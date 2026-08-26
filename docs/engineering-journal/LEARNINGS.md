@@ -30,6 +30,15 @@
 **Generalizable rule.** A release gate must verify the semantic state transition against the authoritative base-ref tip (the version delta between base-ref tip and head), not merely file touch presence or merge-base ancestry.
 **Residual.** Two unmerged PRs authored in parallel can both claim the same next version and pass CI concurrently while both evaluate against the same pre-merge base-ref tip; once the first PR merges into main, any subsequent CI run on the second PR against the updated base-ref tip will fail until its version is advanced.
 **Refs.** Issues #842, #847; PRs #833, #834; `tools/release_surface_diff_guard.py`; `{#bump-guard-checks-touch-not-delta}`.
+### Cross-file Markdown fragment citation validation in journal lint (`#838`)  {#lint-cross-file-journal-fragment-citations}
+
+**Context.** The journal order linter `scripts/lint_journal_order.py` previously checked heading ordering and same-file fragment / anchor citations (`{#slug}` and `](#slug)`), but left cross-file Markdown fragment links (`](DECISIONS.md#slug)`) out of scope. Over time, 18 citations across the journal set drifted dangling when target entries in `QUEUED.md` were pruned, completed, or renamed without updating citations in `LEARNINGS.md`, `DECISIONS.md`, and `ARCHIVE.md`.
+**Evidence.** Running `lint_journal_order.py` with cross-file fragment validation immediately surfaced the exact 18 dangling cross-file citations catalogued in PR #832 (e.g. `ARCHIVE.md#toplevel-oneof-schema-dispatch-400-v1`, `QUEUED.md#marketplace-ci-guard`, `QUEUED.md#investigate-systematic-debugging-engine`).
+**Mechanism.** Anchor link validation without cross-file resolution allows citations to silently rot when referenced entries are moved across lifecycle documents (e.g. from `QUEUED.md` to `ARCHIVE.md`). Furthermore, links in journals target either explicit HTML anchors (`{#slug}`) or GitHub-generated Markdown heading anchor slugs (`#heading-slug`), requiring the linter to extract and resolve both target types across relative and repo-relative paths.
+**Fix (or queued).** Extended `scripts/lint_journal_order.py`'s `check_anchors` to scan Markdown fragment targets `](DECISIONS.md#slug)`, resolve target files relative to the referencing source file within the covered journal set, and match anchors against explicit heading `{#slug}` definitions and GitHub-generated heading anchor slugs. Repaired all 18 dangling references in `ARCHIVE.md`, `DECISIONS.md`, `LEARNINGS.md`, and `README.md`.
+**Validation.** `uv run pytest tests/test_lint_journal_order.py -q` passes (39 tests including cross-file validation, missing anchor reporting, outside-covered-set rejection, and relative path navigation); `python3 scripts/lint_journal_order.py` passes with 0 violations across all 4 journals.
+**Generalizable rule.** A documentation link validator that does not resolve cross-file targets against both explicit anchors and Markdown-generated heading slugs creates false confidence and lets inter-document citations rot silently during knowledge promotion and archival.
+**Refs.** Issue #838; PR #832; Unit U2 in `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md`.
 
 ## 2026-08-25
 
@@ -9406,7 +9415,7 @@ note:     Got: def delete(self, *names: bytes|str|memoryview[int]) -> Awaitable[
 **Generalizable rule.** When two files must stay in sync (plugin dir + registry, schema + migration, code + docs index, env var + Lambda config), reviewers will drift one against the other given enough opportunities. Add a CI assertion that fails on drift — don't rely on PR review.
 
 **Refs.**
-- [QUEUED.md](QUEUED.md#marketplace-ci-guard) — P1 work item for the CI guard.
+- [ARCHIVE.md](ARCHIVE.md#marketplace-ci-guard-pruned) — P1 work item for the CI guard (pruned; superseded by repo invariants).
 - [DECISIONS.md](DECISIONS.md#gitignore-claude-and-no-uv-lock) — repo hygiene shipped alongside.
 - [ARCHIVE.md](ARCHIVE.md#pr-112-marketplace-fix) — SHIPPED record.
 

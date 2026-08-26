@@ -4,7 +4,7 @@ description: Primary SDLC issue creation and prepared handoff command with sourc
 ---
 
 Create or prepare an SDLC issue in any Infiquetra repository. This is the primary user-facing
-issue command; `/issue` remains a compatibility alias.
+issue command.
 
 ## Usage
 

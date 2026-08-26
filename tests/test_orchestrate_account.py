@@ -766,9 +766,21 @@ class TestStatuslineAccountEvidence:
         assert "account" not in receipt["confirmed_against_herdr"]
 
 
-@pytest.mark.usefixtures("launcher_on_path", "pane_reads_nothing")
+@pytest.mark.usefixtures("launcher_on_path")
 class TestNoSilentAccountSubstitution:
     """Proof that Orchestrate never silently substitutes personal or company accounts (#848)."""
+
+    @staticmethod
+    def _pane(monkeypatch: pytest.MonkeyPatch, orchestrate: ModuleType, text: str | None) -> None:
+        def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+            if cmd[:3] == ["herdr", "pane", "read"]:
+                if text is None:
+                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such pane")
+                return subprocess.CompletedProcess(cmd, 0, stdout=text, stderr="")
+            raise AssertionError(f"unexpected command {cmd}")
+
+        monkeypatch.setattr(orchestrate, "run", fake_run)
+        monkeypatch.setenv("USER", "jefcox")
 
     def test_unverified_company_account_raises_and_never_substitutes_personal(
         self,
@@ -778,6 +790,7 @@ class TestNoSilentAccountSubstitution:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When company account cannot be verified, fail loudly rather than defaulting to personal."""
+        self._pane(monkeypatch, orchestrate, None)
         unit = orchestrate.Unit(
             name="worker",
             vendor="claude",
@@ -811,19 +824,11 @@ class TestNoSilentAccountSubstitution:
         self,
         orchestrate: ModuleType,
         repo: Path,
+        fake_claude_roots: tuple[Path, Path],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Detected personal account when company was requested closes session and stops."""
-
-        def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
-            if cmd[:3] == ["herdr", "pane", "read"]:
-                return subprocess.CompletedProcess(
-                    cmd, 0, stdout="jefcox:/infiquetra/repo (main)\n", stderr=""
-                )
-            raise AssertionError(f"unexpected command {cmd}")
-
-        monkeypatch.setattr(orchestrate, "run", fake_run)
-        monkeypatch.setenv("USER", "jefcox")
+        self._pane(monkeypatch, orchestrate, "jefcox:/infiquetra/repo (main)\n")
 
         unit = orchestrate.Unit(
             name="worker",

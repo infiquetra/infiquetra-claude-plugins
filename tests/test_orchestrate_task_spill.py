@@ -242,6 +242,146 @@ class TestTaskSpillOwnershipAndNoClobber:
         assert loaded.unit("u").task == brief_text
         assert loaded.unit("u").task_file == "hand_authored.task.md"
 
+    def test_unmarked_303_spills_upgrade_on_save(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A spill written before the ownership marker existed upgrades cleanly on same-owner save."""
+        monkeypatch.chdir(tmp_path)
+        spill_file = _spill_path(tmp_path, "build")
+        spill_file.parent.mkdir(parents=True, exist_ok=True)
+        spill_file.write_text(LONG_TASK, encoding="utf-8")
+
+        _write_raw_run(
+            tmp_path,
+            [
+                {
+                    "name": "build",
+                    "vendor": "claude",
+                    "task": "",
+                    "task_file": "build.task.md",
+                    "status": "pending",
+                }
+            ],
+        )
+
+        loaded = orchestrate.Run.load()
+        assert loaded.unit("build").task == LONG_TASK
+        assert loaded.unit("build").task_file == "build.task.md"
+
+        loaded.save()
+        marker = orchestrate.task_spill_marker("r1", "build")
+        assert spill_file.read_text(encoding="utf-8") == f"{marker}\n{LONG_TASK}"
+
+    def test_multi_unit_save_does_not_leave_partial_spills_on_refusal(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A save touching several units refuses atomically before writing any spill files."""
+        monkeypatch.chdir(tmp_path)
+        u2_brief = _spill_path(tmp_path, "u2")
+        u2_brief.parent.mkdir(parents=True, exist_ok=True)
+        brief_bytes = b"# Hand-authored u2 brief\n"
+        u2_brief.write_bytes(brief_bytes)
+
+        u1_spill = _spill_path(tmp_path, "u1")
+        assert not u1_spill.exists()
+
+        u1 = orchestrate.Unit(name="u1", vendor="claude", task=LONG_TASK)
+        u2 = orchestrate.Unit(name="u2", vendor="claude", task=LONG_TASK)
+        r = _run(orchestrate, u1, u2)
+
+        with pytest.raises(SystemExit) as exc_info:
+            r.save()
+
+        assert "refusing to overwrite unmarked task file" in str(exc_info.value)
+        assert "u2.task.md" in str(exc_info.value)
+        assert not u1_spill.exists()
+        assert u2_brief.read_bytes() == brief_bytes
+
+    @pytest.mark.parametrize(
+        ("run_id", "unit_name"),
+        [
+            ("r1", "build"),
+            ("orch 2026:08", "unit with spaces"),
+            ("run-42", "unit.step-1"),
+            ("run/quoted", 'unit\'s "name"'),
+            ("r1", "unit[0]"),
+            ("r-λ", "unit-λ"),
+        ],
+    )
+    def test_ownership_marker_round_trips_legal_unit_names_and_run_ids(
+        self,
+        orchestrate: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_id: str,
+        unit_name: str,
+    ) -> None:
+        """Any legal unit name and run_id round-trips exactly through marker generation and parsing."""
+        marker = orchestrate.task_spill_marker(run_id, unit_name)
+        stamped = f"{marker}\n{LONG_TASK}"
+        parsed = orchestrate.parse_task_spill_marker(stamped)
+        assert parsed == (run_id, unit_name)
+        assert orchestrate.strip_task_spill_marker(stamped) == LONG_TASK
+
+    def test_crash_truncated_spill_allows_same_owner_retry(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 0-byte or truncated spill from a crash does not brick same-owner save retry."""
+        monkeypatch.chdir(tmp_path)
+        spill_file = _spill_path(tmp_path, "build")
+        spill_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Case 1: 0-byte file from crash
+        spill_file.write_bytes(b"")
+        r = _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK))
+        r.save()
+        assert orchestrate.Run.load().unit("build").task == LONG_TASK
+
+        # Case 2: Incomplete / truncated marker from same run
+        spill_file.write_text(
+            '<!-- orchestrate:owner json={"run_id": "r1", "unit": "buil', encoding="utf-8"
+        )
+        r.save()
+        assert orchestrate.Run.load().unit("build").task == LONG_TASK
+
+        # Case 3: Incomplete / truncated marker from different run is refused
+        spill_file.write_text(
+            '<!-- orchestrate:owner json={"run_id": "other-run", "unit": "buil', encoding="utf-8"
+        )
+        with pytest.raises(SystemExit):
+            r.save()
+
+    def test_empty_run_id_default_does_not_create_conflicting_owner(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Calling spill_unit without run_id does not create a conflicting owner identity."""
+        monkeypatch.chdir(tmp_path)
+        u = orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)
+        orchestrate.spill_unit(u)
+
+        r = orchestrate.Run(run_id="r1", source="test", base="0" * 40, units=[u])
+        r.save()
+        assert orchestrate.Run.load().unit("build").task == LONG_TASK
+
+    def test_non_utf8_task_file_refuses_cleanly_without_raising(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-UTF-8 task file causes a clean SystemExit refusal naming the path, not an unhandled exception."""
+        monkeypatch.chdir(tmp_path)
+        spill_file = _spill_path(tmp_path, "build")
+        spill_file.parent.mkdir(parents=True, exist_ok=True)
+        binary_bytes = b"\x80\x81\xff\xfe\x00\x01"
+        spill_file.write_bytes(binary_bytes)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _run(
+                orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)
+            ).save()
+
+        assert "refusing to overwrite task file" in str(exc_info.value)
+        assert "build.task.md" in str(exc_info.value)
+        assert spill_file.read_bytes() == binary_bytes
+
 
 class TestAShortTaskStaysInline:
     """The spill is for the 83%; a short task never leaves the record."""

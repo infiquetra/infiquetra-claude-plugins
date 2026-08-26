@@ -480,6 +480,28 @@ class Run:
 
     def save(self, path: Path = RUN_FILE) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Pre-validate all unit spills so any refusal happens before mutating any files on disk
+        planned_spills: dict[str, tuple[str, Path, str]] = {}
+        for u in self.units:
+            if len(u.task) > TASK_SPILL_THRESHOLD:
+                planned_spills[u.name] = check_can_spill_unit(u, self.run_id)
+
+        TASK_DIR.mkdir(parents=True, exist_ok=True)
+        unit_rows: list[dict[str, Any]] = []
+        for u in self.units:
+            if u.name in planned_spills:
+                pointer, target, stamped_task = planned_spills[u.name]
+                target.write_text(stamped_task, encoding="utf-8")
+                data = asdict(u)
+                data["task"] = ""
+                data["task_file"] = pointer
+                unit_rows.append(data)
+            else:
+                data = asdict(u)
+                data["task_file"] = None
+                unit_rows.append(data)
+
         payload = {
             "run_id": self.run_id,
             "source": self.source,
@@ -495,7 +517,7 @@ class Run:
             "review_outcome": self.review_outcome,
             "review_resubmit_pending": self.review_resubmit_pending,
             "operator_fix_requests": self.operator_fix_requests,
-            "units": [spill_unit(u, run_id=self.run_id) for u in self.units],
+            "units": unit_rows,
         }
         path.write_text(json.dumps(payload, indent=2) + "\n")
 
@@ -555,27 +577,48 @@ class Run:
         return "; ".join(parts)
 
 
-_TASK_SPILL_MARKER_PATTERN = re.compile(
-    r"^<!--\s*orchestrate:owner\s+run_id=(?P<run_id>[^\s>]*)\s+unit=(?P<unit>[^\s>]+)\s*-->\r?\n?"
+_TASK_SPILL_MARKER_PREFIX_PATTERN = re.compile(
+    r"^<!--\s*orchestrate:owner\s+(?P<payload>.*?)\s*-->\r?\n?",
+    re.DOTALL,
 )
 
 
 def task_spill_marker(run_id: str, unit_name: str) -> str:
     """Format the stable ownership marker for a generated task spill file."""
-    return f"<!-- orchestrate:owner run_id={run_id} unit={unit_name} -->"
+    payload = json.dumps({"run_id": run_id, "unit": unit_name}, sort_keys=True)
+    return f"<!-- orchestrate:owner json={payload} -->"
 
 
 def parse_task_spill_marker(content: str) -> tuple[str, str] | None:
     """Extract (run_id, unit_name) from a task spill file's ownership marker, if present."""
-    match = _TASK_SPILL_MARKER_PATTERN.match(content)
+    match = _TASK_SPILL_MARKER_PREFIX_PATTERN.match(content)
     if not match:
         return None
-    return match.group("run_id"), match.group("unit")
+    payload = match.group("payload").strip()
+    if payload.startswith("json="):
+        try:
+            data = json.loads(payload[5:])
+            if isinstance(data, dict):
+                return str(data.get("run_id", "")), str(data.get("unit", ""))
+        except (ValueError, TypeError):
+            return None
+    # Key-value fallback for backwards compatibility or legacy format
+    run_match = re.search(r'run_id=(?:"([^"]*)"|\'([^\']*)\'|([^\s>]*))', payload)
+    unit_match = re.search(r'unit=(?:"([^"]*)"|\'([^\']*)\'|([^\s>]*))', payload)
+    if unit_match:
+        run_id = (
+            run_match.group(1) or run_match.group(2) or run_match.group(3) or ""
+            if run_match
+            else ""
+        )
+        unit_name = unit_match.group(1) or unit_match.group(2) or unit_match.group(3) or ""
+        return run_id, unit_name
+    return None
 
 
 def strip_task_spill_marker(content: str) -> str:
     """Return task content with any leading orchestrate ownership marker removed."""
-    match = _TASK_SPILL_MARKER_PATTERN.match(content)
+    match = _TASK_SPILL_MARKER_PREFIX_PATTERN.match(content)
     if not match:
         return content
     return content[match.end() :]
@@ -597,6 +640,67 @@ def resolve_task_file(pointer: str) -> Path:
     return resolved
 
 
+def check_can_spill_unit(unit: Unit, run_id: str) -> tuple[str, Path, str]:
+    """Validate that a unit's long task can safely spill to its task file without clobbering.
+
+    Returns (pointer, target_path, stamped_content). Fails loudly with SystemExit on conflict."""
+    pointer = f"{unit.name}.task.md"
+    target = resolve_task_file(pointer)
+    effective_run_id = run_id
+
+    if target.exists():
+        try:
+            existing_content = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise SystemExit(
+                f"refusing to overwrite task file {pointer!r} ({target}): "
+                f"cannot read existing file ({exc})"
+            ) from None
+
+        owner = parse_task_spill_marker(existing_content)
+        if owner is not None:
+            existing_run_id, existing_unit_name = owner
+            if existing_unit_name != unit.name:
+                raise SystemExit(
+                    f"refusing to overwrite task file {pointer!r} ({target}) owned by "
+                    f"unit {existing_unit_name!r} (current unit {unit.name!r})"
+                )
+            if existing_run_id and run_id and existing_run_id != run_id:
+                raise SystemExit(
+                    f"refusing to overwrite task file {pointer!r} ({target}) owned by "
+                    f"run {existing_run_id!r} unit {existing_unit_name!r} "
+                    f"(current run {run_id!r} unit {unit.name!r})"
+                )
+            if not effective_run_id and existing_run_id:
+                effective_run_id = existing_run_id
+        else:
+            # Unmarked or truncated existing file
+            is_same_owner_upgrade = unit.task_file == pointer
+            is_empty_file = target.stat().st_size == 0
+            is_same_run_truncated = (
+                existing_content.startswith("<!-- orchestrate:owner")
+                and (
+                    not run_id
+                    or f'"{run_id}"' in existing_content
+                    or f"run_id={run_id}" in existing_content
+                )
+                and not any(
+                    f'"{other}"' in existing_content
+                    for other in re.findall(r'run_id["\':=\s]+([^"\'>\s,}]+)', existing_content)
+                    if other and other != run_id
+                )
+            )
+
+            if not (is_same_owner_upgrade or is_empty_file or is_same_run_truncated):
+                raise SystemExit(
+                    f"refusing to overwrite unmarked task file {pointer!r} ({target}); "
+                    "hand-authored briefs are protected from generated task spills"
+                )
+
+    stamped_task = f"{task_spill_marker(effective_run_id, unit.name)}\n{unit.task}"
+    return pointer, target, stamped_task
+
+
 def spill_unit(unit: Unit, run_id: str = "") -> dict[str, Any]:
     """One unit's row in the run record, with a long task spilled to its own file.
 
@@ -610,30 +714,8 @@ def spill_unit(unit: Unit, run_id: str = "") -> dict[str, Any]:
         data["task_file"] = None
         return data
     TASK_DIR.mkdir(parents=True, exist_ok=True)
-    pointer = f"{unit.name}.task.md"
-    target = resolve_task_file(pointer)
-
-    if target.exists():
-        try:
-            existing_content = target.read_text()
-        except OSError as exc:
-            raise SystemExit(f"cannot check task file {pointer!r} ({target}): {exc}") from exc
-        owner = parse_task_spill_marker(existing_content)
-        if owner is None:
-            raise SystemExit(
-                f"refusing to overwrite unmarked task file {pointer!r} ({target}); "
-                "hand-authored briefs are protected from generated task spills"
-            )
-        existing_run_id, existing_unit_name = owner
-        if existing_run_id != run_id or existing_unit_name != unit.name:
-            raise SystemExit(
-                f"refusing to overwrite task file {pointer!r} ({target}) owned by "
-                f"run {existing_run_id!r} unit {existing_unit_name!r} "
-                f"(current run {run_id!r} unit {unit.name!r})"
-            )
-
-    stamped_task = f"{task_spill_marker(run_id, unit.name)}\n{unit.task}"
-    target.write_text(stamped_task)
+    pointer, target, stamped_task = check_can_spill_unit(unit, run_id)
+    target.write_text(stamped_task, encoding="utf-8")
     data["task"] = ""
     data["task_file"] = pointer
     return data
@@ -656,7 +738,7 @@ def read_unit(raw: dict[str, Any]) -> Unit:
         return unit
     spill = resolve_task_file(unit.task_file)
     try:
-        raw_text = spill.read_text()
+        raw_text = spill.read_text(encoding="utf-8")
         unit.task = strip_task_spill_marker(raw_text)
     except FileNotFoundError:
         unit.task = ""

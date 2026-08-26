@@ -50,6 +50,7 @@
 **Validation.** `grep -rn "infiquetra-plugins/mission-control/[0-9]" plugins/mission-control/` returns exit 1 (no matches); `uv run pytest tests/test_mission_control.py -q` passes all 38 tests including the drift guard and mutation proofs; `uv run python scripts/lint_journal_order.py` passes with 0 violations.
 **Generalizable rule.** Never hard-code version-pinned cache directories in documentation or command templates; reference plugin entry points via runtime-injected root variables (`$CLAUDE_PLUGIN_ROOT`) and pair with automated documentation drift guards that reject version-pinned paths.
 **Refs.** Issue #818; run plan `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md` unit U15; `{#822-package-root-resolution-sync-template-docs}`; `{#829-package-root-resolution-plugin-json}`.
+
 ### Explicit ownership markers and no-clobber protection prevent generated task spills from overwriting hand-authored briefs  {#845-task-spill-ownership-no-clobber}
 
 **Context.** In Orchestrate, long task instructions (>400 characters) spill out of `run.json` into `.orchestrate/tasks/<unit>.task.md` to keep the run record small. However, hand-authored unit task briefs also reside in `.orchestrate/tasks/`. Previously, `spill_unit()` in `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:574` called `resolve_task_file(pointer).write_text(unit.task)` unconditionally, allowing generated spills to overwrite hand-authored briefs sharing a unit name.

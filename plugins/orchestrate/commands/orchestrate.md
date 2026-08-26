@@ -108,13 +108,9 @@ order — not a checklist, and stop as soon as the answers determine the table:
    `agents` wrapper and vendor-native live catalogs or help — **never** from Fleet Commons tier data
    (`fleet_commons.tier_resolver`) or `~/.config/orchestrate/models.json`.
 
-   - **Model-aware dry run proof:** Run `python3 "$S" roster` (or invoke `start` / `expand` with a candidate
-     plan JSON) to verify that the wrapper recognizes the vendor and that model/effort flags assemble properly
-     via `agent_argv`. Success is exit 0 with valid launch arguments emitted.
-   - **Bounded real launch proof:** Dispatch a test or single unit via `python3 "$S" go` under defined timeout
-     bounds (`LAUNCH_SETTLE_SECONDS = 30.0` for interactive readiness, `DELIVERY_CHECK_SECONDS = 15.0` for prompt
-     acceptance). Success is the session transitioning out of idle, `took_the_task` returning true, and the unit
-     entering `running` status rather than `prompt_undelivered` or `account_mismatch`.
+   - **Interview-time model discovery:** Run `python3 "$S" roster` to verify installed wrapper tools
+     and `python3 "$S" roster --models` to query live vendor models and favourites. This check inspects
+     the live catalog without creating worktrees, git branches, Herdr sessions, or run state.
    - **Herdr verification bounds:** Herdr proves only workspace, pane, working-directory (`cwd`), and
      readiness facts (`herdr agent list`), never models.
    - **Internal tier decoupling:** Fleet Commons retains internal Team Execution tier ownership and must never

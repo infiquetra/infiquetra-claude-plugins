@@ -50,6 +50,7 @@
 **Validation.** `uv run pytest plugins/mission-control/tests/test_sdlc_manager_optional_deps.py -q` and `uv run pytest plugins/mission-control/tests/ -q` pass with 100% green; `--help` and YAML-free subcommands succeed in subprocesses where `yaml` is unimportable.
 **Generalizable rule.** In multi-command CLI scripts, defer domain-specific imports to their leaf functions when not required by the rest of the CLI surface, so baseline entrypoints like `--help` run on minimal interpreters.
 **Refs.** Issue #828; run plan `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md` unit U11.
+
 ### External model authority must come from live catalogs and wrapper, not stale internal tier tables or favourites  {#model-authority-boundary-live-catalog}
 
 **Context.** During preflight and shaping for orchestration parent #847 (issue #848 / unit U6), absence of models from `fleet_commons.tier_resolver.py` and `~/.config/orchestrate/models.json` was read as absence from the external world, generating false negatives that Gemini 3.7 was unavailable and that two declared OpenCode Muse routes were one.

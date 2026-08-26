@@ -126,7 +126,11 @@ without making a fresh run appear as untracked source work.
 repository, put the brief there, and give the unit the brief's absolute path (a unit runs in a
 different worktree, so a repository-relative path points at the wrong tree). Do not use a session
 scratchpad or `/tmp`: those paths can disappear while the run record still names them. Generated
-long-task handovers already use this directory and the same containment boundary.
+long-task handovers already use this directory and the same containment boundary, stamped with an
+Orchestrate ownership marker (`<!-- orchestrate:owner json={"run_id": "...", "unit": "..."} -->`). Orchestrate refuses
+to overwrite unmarked existing files (such as hand-authored briefs) or files owned by another
+run/unit, preserving their original bytes and naming the conflicting path. Same-owner updates remain
+idempotent.
 
 The unit's `name` is the dependency key and never changes. The wrapper uniquifies agent names, so
 what herdr calls the session is recorded separately as `agent_name`.

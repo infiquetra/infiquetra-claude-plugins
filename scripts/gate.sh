@@ -119,8 +119,11 @@ fi
 ran=0 failed=0 advisory_failed=0
 declare -a FAILED_NAMES=() ADVISORY_NAMES=() COVERED=()
 
-# The diff-aware guards need a base ref. Locally that is the merge base with main.
+# The diff-aware guards need a base ref. For the release-surface bump guard, that is the
+# authoritative tip of origin/main (to ensure versions advance over main's current tip).
+# For the journal newest-first lint, that is the merge base with main.
 git fetch -q origin main 2>/dev/null || true
+RELEASE_BASE_REF="${RELEASE_BASE_REF:-origin/main}"
 PR_BASE_SHA="$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD)"
 export PR_BASE_SHA
 
@@ -200,7 +203,7 @@ step "Tri-lock release-surface parity (plugin.json == marketplace == CHANGELOG)"
 step "CHANGELOG heading grammar lint (fleet baseline)" \
   uv run python -m pytest tests/test_changelog_heading_lint.py -k fleet_baseline -q
 step "Diff-aware release-surface bump guard" \
-  uv run python tools/release_surface_diff_guard.py --base-ref "$PR_BASE_SHA"
+  uv run python tools/release_surface_diff_guard.py --base-ref "$RELEASE_BASE_REF"
 step "Journal newest-first guard (new entries)" \
   uv run python scripts/lint_journal_order.py --base-ref "$PR_BASE_SHA"
 

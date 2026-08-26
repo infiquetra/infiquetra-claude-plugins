@@ -682,16 +682,13 @@ def is_explicit_non_code_review_capability(task: str) -> bool:
 
     Matches either namespaced capability invocations (e.g. ``/saga:plan``, ``$saga:doc-review``)
     or bare capability commands for known non-Code-Review Saga capabilities (e.g. ``/doc-review``,
-    ``/founder-review``, ``/plan``). Does not match Code Review invocations or untyped prompts.
+    ``/founder-review``, ``/plan``). Does not match Code Review invocations, unknown capabilities,
+    or untyped prompts.
     """
-    match = re.match(r"^\s*[/$](saga:)?([a-z0-9_-]+)\b", task, re.IGNORECASE)
+    match = re.match(r"^\s*[/$](?:saga:)?([a-z0-9_-]+)\b", task, re.IGNORECASE)
     if not match:
         return False
-    ns, cap = match.group(1), match.group(2).lower()
-    if cap == "code-review":
-        return False
-    if ns is not None:
-        return True
+    cap = match.group(1).lower()
     return cap in _NON_CODE_REVIEW_CAPABILITIES
 
 

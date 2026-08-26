@@ -34,6 +34,7 @@ sibling Saga skills (`/loop`, `/code-review`, `/founder-review`, `/optimize`, `/
 invocation or an already-approved recorded plan choice.
 
 **Revisit when.** A future operator ruling reconsiders the narrow default offer framework.
+
 ### Conditional lenses launch only after commit+cycle approval (#778) {#778-conditional-lens-operator-approval}
 
 **Decision.** Auto-run the four always-on Code Review lenses. Recommend conditionals

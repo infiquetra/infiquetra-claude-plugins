@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.6] - 2026-08-26
+
+### Fixed - update-surviving installed script paths in docs and commands (#818)
+
+- Replaced six version-pinned installed script paths (pinned to legacy cache directories) in `README.md`, `commands/board.md`, `commands/issue.md`, `commands/metrics.md`, and `commands/triage.md` with the settled convention `"$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py"` (no `skills/` segment).
+- Added drift guards in `tests/test_mission_control.py` verifying no version-pinned paths exist across tracked Mission Control documents, confirming all six sites use the `$CLAUDE_PLUGIN_ROOT` invocation form, mutation-proving that restoring a pinned path fails the guard, and confirming `agents/sdlc-operator.md` remains unaffected.
+
 ## [2.12.5] - 2026-08-26
 
 ### Fixed - dynamic package-root resolution in sync_template_docs.py (#822)

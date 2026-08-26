@@ -42,7 +42,7 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "mission-control")
 
     assert plugin_json["name"] == "mission-control"
-    assert plugin_json["version"] == "2.12.5"  # #822 package-root resolution in sync_template_docs
+    assert plugin_json["version"] == "2.12.6"  # #818 replace six version-pinned installed paths
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]

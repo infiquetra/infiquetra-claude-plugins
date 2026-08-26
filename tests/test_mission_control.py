@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -869,3 +870,99 @@ class TestSyncTemplateDocsRelocatedCopy:
                 in src
             )
             assert "PACKAGE_ROOT = _find_package_root()" in src
+
+
+# ===========================
+# #818 Installed path drift guard & $CLAUDE_PLUGIN_ROOT convention
+# ===========================
+
+
+class TestMissionControlInstalledPathDriftGuard:
+    """Drift guards for update-surviving installed script paths in Mission Control."""
+
+    PINNED_PATH_PATTERN = re.compile(r"infiquetra-plugins/mission-control/[0-9]")
+
+    @classmethod
+    def _find_pinned_path_violations(cls, base_dir: Path) -> list[str]:
+        violations = []
+        for path in sorted(base_dir.rglob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if cls.PINNED_PATH_PATTERN.search(line):
+                    violations.append(
+                        f"{path.relative_to(base_dir.parent.parent)}:{lineno}: {line.strip()}"
+                    )
+        return violations
+
+    def test_no_version_pinned_installed_paths_in_tracked_documents(self) -> None:
+        """Fail when any tracked Mission Control document contains a version-pinned path."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        violations = self._find_pinned_path_violations(mc_dir)
+        assert not violations, "Found version-pinned mission-control paths:\n" + "\n".join(
+            violations
+        )
+
+    def test_replacement_invocation_form_present_at_all_six_repaired_sites(self) -> None:
+        """Confirm the replacement invocation form is present in all six repaired sites."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        expected_script_var = 'SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py"'
+        expected_cli_call = 'python3 "$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py"'
+
+        # Site 1: README.md
+        readme = (mc_dir / "README.md").read_text(encoding="utf-8")
+        assert expected_script_var in readme
+
+        # Site 2: commands/board.md
+        board = (mc_dir / "commands" / "board.md").read_text(encoding="utf-8")
+        assert expected_script_var in board
+
+        # Sites 3 & 4: commands/issue.md (prepare and create-prepared)
+        issue = (mc_dir / "commands" / "issue.md").read_text(encoding="utf-8")
+        assert expected_cli_call in issue
+        assert issue.count(expected_cli_call) >= 2
+
+        # Site 5: commands/metrics.md
+        metrics = (mc_dir / "commands" / "metrics.md").read_text(encoding="utf-8")
+        assert expected_script_var in metrics
+
+        # Site 6: commands/triage.md
+        triage = (mc_dir / "commands" / "triage.md").read_text(encoding="utf-8")
+        assert expected_script_var in triage
+
+        # Verify no 'skills/' segment appears in the replacement paths
+        for content in (readme, board, issue, metrics, triage):
+            assert "$CLAUDE_PLUGIN_ROOT/skills/sdlc_manager.py" not in content
+            assert "$CLAUDE_PLUGIN_ROOT/skills/mission-control" not in content
+
+    def test_mutation_proof_restored_pinned_path_fails_guard(self, tmp_path: Path) -> None:
+        """Mutation-prove that restoring a pinned path fails the new guard."""
+        fake_doc = tmp_path / "command.md"
+        fake_doc.write_text(
+            "SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py\n",
+            encoding="utf-8",
+        )
+        violations = []
+        for path in sorted(tmp_path.rglob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if self.PINNED_PATH_PATTERN.search(line):
+                    violations.append(f"{path.name}:{lineno}: {line.strip()}")
+
+        assert len(violations) == 1
+        assert "command.md:1:" in violations[0]
+        assert "2.1.0" in violations[0]
+
+    def test_sdlc_operator_agent_unaffected(self) -> None:
+        """Confirm plugins/mission-control/agents/sdlc-operator.md is clean and unaffected."""
+        agent_path = (
+            Path(__file__).resolve().parent.parent
+            / "plugins"
+            / "mission-control"
+            / "agents"
+            / "sdlc-operator.md"
+        )
+        text = agent_path.read_text(encoding="utf-8")
+        # Must not contain version digits in installed path
+        assert not self.PINNED_PATH_PATTERN.search(text)
+        # Must retain the generic <version> placeholder
+        assert "infiquetra-plugins/mission-control/<version>/scripts/sdlc_manager.py" in text

@@ -60,7 +60,7 @@ def test_skill_edit_with_bump_passes():
     assert violations == []
 
 
-def test_version_equal_to_merge_base_fails():
+def test_version_equal_to_base_ref_fails():
     reader = make_manifest_reader(
         {
             ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
@@ -83,10 +83,10 @@ def test_version_equal_to_merge_base_fails():
     assert len(violations) == 1
     assert "foo" in violations[0]
     assert "'1.0.0'" in violations[0]
-    assert "equal to merge-base version '1.0.0'" in violations[0]
+    assert "equal to base-ref version '1.0.0'" in violations[0]
 
 
-def test_version_lower_than_merge_base_fails():
+def test_version_lower_than_base_ref_fails():
     reader = make_manifest_reader(
         {
             ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
@@ -110,10 +110,10 @@ def test_version_lower_than_merge_base_fails():
     assert "foo" in violations[0]
     assert "'1.0.0'" in violations[0]
     assert "'1.1.0'" in violations[0]
-    assert "lower than merge-base version '1.1.0'" in violations[0]
+    assert "lower than base-ref version '1.1.0'" in violations[0]
 
 
-def test_version_greater_than_merge_base_passes():
+def test_version_greater_than_base_ref_passes():
     reader = make_manifest_reader(
         {
             ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
@@ -134,6 +134,112 @@ def test_version_greater_than_merge_base_passes():
     )
 
     assert violations == []
+
+
+def test_missing_head_manifest_fails():
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "1.0.0"}
+            ),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): None,
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "foo" in violations[0]
+    assert "proposed manifest plugins/foo/.claude-plugin/plugin.json is missing" in violations[0]
+    assert "'1.0.0'" in violations[0]
+
+
+def test_invalid_json_head_manifest_fails():
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "1.0.0"}
+            ),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): "{invalid-json",
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "foo" in violations[0]
+    assert (
+        "proposed manifest plugins/foo/.claude-plugin/plugin.json has invalid JSON" in violations[0]
+    )
+    assert "'1.0.0'" in violations[0]
+
+
+def test_missing_version_key_head_manifest_fails():
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "1.0.0"}
+            ),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): json.dumps({"name": "foo"}),
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "foo" in violations[0]
+    assert (
+        "proposed manifest plugins/foo/.claude-plugin/plugin.json is missing 'version' key"
+        in violations[0]
+    )
+    assert "'1.0.0'" in violations[0]
+
+
+def test_non_string_version_head_manifest_fails():
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "1.0.0"}
+            ),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": None}
+            ),
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "foo" in violations[0]
+    assert (
+        "proposed manifest plugins/foo/.claude-plugin/plugin.json 'version' is not a string (None)"
+        in violations[0]
+    )
+    assert "'1.0.0'" in violations[0]
 
 
 def test_malformed_head_version_fails():
@@ -163,6 +269,88 @@ def test_malformed_head_version_fails():
     assert "malformed" in violations[0]
 
 
+def test_invalid_json_base_manifest_fails():
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): "not-json",
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "1.0.1"}
+            ),
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "foo" in violations[0]
+    assert (
+        "base-ref manifest plugins/foo/.claude-plugin/plugin.json has invalid JSON" in violations[0]
+    )
+    assert "'1.0.1'" in violations[0]
+
+
+def test_missing_version_key_base_manifest_fails():
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps({"name": "foo"}),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "1.0.1"}
+            ),
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "foo" in violations[0]
+    assert (
+        "base-ref manifest plugins/foo/.claude-plugin/plugin.json is missing 'version' key"
+        in violations[0]
+    )
+    assert "'1.0.1'" in violations[0]
+
+
+def test_non_string_version_base_manifest_fails():
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": 123}
+            ),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "1.0.1"}
+            ),
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "foo" in violations[0]
+    assert (
+        "base-ref manifest plugins/foo/.claude-plugin/plugin.json 'version' is not a string (123)"
+        in violations[0]
+    )
+    assert "'1.0.1'" in violations[0]
+
+
 def test_malformed_base_version_fails():
     reader = make_manifest_reader(
         {
@@ -187,7 +375,10 @@ def test_malformed_base_version_fails():
     assert "foo" in violations[0]
     assert "'bad-base'" in violations[0]
     assert "'1.0.1'" in violations[0]
-    assert "merge-base manifest version 'bad-base' is malformed" in violations[0]
+    assert (
+        "base-ref manifest plugins/foo/.claude-plugin/plugin.json version 'bad-base' is malformed"
+        in violations[0]
+    )
 
 
 def test_new_plugin_with_valid_version_passes():
@@ -234,6 +425,28 @@ def test_new_plugin_with_malformed_version_fails():
     assert "'not-semver'" in violations[0]
     assert "<absent>" in violations[0]
     assert "malformed" in violations[0]
+
+
+def test_new_plugin_with_invalid_json_fails():
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/newplugin/.claude-plugin/plugin.json"): None,
+            ("HEAD", "plugins/newplugin/.claude-plugin/plugin.json"): "{bad-json",
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/newplugin/skills/x/SKILL.md",
+            "plugins/newplugin/.claude-plugin/plugin.json",
+            "plugins/newplugin/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "newplugin" in violations[0]
+    assert "invalid JSON" in violations[0]
+    assert "<absent>" in violations[0]
 
 
 @pytest.mark.parametrize(
@@ -322,6 +535,88 @@ def test_semver_invalid_parsing(invalid: str | None):
     assert GUARD.parse_semver(invalid) is None
 
 
+def test_git_base_ref_tip_collision_fails(tmp_path: Path):
+    """Reproduction of the #833/#834 collision:
+
+    Branch B branched from main at 1.0.0 and bumps to 1.0.1.
+    Meanwhile, Branch A merges into main bumping to 1.0.1.
+    Branch B tested against the updated main tip must fail because 1.0.1 is not > main's 1.0.1.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    plugin_dir = repo / "plugins" / "sample"
+    (plugin_dir / ".claude-plugin").mkdir(parents=True)
+    (plugin_dir / "skills" / "sample-skill").mkdir(parents=True)
+
+    manifest = plugin_dir / ".claude-plugin" / "plugin.json"
+    manifest.write_text(json.dumps({"name": "sample", "version": "1.0.0"}))
+    changelog = plugin_dir / "CHANGELOG.md"
+    changelog.write_text("# Changelog\n\n## [1.0.0] - 2026-08-26\n- initial\n")
+    skill = plugin_dir / "skills" / "sample-skill" / "SKILL.md"
+    skill.write_text("# Skill\n")
+
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial commit (1.0.0)"], cwd=repo, check=True, capture_output=True
+    )
+
+    # Branch B branches from 1.0.0
+    subprocess.run(["git", "checkout", "-b", "branch-b"], cwd=repo, check=True, capture_output=True)
+    skill.write_text("# Skill modified by B\n")
+    manifest.write_text(json.dumps({"name": "sample", "version": "1.0.1"}))
+    changelog.write_text(
+        "# Changelog\n\n## [1.0.1] - 2026-08-26\n- branch B\n## [1.0.0] - 2026-08-26\n- initial\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "branch B bumps to 1.0.1"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Meanwhile on main (simulating Branch A merging): bump to 1.0.1
+    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+    skill.write_text("# Skill modified by A\n")
+    manifest.write_text(json.dumps({"name": "sample", "version": "1.0.1"}))
+    changelog.write_text(
+        "# Changelog\n\n## [1.0.1] - 2026-08-26\n- branch A\n## [1.0.0] - 2026-08-26\n- initial\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "branch A merges to main with 1.0.1"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Switch back to branch-b and run guard against main
+    subprocess.run(["git", "checkout", "branch-b"], cwd=repo, check=True, capture_output=True)
+
+    def repo_runner(cmd, **kwargs):
+        return subprocess.run(cmd, cwd=repo, capture_output=True, text=True, check=False)
+
+    paths = GUARD.changed_files("main", runner=repo_runner)
+    violations = GUARD.find_violations(paths, base_ref="main", runner=repo_runner)
+
+    # Branch B must FAIL against main tip because main already has 1.0.1
+    assert len(violations) == 1
+    assert "sample" in violations[0]
+    assert "'1.0.1'" in violations[0]
+    assert "equal to base-ref version '1.0.1'" in violations[0]
+
+
 def test_committed_content_vs_working_tree_in_git_repo(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -355,31 +650,8 @@ def test_committed_content_vs_working_tree_in_git_repo(tmp_path: Path):
     # Create feature branch
     subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True)
 
-    # 1. Modify runtime file but keep manifest version equal
+    # 1. Advance version in committed HEAD: 1.0.0 -> 1.0.1
     skill.write_text("# Skill modified\n")
-    changelog.write_text(
-        "# Changelog\n\n## [1.0.0] - 2026-08-26\n- modified\n## [1.0.0] - 2026-08-26\n- initial\n"
-    )
-    # Touch manifest without changing version (e.g. description edit)
-    manifest.write_text(
-        json.dumps({"name": "sample", "version": "1.0.0", "description": "updated desc"})
-    )
-    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "un-bumped feature"], cwd=repo, check=True, capture_output=True
-    )
-
-    # Run runner inside the temp repo
-    def repo_runner(cmd, **kwargs):
-        return subprocess.run(cmd, cwd=repo, capture_output=True, text=True, check=False)
-
-    paths = GUARD.changed_files("main", runner=repo_runner)
-    violations = GUARD.find_violations(paths, base_ref="main", runner=repo_runner)
-    assert len(violations) == 1
-    assert "sample" in violations[0]
-    assert "equal to merge-base version '1.0.0'" in violations[0]
-
-    # 2. Advance version in committed HEAD: 1.0.0 -> 1.0.1
     manifest.write_text(json.dumps({"name": "sample", "version": "1.0.1"}))
     changelog.write_text(
         "# Changelog\n\n## [1.0.1] - 2026-08-26\n- bumped\n## [1.0.0] - 2026-08-26\n- initial\n"
@@ -391,6 +663,9 @@ def test_committed_content_vs_working_tree_in_git_repo(tmp_path: Path):
 
     # Dirty the working tree with an uncommitted downgrade (1.0.0)
     manifest.write_text(json.dumps({"name": "sample", "version": "1.0.0"}))
+
+    def repo_runner(cmd, **kwargs):
+        return subprocess.run(cmd, cwd=repo, capture_output=True, text=True, check=False)
 
     # Guard must read committed HEAD (1.0.1) and pass, ignoring uncommitted working tree
     paths = GUARD.changed_files("main", runner=repo_runner)
@@ -434,19 +709,6 @@ def test_changed_files_raises_on_nonzero_exit():
         GUARD.changed_files("origin/main", runner=failing_runner)
 
 
-def test_get_merge_base_raises_on_failure():
-    def failing_runner(cmd, **kwargs):
-        class Result:
-            returncode = 1
-            stdout = ""
-            stderr = "merge-base error"
-
-        return Result()
-
-    with pytest.raises(GUARD.DiffGuardError):
-        GUARD.get_merge_base("origin/main", "HEAD", runner=failing_runner)
-
-
 def test_main_parses_base_ref_flag(monkeypatch):
     captured = {}
 
@@ -484,7 +746,7 @@ def test_main_reports_violations_and_exits_1(monkeypatch, capsys):
         GUARD,
         "find_violations",
         lambda paths, base_ref=GUARD.DEFAULT_BASE_REF, **kwargs: [
-            "foo: proposed manifest version '1.0.0' is equal to merge-base version '1.0.0' (must be strictly greater)"
+            "foo: proposed manifest version '1.0.0' is equal to base-ref version '1.0.0' (must be strictly greater)"
         ],
     )
 
@@ -493,7 +755,7 @@ def test_main_reports_violations_and_exits_1(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "release_surface_diff_guard: violations found:" in captured.err
     assert (
-        "foo: proposed manifest version '1.0.0' is equal to merge-base version '1.0.0'"
+        "foo: proposed manifest version '1.0.0' is equal to base-ref version '1.0.0'"
         in captured.err
     )
 

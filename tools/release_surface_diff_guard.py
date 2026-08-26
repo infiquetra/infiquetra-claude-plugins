@@ -2,11 +2,11 @@
 """
 PR-scoped diff-aware release-surface bump guard (#429, R3/KTD4; extended #842).
 
-Any plugin whose non-doc files changed in a diff (versus a base ref) must touch that plugin's
-own `plugin.json` and `CHANGELOG.md` in the same diff, and its manifest `version` must strictly
-advance compared to the merge-base version. Equal, lower, malformed, and incomparable versions
-fail naming the plugin and both values. Doc-only (`README.md`, `docs/**`) or test-only
-(`tests/**`) changes are exempt — they don't require a bump.
+Any plugin whose non-doc files changed in a diff (versus an authoritative base ref) must touch
+that plugin's own `plugin.json` and `CHANGELOG.md` in the same diff, and its manifest `version`
+must strictly advance compared to the version on the base-ref tip. Equal, lower, and malformed
+or invalid versions fail naming the plugin and both values. Doc-only (`README.md`, `docs/**`)
+or test-only (`tests/**`) changes are exempt — they don't require a bump.
 
 The base ref is taken explicitly via `--base-ref` (CI supplies the PR's
 `github.event.pull_request.base.sha`); this keeps the guard testable against fixture git repos
@@ -23,6 +23,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 DEFAULT_BASE_REF = "origin/main"
@@ -116,24 +117,46 @@ def parse_semver(version: str | None) -> SemVer | None:
     return SemVer(major, minor, patch, tuple(prerelease_parts), raw=version)
 
 
-def get_merge_base(
-    base_ref: str,
-    head_ref: str = "HEAD",
-    *,
-    runner: Callable[..., Any] | None = None,
-) -> str:
-    run = runner if runner is not None else subprocess.run
-    result = run(
-        ["git", "merge-base", base_ref, head_ref],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise DiffGuardError(
-            f"git merge-base failed for {base_ref!r} and {head_ref!r}: {result.stderr}"
+@dataclass(frozen=True)
+class ManifestParseResult:
+    error: str | None = None
+    raw_version: str | None = None
+    parsed_version: SemVer | None = None
+
+
+def extract_manifest_version(content: str | None, manifest_label: str) -> ManifestParseResult:
+    """Parse JSON manifest and semver. Return ManifestParseResult with error or parsed SemVer."""
+    if content is None:
+        return ManifestParseResult(error=f"{manifest_label} is missing")
+
+    try:
+        data = json.loads(content)
+    except Exception:
+        return ManifestParseResult(error=f"{manifest_label} has invalid JSON")
+
+    if not isinstance(data, dict):
+        return ManifestParseResult(
+            error=f"{manifest_label} has invalid JSON (top-level is not an object)"
         )
-    return result.stdout.strip()
+
+    if "version" not in data:
+        return ManifestParseResult(error=f"{manifest_label} is missing 'version' key")
+
+    raw_version = data["version"]
+    if not isinstance(raw_version, str):
+        return ManifestParseResult(
+            error=f"{manifest_label} 'version' is not a string ({raw_version!r})",
+            raw_version=str(raw_version),
+        )
+
+    parsed = parse_semver(raw_version)
+    if parsed is None:
+        return ManifestParseResult(
+            error=f"{manifest_label} version {raw_version!r} is malformed",
+            raw_version=raw_version,
+        )
+
+    return ManifestParseResult(raw_version=raw_version, parsed_version=parsed)
 
 
 def read_committed_file(
@@ -204,9 +227,6 @@ def find_violations(
     by_plugin = classify_by_plugin(paths)
     violations: list[str] = []
 
-    reader = manifest_reader
-    merge_base: str | None = None
-
     for plugin_name, relative_paths in sorted(by_plugin.items()):
         bump_required = any(is_bump_required_path(p) for p in relative_paths)
         if not bump_required:
@@ -220,83 +240,57 @@ def find_violations(
             )
             continue
 
-        if reader is None:
-            if merge_base is None:
-                merge_base = get_merge_base(base_ref, "HEAD", runner=runner)
-            base_content = read_committed_file(
-                merge_base, f"plugins/{plugin_name}/.claude-plugin/plugin.json", runner=runner
-            )
-            head_content = read_committed_file(
-                "HEAD", f"plugins/{plugin_name}/.claude-plugin/plugin.json", runner=runner
-            )
+        manifest_path = f"plugins/{plugin_name}/.claude-plugin/plugin.json"
+        if manifest_reader is None:
+            base_content = read_committed_file(base_ref, manifest_path, runner=runner)
+            head_content = read_committed_file("HEAD", manifest_path, runner=runner)
         else:
-            base_content = reader("base", f"plugins/{plugin_name}/.claude-plugin/plugin.json")
-            head_content = reader("HEAD", f"plugins/{plugin_name}/.claude-plugin/plugin.json")
+            base_content = manifest_reader("base", manifest_path)
+            head_content = manifest_reader("HEAD", manifest_path)
 
-        if head_content is None:
-            violations.append(
-                f"{plugin_name}: missing head manifest plugins/{plugin_name}/.claude-plugin/plugin.json"
-            )
+        head_res = extract_manifest_version(head_content, f"proposed manifest {manifest_path}")
+        if head_res.error:
+            if base_content is not None:
+                base_res = extract_manifest_version(
+                    base_content, f"base-ref manifest {manifest_path}"
+                )
+                if base_res.raw_version is not None:
+                    violations.append(
+                        f"{plugin_name}: {head_res.error} (base-ref version: {base_res.raw_version!r})"
+                    )
+                else:
+                    violations.append(f"{plugin_name}: {head_res.error}")
+            else:
+                violations.append(f"{plugin_name}: {head_res.error} (base-ref version: <absent>)")
             continue
 
-        try:
-            head_data = json.loads(head_content)
-            head_version = head_data.get("version") if isinstance(head_data, dict) else None
-        except Exception:
-            head_version = None
-
-        head_version_str = head_version if isinstance(head_version, str) else str(head_version)
-        head_parsed = parse_semver(head_version) if isinstance(head_version, str) else None
+        assert head_res.parsed_version is not None
+        assert head_res.raw_version is not None
 
         if base_content is None:
-            # New plugin — no base version exists
-            if head_parsed is None:
-                violations.append(
-                    f"{plugin_name}: proposed manifest version {head_version_str!r} is malformed "
-                    f"(merge-base version: <absent>)"
-                )
+            # New plugin on base_ref — head version is valid semver
             continue
 
-        try:
-            base_data = json.loads(base_content)
-            base_version = base_data.get("version") if isinstance(base_data, dict) else None
-        except Exception:
-            base_version = None
-
-        base_version_str = base_version if isinstance(base_version, str) else str(base_version)
-        base_parsed = parse_semver(base_version) if isinstance(base_version, str) else None
-
-        if head_parsed is None:
+        base_res = extract_manifest_version(base_content, f"base-ref manifest {manifest_path}")
+        if base_res.error:
             violations.append(
-                f"{plugin_name}: proposed manifest version {head_version_str!r} is malformed "
-                f"(merge-base version: {base_version_str!r})"
+                f"{plugin_name}: {base_res.error} (proposed version: {head_res.raw_version!r})"
             )
-        elif base_parsed is None:
-            violations.append(
-                f"{plugin_name}: merge-base manifest version {base_version_str!r} is malformed "
-                f"(proposed version: {head_version_str!r})"
-            )
-        else:
-            try:
-                is_equal = head_parsed == base_parsed
-                is_lower = head_parsed < base_parsed
-            except TypeError:
-                violations.append(
-                    f"{plugin_name}: proposed manifest version {head_version_str!r} is "
-                    f"incomparable to merge-base version {base_version_str!r}"
-                )
-                continue
+            continue
 
-            if is_equal:
-                violations.append(
-                    f"{plugin_name}: proposed manifest version {head_version_str!r} is equal to "
-                    f"merge-base version {base_version_str!r} (must be strictly greater)"
-                )
-            elif is_lower:
-                violations.append(
-                    f"{plugin_name}: proposed manifest version {head_version_str!r} is lower than "
-                    f"merge-base version {base_version_str!r} (must be strictly greater)"
-                )
+        assert base_res.parsed_version is not None
+        assert base_res.raw_version is not None
+
+        if head_res.parsed_version == base_res.parsed_version:
+            violations.append(
+                f"{plugin_name}: proposed manifest version {head_res.raw_version!r} is equal to "
+                f"base-ref version {base_res.raw_version!r} (must be strictly greater)"
+            )
+        elif head_res.parsed_version < base_res.parsed_version:
+            violations.append(
+                f"{plugin_name}: proposed manifest version {head_res.raw_version!r} is lower than "
+                f"base-ref version {base_res.raw_version!r} (must be strictly greater)"
+            )
 
     return violations
 

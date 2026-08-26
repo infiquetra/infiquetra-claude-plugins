@@ -80,7 +80,7 @@ cross-project edit that looks like a repo edit is the failure mode this tier exi
 
 - a **destructive self-edit** — no Tier-2 change applies without the operator's explicit **apply**;
 - an **execution backend** — a big multi-file refactor surfaced by a pass is **OFFERED** per
-  `../../../references/operator-choice.md` (inline / team-execution / cc-workflows-ultracode) and started
-  only on the operator's pick.
+  `../../../references/operator-choice.md` (default offer presents inline / team-execution;
+  cc-workflows-ultracode only on explicit invocation) and started only on the operator's pick.
 
 The engine proposes; the operator disposes. The only thing it does on its own is grow the journal.

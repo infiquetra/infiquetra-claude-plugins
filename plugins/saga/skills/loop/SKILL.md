@@ -278,21 +278,21 @@ doc-review P0/P1 gate) and **every handoff** for operator confirmation. See
 
 For a **router-level broad fan-out** that `/loop` itself owns — e.g. a multi-issue sweep across many
 threads, where `/loop` (not a single routed command) is the driver — `/loop` offers the execution
-backend per `references/operator-choice.md` and may author a Workflow itself:
+backend per `references/operator-choice.md` (the narrow default offer: `inline` and `team-execution`
+only; `cc-workflows-ultracode` only on explicit invocation):
 
 ```bash
 python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
   --broad-fanout --file-count <N> --phase-count <M>
 ```
 
-Recommend the cheapest-correct backend, but render the offer from the full `backends` enumeration
-(all three, each `{backend, status, note}`) so escalation is one step and no backend is silently
-dropped, confirm with the operator, and record `--orchestration-mode` + `--orchestration-ref` in the
-routing tick (Phase 4) **only in this `/loop`-owned-offload case** — never on an ordinary single-command
-route. **Never omit `cc-workflows-ultracode` ("dynamic workflows") from the offer** — when the Workflow
-tool is observably absent, still name it with `status: unavailable` and its availability-provenance note
-(probed vs asserted); fall back to `/loop`'s own phase-walk when no heavier backend is reachable
-(operator-choice §4).
+Recommend the cheapest-correct Saga backend (`inline` or `team-execution`). The full wire enumeration
+still carries all three backends (`{backend, status, note}`), with `cc-workflows-ultracode` as an
+alternative (or unavailable when the Workflow tool is absent with its availability-provenance note),
+so no backend is silently dropped. Confirm with the operator, and record `--orchestration-mode` +
+`--orchestration-ref` in the routing tick (Phase 4) **only in this `/loop`-owned-offload case** — never
+on an ordinary single-command route. Fall back to `/loop`'s own phase-walk when no heavier backend is
+reachable (operator-choice §4).
 
 ---
 

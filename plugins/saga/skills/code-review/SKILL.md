@@ -263,30 +263,29 @@ cycle)` is missing) **before** the Agent/Task call. Each review/verify-class len
 worktree) — see `plugins/saga/references/sandbox-spawn-sites.md`. Each lens returns findings in the
 schema defined by `references/findings-schema.md`.
 
-**Operator-choice backend.** Offer the execution backend per `../../references/operator-choice.md` (the
-plugin-root decision contract). There are exactly three backends — `inline` ("inline") |
-`team-execution` ("team execution") | `cc-workflows-ultracode` ("dynamic workflows"). Read the work
-shape, recommend the cheapest-correct backend and pre-select it, but surface the alternatives so
-escalation is one step. `inline` ("inline") suits small diffs. When the Phase 2 lens-selection
-question is still open, attach this backend choice to that same operator interaction. When a caller-
-supplied or reused approval already closed lens selection, ask backend alone.
+**Operator-choice backend.** Offer the default Saga execution backends per
+`../../references/operator-choice.md` (the plugin-root decision contract, as narrowed by issue #808).
+The default offer presents `inline` ("inline") and `team-execution` ("team execution").
+`cc-workflows-ultracode` ("dynamic workflows") remains a recorded enum value and is available only by
+**explicit invocation** inside a managed Claude Code session, or when an already-approved plan records
+that choice. Read the work shape, recommend the cheapest-correct Saga backend (`inline` or
+`team-execution`) and pre-select it. `inline` suits small diffs; `team-execution` suits multi-reviewer
+gated consensus. When the Phase 2 lens-selection question is still open, attach this backend choice to
+that same operator interaction. When a caller-supplied or reused approval already closed lens selection,
+ask backend alone.
 
-**Dynamic workflows serve BOTH purposes** (per `operator-choice.md` §3.2) — escalate to
-`cc-workflows-ultracode` ("dynamic workflows"), without elevated risk, for **either**:
+**Claude Code Workflows still serve both purposes** (per `operator-choice.md` §3.2) — **breadth / scale**
+(broad independent fan-out across many targets) and **adversarial confidence** (judge panels,
+prove-by-refutation / refute-N). These describe **when an operator might explicitly invoke** a Workflow;
+they are **never** default or automatic offer triggers and must never pre-select `cc-workflows-ultracode`.
 
-- **Breadth / scale** — broad independent fan-out, the same review lens across many enumerated targets, or
-  an exhaustive probe-all sweep where missing a target is the failure mode.
-- **Adversarial confidence** — a judge panel over N independent attempts, prove-by-refutation (refute-N),
-  or perspective-diverse verifiers each applying a distinct lens. This is real review depth; the Workflow
-  tool names *confidence* as a first-class purpose. Set it only on an **explicit** request for
-  many-independent-attempt verification.
-
-**The backend changes transport, never policy ownership.** `inline`, Team Execution, and dynamic
-workflows may execute selected lenses, but every backend returns evidence to the same Code Review
-controller. Code Review invokes `review_consensus.py`, retains cycle state, and emits the outcome. Team
-Execution supplies transport and worker coordination; it never recomputes the score or owns a second
-acceptance rule. Omit `cc-workflows-ultracode` ("dynamic workflows") when the Workflow tool is observably
-absent.
+**The backend changes transport, never policy ownership.** `inline`, Team Execution, and explicitly
+invoked Claude Code Workflows may execute selected lenses, but every backend returns evidence to the
+same Code Review controller. Code Review invokes `review_consensus.py`, retains cycle state, and emits the
+outcome. Team Execution supplies transport and worker coordination; it never recomputes the score or
+owns a second acceptance rule. Code Review retains its own lenses, consensus, and acceptance policy
+regardless of where a workflow step runs. Omit `cc-workflows-ultracode` when the Workflow tool is
+observably absent.
 This remains a **governance** choice about durable execution evidence: the Code Review outcome
 **blocks a merge** when the caller applies it, regardless of which backend transported the lens work.
 

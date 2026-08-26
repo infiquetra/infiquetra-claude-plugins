@@ -1239,12 +1239,14 @@ def test_verifiability_without_external_selector_fails() -> None:
         spec.validate()
 
 
-def test_advisory_consensus_routes_to_ultracode_backend() -> None:
+def test_advisory_consensus_defaults_to_inline_with_alternatives() -> None:
     from lifecycle_state import recommend_execution_backend
 
     result = recommend_execution_backend(needs_consensus=True, consensus_is_gated=False)
 
-    assert result["recommended"] == "cc-workflows-ultracode"
+    assert result["recommended"] == "inline"
+    assert "team-execution" in result["alternatives"]
+    assert "cc-workflows-ultracode" in result["alternatives"]
 
 
 def test_recommend_backend_no_ledger_has_no_prior_key() -> None:

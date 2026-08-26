@@ -40,6 +40,7 @@
 **Validation.** `uv run pytest tests/test_lint_journal_order.py -q` passes (39 tests including cross-file validation, missing anchor reporting, outside-covered-set rejection, and relative path navigation); `python3 scripts/lint_journal_order.py` passes with 0 violations across all 4 journals.
 **Generalizable rule.** A documentation link validator that does not resolve cross-file targets against both explicit anchors and Markdown-generated heading slugs creates false confidence and lets inter-document citations rot silently during knowledge promotion and archival.
 **Refs.** Issue #838; PR #832; Unit U2 in `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md`.
+
 ### Layout-independent help assertions and terminal-width matrix validation  {#layout-independent-help-assertions-width-matrix}
 
 **Context.** In issue #839 (unit U4 of orchestration parent #847), tests asserting command `--help` output against raw substrings were susceptible to terminal width variations due to `argparse` wrapping and hyphen-splitting behavior across non-monotonic column widths (such as 70, 75, 107, 110, 120).

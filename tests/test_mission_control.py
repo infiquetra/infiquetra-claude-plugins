@@ -966,3 +966,92 @@ class TestMissionControlInstalledPathDriftGuard:
         assert not self.PINNED_PATH_PATTERN.search(text)
         # Must retain the generic <version> placeholder
         assert "infiquetra-plugins/mission-control/<version>/scripts/sdlc_manager.py" in text
+
+
+# ===========================
+# Self-referential alias drift guard (#819)
+# ===========================
+
+
+class TestMissionControlSelfReferentialAliasDriftGuard:
+    """Drift guards verifying no command is documented as a compatibility alias of itself (#819)."""
+
+    SELF_REFERENTIAL_ALIAS_PATTERN = re.compile(
+        r"`?(/[a-zA-Z0-9_-]+)`?[^.\n]*\b(?:remains|retained as|is a|acts as a|serves as a)\b[^.\n]*\bcompatibility alias\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _find_alias_violations(cls, base_dir: Path) -> list[str]:
+        violations = []
+        for path in sorted(base_dir.rglob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if cls.SELF_REFERENTIAL_ALIAS_PATTERN.search(line):
+                    violations.append(f"{path.name}:{lineno}: {line.strip()}")
+        return violations
+
+    def test_no_sentence_names_command_as_own_compatibility_alias(self) -> None:
+        """Fail when any command or changelog doc names a command as its own compatibility alias."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        violations = []
+        for doc_path in [mc_dir / "commands" / "issue.md", mc_dir / "CHANGELOG.md"]:
+            text = doc_path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if self.SELF_REFERENTIAL_ALIAS_PATTERN.search(line):
+                    violations.append(f"{doc_path.name}:{lineno}: {line.strip()}")
+
+        assert not violations, (
+            "Found self-referential compatibility alias statements:\n" + "\n".join(violations)
+        )
+
+    def test_plugin_ships_exactly_four_commands(self) -> None:
+        """Confirm Mission Control ships exactly board, issue, metrics, and triage commands."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        commands_dir = mc_dir / "commands"
+        command_names = sorted(p.stem for p in commands_dir.glob("*.md"))
+        assert command_names == ["board", "issue", "metrics", "triage"]
+        assert "create-issue" not in command_names
+        assert "sdlc-create" not in command_names
+
+    def test_repaired_sentences_contain_no_alias_clauses(self) -> None:
+        """Confirm neither repaired sentence in issue.md or CHANGELOG.md carries an alias clause."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        issue_text = (mc_dir / "commands" / "issue.md").read_text(encoding="utf-8")
+        changelog_text = (mc_dir / "CHANGELOG.md").read_text(encoding="utf-8")
+
+        # In commands/issue.md
+        assert (
+            "This is the primary user-facing\nissue command." in issue_text
+            or "This is the primary user-facing issue command." in issue_text
+        )
+        assert "compatibility alias" not in issue_text
+        assert "remains a compatibility alias" not in issue_text
+
+        # In CHANGELOG.md
+        assert "- Added `/issue` as the primary issue command surface." in changelog_text
+        assert "retained as a compatibility alias" not in changelog_text
+        assert "compatibility alias" not in (
+            (mc_dir / "commands" / "issue.md").read_text(encoding="utf-8")
+        )
+
+    def test_mutation_proof_self_referential_alias_fails_guard(self, tmp_path: Path) -> None:
+        """Mutation-prove that adding a self-referential alias sentence fails the guard."""
+        fake_doc = tmp_path / "issue.md"
+        fake_doc.write_text(
+            "This is the primary user-facing issue command; `/issue` remains a compatibility alias.\n",
+            encoding="utf-8",
+        )
+        violations = self._find_alias_violations(tmp_path)
+        assert len(violations) == 1
+        assert "issue.md:1:" in violations[0]
+        assert "compatibility alias" in violations[0]
+
+        fake_changelog = tmp_path / "CHANGELOG.md"
+        fake_changelog.write_text(
+            "- Added `/issue` as the primary issue command surface, with `/issue` retained as a compatibility alias.\n",
+            encoding="utf-8",
+        )
+        violations = self._find_alias_violations(tmp_path)
+        assert len(violations) == 2
+        assert any("CHANGELOG.md:1:" in v for v in violations)

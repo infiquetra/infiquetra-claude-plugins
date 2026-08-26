@@ -42,7 +42,7 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "mission-control")
 
     assert plugin_json["name"] == "mission-control"
-    assert plugin_json["version"] == "2.12.6"  # #818 replace six version-pinned installed paths
+    assert plugin_json["version"] == "2.12.7"  # #819 delete self-referential alias clause
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]
@@ -155,6 +155,8 @@ def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
     assert "from the brainstorm" in create_command
     assert "handoff the plan" in create_command
     assert "/loop <issue>" not in create_command
+    assert "compatibility alias" not in create_command
+    assert "remains a compatibility alias" not in create_command
 
 
 def test_asgard_campps_model_retires_olympus_as_active_target() -> None:

@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.7] - 2026-08-26
+
+### Fixed - delete self-referential alias clauses in issue command docs (#819)
+
+- Deleted the self-referential compatibility alias clause from `commands/issue.md` and historical changelog entries, restoring clarity that `/issue` is the primary issue command surface with no unrecoverable rename claim or nonexistent compatibility alias.
+- Added focused assertions in test suite verifying that no sentence names a command as its own compatibility alias, that neither repaired sentence carries an alias clause, and that the plugin ships exactly four commands (`board`, `issue`, `metrics`, `triage`).
+
 ## [2.12.6] - 2026-08-26
 
 ### Fixed - update-surviving installed script paths in docs and commands (#818)
@@ -281,8 +288,7 @@ Paired with the `infiquetra-sdlc` change that removes both labels from the five 
 ## [Unreleased]
 
 ### Added
-- Added `/issue` as the primary issue command surface, with `/issue` retained as a
-  compatibility alias.
+- Added `/issue` as the primary issue command surface.
 - Added prepared-issue handoff maturity metadata and source artifact resolution for local files,
   GitHub issue/PR URLs, branch refs, and natural hints such as "from the brainstorm".
 

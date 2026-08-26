@@ -21,14 +21,14 @@ Extended `scripts/lint_journal_order.py` to validate cross-file Markdown fragmen
   - Repaired citations to `#investigate-systematic-debugging-engine-shipped` (lines 156, 217, 219) with aligned status phrasing.
   - Repaired citation to `#optimize-engine-rebuild-shipped` (line 195).
   - Repaired citations to `#code-review-defect2-shipped` for Defect 2 closures (lines 248, 255, 261, 263).
-  - Repaired citation to `#brainstorm-spec-interrogation-seam-resolved` (line 345).
+  - Repaired citation to `#brainstorm-spec-interrogation-seam-resolved` (line 345) with aligned status phrasing.
 - `docs/engineering-journal/DECISIONS.md`:
   - Repaired citation to `QUEUED.md#brainstorm-ideate-convergence-bias` (line 7587).
   - Repaired citations to `ARCHIVE.md#investigate-systematic-debugging-engine-shipped` (lines 8189, 8289) with aligned status phrasing.
-  - Repaired citations to `ARCHIVE.md#code-review-defect2-shipped` for Defect 2 (lines 8353, 8366).
+  - Aligned Defect 1 (`ARCHIVE.md#code-review-saga-scan-touchups-shipped`) and Defect 2 (`ARCHIVE.md#code-review-defect2-shipped`) citations and status phrasing (lines 8336, 8349, 8353, 8366).
   - Repaired citations to `ARCHIVE.md#brainstorm-spec-interrogation-seam-resolved` (lines 8467, 8475, 8477).
 - `docs/engineering-journal/LEARNINGS.md`:
-  - Repaired citation to `ARCHIVE.md#marketplace-ci-guard-pruned` (line 9397).
+  - Repaired citation to `ARCHIVE.md#marketplace-ci-guard-pruned` (line 9409) with aligned status phrasing.
 - `docs/engineering-journal/README.md`:
   - Repaired citation to `ARCHIVE.md#marketplace-ci-guard-pruned` (line 39).
 

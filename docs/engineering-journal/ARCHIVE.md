@@ -342,7 +342,7 @@ Two shared foundations underpinned the campaign: the `saga` durable work-state e
 - **Operator-choice** offer — all three backends (`inline` | `team-execution` | `cc-workflows-ultracode`) cited by path (`references/operator-choice.md`), offered not defaulted.
 - Version bumps: plugin `0.7.0`, marketplace entry `0.7.0`; CHANGELOG.
 
-**Seam left queued.** The `/brainstorm` ↔ gstack `spec` WHAT-interrogation ownership seam (where the relentless WHAT-rigor lands — fold into `/brainstorm` vs the standalone `/spec`) is a deliberate downstream decision-point — see ARCHIVE [#brainstorm-spec-interrogation-seam-resolved](#brainstorm-spec-interrogation-seam-resolved).
+**Interrogation seam.** The `/brainstorm` ↔ gstack `spec` WHAT-interrogation ownership seam (where the relentless WHAT-rigor lands — fold into `/brainstorm` vs the standalone `/spec`) was a downstream decision-point (since resolved) — see ARCHIVE [#brainstorm-spec-interrogation-seam-resolved](#brainstorm-spec-interrogation-seam-resolved).
 
 **Refs.** DECISIONS [#plan-engine-rebuild](DECISIONS.md#plan-engine-rebuild), [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign). Operator-choice contract: `plugins/saga/references/operator-choice.md`. Saga foundation: DECISIONS [#saga-schema-foundation](DECISIONS.md#saga-schema-foundation).
 

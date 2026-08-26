@@ -30,6 +30,7 @@
 **Generalizable rule.** A release gate must verify the semantic state transition against the authoritative base-ref tip (the version delta between base-ref tip and head), not merely file touch presence or merge-base ancestry.
 **Residual.** Two unmerged PRs authored in parallel can both claim the same next version and pass CI concurrently while both evaluate against the same pre-merge base-ref tip; once the first PR merges into main, any subsequent CI run on the second PR against the updated base-ref tip will fail until its version is advanced.
 **Refs.** Issues #842, #847; PRs #833, #834; `tools/release_surface_diff_guard.py`; `{#bump-guard-checks-touch-not-delta}`.
+
 ### Cross-file Markdown fragment citation validation in journal lint (`#838`)  {#lint-cross-file-journal-fragment-citations}
 
 **Context.** The journal order linter `scripts/lint_journal_order.py` previously checked heading ordering and same-file fragment / anchor citations (`{#slug}` and `](#slug)`), but left cross-file Markdown fragment links (`](DECISIONS.md#slug)`) out of scope. Over time, 18 citations across the journal set drifted dangling when target entries in `QUEUED.md` were pruned, completed, or renamed without updating citations in `LEARNINGS.md`, `DECISIONS.md`, and `ARCHIVE.md`.
@@ -9415,7 +9416,7 @@ note:     Got: def delete(self, *names: bytes|str|memoryview[int]) -> Awaitable[
 **Generalizable rule.** When two files must stay in sync (plugin dir + registry, schema + migration, code + docs index, env var + Lambda config), reviewers will drift one against the other given enough opportunities. Add a CI assertion that fails on drift — don't rely on PR review.
 
 **Refs.**
-- [ARCHIVE.md](ARCHIVE.md#marketplace-ci-guard-pruned) — P1 work item for the CI guard (pruned; superseded by repo invariants).
+- [ARCHIVE.md](ARCHIVE.md#marketplace-ci-guard-pruned) — CI guard for marketplace drift (pruned; superseded by repo invariants).
 - [DECISIONS.md](DECISIONS.md#gitignore-claude-and-no-uv-lock) — repo hygiene shipped alongside.
 - [ARCHIVE.md](ARCHIVE.md#pr-112-marketplace-fix) — SHIPPED record.
 

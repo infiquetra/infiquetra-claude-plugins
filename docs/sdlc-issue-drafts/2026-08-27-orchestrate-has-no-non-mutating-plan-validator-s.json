@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-27T00:59:31.781744+00:00",
+  "created_issue_number": 879,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/879",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-27-orchestrate-has-no-non-mutating-plan-validator-s.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "execute",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/s5.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-27-orchestrate-has-no-non-mutating-plan-validator-s.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Orchestrate has no way to check a plan without acting on it. The only entry point that reads a plan is start, which creates worktrees and writes the run record, so the first sign that a plan is malformed is a partly created run. Found during the Auralis preflight on installed Orchestrate 3.0.7.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/s5.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/s5.md",
+    "title": "s5",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Orchestrate has no non-mutating plan validator so a bad plan is only discovered by starting a run",
+  "updated_at": "2026-08-27T00:59:51.503945+00:00"
+}

@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.0.7] - 2026-08-27
+
+### Fixed
+
+- **`dependencies` is declared as an array so the plugin loads again (#871).** The manifest
+  declared `dependencies` as a JSON object (`{"agent-launcher": ">=1.0.0"}`). The live Claude Code
+  plugin loader requires an array and rejects the entire manifest rather than ignoring the field,
+  so no part of Orchestrate loaded and `/orchestrate` was unavailable. The same
+  `agent-launcher >=1.0.0` floor is now expressed as `[{"name": "agent-launcher", "version":
+  ">=1.0.0"}]`, which the loader accepts under `--strict`. The object form dated to 2.0.0
+  (commit `28a881b3`, pull request 827 for issue 777), so every release from 2.0.0 through 3.0.6
+  failed to load; 1.20.8 and earlier omitted the key and were unaffected. Added
+  `tests/test_plugin_manifest_loader_contract.py`, which fails against the 3.0.6 object form and
+  validates every packaged manifest against the live loader contract. Also corrected
+  `marketplace/validator/schema.json`, which declared `dependencies` as an object and so
+  actively enforced the unloadable shape, and the two tests that asserted it.
+
 ## [3.0.6] - 2026-08-26
 
 ### Fixed

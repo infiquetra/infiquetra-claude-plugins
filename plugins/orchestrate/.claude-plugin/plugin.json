@@ -1,6 +1,6 @@
 {
   "name": "orchestrate",
-  "version": "3.0.6",
+  "version": "3.0.7",
   "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
   "author": {
     "name": "Infiquetra",
@@ -19,7 +19,10 @@
     "consensus",
     "review"
   ],
-  "dependencies": {
-    "agent-launcher": ">=1.0.0"
-  }
+  "dependencies": [
+    {
+      "name": "agent-launcher",
+      "version": ">=1.0.0"
+    }
+  ]
 }

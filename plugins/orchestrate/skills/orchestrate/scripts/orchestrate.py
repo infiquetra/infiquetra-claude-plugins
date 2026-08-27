@@ -297,6 +297,14 @@ class Unit:
     the same expand/go path as every other unit. Work workers use ``review-fixer`` or
     ``downstream-resolver`` so an opaque result can be routed without treating a unit name as
     policy. Older run records carry no role and continue to load unchanged."""
+    lifecycle: str | None = None
+    """Which child lifecycle this unit belongs to, when a run carries more than one.
+
+    A run reviewing several independent frozen targets needs one Code Review controller per target,
+    each with its own typed state.  Declaring a lifecycle is what makes those controllers legible as
+    *deliberately separate* rather than as the accidental second controller the single-controller
+    guard exists to catch (#877).  Runs with a single review phase leave this unset and behave
+    exactly as before, including the error when a second unscoped controller appears."""
     paths: list[str] = field(default_factory=list)
     """Repository paths this Work worker owns for review-fix routing.
 
@@ -420,6 +428,16 @@ class Run:
     review_resubmit_pending: bool = False
     """Whether landed Work repairs must be resubmitted to the one review controller."""
     operator_fix_requests: list[dict[str, Any]] = field(default_factory=list)
+    review_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Typed review state per Code Review controller, keyed by controller unit name.
+
+    ``review_result``, ``review_outcome``, ``review_resubmit_pending`` and ``operator_fix_requests``
+    above are the single-controller view and stay authoritative for runs with one review phase.  A
+    run carrying several scoped controllers keeps each controller's typed state here instead, so one
+    controller's outcome, resubmit flag, or unresolved fix requests can never be read as another's
+    (#877)."""
+    review_controller_ceiling: int | None = None
+    """Most Code Review controllers this run may have running at once, when declared."""
     """Outstanding ``human`` or ``release`` requests, surfaced rather than dispatched as Work."""
 
     @classmethod
@@ -441,6 +459,8 @@ class Run:
             review_outcome=raw.get("review_outcome"),
             review_resubmit_pending=bool(raw.get("review_resubmit_pending", False)),
             operator_fix_requests=raw.get("operator_fix_requests", []),
+            review_states=raw.get("review_states", {}),
+            review_controller_ceiling=raw.get("review_controller_ceiling"),
         )
         # engine_prefs was retired with #776; ignore it on load so older run files still open.
         loaded.resolve_branch_once()
@@ -521,6 +541,8 @@ class Run:
             "review_outcome": self.review_outcome,
             "review_resubmit_pending": self.review_resubmit_pending,
             "operator_fix_requests": self.operator_fix_requests,
+            "review_states": self.review_states,
+            "review_controller_ceiling": self.review_controller_ceiling,
             "units": unit_rows,
         }
         _atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
@@ -541,15 +563,87 @@ class Run:
         """
         return any(is_review_controller(unit) for unit in self.units)
 
+    def review_controllers(self) -> list[Unit]:
+        """Every Code Review controller in this run, in table order."""
+        return [unit for unit in self.units if is_review_controller(unit)]
+
     def review_controller(self) -> Unit | None:
-        """Return the single Code Review controller, refusing an ambiguous legacy panel."""
-        controllers = [unit for unit in self.units if is_review_controller(unit)]
+        """Return the single Code Review controller, refusing an ambiguous legacy panel.
+
+        Several controllers are permitted only when each one declares its own child lifecycle; that
+        is the deliberate multi-target shape, and callers that need it ask for a controller by name
+        through ``review_controller_for``.  An unscoped second controller is still the accidental
+        panel this has always refused, and still refuses with the same message (#877).
+        """
+        controllers = self.review_controllers()
         if len(controllers) > 1:
+            if all(unit.lifecycle for unit in controllers):
+                raise SystemExit(
+                    f"this run has {len(controllers)} scoped Code Review controllers "
+                    f"({', '.join(unit.name for unit in controllers)}); name one with "
+                    "`--controller` so its typed state cannot be read as another's"
+                )
             raise SystemExit(
                 "this run has more than one Code Review controller; one review phase is one "
                 "top-level controller invocation"
             )
         return controllers[0] if controllers else None
+
+    def review_slot(self, controller: Unit | None) -> dict[str, Any]:
+        """Read the typed review state belonging to ``controller``.
+
+        For a run with one review phase this is the run-level view that has always existed, so
+        existing records and existing callers are untouched.  For a scoped controller it is that
+        controller's own slot, which is the whole point: one controller's outcome, resubmit flag and
+        unresolved fix requests must never be legible as another's (#877).
+        """
+        if controller is not None and controller.lifecycle:
+            slot = self.review_states.setdefault(controller.name, {})
+            slot.setdefault("review_result", None)
+            slot.setdefault("review_outcome", None)
+            slot.setdefault("review_resubmit_pending", False)
+            slot.setdefault("operator_fix_requests", [])
+            return slot
+        return {
+            "review_result": self.review_result,
+            "review_outcome": self.review_outcome,
+            "review_resubmit_pending": self.review_resubmit_pending,
+            "operator_fix_requests": self.operator_fix_requests,
+        }
+
+    def write_review_slot(self, controller: Unit | None, **changes: Any) -> None:
+        """Write typed review state back to whichever slot ``controller`` owns."""
+        if controller is not None and controller.lifecycle:
+            self.review_states.setdefault(controller.name, {}).update(changes)
+            return
+        for key, value in changes.items():
+            setattr(self, key, value)
+
+    def review_controller_for(self, selector: str) -> Unit:
+        """Return the controller named by ``selector``, refusing anything that is not one.
+
+        ``selector`` is a unit name or a declared lifecycle.  A result aimed at a unit that is not a
+        Code Review controller, or at a name this run does not carry, is refused rather than routed
+        somewhere plausible -- misrouting typed state is the failure this scoping exists to prevent.
+        """
+        controllers = self.review_controllers()
+        for unit in controllers:
+            if unit.name == selector or (unit.lifecycle and unit.lifecycle == selector):
+                return unit
+        named = [unit for unit in self.units if unit.name == selector]
+        if named:
+            raise SystemExit(
+                f"unit {selector!r} is not a Code Review controller; refusing to record a typed "
+                "review result against it"
+            )
+        known = ", ".join(
+            f"{unit.name}" + (f" (lifecycle {unit.lifecycle})" if unit.lifecycle else "")
+            for unit in controllers
+        )
+        raise SystemExit(
+            f"this run has no Code Review controller {selector!r}"
+            + (f"; it has {known}" if known else "; it has none")
+        )
 
     def eligible(self) -> list[Unit]:
         """Pending units whose every ordering edge is satisfied.
@@ -557,11 +651,34 @@ class Run:
         ``after`` and ``serialize`` gate identically -- a unit is not eligible until every name in
         both lists is done. What the edge *means* is carried elsewhere: see ``wait_reason``."""
         done = {u.name for u in self.units if u.status == DONE}
-        return [
+        ready = [
             u
             for u in self.units
             if u.status == PENDING and all(dep in done for dep in u.after + u.serialize)
         ]
+        return self._within_review_ceiling(ready)
+
+    def _within_review_ceiling(self, ready: list[Unit]) -> list[Unit]:
+        """Hold back Code Review controllers that would exceed the run's declared ceiling.
+
+        A ceiling is a launch limit, not a plan limit: the run may legitimately carry more scoped
+        controllers than it is allowed to run at once, and the surplus simply waits for a live one
+        to finish rather than being refused at load (#877).  Non-controller units are never held.
+        """
+        ceiling = self.review_controller_ceiling
+        if ceiling is None:
+            return ready
+        live = sum(1 for u in self.units if is_review_controller(u) and u.status == RUNNING)
+        room = ceiling - live
+        held: list[Unit] = []
+        for unit in ready:
+            if not is_review_controller(unit):
+                held.append(unit)
+                continue
+            if room > 0:
+                held.append(unit)
+                room -= 1
+        return held
 
     def wait_reason(self, unit: Unit) -> str:
         """Why a pending unit is still pending, naming the kind of each edge that holds it.
@@ -739,8 +856,15 @@ def read_unit(raw: dict[str, Any]) -> Unit:
 
 
 def is_code_review_task(task: str) -> bool:
-    """Whether task text invokes Saga's Code Review controller in any supported spelling."""
-    return bool(re.search(r"[/$](saga:)?code-review\b", task))
+    """Whether task text *invokes* Saga's Code Review controller in any supported spelling.
+
+    Anchored to a command position -- start of text or after whitespace -- because the sigil is
+    otherwise indistinguishable from an ordinary path separator.  Without the anchor a Work or
+    Document Review unit is classified as a Code Review controller merely for naming the directory
+    where committed typed results live, and the operator then cannot tell a real second controller
+    from a false positive (#877).
+    """
+    return bool(re.search(r"(?:^|(?<=\s))[/$](?:saga:)?code-review\b", task))
 
 
 def is_review_controller(unit: Unit) -> bool:
@@ -791,14 +915,35 @@ def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
 
 
 def assert_single_review_controller(units: Sequence[Unit]) -> None:
-    """Refuse the superseded one-full-review-per-reviewer plan shape."""
+    """Refuse the superseded one-full-review-per-reviewer plan shape.
+
+    One review phase is still one controller.  What is now also expressible is a run carrying
+    several *independent child lifecycles*, each with its own frozen target and its own typed
+    result: that shape declares a distinct ``lifecycle`` on every controller, which is what
+    separates it from the accidental panel this refuses (#877).  Anything less than fully scoped --
+    a missing lifecycle, or two controllers claiming the same one -- is still the old error.
+    """
     controllers = [unit for unit in units if is_review_controller(unit)]
-    if len(controllers) > 1:
+    if len(controllers) <= 1:
+        return
+
+    unscoped = [unit for unit in controllers if not unit.lifecycle]
+    if unscoped:
         names = ", ".join(unit.name for unit in controllers)
         raise SystemExit(
             f"review phase has {len(controllers)} controller units ({names}); create exactly one "
-            "top-level Code Review controller"
+            "top-level Code Review controller, or give each one its own `lifecycle`"
         )
+
+    seen: dict[str, str] = {}
+    for unit in controllers:
+        lifecycle = str(unit.lifecycle)
+        if lifecycle in seen:
+            raise SystemExit(
+                f"Code Review controllers {seen[lifecycle]!r} and {unit.name!r} both claim "
+                f"lifecycle {lifecycle!r}; each controller owns exactly one"
+            )
+        seen[lifecycle] = unit.name
 
 
 def is_explicit_non_code_review_capability(task: str) -> bool:
@@ -1059,23 +1204,30 @@ def route_review_result(
     raw_result: str,
     *,
     agents: Sequence[Mapping[str, Any]] | None = None,
+    controller: Unit | None = None,
 ) -> ReviewRouting:
-    """Route one persisted result without making or recomputing a review decision."""
+    """Route one persisted result without making or recomputing a review decision.
+
+    ``controller`` is the already-selected owner of this result.  It is passed in rather than
+    resolved here because resolution is the caller's decision once a run may carry several scoped
+    controllers, and re-deriving it would reintroduce the ambiguity (#877).
+    """
     outcome, requests = _review_routing_fields(raw_result)
-    r.review_outcome = outcome
-    r.operator_fix_requests = []
+    if controller is None:
+        controller = r.review_controller()
+    r.write_review_slot(controller, review_outcome=outcome, operator_fix_requests=[])
+    operator_requests: list[dict[str, Any]] = r.review_slot(controller)["operator_fix_requests"]
     routing = ReviewRouting(outcome=outcome, run_branch=r.branch)
     if outcome != "repairs_requested":
-        r.review_resubmit_pending = False
+        r.write_review_slot(controller, review_resubmit_pending=False)
         return routing
 
     live = list(live_agents() if agents is None else agents)
-    controller = r.review_controller()
     names = {unit.name for unit in r.units}
     for request in requests:
         owner = str(request["owner"])
         if owner in OPERATOR_FIX_ROLES:
-            r.operator_fix_requests.append(request)
+            operator_requests.append(request)
             routing.operator_requests.append(request)
             continue
 
@@ -1119,7 +1271,7 @@ def route_review_result(
             r.issues[replacement.name] = r.issues[templates[0].name]
         routing.replacements.append(replacement)
 
-    r.review_resubmit_pending = routing.work_requests > 0
+    r.write_review_slot(controller, review_resubmit_pending=routing.work_requests > 0)
     return routing
 
 
@@ -1158,12 +1310,33 @@ def resubmit_review_if_ready(
     *,
     sender: Callable[[Unit, str], None] | None = None,
 ) -> bool:
-    """Resubmit the landed revision through the same controller when every Work repair landed."""
-    if not r.review_resubmit_pending:
-        return False
-    if r.operator_fix_requests or any(unit.fix_requests for unit in r.units):
-        return False
-    controller = r.review_controller()
+    """Resubmit the landed revision through the same controller when every Work repair landed.
+
+    "The same controller" is load-bearing once a run may carry several: a landed repair belongs to
+    the controller whose result requested it, and resubmitting it anywhere else would hand one
+    frozen target's repair to another target's review (#877).
+    """
+    pending = [
+        unit
+        for unit in r.review_controllers()
+        if unit.lifecycle and r.review_slot(unit)["review_resubmit_pending"]
+    ]
+    if pending:
+        if len(pending) > 1:
+            raise SystemExit(
+                "several scoped Code Review controllers are awaiting resubmission "
+                f"({', '.join(unit.name for unit in pending)}); resubmit them one at a time"
+            )
+        controller = pending[0]
+        slot = r.review_slot(controller)
+        if slot["operator_fix_requests"] or any(unit.fix_requests for unit in r.units):
+            return False
+    else:
+        if not r.review_resubmit_pending:
+            return False
+        if r.operator_fix_requests or any(unit.fix_requests for unit in r.units):
+            return False
+        controller = r.review_controller()
     if controller is None:
         raise SystemExit("review repairs landed, but this run has no Code Review controller")
     task = normalize_task(controller.vendor, controller.task, r.backend)
@@ -1176,7 +1349,7 @@ def resubmit_review_if_ready(
     send_one(controller, task)
     controller.status = RUNNING
     append_unit_note(controller, f"resubmitted landed revision {revision}")
-    r.review_resubmit_pending = False
+    r.write_review_slot(controller, review_resubmit_pending=False)
     return True
 
 
@@ -2185,20 +2358,38 @@ def cmd_review_result(args: argparse.Namespace) -> int:
         raise SystemExit(f"cannot read review result {args.file!r}: {exc}") from None
 
     r = Run.load()
-    if r.review_result == raw_result and r.review_outcome is not None:
+    selector = getattr(args, "controller", None)
+    controllers = r.review_controllers()
+    if selector is not None:
+        controller = r.review_controller_for(selector)
+    elif len(controllers) > 1:
+        # Refuse rather than guess. Picking one would write this target's typed state into another
+        # target's slot, which is precisely the mixing this scoping exists to prevent (#877).
+        known = ", ".join(
+            unit.name + (f" (lifecycle {unit.lifecycle})" if unit.lifecycle else "")
+            for unit in controllers
+        )
+        raise SystemExit(
+            f"this run has {len(controllers)} Code Review controllers ({known}); pass "
+            "`--controller` to say which one produced this result"
+        )
+    else:
+        controller = controllers[0] if controllers else None
+
+    slot = r.review_slot(controller)
+    if slot["review_result"] == raw_result and slot["review_outcome"] is not None:
         print("review result is already recorded byte-for-byte; nothing dispatched twice")
         return 0
 
     # Persist before interpreting even the routing envelope. A bad or unsupported route must not
     # discard the controller's evidence; the operator can inspect the exact string that failed.
-    r.review_result = raw_result
-    r.review_outcome = None
+    r.write_review_slot(controller, review_result=raw_result, review_outcome=None)
     r.save()
-    routing = route_review_result(r, raw_result)
+    routing = route_review_result(r, raw_result, controller=controller)
     # ``review_outcome`` is the completion marker used by the byte-identical replay guard. Keep it
     # unset until every live-worker prompt succeeds, while saving the routed fix requests first so
     # cleanup cannot reap their workers across this process boundary.
-    r.review_outcome = None
+    r.write_review_slot(controller, review_outcome=None)
     r.save()  # outstanding requests protect workers before any prompt crosses a process boundary
 
     try:
@@ -2215,10 +2406,11 @@ def cmd_review_result(args: argparse.Namespace) -> int:
             f"{routing.work_requests} Work fix requests; the result remains retryable"
         )
         return 1
-    r.review_outcome = routing.outcome
+    r.write_review_slot(controller, review_outcome=routing.outcome)
     r.save()
 
-    print(f"recorded Code Review routing outcome: {routing.outcome}")
+    scope = f" for {controller.name}" if controller is not None and controller.lifecycle else ""
+    print(f"recorded Code Review routing outcome{scope}: {routing.outcome}")
     for name in dispatched:
         print(f"  dispatched Work repair to live worker {name}")
     for unit in routing.replacements:
@@ -4337,6 +4529,11 @@ def main(argv: list[str] | None = None) -> int:
         help="persist a typed Code Review result verbatim and route its fix requests",
     )
     s.add_argument("--file", required=True, help="UTF-8 file containing the complete typed result")
+    s.add_argument(
+        "--controller",
+        help="which Code Review controller this result belongs to, by unit name or lifecycle; "
+        "required when the run carries more than one",
+    )
     s.set_defaults(func=cmd_review_result)
 
     s = sub.add_parser("go", help="launch every unit whose dependencies are met")

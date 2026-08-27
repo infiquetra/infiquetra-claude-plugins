@@ -98,13 +98,28 @@ launched through `expand`/`go`. A plan that still carries `engine_prefs` is refu
 Review phase is present, Orchestrate refuses plain review prompts, direct reviewer launches, and
 duplicate review units. Halt; never fall back to the retired saga external-engine runner.
 
-**Code Review has one controller and owns acceptance.** Its plan row declares
+**One review phase has one controller, and it owns acceptance.** Its plan row declares
 `role: "review-controller"`; `start` and `expand` refuse a second. Work rows that may receive repairs
 declare `role: "review-fixer"` or `role: "downstream-resolver"` and repository-relative `paths`.
 When the controller emits its typed result, run `review-result --file <path>`. Orchestrate first
 stores the complete UTF-8 string verbatim, then reads only its routing envelope: outcome and the fix
 request identity, owner role, and touched paths. It never imports the scorer or makes a second
 acceptance decision.
+
+**Several independent child lifecycles, each with its own frozen target, declare a `lifecycle` per
+controller.** This is the only shape in which more than one controller loads. It exists because a
+campaign can hold several ready targets at once, and a controller carries target-specific typed state
+— `review_outcome`, `review_resubmit_pending`, `operator_fix_requests` — so reusing one controller
+across different targets risks reading one target's state as another's. Each scoped controller keeps
+its own typed state, and `review-result` then requires `--controller <name-or-lifecycle>`; omitting it
+when several exist is refused rather than guessed, and a result aimed at a unit that is not a
+controller is refused outright. Declare `review_controller_ceiling` to cap how many run at once; the
+surplus waits for a live one to finish rather than being refused at load.
+
+Note the distinction: relaunching **one** controller for successive cycles against **one advancing**
+target is the ordinary repair loop and needs none of this. Scoping is for **different targets at the
+same time**. A partially scoped set — one controller missing its `lifecycle`, or two claiming the
+same one — is still the accidental panel, and still refused.
 
 An overlapping live Work worker is told to merge the current run branch, then receives the request in
 its existing session. Otherwise a replacement inherits the matching role's approved vendor and tier

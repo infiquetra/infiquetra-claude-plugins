@@ -7,8 +7,11 @@
 - **Several independent Code Review controllers in one run, each scoped to its own child lifecycle
   (#877).** A run reviewing several ready frozen targets can now declare one controller per target
   by giving each a `lifecycle`. Each keeps its own typed state — `review_outcome`,
-  `review_resubmit_pending`, `operator_fix_requests` — in `review_states`, so one target's state can
-  never be read as another's. `review-result` gains `--controller <name-or-lifecycle>`, required when
+  `review_resubmit_pending`, `operator_fix_requests` — in `review_states`, which every consumer
+  reads through `review_slot`, so one target's state can never be read as another's. `land`, `reap`,
+  `status` and `resubmit` all read the slot; repair routing, worker matching and replacement are
+  confined to the selected controller's lifecycle; and each pending controller resubmits
+  independently, so one controller's operator hold cannot block another's recovery. `review-result` gains `--controller <name-or-lifecycle>`, required when
   several controllers exist; omitting it is refused rather than guessed, and a result aimed at a unit
   that is not a controller is refused outright. `review_controller_ceiling` caps how many controllers
   run at once, holding the surplus at the eligibility gate rather than refusing it at load.

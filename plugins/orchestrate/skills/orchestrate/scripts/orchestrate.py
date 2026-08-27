@@ -174,6 +174,8 @@ ORPHANED = "orphaned"
 PARKED = "parked"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
+RUN_SLOT = "__run__"
+"""Key under which an unscoped run's single-controller review state lives in ``review_states``."""
 REVIEWER_SEAT_ROLE = "external-reviewer"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
 _REVIEW_SHAPED = re.compile(r"(?i)\breview\b")
@@ -428,6 +430,7 @@ class Run:
     review_resubmit_pending: bool = False
     """Whether landed Work repairs must be resubmitted to the one review controller."""
     operator_fix_requests: list[dict[str, Any]] = field(default_factory=list)
+    """Outstanding human or release requests this run is waiting on."""
     review_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Typed review state per Code Review controller, keyed by controller unit name.
 
@@ -438,7 +441,6 @@ class Run:
     (#877)."""
     review_controller_ceiling: int | None = None
     """Most Code Review controllers this run may have running at once, when declared."""
-    """Outstanding ``human`` or ``release`` requests, surfaced rather than dispatched as Work."""
 
     @classmethod
     def load(cls, path: Path = RUN_FILE) -> Run:
@@ -597,27 +599,34 @@ class Run:
         controller's own slot, which is the whole point: one controller's outcome, resubmit flag and
         unresolved fix requests must never be legible as another's (#877).
         """
-        if controller is not None and controller.lifecycle:
-            slot = self.review_states.setdefault(controller.name, {})
-            slot.setdefault("review_result", None)
-            slot.setdefault("review_outcome", None)
-            slot.setdefault("review_resubmit_pending", False)
-            slot.setdefault("operator_fix_requests", [])
-            return slot
-        return {
-            "review_result": self.review_result,
-            "review_outcome": self.review_outcome,
-            "review_resubmit_pending": self.review_resubmit_pending,
-            "operator_fix_requests": self.operator_fix_requests,
-        }
+        key = controller.name if (controller is not None and controller.lifecycle) else RUN_SLOT
+        slot = self.review_states.setdefault(key, {})
+        if key == RUN_SLOT and not slot:
+            # Adopt the run-level fields once, so the store is the single authority from then on
+            # and every consumer reads one shape regardless of how the run is scoped.
+            slot.update(
+                {
+                    "review_result": self.review_result,
+                    "review_outcome": self.review_outcome,
+                    "review_resubmit_pending": self.review_resubmit_pending,
+                    "operator_fix_requests": self.operator_fix_requests,
+                }
+            )
+        slot.setdefault("review_result", None)
+        slot.setdefault("review_outcome", None)
+        slot.setdefault("review_resubmit_pending", False)
+        slot.setdefault("operator_fix_requests", [])
+        return slot
 
     def write_review_slot(self, controller: Unit | None, **changes: Any) -> None:
         """Write typed review state back to whichever slot ``controller`` owns."""
-        if controller is not None and controller.lifecycle:
-            self.review_states.setdefault(controller.name, {}).update(changes)
-            return
-        for key, value in changes.items():
-            setattr(self, key, value)
+        slot = self.review_slot(controller)
+        slot.update(changes)
+        if controller is None or not controller.lifecycle:
+            # Mirror to the run-level fields so a record written here still loads in an older
+            # Orchestrate, and so the single-controller view stays true for anything reading it.
+            for key, value in changes.items():
+                setattr(self, key, value)
 
     def review_controller_for(self, selector: str) -> Unit:
         """Return the controller named by ``selector``, refusing anything that is not one.
@@ -627,9 +636,20 @@ class Run:
         somewhere plausible -- misrouting typed state is the failure this scoping exists to prevent.
         """
         controllers = self.review_controllers()
-        for unit in controllers:
-            if unit.name == selector or (unit.lifecycle and unit.lifecycle == selector):
-                return unit
+        matched = [
+            unit
+            for unit in controllers
+            if unit.name == selector or (unit.lifecycle and unit.lifecycle == selector)
+        ]
+        if len(matched) > 1:
+            # Storing the wrong target's verdict is the exact failure this scoping prevents, so an
+            # ambiguous selector is refused rather than resolved by table order.
+            raise SystemExit(
+                f"selector {selector!r} matches {len(matched)} Code Review controllers "
+                f"({', '.join(unit.name for unit in matched)}); name one unambiguously"
+            )
+        if matched:
+            return matched[0]
         named = [unit for unit in self.units if unit.name == selector]
         if named:
             raise SystemExit(
@@ -689,6 +709,17 @@ class Run:
         unit: it is eligible and simply has not been launched yet."""
         done = {u.name for u in self.units if u.status == DONE}
         parts: list[str] = []
+        if (
+            unit.status == PENDING
+            and is_review_controller(unit)
+            and all(dep in done for dep in unit.after + unit.serialize)
+            and unit not in self.eligible()
+        ):
+            live = sum(1 for u in self.units if is_review_controller(u) and u.status == RUNNING)
+            parts.append(
+                f"review controller ceiling {self.review_controller_ceiling} reached "
+                f"({live} running)"
+            )
         needs = [dep for dep in unit.after if dep not in done]
         if needs:
             parts.append(f"needs output from {', '.join(needs)}")
@@ -864,7 +895,7 @@ def is_code_review_task(task: str) -> bool:
     where committed typed results live, and the operator then cannot tell a real second controller
     from a false positive (#877).
     """
-    return bool(re.search(r"(?:^|(?<=\s))[/$](?:saga:)?code-review\b", task))
+    return bool(re.search(r"(?:^|(?<=\s))[/$](?:saga:)?code-review(?=$|\s)", task))
 
 
 def is_review_controller(unit: Unit) -> bool:
@@ -914,6 +945,22 @@ def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
     return units
 
 
+def review_ceiling_from_plan(plan: Mapping[str, Any]) -> int | None:
+    """Read and validate ``review_controller_ceiling`` from a plan.
+
+    A ceiling that silently fails to load is worse than none: the operator believes launches are
+    capped and they are not.  So a present-but-unusable value is refused rather than dropped (#877).
+    """
+    if "review_controller_ceiling" not in plan:
+        return None
+    raw = plan["review_controller_ceiling"]
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise SystemExit(f"review_controller_ceiling must be a positive whole number, got {raw!r}")
+    return raw
+
+
 def assert_single_review_controller(units: Sequence[Unit]) -> None:
     """Refuse the superseded one-full-review-per-reviewer plan shape.
 
@@ -927,6 +974,9 @@ def assert_single_review_controller(units: Sequence[Unit]) -> None:
     if len(controllers) <= 1:
         return
 
+    for unit in controllers:
+        if unit.lifecycle is not None:
+            unit.lifecycle = unit.lifecycle.strip() or None
     unscoped = [unit for unit in controllers if not unit.lifecycle]
     if unscoped:
         names = ", ".join(unit.name for unit in controllers)
@@ -937,13 +987,24 @@ def assert_single_review_controller(units: Sequence[Unit]) -> None:
 
     seen: dict[str, str] = {}
     for unit in controllers:
-        lifecycle = str(unit.lifecycle)
+        lifecycle = str(unit.lifecycle).strip()
         if lifecycle in seen:
             raise SystemExit(
                 f"Code Review controllers {seen[lifecycle]!r} and {unit.name!r} both claim "
                 f"lifecycle {lifecycle!r}; each controller owns exactly one"
             )
         seen[lifecycle] = unit.name
+
+    # A name that equals another controller's lifecycle would make `--controller` ambiguous at the
+    # moment a typed result arrives, which is far too late to discover it.
+    names = {unit.name for unit in controllers}
+    collide = names & set(seen)
+    for value in sorted(collide):
+        if seen[value] != value:
+            raise SystemExit(
+                f"controller name {value!r} also names another controller's lifecycle; "
+                "`--controller` could not tell them apart"
+            )
 
 
 def is_explicit_non_code_review_capability(task: str) -> bool:
@@ -1234,7 +1295,7 @@ def route_review_result(
         routing.work_requests += 1
         fix_id = _fix_request_id(request)
         touched_paths = list(request["touched_paths"])
-        role_workers = [unit for unit in r.units if unit.role == owner]
+        role_workers = [unit for unit in _lifecycle_units(r, controller) if unit.role == owner]
         matching = [unit for unit in role_workers if route_paths_overlap(unit.paths, touched_paths)]
         reusable = [unit for unit in matching if _unit_is_live(unit, live)]
         if reusable:
@@ -1304,6 +1365,20 @@ def complete_landed_fix_requests(r: Run, landed_names: Sequence[str]) -> list[st
     return completed
 
 
+def _lifecycle_units(r: Run, controller: Unit | None) -> list[Unit]:
+    """Units this controller owns: its own lifecycle, or the whole run when unscoped.
+
+    Routing a repair across this boundary hands one frozen target's fix to another target's worker,
+    and landing one controller then clears the other's outstanding requests (#877).
+    """
+    if controller is None or not controller.lifecycle:
+        scoped = {u.lifecycle for u in r.units if u.lifecycle}
+        if not scoped:
+            return list(r.units)
+        return [u for u in r.units if not u.lifecycle]
+    return [u for u in r.units if u.lifecycle == controller.lifecycle]
+
+
 def resubmit_review_if_ready(
     r: Run,
     revision: str,
@@ -1322,23 +1397,40 @@ def resubmit_review_if_ready(
         if unit.lifecycle and r.review_slot(unit)["review_resubmit_pending"]
     ]
     if pending:
-        if len(pending) > 1:
-            raise SystemExit(
-                "several scoped Code Review controllers are awaiting resubmission "
-                f"({', '.join(unit.name for unit in pending)}); resubmit them one at a time"
-            )
-        controller = pending[0]
-        slot = r.review_slot(controller)
-        if slot["operator_fix_requests"] or any(unit.fix_requests for unit in r.units):
-            return False
-    else:
-        if not r.review_resubmit_pending:
-            return False
-        if r.operator_fix_requests or any(unit.fix_requests for unit in r.units):
-            return False
-        controller = r.review_controller()
+        # Each scoped controller recovers independently. One controller still holding an operator
+        # request or a live worker must not block another whose repairs are clear -- that would make
+        # two independent targets unable to recover at all (#877).
+        sent = False
+        for candidate in pending:
+            if _resubmit_one(r, candidate, revision, sender=sender):
+                sent = True
+        return sent
+
+    if not r.review_resubmit_pending:
+        return False
+    controller = r.review_controller()
     if controller is None:
         raise SystemExit("review repairs landed, but this run has no Code Review controller")
+    return _resubmit_one(r, controller, revision, sender=sender)
+
+
+def _resubmit_one(
+    r: Run,
+    controller: Unit,
+    revision: str,
+    *,
+    sender: Callable[[Unit, str], None] | None = None,
+) -> bool:
+    """Resubmit ``revision`` through one controller, if that controller's own work is clear.
+
+    "Its own" is the whole point: a worker belonging to another lifecycle is not this controller's
+    business, and treating it as blocking is what deadlocks two independent targets.
+    """
+    slot = r.review_slot(controller)
+    if slot["operator_fix_requests"]:
+        return False
+    if any(unit.fix_requests for unit in _lifecycle_units(r, controller)):
+        return False
     task = normalize_task(controller.vendor, controller.task, r.backend)
     task += (
         f" The routed Work repairs are now landed on the run branch at revision {revision}. "
@@ -2034,6 +2126,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         status_map=plan.get("status_map", {}),
         workspace=plan.get("workspace") or None,
         account=plan.get("account") or None,
+        review_controller_ceiling=review_ceiling_from_plan(plan),
     )
     # Before anything is written or any worktree is created: a typo in an ordering edge is a
     # unit that is never eligible, forever, and `start` is the only moment it fails cheaply.
@@ -2340,6 +2433,9 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r.units.extend(incoming)
     r.issues.update(added.get("issues", {}))
     r.status_map.update(added.get("status_map", {}))
+    expanded_ceiling = review_ceiling_from_plan(added)
+    if expanded_ceiling is not None:
+        r.review_controller_ceiling = expanded_ceiling
     if "workspace" in added:
         r.workspace = added["workspace"] or None
     if "account" in added:
@@ -2578,22 +2674,43 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(format_row(row))
     for name, branch in discover_unrecorded(r):
         print(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
-    if r.review_outcome:
-        outstanding_work = any(unit.fix_requests for unit in r.units)
-        if r.review_resubmit_pending and outstanding_work and r.operator_fix_requests:
+    # Read every controller's own slot. Consulting only the run-level fields would show a scoped
+    # run as having no Code Review result at all, which is exactly when the operator needs one (#877).
+    scoped_controllers = [unit for unit in r.review_controllers() if unit.lifecycle]
+    slots: list[tuple[str, dict[str, Any]]] = [
+        (f"{unit.name} (lifecycle {unit.lifecycle})", r.review_slot(unit))
+        for unit in scoped_controllers
+    ]
+    if not slots:
+        slots = [("", r.review_slot(r.review_controllers()[0] if r.review_controllers() else None))]
+
+    operator_requests: list[dict[str, Any]] = []
+    for label, slot in slots:
+        operator_requests.extend(slot["operator_fix_requests"])
+        if not slot["review_outcome"]:
+            continue
+        owned = _lifecycle_units(
+            r, next((u for u in scoped_controllers if label.startswith(u.name)), None)
+        )
+        outstanding_work = any(unit.fix_requests for unit in owned)
+        pending = slot["review_resubmit_pending"]
+        operator_held = bool(slot["operator_fix_requests"])
+        if pending and outstanding_work and operator_held:
             state = "awaiting landed Work repairs and operator-owned fix requests"
-        elif r.review_resubmit_pending and outstanding_work:
+        elif pending and outstanding_work:
             state = "awaiting landed Work repairs"
-        elif r.review_resubmit_pending and r.operator_fix_requests:
+        elif pending and operator_held:
             state = "resubmission held by operator-owned fix requests"
-        elif r.review_resubmit_pending:
+        elif pending:
             state = "awaiting Code Review resubmission"
-        elif r.operator_fix_requests:
+        elif operator_held:
             state = "operator-owned fix requests outstanding"
         else:
             state = "recorded"
-        print(f"\nCode Review result: {one_line(str(r.review_outcome))} ({state})")
-    for request in r.operator_fix_requests:
+        scope = f" [{label}]" if label else ""
+        print(f"\nCode Review result{scope}: {one_line(str(slot['review_outcome']))} ({state})")
+
+    for request in operator_requests:
         owner = one_line(str(request.get("owner", "?")))
         fix_id = one_line(str(request.get("fix_id", "?")))
         touched_paths = one_line(", ".join(str(path) for path in request.get("touched_paths", [])))
@@ -3432,7 +3549,10 @@ def cmd_land(args: argparse.Namespace) -> int:
                 cleanup_failures.append((landing_worktree, detail))
 
     resubmit_failed = False
-    if r.review_resubmit_pending:
+    any_pending = r.review_resubmit_pending or any(
+        r.review_slot(unit)["review_resubmit_pending"] for unit in r.review_controllers()
+    )
+    if any_pending:
         try:
             if resubmit_review_if_ready(r, branch_tip):
                 print(f"resubmitted landed revision {branch_tip} to the Code Review controller")
@@ -3572,8 +3692,11 @@ def reapable(unit: Unit, r: Run) -> bool:
     reaping away from a DONE unit that saved nothing: its worktree is the evidence the session
     failed, and this plugin keeps no other record.
     """
-    if is_review_controller(unit) and (r.review_resubmit_pending or bool(r.operator_fix_requests)):
-        return False
+    if is_review_controller(unit):
+        slot = r.review_slot(unit)
+        if slot["review_resubmit_pending"] or bool(slot["operator_fix_requests"]):
+            # Reaping here closes the session the controller still needs to resubmit through.
+            return False
     if unit.status != DONE or not unit.branch:
         return False
     if r.unresolvable_branch:

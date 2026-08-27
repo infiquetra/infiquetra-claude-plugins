@@ -14,6 +14,7 @@ that every controller declares its own ``lifecycle``.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sys
 from pathlib import Path
@@ -83,13 +84,23 @@ def test_single_controller_run_still_resolves_to_that_controller(orchestrate: Mo
 def test_two_unscoped_controllers_still_fail_with_todays_message(orchestrate: ModuleType) -> None:
     """The accidental panel must keep failing exactly as it did, or the guard is weakened."""
     units = [_controller(orchestrate, "cr-a"), _controller(orchestrate, "cr-b")]
-    with pytest.raises(SystemExit) as excinfo:
-        orchestrate.assert_single_review_controller(units)
-    assert "create exactly one" in str(excinfo.value)
 
+    # Assert the FULL accessor string by equality. A substring check is not enough: the phrase
+    # "create exactly one" appears in 3.0.7 as well, so asserting it proves nothing about whether
+    # this message survived the change.
     with pytest.raises(SystemExit) as accessor:
         _run(orchestrate, *units).review_controller()
-    assert "more than one Code Review controller" in str(accessor.value)
+    assert str(accessor.value) == (
+        "this run has more than one Code Review controller; one review phase is one "
+        "top-level controller invocation"
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        orchestrate.assert_single_review_controller(units)
+    assert str(excinfo.value) == (
+        "review phase has 2 controller units (cr-a, cr-b); create exactly one "
+        "top-level Code Review controller, or give each one its own `lifecycle`"
+    )
 
 
 def test_partially_scoped_controllers_are_refused(orchestrate: ModuleType) -> None:
@@ -328,3 +339,191 @@ def test_explicit_role_still_wins_over_task_text(orchestrate: ModuleType) -> Non
         name="w", vendor="claude", task="/saga:code-review something", role="review-fixer"
     )
     assert orchestrate.is_review_controller(worker) is False
+
+
+# --- 6. the command paths themselves, not just the accessors -------------------------------
+#
+# The first version of this suite tested accessors and never called a command, so every consumer
+# of the review state -- land, reap, status, start -- stayed unwired while the suite went green.
+
+
+def _scoped_run_on_disk(orchestrate: ModuleType, tmp_path: Path) -> Any:
+    run = _run(
+        orchestrate,
+        _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE),
+        _controller(orchestrate, "cr-c4", lifecycle="c4", status=orchestrate.DONE),
+        ceiling=2,
+    )
+    for unit in run.units:
+        unit.branch = f"orch/{unit.name}"
+    run.save()
+    return run
+
+
+def test_reapable_keeps_a_controller_whose_own_slot_is_pending(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reaping here closes the session the controller still needs in order to resubmit."""
+    monkeypatch.chdir(tmp_path)
+    run = _scoped_run_on_disk(orchestrate, tmp_path)
+    c2, c4 = run.review_controllers()
+    run.write_review_slot(c2, review_resubmit_pending=True)
+    monkeypatch.setattr(orchestrate, "landed", lambda *a, **k: True)
+
+    assert orchestrate.reapable(c2, run) is False, "pending controller must not be reaped"
+    assert orchestrate.reapable(c4, run) is True, "a clear controller stays reapable"
+
+
+def test_reapable_keeps_a_controller_holding_operator_requests(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    run = _scoped_run_on_disk(orchestrate, tmp_path)
+    c2, _ = run.review_controllers()
+    run.review_slot(c2)["operator_fix_requests"].append({"fix_id": "held"})
+    monkeypatch.setattr(orchestrate, "landed", lambda *a, **k: True)
+    assert orchestrate.reapable(c2, run) is False
+
+
+def test_status_shows_each_scoped_controller_outcome(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """Consulting only run-level fields showed a scoped run as having no Code Review result."""
+    monkeypatch.chdir(tmp_path)
+    run = _scoped_run_on_disk(orchestrate, tmp_path)
+    c2, c4 = run.review_controllers()
+    run.write_review_slot(c2, review_outcome="accepted")
+    run.write_review_slot(c4, review_outcome="repairs_requested", review_resubmit_pending=True)
+    run.save()
+
+    orchestrate.cmd_status(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert "cr-c2 (lifecycle c2)" in out and "accepted" in out
+    assert "cr-c4 (lifecycle c4)" in out and "repairs_requested" in out
+    assert "awaiting Code Review resubmission" in out
+
+
+def test_resubmit_sends_each_pending_controller_independently(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two independent targets must both recover; one must not block the other."""
+    monkeypatch.chdir(tmp_path)
+    run = _scoped_run_on_disk(orchestrate, tmp_path)
+    c2, c4 = run.review_controllers()
+    run.write_review_slot(c2, review_resubmit_pending=True)
+    run.write_review_slot(c4, review_resubmit_pending=True)
+
+    sent: list[str] = []
+    assert orchestrate.resubmit_review_if_ready(
+        run, "deadbeef", sender=lambda unit, _text: sent.append(unit.name)
+    )
+    assert sorted(sent) == ["cr-c2", "cr-c4"]
+    assert run.review_slot(c2)["review_resubmit_pending"] is False
+    assert run.review_slot(c4)["review_resubmit_pending"] is False
+
+
+def test_one_controller_operator_hold_does_not_block_the_other(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    run = _scoped_run_on_disk(orchestrate, tmp_path)
+    c2, c4 = run.review_controllers()
+    run.write_review_slot(c2, review_resubmit_pending=True)
+    run.write_review_slot(c4, review_resubmit_pending=True)
+    run.review_slot(c2)["operator_fix_requests"].append({"fix_id": "held"})
+
+    sent: list[str] = []
+    assert orchestrate.resubmit_review_if_ready(
+        run, "deadbeef", sender=lambda unit, _text: sent.append(unit.name)
+    )
+    assert sent == ["cr-c4"], "the unblocked controller still resubmits"
+    assert run.review_slot(c2)["review_resubmit_pending"] is True
+
+
+def test_a_worker_in_another_lifecycle_does_not_block_resubmit(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker belonging to another lifecycle is not this controller's business."""
+    monkeypatch.chdir(tmp_path)
+    run = _scoped_run_on_disk(orchestrate, tmp_path)
+    c2, _ = run.review_controllers()
+    other = orchestrate.Unit(
+        name="w-c4", vendor="claude", task="/saga:work build", role="review-fixer", lifecycle="c4"
+    )
+    other.fix_requests.append({"fix_id": "belongs-to-c4"})
+    run.units.append(other)
+    run.write_review_slot(c2, review_resubmit_pending=True)
+
+    sent: list[str] = []
+    assert orchestrate.resubmit_review_if_ready(
+        run, "deadbeef", sender=lambda unit, _text: sent.append(unit.name)
+    )
+    assert sent == ["cr-c2"]
+
+
+def test_cmd_start_carries_and_validates_the_ceiling(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ceiling that silently fails to load is worse than none."""
+    assert orchestrate.review_ceiling_from_plan({}) is None
+    assert orchestrate.review_ceiling_from_plan({"review_controller_ceiling": 3}) == 3
+    for bad in (0, -1, "3", True, 2.5):
+        with pytest.raises(SystemExit):
+            orchestrate.review_ceiling_from_plan({"review_controller_ceiling": bad})
+
+
+def test_wait_reason_names_the_ceiling_holdback(orchestrate: ModuleType) -> None:
+    """An empty wait_reason means eligible-not-yet-launched, so starvation must not look like that."""
+    run = _run(
+        orchestrate,
+        _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.RUNNING),
+        _controller(orchestrate, "cr-c4", lifecycle="c4"),
+        ceiling=1,
+    )
+    held = [u for u in run.units if u.name == "cr-c4"][0]
+    assert "ceiling" in run.wait_reason(held)
+
+
+def test_an_ambiguous_selector_is_refused(orchestrate: ModuleType) -> None:
+    """A name equal to another controller's lifecycle would silently store the wrong verdict."""
+    run = _run(
+        orchestrate,
+        _controller(orchestrate, "c4", lifecycle="c2"),
+        _controller(orchestrate, "cr-c4", lifecycle="c4"),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        run.review_controller_for("c4")
+    assert "matches 2" in str(excinfo.value)
+
+
+def test_a_controller_name_colliding_with_a_lifecycle_is_refused_at_load(
+    orchestrate: ModuleType,
+) -> None:
+    units = [
+        _controller(orchestrate, "c4", lifecycle="c2"),
+        _controller(orchestrate, "cr-c4", lifecycle="c4"),
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        orchestrate.assert_single_review_controller(units)
+    assert "could not tell them apart" in str(excinfo.value)
+
+
+def test_whitespace_only_lifecycles_do_not_bypass_the_guard(orchestrate: ModuleType) -> None:
+    """`c2` and `c2 ` must not count as two distinct lifecycles."""
+    units = [
+        _controller(orchestrate, "cr-a", lifecycle="c2"),
+        _controller(orchestrate, "cr-b", lifecycle="c2 "),
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        orchestrate.assert_single_review_controller(units)
+    assert "both claim" in str(excinfo.value)
+
+
+def test_a_blank_lifecycle_counts_as_unscoped(orchestrate: ModuleType) -> None:
+    units = [
+        _controller(orchestrate, "cr-a", lifecycle="c2"),
+        _controller(orchestrate, "cr-b", lifecycle="   "),
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        orchestrate.assert_single_review_controller(units)
+    assert "create exactly one" in str(excinfo.value)

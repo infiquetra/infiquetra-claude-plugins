@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-27T00:01:34.150332+00:00",
+  "created_issue_number": 871,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/871",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-27-orchestrate-plugin-json-declares-dependencies-as.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "execute",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/defect-source.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Prepared asgard issues must start in 'Shaping', not 'Active'",
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-27-orchestrate-plugin-json-declares-dependencies-as.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "Installed Orchestrate 3.0.6 and current main at bf66ee5e declare dependencies as a JSON object.\nThe live Claude plugin loader requires an array and rejects the entire plugin, so Orchestrate does\nnot load and its /orchestrate command is unavailable. This blocks starting the Auralis orchestration.\nReproduced with claude plugin validate against both the repository source and the installed cache.\nThe smallest fix is to express the same agent-launcher >=1.0.0 floor as an array of objects.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/defect-source.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/defect-source.md",
+    "title": "defect-source",
+    "url": null
+  },
+  "state": "created",
+  "status": "Active",
+  "team": "asgard",
+  "title": "Orchestrate plugin.json declares dependencies as an object; the Claude loader requires an array and rejects the whole plugin",
+  "updated_at": "2026-08-27T00:01:53.067113+00:00"
+}

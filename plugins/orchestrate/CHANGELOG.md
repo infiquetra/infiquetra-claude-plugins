@@ -11,7 +11,12 @@
   reads through `review_slot`, so one target's state can never be read as another's. `land`, `reap`,
   `status` and `resubmit` all read the slot; repair routing, worker matching and replacement are
   confined to the selected controller's lifecycle; and each pending controller resubmits
-  independently, so one controller's operator hold cannot block another's recovery. `review-result` gains `--controller <name-or-lifecycle>`, required when
+  independently, so one controller's operator hold cannot block another's recovery.
+  Replacement Work units inherit their controller's lifecycle, fix parking and assignment are
+  confined to it, and a lifecycle-less Work unit remains reachable as a documented fallback.
+  Lifecycles are normalised at load, the ceiling is validated on load as well as at start and
+  expand, and `review_states` is the single live authority with the run-level fields mirrored only
+  so an older Orchestrate can still read the record. `review-result` gains `--controller <name-or-lifecycle>`, required when
   several controllers exist; omitting it is refused rather than guessed, and a result aimed at a unit
   that is not a controller is refused outright. `review_controller_ceiling` caps how many controllers
   run at once, holding the surplus at the eligibility gate rather than refusing it at load.

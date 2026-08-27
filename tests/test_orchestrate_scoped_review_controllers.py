@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -297,6 +298,10 @@ def test_ceiling_never_holds_back_non_controller_units(orchestrate: ModuleType) 
         "/saga:plan consult the docs/code-review directory",
         "see plugins/saga/code-review/references for the lens list",
         "read a/b/code-review.md first",
+        # These two are rejected only by the RIGHT-hand command boundary. Without them that
+        # boundary can regress unnoticed, because the left lookbehind already handles mid-path.
+        "/code-review.md",
+        "see /code-review.md first",
     ],
 )
 def test_a_code_review_path_segment_is_not_a_controller(orchestrate: ModuleType, task: str) -> None:
@@ -318,6 +323,9 @@ def test_a_code_review_path_segment_is_not_a_controller(orchestrate: ModuleType,
         "$saga:code-review at revision 9c06fb4",
         "/code-review the diff",
         "First fetch, then /saga:code-review the run branch",
+        # A trailing period terminates a sentence, not the command's claim to be one.
+        "invoke /code-review.",
+        "/saga:code-review, then stop",
     ],
 )
 def test_real_invocations_still_classify(orchestrate: ModuleType, task: str) -> None:
@@ -527,3 +535,163 @@ def test_a_blank_lifecycle_counts_as_unscoped(orchestrate: ModuleType) -> None:
     with pytest.raises(SystemExit) as excinfo:
         orchestrate.assert_single_review_controller(units)
     assert "create exactly one" in str(excinfo.value)
+
+
+# --- 7. routing, land and start: the commands the first two suites never called -------------
+
+
+def test_a_replacement_worker_stays_inside_its_controller_lifecycle(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replacement minted without a lifecycle leaves the child lifecycle entirely.
+
+    `_lifecycle_units` then cannot see it, so resubmit stops waiting on its outstanding repair and
+    land resubmits the frozen target before the repair exists.
+    """
+    monkeypatch.chdir(tmp_path)
+    controller = _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE)
+    template = orchestrate.Unit(
+        name="w-c2",
+        vendor="claude",
+        task="/saga:work build",
+        role="review-fixer",
+        lifecycle="c2",
+        paths=["src/"],
+    )
+    run = _run(orchestrate, controller, template)
+    request = {
+        "fix_id": "fix-1",
+        "owner": "review-fixer",
+        "touched_paths": ["src/"],
+        "summary": "s",
+    }
+    replacement = orchestrate._replacement_worker(template, request, controller, {"w-c2"})
+    assert replacement.lifecycle == "c2", "replacement must not leave its controller's lifecycle"
+    run.units.append(replacement)
+    assert replacement in orchestrate._lifecycle_units(run, controller)
+
+
+def test_a_scoped_controller_can_still_route_to_an_unscoped_worker(
+    orchestrate: ModuleType,
+) -> None:
+    """A lifecycle-less Work unit is a likely authored shape and must remain reachable."""
+    controller = _controller(orchestrate, "cr-c2", lifecycle="c2")
+    plain = orchestrate.Unit(
+        name="w", vendor="claude", task="/saga:work build", role="review-fixer", paths=["src/"]
+    )
+    run = _run(orchestrate, controller, plain)
+    assert plain in orchestrate._lifecycle_units(run, controller)
+
+
+def test_another_lifecycles_worker_is_not_reachable(orchestrate: ModuleType) -> None:
+    controller = _controller(orchestrate, "cr-c2", lifecycle="c2")
+    foreign = orchestrate.Unit(
+        name="w-c4",
+        vendor="claude",
+        task="/saga:work build",
+        role="review-fixer",
+        lifecycle="c4",
+    )
+    run = _run(orchestrate, controller, foreign)
+    assert foreign not in orchestrate._lifecycle_units(run, controller)
+
+
+def test_cmd_land_resubmits_a_scoped_pending_controller(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Land exited 0 without ever telling a scoped controller to resubmit."""
+    monkeypatch.chdir(tmp_path)
+    run = _run(
+        orchestrate,
+        _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE),
+        ceiling=1,
+    )
+    run.write_review_slot(run.review_controllers()[0], review_resubmit_pending=True)
+    run.save()
+
+    reloaded = orchestrate.Run.load()
+    assert reloaded.review_slot(reloaded.review_controllers()[0])["review_resubmit_pending"] is True
+
+    sent: list[str] = []
+    assert orchestrate.resubmit_review_if_ready(
+        reloaded, "cafe1234", sender=lambda unit, _t: sent.append(unit.name)
+    )
+    assert sent == ["cr-c2"]
+
+
+def test_run_load_validates_the_ceiling_from_a_hand_edited_record(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`false` or `0` in a hand-edited run.json would otherwise become a hold-all ceiling."""
+    monkeypatch.chdir(tmp_path)
+    run = _run(orchestrate, _controller(orchestrate, "cr-c2", lifecycle="c2"), ceiling=2)
+    run.save()
+
+    record = json.loads(Path(".orchestrate/run.json").read_text())
+    for bad in (False, 0, "2"):
+        record["review_controller_ceiling"] = bad
+        Path(".orchestrate/run.json").write_text(json.dumps(record))
+        with pytest.raises(SystemExit):
+            orchestrate.Run.load()
+
+
+def test_lifecycle_whitespace_is_normalised_at_load(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review-result, land, status and reap load without passing through the plan guard."""
+    monkeypatch.chdir(tmp_path)
+    run = _run(orchestrate, _controller(orchestrate, "cr-c2", lifecycle="c2"))
+    run.save()
+    record = json.loads(Path(".orchestrate/run.json").read_text())
+    record["units"][0]["lifecycle"] = "  c2  "
+    Path(".orchestrate/run.json").write_text(json.dumps(record))
+
+    reloaded = orchestrate.Run.load()
+    assert reloaded.review_controllers()[0].lifecycle == "c2"
+    assert reloaded.review_controller_for("c2").name == "cr-c2"
+
+
+def test_status_binds_work_by_identity_not_name_prefix(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """One controller name prefixing another must not steal the longer name's outstanding Work."""
+    monkeypatch.chdir(tmp_path)
+    short = _controller(orchestrate, "cr", lifecycle="c2", status=orchestrate.DONE)
+    longer = _controller(orchestrate, "cr-extra", lifecycle="c4", status=orchestrate.DONE)
+    worker = orchestrate.Unit(
+        name="w-c4",
+        vendor="claude",
+        task="/saga:work build",
+        role="review-fixer",
+        lifecycle="c4",
+    )
+    worker.fix_requests.append({"fix_id": "belongs-to-c4"})
+    run = _run(orchestrate, short, longer, worker)
+    run.write_review_slot(short, review_outcome="accepted")
+    run.write_review_slot(longer, review_outcome="repairs_requested", review_resubmit_pending=True)
+    run.save()
+
+    orchestrate.cmd_status(argparse.Namespace())
+    out = capsys.readouterr().out
+    # The short-named controller has no outstanding Work of its own; only cr-extra does.
+    assert "cr (lifecycle c2)" in out and "(recorded)" in out
+    assert "awaiting landed Work repairs" in out
+
+
+def test_unscoped_review_state_round_trips_through_the_slot(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unscoped run must behave exactly as before, and the two views must not diverge."""
+    monkeypatch.chdir(tmp_path)
+    run = _run(orchestrate, _controller(orchestrate, "cr"))
+    controller = run.review_controllers()[0]
+    run.write_review_slot(controller, review_outcome="accepted", review_resubmit_pending=False)
+
+    assert run.review_outcome == "accepted", "run-level mirror keeps older readers working"
+    assert run.review_slot(controller)["review_outcome"] == "accepted"
+    run.save()
+
+    reloaded = orchestrate.Run.load()
+    only = reloaded.review_controllers()[0]
+    assert reloaded.review_outcome == "accepted"
+    assert reloaded.review_slot(only)["review_outcome"] == "accepted"

@@ -462,7 +462,7 @@ class Run:
             review_resubmit_pending=bool(raw.get("review_resubmit_pending", False)),
             operator_fix_requests=raw.get("operator_fix_requests", []),
             review_states=raw.get("review_states", {}),
-            review_controller_ceiling=raw.get("review_controller_ceiling"),
+            review_controller_ceiling=review_ceiling_from_plan(raw),
         )
         # engine_prefs was retired with #776; ignore it on load so older run files still open.
         loaded.resolve_branch_once()
@@ -594,24 +594,23 @@ class Run:
     def review_slot(self, controller: Unit | None) -> dict[str, Any]:
         """Read the typed review state belonging to ``controller``.
 
-        For a run with one review phase this is the run-level view that has always existed, so
-        existing records and existing callers are untouched.  For a scoped controller it is that
-        controller's own slot, which is the whole point: one controller's outcome, resubmit flag and
-        unresolved fix requests must never be legible as another's (#877).
+        This store is the only authority.  An unscoped run keeps its state under ``RUN_SLOT``; a
+        scoped controller keeps its own, which is the whole point -- one controller's outcome,
+        resubmit flag and unresolved fix requests must never be legible as another's (#877).
+        ``write_review_slot`` mirrors the unscoped slot back onto the run-level fields purely so a
+        record written here still loads in an older Orchestrate.  Read through this method, never
+        from the run-level fields directly: reading them directly is exactly the miss that left the
+        multi-target repair loop unwired.
         """
         key = controller.name if (controller is not None and controller.lifecycle) else RUN_SLOT
         slot = self.review_states.setdefault(key, {})
-        if key == RUN_SLOT and not slot:
-            # Adopt the run-level fields once, so the store is the single authority from then on
-            # and every consumer reads one shape regardless of how the run is scoped.
-            slot.update(
-                {
-                    "review_result": self.review_result,
-                    "review_outcome": self.review_outcome,
-                    "review_resubmit_pending": self.review_resubmit_pending,
-                    "operator_fix_requests": self.operator_fix_requests,
-                }
-            )
+        if key == RUN_SLOT:
+            # Fill from the run-level fields on every read, not once. Adopting only when empty left
+            # two live authorities that could disagree the moment either side was written (#877).
+            slot.setdefault("review_result", self.review_result)
+            slot.setdefault("review_outcome", self.review_outcome)
+            slot.setdefault("review_resubmit_pending", self.review_resubmit_pending)
+            slot.setdefault("operator_fix_requests", self.operator_fix_requests)
         slot.setdefault("review_result", None)
         slot.setdefault("review_outcome", None)
         slot.setdefault("review_resubmit_pending", False)
@@ -639,7 +638,8 @@ class Run:
         matched = [
             unit
             for unit in controllers
-            if unit.name == selector or (unit.lifecycle and unit.lifecycle == selector)
+            if unit.name == selector
+            or (unit.lifecycle and str(unit.lifecycle).strip() == str(selector).strip())
         ]
         if len(matched) > 1:
             # Storing the wrong target's verdict is the exact failure this scoping prevents, so an
@@ -872,6 +872,11 @@ def read_unit(raw: dict[str, Any]) -> Unit:
     If the file contains a leading Orchestrate ownership marker, the marker is stripped so the
     unit's in-memory task text is restored cleanly; unmarked hand-authored briefs load verbatim."""
     unit = Unit(**raw)
+    if unit.lifecycle is not None:
+        # Normalise here rather than in the plan guard alone: review-result, land, status and reap
+        # all load the run without passing through that guard, and "c2" versus "c2 " being two
+        # lifecycles for routing is exactly the bypass the one-per-lifecycle rule forbids (#877).
+        unit.lifecycle = unit.lifecycle.strip() or None
     if not unit.task_file:
         return unit
     spill = resolve_task_file(unit.task_file)
@@ -895,7 +900,7 @@ def is_code_review_task(task: str) -> bool:
     where committed typed results live, and the operator then cannot tell a real second controller
     from a false positive (#877).
     """
-    return bool(re.search(r"(?:^|(?<=\s))[/$](?:saga:)?code-review(?=$|\s)", task))
+    return bool(re.search(r"(?:^|(?<=\s))[/$](?:saga:)?code-review(?=$|\s|[.,:;!?](?:\s|$))", task))
 
 
 def is_review_controller(unit: Unit) -> bool:
@@ -1194,10 +1199,16 @@ def _unit_has_fix_request(unit: Unit, fix_id: str) -> bool:
     return any(_fix_request_id(request) == fix_id for request in unit.fix_requests)
 
 
-def _park_fix_request(r: Run, holder: Unit, request: dict[str, Any]) -> None:
-    """Keep one outstanding copy of a review repair on its actionable holder."""
+def _park_fix_request(
+    r: Run, holder: Unit, request: dict[str, Any], controller: Unit | None = None
+) -> None:
+    """Keep one outstanding copy of a review repair on its actionable holder.
+
+    The strip is confined to the controller's own lifecycle: clearing a same-identifier request from
+    another lifecycle's worker would silently discharge that target's outstanding repair (#877).
+    """
     fix_id = _fix_request_id(request)
-    for unit in r.units:
+    for unit in _lifecycle_units(r, controller):
         unit.fix_requests = [
             existing for existing in unit.fix_requests if _fix_request_id(existing) != fix_id
         ]
@@ -1255,6 +1266,10 @@ def _replacement_worker(
         paths=list(request["touched_paths"]),
         fix_requests=[request],
         serialize=[controller.name] if controller is not None else [],
+        # A replacement minted without its controller's lifecycle leaves that child lifecycle:
+        # _lifecycle_units cannot see it, so resubmit stops waiting on its outstanding repair and
+        # land resubmits the frozen target before the repair exists (#877).
+        lifecycle=template.lifecycle or (controller.lifecycle if controller is not None else None),
     )
     existing.add(name)
     return replacement
@@ -1300,7 +1315,7 @@ def route_review_result(
         reusable = [unit for unit in matching if _unit_is_live(unit, live)]
         if reusable:
             worker = reusable[0]
-            _park_fix_request(r, worker, request)
+            _park_fix_request(r, worker, request, controller)
             routing.dispatches.append((worker, request))
             continue
 
@@ -1308,14 +1323,14 @@ def route_review_result(
         assigned = next(
             (
                 unit
-                for unit in r.units
+                for unit in _lifecycle_units(r, controller)
                 if _unit_has_fix_request(unit, fix_id)
                 and (_unit_is_live(unit, live) or unit.name in eligible_names)
             ),
             None,
         )
         if assigned is not None:
-            _park_fix_request(r, assigned, request)
+            _park_fix_request(r, assigned, request, controller)
             routing.assignments.append((assigned, request))
             continue
 
@@ -1327,7 +1342,7 @@ def route_review_result(
             )
         replacement = _replacement_worker(templates[0], request, controller, names)
         r.units.append(replacement)
-        _park_fix_request(r, replacement, request)
+        _park_fix_request(r, replacement, request, controller)
         if templates[0].name in r.issues:
             r.issues[replacement.name] = r.issues[templates[0].name]
         routing.replacements.append(replacement)
@@ -1376,7 +1391,14 @@ def _lifecycle_units(r: Run, controller: Unit | None) -> list[Unit]:
         if not scoped:
             return list(r.units)
         return [u for u in r.units if not u.lifecycle]
-    return [u for u in r.units if u.lifecycle == controller.lifecycle]
+
+    want = str(controller.lifecycle).strip()
+    owned = [u for u in r.units if u.lifecycle and str(u.lifecycle).strip() == want]
+    # Documented fallback: a lifecycle-less Work unit is a likely authored shape, and a scoped
+    # controller that could reach no fixer at all would silently drop its repairs.  Unscoped workers
+    # are shared, so a replacement minted from one is stamped with the controller's lifecycle and
+    # stops being shared from then on.
+    return owned + [u for u in r.units if not u.lifecycle and not is_review_controller(u)]
 
 
 def resubmit_review_if_ready(
@@ -1406,9 +1428,9 @@ def resubmit_review_if_ready(
                 sent = True
         return sent
 
-    if not r.review_resubmit_pending:
-        return False
     controller = r.review_controller()
+    if not r.review_slot(controller)["review_resubmit_pending"]:
+        return False
     if controller is None:
         raise SystemExit("review repairs landed, but this run has no Code Review controller")
     return _resubmit_one(r, controller, revision, sender=sender)
@@ -2677,22 +2699,22 @@ def cmd_status(args: argparse.Namespace) -> int:
     # Read every controller's own slot. Consulting only the run-level fields would show a scoped
     # run as having no Code Review result at all, which is exactly when the operator needs one (#877).
     scoped_controllers = [unit for unit in r.review_controllers() if unit.lifecycle]
-    slots: list[tuple[str, dict[str, Any]]] = [
-        (f"{unit.name} (lifecycle {unit.lifecycle})", r.review_slot(unit))
+    # Carry the Unit itself. Matching a label back to its controller by name prefix attributes one
+    # controller's Work to another whenever one name prefixes the other (#877).
+    slots: list[tuple[Unit | None, str, dict[str, Any]]] = [
+        (unit, f"{unit.name} (lifecycle {unit.lifecycle})", r.review_slot(unit))
         for unit in scoped_controllers
     ]
     if not slots:
-        slots = [("", r.review_slot(r.review_controllers()[0] if r.review_controllers() else None))]
+        only = r.review_controllers()[0] if r.review_controllers() else None
+        slots = [(only, "", r.review_slot(only))]
 
     operator_requests: list[dict[str, Any]] = []
-    for label, slot in slots:
+    for owner, label, slot in slots:
         operator_requests.extend(slot["operator_fix_requests"])
         if not slot["review_outcome"]:
             continue
-        owned = _lifecycle_units(
-            r, next((u for u in scoped_controllers if label.startswith(u.name)), None)
-        )
-        outstanding_work = any(unit.fix_requests for unit in owned)
+        outstanding_work = any(unit.fix_requests for unit in _lifecycle_units(r, owner))
         pending = slot["review_resubmit_pending"]
         operator_held = bool(slot["operator_fix_requests"])
         if pending and outstanding_work and operator_held:
@@ -3560,6 +3582,20 @@ def cmd_land(args: argparse.Namespace) -> int:
             resubmit_failed = True
             print(f"REVIEW RESUBMIT FAILED: {exc}")
         r.save()
+
+    for held_controller in r.review_controllers():
+        held_slot = r.review_slot(held_controller)
+        if (
+            held_controller.lifecycle
+            and held_slot["review_resubmit_pending"]
+            and held_slot["operator_fix_requests"]
+        ):
+            print(
+                f"REVIEW RESUBMISSION HELD for {held_controller.name} "
+                f"(lifecycle {held_controller.lifecycle}): "
+                f"{len(held_slot['operator_fix_requests'])} operator-owned fix request(s) "
+                "outstanding"
+            )
 
     outstanding_work = any(unit.fix_requests for unit in r.units)
     if r.review_resubmit_pending and r.operator_fix_requests and not outstanding_work:

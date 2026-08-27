@@ -610,7 +610,9 @@ class Run:
             slot.setdefault("review_result", self.review_result)
             slot.setdefault("review_outcome", self.review_outcome)
             slot.setdefault("review_resubmit_pending", self.review_resubmit_pending)
-            slot.setdefault("operator_fix_requests", self.operator_fix_requests)
+            # Copy, never alias: an aliased list makes the slot and the run-level field the same
+            # object, so "two live authorities" becomes true again the moment either is mutated.
+            slot.setdefault("operator_fix_requests", list(self.operator_fix_requests))
         slot.setdefault("review_result", None)
         slot.setdefault("review_outcome", None)
         slot.setdefault("review_resubmit_pending", False)
@@ -1310,9 +1312,22 @@ def route_review_result(
         routing.work_requests += 1
         fix_id = _fix_request_id(request)
         touched_paths = list(request["touched_paths"])
-        role_workers = [unit for unit in _lifecycle_units(r, controller) if unit.role == owner]
+        # A lifecycle-less worker may serve as a mint TEMPLATE, but a scoped controller in a
+        # multi-controller run must not reuse it as a live holder: that shares one session between
+        # two frozen targets, and landing it discharges both repairs (#877).
+        role_workers = [
+            unit for unit in _lifecycle_units(r, controller, shared_ok=True) if unit.role == owner
+        ]
         matching = [unit for unit in role_workers if route_paths_overlap(unit.paths, touched_paths)]
-        reusable = [unit for unit in matching if _unit_is_live(unit, live)]
+        scoped_controllers = [u for u in r.review_controllers() if u.lifecycle]
+        shared_hazard = bool(
+            controller is not None and controller.lifecycle and len(scoped_controllers) > 1
+        )
+        reusable = [
+            unit
+            for unit in matching
+            if _unit_is_live(unit, live) and not (shared_hazard and not unit.lifecycle)
+        ]
         if reusable:
             worker = reusable[0]
             _park_fix_request(r, worker, request, controller)
@@ -1380,7 +1395,7 @@ def complete_landed_fix_requests(r: Run, landed_names: Sequence[str]) -> list[st
     return completed
 
 
-def _lifecycle_units(r: Run, controller: Unit | None) -> list[Unit]:
+def _lifecycle_units(r: Run, controller: Unit | None, *, shared_ok: bool = False) -> list[Unit]:
     """Units this controller owns: its own lifecycle, or the whole run when unscoped.
 
     Routing a repair across this boundary hands one frozen target's fix to another target's worker,
@@ -1394,10 +1409,13 @@ def _lifecycle_units(r: Run, controller: Unit | None) -> list[Unit]:
 
     want = str(controller.lifecycle).strip()
     owned = [u for u in r.units if u.lifecycle and str(u.lifecycle).strip() == want]
-    # Documented fallback: a lifecycle-less Work unit is a likely authored shape, and a scoped
-    # controller that could reach no fixer at all would silently drop its repairs.  Unscoped workers
-    # are shared, so a replacement minted from one is stamped with the controller's lifecycle and
-    # stops being shared from then on.
+    if not shared_ok:
+        # Reusing one lifecycle-less worker from several scoped controllers couples the very targets
+        # this scoping isolates: both park on one session, landing it discharges both repairs, and
+        # until then each child's parked bag blocks the other's resubmit (#877).  Such a worker is a
+        # mint TEMPLATE only -- `_replacement_worker` stamps the controller's lifecycle onto the
+        # copy, so the repair that actually runs belongs to exactly one target.
+        return owned
     return owned + [u for u in r.units if not u.lifecycle and not is_review_controller(u)]
 
 
@@ -3598,7 +3616,16 @@ def cmd_land(args: argparse.Namespace) -> int:
             )
 
     outstanding_work = any(unit.fix_requests for unit in r.units)
-    if r.review_resubmit_pending and r.operator_fix_requests and not outstanding_work:
+    # Read the slot, not the run-level flags: scoped writes never mirror onto them, so reading them
+    # here is the same class of miss that left the multi-target loop unwired (#877).
+    unscoped_slot = r.review_slot(
+        None if any(u.lifecycle for u in r.review_controllers()) else r.review_controller()
+    )
+    if (
+        unscoped_slot["review_resubmit_pending"]
+        and unscoped_slot["operator_fix_requests"]
+        and not outstanding_work
+    ):
         fix_ids = ", ".join(
             one_line(str(request.get("fix_id", "?"))) for request in r.operator_fix_requests
         )

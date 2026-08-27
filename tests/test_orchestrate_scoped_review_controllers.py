@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -479,6 +480,28 @@ def test_cmd_start_carries_and_validates_the_ceiling(
         with pytest.raises(SystemExit):
             orchestrate.review_ceiling_from_plan({"review_controller_ceiling": bad})
 
+    # And prove start actually ingests it, so a start-ingest regression cannot stay green.
+    monkeypatch.chdir(tmp_path)
+    plan = {
+        "run_id": "ceil",
+        "source": "t",
+        "review_controller_ceiling": 2,
+        "units": [
+            {
+                "name": "cr-c2",
+                "vendor": "grok",
+                "role": "review-controller",
+                "lifecycle": "c2",
+                "merge": False,
+                "task": "/saga:code-review t",
+            }
+        ],
+    }
+    assert orchestrate.review_ceiling_from_plan(plan) == 2
+    run = _run(orchestrate, _controller(orchestrate, "cr-c2", lifecycle="c2"), ceiling=2)
+    run.save()
+    assert orchestrate.Run.load().review_controller_ceiling == 2
+
 
 def test_wait_reason_names_the_ceiling_holdback(orchestrate: ModuleType) -> None:
     """An empty wait_reason means eligible-not-yet-launched, so starvation must not look like that."""
@@ -571,16 +594,78 @@ def test_a_replacement_worker_stays_inside_its_controller_lifecycle(
     assert replacement in orchestrate._lifecycle_units(run, controller)
 
 
-def test_a_scoped_controller_can_still_route_to_an_unscoped_worker(
+def test_an_unscoped_worker_is_a_mint_template_not_a_shared_holder(
     orchestrate: ModuleType,
 ) -> None:
-    """A lifecycle-less Work unit is a likely authored shape and must remain reachable."""
+    """A lifecycle-less Work unit stays reachable as a TEMPLATE, never as a shared live holder.
+
+    Reusing one live lifecycle-less worker from several scoped controllers couples the very targets
+    this scoping isolates. It remains a mint template, and `_replacement_worker` stamps the copy.
+    """
     controller = _controller(orchestrate, "cr-c2", lifecycle="c2")
     plain = orchestrate.Unit(
         name="w", vendor="claude", task="/saga:work build", role="review-fixer", paths=["src/"]
     )
     run = _run(orchestrate, controller, plain)
-    assert plain in orchestrate._lifecycle_units(run, controller)
+    assert plain in orchestrate._lifecycle_units(run, controller, shared_ok=True)
+    assert plain not in orchestrate._lifecycle_units(run, controller)
+
+
+def test_two_scoped_controllers_do_not_share_one_live_unscoped_fixer(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The residual the third review cycle caught: one shared session couples two frozen targets.
+
+    Landing that worker would discharge both repairs, and until then each child's parked bag blocks
+    the other's resubmit. Each controller must get its own stamped replacement instead.
+    """
+    monkeypatch.chdir(tmp_path)
+    c2 = _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE)
+    c4 = _controller(orchestrate, "cr-c4", lifecycle="c4", status=orchestrate.DONE)
+    shared = orchestrate.Unit(
+        name="w-shared",
+        vendor="claude",
+        task="/saga:work build",
+        role="review-fixer",
+        paths=["src/"],
+        pane_id="pane-shared",
+        agent_name="agent-shared",
+    )
+    run = _run(orchestrate, c2, c4, shared)
+    run.save()
+    live = [{"name": "agent-shared", "agent_status": "idle"}]
+
+    def _result(fix_id: str) -> str:
+        return json.dumps(
+            {
+                "schema": "review_result.v1",
+                "outcome": "repairs_requested",
+                "best_available_revision": "a" * 40,
+                "fix_requests": [
+                    {
+                        "fix_id": fix_id,
+                        "owner": "review-fixer",
+                        "touched_paths": ["src/"],
+                        "summary": "s",
+                    }
+                ],
+            }
+        )
+
+    orchestrate.route_review_result(run, _result("fix-c2"), agents=live, controller=c2)
+    orchestrate.route_review_result(run, _result("fix-c4"), agents=live, controller=c4)
+
+    # The shared worker must not be carrying both targets' repairs.
+    assert len(shared.fix_requests) <= 1, "one live worker must not hold two targets' repairs"
+    holders = {
+        orchestrate._fix_request_id(req): unit.name
+        for unit in run.units
+        for req in unit.fix_requests
+    }
+    assert holders.get("fix-c2") != holders.get("fix-c4"), "each target needs its own holder"
+    for unit in run.units:
+        if unit.fix_requests and unit is not shared:
+            assert unit.lifecycle in {"c2", "c4"}, "a minted holder must carry a lifecycle"
 
 
 def test_another_lifecycles_worker_is_not_reachable(orchestrate: ModuleType) -> None:
@@ -599,13 +684,32 @@ def test_another_lifecycles_worker_is_not_reachable(orchestrate: ModuleType) -> 
 def test_cmd_land_resubmits_a_scoped_pending_controller(
     orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Land exited 0 without ever telling a scoped controller to resubmit."""
-    monkeypatch.chdir(tmp_path)
+    """Land exited 0 without ever telling a scoped controller to resubmit.
+
+    Driven through the real command against a real repository, because the whole finding was that
+    the helper worked while the command that calls it did not.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    run_git("init", "-q", "-b", "main")
+    run_git("config", "user.email", "t@t")
+    run_git("config", "user.name", "t")
+    (repo / "seed.txt").write_text("seed\n")
+    run_git("add", "-A")
+    run_git("commit", "-qm", "seed")
+    run_git("branch", "orch/proof-run")
+    monkeypatch.chdir(repo)
+
     run = _run(
         orchestrate,
         _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE),
         ceiling=1,
     )
+    run.branch = "orch/proof-run"
     run.write_review_slot(run.review_controllers()[0], review_resubmit_pending=True)
     run.save()
 
@@ -613,10 +717,12 @@ def test_cmd_land_resubmits_a_scoped_pending_controller(
     assert reloaded.review_slot(reloaded.review_controllers()[0])["review_resubmit_pending"] is True
 
     sent: list[str] = []
-    assert orchestrate.resubmit_review_if_ready(
-        reloaded, "cafe1234", sender=lambda unit, _t: sent.append(unit.name)
-    )
-    assert sent == ["cr-c2"]
+    monkeypatch.setattr(orchestrate, "say", lambda unit, pane, text: sent.append(unit.name))
+    orchestrate.cmd_land(argparse.Namespace(clean=False))
+
+    after = orchestrate.Run.load()
+    assert sent == ["cr-c2"], "land must tell the scoped controller to resubmit"
+    assert after.review_slot(after.review_controllers()[0])["review_resubmit_pending"] is False
 
 
 def test_run_load_validates_the_ceiling_from_a_hand_edited_record(

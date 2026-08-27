@@ -1319,14 +1319,17 @@ def route_review_result(
             unit for unit in _lifecycle_units(r, controller, shared_ok=True) if unit.role == owner
         ]
         matching = [unit for unit in role_workers if route_paths_overlap(unit.paths, touched_paths)]
-        scoped_controllers = [u for u in r.review_controllers() if u.lifecycle]
-        shared_hazard = bool(
-            controller is not None and controller.lifecycle and len(scoped_controllers) > 1
-        )
+        # No carve-out for a single scoped controller. The count is read at route time, so a run
+        # that parks while it has one controller and later gains a second through `expand` would
+        # strand the first controller's repairs on a worker its own resubmit gate cannot see. And
+        # even with one controller the gate reads `shared_ok=False`, so a bag parked on an unscoped
+        # worker is invisible and land resubmits before the repair exists. A scoped controller
+        # therefore never reuses a live lifecycle-less holder -- it always mints a stamped copy.
+        scoped = bool(controller is not None and controller.lifecycle)
         reusable = [
             unit
             for unit in matching
-            if _unit_is_live(unit, live) and not (shared_hazard and not unit.lifecycle)
+            if _unit_is_live(unit, live) and not (scoped and not unit.lifecycle)
         ]
         if reusable:
             worker = reusable[0]

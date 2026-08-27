@@ -14,8 +14,10 @@
   independently, so one controller's operator hold cannot block another's recovery.
   Replacement Work units inherit their controller's lifecycle, fix parking and assignment are
   confined to it, and a lifecycle-less Work unit remains reachable as a documented fallback.
-  A lifecycle-less Work unit is a mint template rather than a shared live holder, so two scoped
-  controllers never park on one session and landing it cannot discharge both targets' repairs.
+  A lifecycle-less Work unit is a mint template rather than a shared live holder -- for every scoped
+  controller, not only when several exist -- so no two controllers park on one session, landing it
+  cannot discharge another target's repairs, and a controller added later by `expand` cannot orphan
+  an earlier one's already-parked bag.
   Lifecycles are normalised at load, the ceiling is validated on load as well as at start and
   expand, and `review_states` is the single live authority with the run-level fields mirrored only
   so an older Orchestrate can still read the record. `review-result` gains `--controller <name-or-lifecycle>`, required when

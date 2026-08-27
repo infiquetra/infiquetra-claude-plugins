@@ -15,6 +15,7 @@ that every controller declares its own ``lifecycle``.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import subprocess
@@ -480,26 +481,62 @@ def test_cmd_start_carries_and_validates_the_ceiling(
         with pytest.raises(SystemExit):
             orchestrate.review_ceiling_from_plan({"review_controller_ceiling": bad})
 
-    # And prove start actually ingests it, so a start-ingest regression cannot stay green.
-    monkeypatch.chdir(tmp_path)
-    plan = {
-        "run_id": "ceil",
-        "source": "t",
-        "review_controller_ceiling": 2,
-        "units": [
+    # And prove cmd_start itself ingests it. Building the Run by hand would stay green if a
+    # regression dropped review_ceiling_from_plan from cmd_start, which is the whole risk.
+    repo = tmp_path / "startrepo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    run_git("init", "-q", "-b", "main")
+    run_git("config", "user.email", "t@t")
+    run_git("config", "user.name", "t")
+    (repo / "seed.txt").write_text("seed\n")
+    run_git("add", "-A")
+    run_git("commit", "-qm", "seed")
+    monkeypatch.chdir(repo)
+
+    for stub in (
+        "assert_agent_launcher_available",
+        "assert_vendors_available",
+        "assert_saga_reachable",
+    ):
+        monkeypatch.setattr(orchestrate, stub, lambda *a, **k: None)
+    monkeypatch.setattr(orchestrate, "make_worktree", lambda *a, **k: None)
+
+    plan_path = repo / "plan.json"
+    plan_path.write_text(
+        json.dumps(
             {
-                "name": "cr-c2",
-                "vendor": "grok",
-                "role": "review-controller",
-                "lifecycle": "c2",
-                "merge": False,
-                "task": "/saga:code-review t",
+                "run_id": "ceil",
+                "source": "t",
+                "review_controller_ceiling": 2,
+                "units": [
+                    {
+                        "name": "cr-c2",
+                        "vendor": "grok",
+                        "role": "review-controller",
+                        "lifecycle": "c2",
+                        "merge": False,
+                        "task": "/saga:code-review t",
+                    },
+                    {
+                        "name": "cr-c4",
+                        "vendor": "grok",
+                        "role": "review-controller",
+                        "lifecycle": "c4",
+                        "merge": False,
+                        "task": "/saga:code-review t",
+                    },
+                ],
             }
-        ],
-    }
-    assert orchestrate.review_ceiling_from_plan(plan) == 2
-    run = _run(orchestrate, _controller(orchestrate, "cr-c2", lifecycle="c2"), ceiling=2)
-    run.save()
+        )
+    )
+    # Worktree creation may still refuse in a bare fixture; the record is written before that,
+    # and the record is what this test is about.
+    with contextlib.suppress(SystemExit):
+        orchestrate.cmd_start(argparse.Namespace(plan=str(plan_path), base=None))
     assert orchestrate.Run.load().review_controller_ceiling == 2
 
 
@@ -801,3 +838,111 @@ def test_unscoped_review_state_round_trips_through_the_slot(
     only = reloaded.review_controllers()[0]
     assert reloaded.review_outcome == "accepted"
     assert reloaded.review_slot(only)["review_outcome"] == "accepted"
+
+
+def test_one_scoped_controller_also_mints_rather_than_sharing(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No carve-out for a single scoped controller.
+
+    The controller count is read at route time, so a run that parks while it has one controller and
+    later gains a second through `expand` would strand the first controller's repairs on a worker
+    its own resubmit gate cannot see. Even with one controller the gate reads `shared_ok=False`, so
+    a bag parked on an unscoped worker is invisible and land resubmits before the repair exists.
+    """
+    monkeypatch.chdir(tmp_path)
+    only = _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE)
+    plain = orchestrate.Unit(
+        name="w-plain",
+        vendor="claude",
+        task="/saga:work build",
+        role="review-fixer",
+        paths=["src/"],
+        pane_id="pane-plain",
+        agent_name="agent-plain",
+    )
+    run = _run(orchestrate, only, plain)
+    run.save()
+
+    orchestrate.route_review_result(
+        run,
+        json.dumps(
+            {
+                "schema": "review_result.v1",
+                "outcome": "repairs_requested",
+                "best_available_revision": "b" * 40,
+                "fix_requests": [
+                    {
+                        "fix_id": "fix-solo",
+                        "owner": "review-fixer",
+                        "touched_paths": ["src/"],
+                        "summary": "s",
+                    }
+                ],
+            }
+        ),
+        agents=[{"name": "agent-plain", "agent_status": "idle"}],
+        controller=only,
+    )
+
+    assert plain.fix_requests == [], "a scoped controller must not park on a live unscoped worker"
+    holders = [u for u in run.units if u.fix_requests]
+    assert holders, "the repair must be parked somewhere"
+    for holder in holders:
+        assert holder.lifecycle == "c2", "the minted holder must carry the controller's lifecycle"
+        assert holder in orchestrate._lifecycle_units(run, only), "resubmit must be able to see it"
+
+
+def test_expanding_a_second_controller_does_not_orphan_the_first_ones_repairs(
+    orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The expand-time hazard the carve-out created.
+
+    `shared_hazard` was computed at route time from the controller count, so a run that parked while
+    it had one scoped controller and then gained a second would leave the first controller's repairs
+    on a worker its own resubmit gate can no longer see. With the carve-out gone, the holder is
+    stamped at park time and stays owned however the run grows afterwards.
+    """
+    monkeypatch.chdir(tmp_path)
+    first = _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE)
+    plain = orchestrate.Unit(
+        name="w-plain",
+        vendor="claude",
+        task="/saga:work build",
+        role="review-fixer",
+        paths=["src/"],
+        pane_id="pane-plain",
+        agent_name="agent-plain",
+    )
+    run = _run(orchestrate, first, plain)
+    orchestrate.route_review_result(
+        run,
+        json.dumps(
+            {
+                "schema": "review_result.v1",
+                "outcome": "repairs_requested",
+                "best_available_revision": "c" * 40,
+                "fix_requests": [
+                    {
+                        "fix_id": "fix-first",
+                        "owner": "review-fixer",
+                        "touched_paths": ["src/"],
+                        "summary": "s",
+                    }
+                ],
+            }
+        ),
+        agents=[{"name": "agent-plain", "agent_status": "idle"}],
+        controller=first,
+    )
+    holders_before = {u.name for u in run.units if u.fix_requests}
+    assert holders_before, "the repair must be parked"
+
+    # Now a second controller arrives, as `expand` would add it.
+    run.units.append(_controller(orchestrate, "cr-c4", lifecycle="c4"))
+
+    owned = {u.name for u in orchestrate._lifecycle_units(run, first)}
+    assert holders_before <= owned, (
+        "the first controller's repairs must still be visible to its own resubmit gate "
+        "after a second controller is expanded in"
+    )

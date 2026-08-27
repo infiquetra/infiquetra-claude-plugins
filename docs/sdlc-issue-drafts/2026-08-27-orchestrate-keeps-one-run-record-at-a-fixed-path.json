@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-27T00:58:44.377960+00:00",
+  "created_issue_number": 878,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/878",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-27-orchestrate-keeps-one-run-record-at-a-fixed-path.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "execute",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/s4.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-27-orchestrate-keeps-one-run-record-at-a-fixed-path.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "The Orchestrate run record lives at a single fixed path, .orchestrate/run.json, and no subcommand accepts a flag selecting which run to act on. A stale or completed run record therefore stands in the way of starting the next run, and two runs cannot coexist. Found during the Auralis preflight on installed Orchestrate 3.0.7.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/s4.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/afece0ce-8e67-41fc-93e7-ad31f57ae935/scratchpad/s4.md",
+    "title": "s4",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Orchestrate keeps one run record at a fixed path so a stale run blocks the next and two runs cannot coexist",
+  "updated_at": "2026-08-27T00:59:01.363418+00:00"
+}

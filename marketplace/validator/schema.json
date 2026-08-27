@@ -118,14 +118,33 @@
       }
     },
     "dependencies": {
-      "type": "object",
-      "description": "Runtime dependencies",
-      "patternProperties": {
-        "^.+$": {
-          "type": "string",
-          "pattern": "^>=?\\d+\\.\\d+\\.\\d+$",
-          "description": "Dependency version"
-        }
+      "type": "array",
+      "description": "Runtime dependencies. The Claude plugin loader requires an array and rejects the entire manifest for any other type (#871), so an object form makes the plugin unloadable.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "pattern": "^[^@]+$",
+            "description": "Dependency name. The loader rejects a packed version suffix such as name@>=1.0.0; use the object form to express a version."
+          },
+          {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Dependency name"
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^>=?\\d+\\.\\d+\\.\\d+$",
+                "description": "Dependency version"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       }
     },
     "devDependencies": {

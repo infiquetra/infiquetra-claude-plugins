@@ -93,7 +93,14 @@ def test_orchestrate_declares_agent_launcher_dependency_in_metadata() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
 
     assert "dependencies" in orch_json
-    assert orch_json["dependencies"].get("agent-launcher") == ">=1.0.0"
+    # The Claude plugin loader requires an array here and rejects the whole manifest for
+    # any other type, which made Orchestrate unloadable from 2.0.0 through 3.0.6 (#871).
+    declared = orch_json["dependencies"]
+    assert isinstance(declared, list), (
+        f"dependencies must be an array, got {type(declared).__name__}"
+    )
+    floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
+    assert floors.get("agent-launcher") == ">=1.0.0", declared
 
     orch_entry = next(
         plugin for plugin in marketplace["plugins"] if plugin["name"] == "orchestrate"

@@ -635,7 +635,13 @@ def test_orchestrate_declares_agent_launcher_dependency_and_breaking_version() -
     entry = next(p for p in marketplace["plugins"] if p["name"] == "orchestrate")
     assert plugin["version"] >= "3.0.0"
     assert entry["version"] == plugin["version"]
-    assert plugin["dependencies"]["agent-launcher"] == ">=1.0.0"
+    # The loader requires an array; the object form made the plugin unloadable (#871).
+    declared = plugin["dependencies"]
+    assert isinstance(declared, list), (
+        f"dependencies must be an array, got {type(declared).__name__}"
+    )
+    floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
+    assert floors.get("agent-launcher") == ">=1.0.0", declared
 
 
 def test_skill_cleanup_example_redirects_receipt() -> None:

@@ -90,6 +90,11 @@ python3 sdlc_manager.py board move --project campps --repo athena-service --numb
 python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Done"
 ```
 
+> **W6**: `board move` writes `Status` to EVERY board carrying the issue, all-or-none — a
+> multi-board issue ends at one Status everywhere or nowhere. `--project` is validated as a
+> carrying board, not honored as a single-board restriction, and a failed board move no longer
+> leaves other boards written. Exit remains non-zero on failure (#609).
+
 Use `board discover-fields` when unsure which Status options exist live.
 
 ### Archive Terminal Items

@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.13.0] - 2026-08-28
+
+### Added - one constrained lifecycle-field mutation, atomic across every board carrying the issue (#87)
+
+- Added the constrained cross-board lifecycle mutation in `sdlc_manager.py` (`_set_lifecycle_field_cross_board`): it writes `Stage` and `Status` — and only those fields — to EVERY project board carrying the issue, discovered from the issue's own `projectItems` (`QUERY_GET_LIFECYCLE_FIELD_BOARDS`), never from a repo-to-board mapping. Reuses the existing `assert_correction_field` / `correction_identity` correction seam, so the emitted identity strings stay byte-identical to saga's ledger key. Proves acceptance examples AE3/AE9/AE27/AE37 (infiquetra/infiquetra-sdlc#87).
+- Atomicity is apply-then-compensate: every carrying board is preflighted (field + option resolve there) before the first write; a failed write restores each already-written board's captured prior value; a board whose prior value was unset counts as a FAILED restore (no clear primitive exists). A failed compensation halts with a named divergence (`LifecycleMutationHaltError`, carrying `board_state`) — non-zero exit, no silent retry, never swallowed by the prepared-issue loop's `except RuntimeError`.
+- Added `--reason` to `flow set-field` (optional; recorded verbatim per board; omitted writes the explicit `reason-not-supplied` sentinel, never a fabricated justification).
+- Added tests: `test_lifecycle_field_boards.py`, `test_lifecycle_field_mutation.py`, `test_lifecycle_field_routing.py`, `test_lifecycle_field_identity.py`, and the KTD12 AST writer-census gate `test_lifecycle_writer_census.py`.
+
+### Changed - `flow set-field` and `board move` blast radius for Status/Stage (KTD10/KTD13)
+
+- `flow set-field` (and `flow_set_fields_bulk`, hence every `--numbers`/repeated-`--field` path) now routes EVERY `Status`/`Stage` write — with or without `--correction` — through the cross-board mutation, selected by field name, not by flag. A single-board `Status`/`Stage` write is no longer possible: `--project` is validated as a carrying board, never obeyed as a restriction. Affected callers: saga's board writer (`board_progression.py`, unchanged argv, now cross-board), the issue-create post-step, and the prepared-issue field loop.
+- `board move` (KTD13/D2): the per-project best-effort write loop is gone; `board move` routes its `Status` write through the constrained cross-board mutation and no longer continues past a failed board. `#609` holds: an ordinary failure still returns `False` and exits 1 via the CLI arm; a compensation halt raises instead.
+- Non-lifecycle fields (`Initiative`, `Objective`, `Priority`, ...) keep the exact previous single-board behavior.
+
+# Changelog
+
 ## [2.12.9] - 2026-08-26
 
 ### Removed - dead rollout update subcommand and beads-config write claims (#821)

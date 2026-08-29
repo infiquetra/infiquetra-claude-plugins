@@ -150,6 +150,11 @@ You are deeply familiar with the Infiquetra SDLC process as documented in the
   a hint pointing at `operational-reference.md`'s field-creation runbook. If the option doesn't
   exist on the field, raises with the available option list + a hint pointing at
   `flow field-options`. Verify before bulk operations.
+  **`Status`/`Stage` writes (W6)** are the constrained lifecycle-field mutation: they go to EVERY
+  board carrying the issue, all-or-none (preflight failure writes nothing; a failed write is
+  compensated; a failed compensation halts with a named divergence, exits non-zero, never retries).
+  `--project` is validated as a carrying board, not honored as a single-board restriction;
+  `--reason` is optional and recorded verbatim per board.
   Use `flow unlink-sub-issue` to remove an accidental or retired parent layer without closing
   either issue; verify the Objective field and remaining child graph after migration.
 - `fields {create-option,discover}` — project field management (used in Initiative/Objective

@@ -5717,6 +5717,30 @@ def issue_create_prepared(
     # in `ready_to_create` with None is a true pre-U11 legacy draft and
     # proceeds unchanged — back-compatible, do NOT newly block None.
     approval_state = _read_sidecar_approval_state(draft_path)
+    # CR c2 F-1: the stamp and the bypass are SEPARATE decisions.
+    # --skip-approval means "bypass the gate for THIS invocation" — it must not
+    # also mean "never record that a gate is owed". A still-blocked None
+    # sidecar is therefore stamped into the gate EVEN WHEN skip_approval is
+    # True: the gate check below then honors --skip-approval for this call
+    # only, so the durable record survives a run that stops early (e.g. an
+    # unmapped repo writes mapping_pending with the stamp intact) and a LATER
+    # create without the flag still refuses. Without the stamp, fill-in +
+    # --skip-approval + mapping_pending + a later mapped create created the
+    # issue on a None fall-through.
+    if approval_state is None:
+        sidecar_state = _read_sidecar_payload(draft_path).get("state")
+        if sidecar_state == _PREPARE_STATE_BLOCKED:
+            # The draft started blocked (typically: `issue prepare` without a
+            # Stage — CLI prepare has no --stage flag by settled R3b) and was
+            # repaired by editing the draft file. The human gate applies:
+            # promote the sidecar and refuse unless --skip-approval covers
+            # this invocation.
+            _update_sidecar_state(
+                draft_path,
+                {"state": _PREPARE_STATE_READY, "approval_state": _APPROVAL_NEEDS_OPERATOR},
+            )
+            approval_state = _APPROVAL_NEEDS_OPERATOR
+
     if approval_state == _APPROVAL_NEEDS_OPERATOR and not skip_approval:
         message = (
             f"Prepared draft awaits operator approval; run "
@@ -5727,28 +5751,6 @@ def issue_create_prepared(
         else:
             print(message)
         raise RuntimeError(message)
-
-    if approval_state is None and not skip_approval:
-        sidecar_state = _read_sidecar_payload(draft_path).get("state")
-        if sidecar_state == _PREPARE_STATE_BLOCKED:
-            # The draft started blocked (typically: `issue prepare` without a
-            # Stage — CLI prepare has no --stage flag by settled R3b) and was
-            # repaired by editing the draft file. The human gate applies:
-            # promote the sidecar and refuse until `issue approve` or
-            # --skip-approval.
-            _update_sidecar_state(
-                draft_path,
-                {"state": _PREPARE_STATE_READY, "approval_state": _APPROVAL_NEEDS_OPERATOR},
-            )
-            message = (
-                f"Prepared draft awaits operator approval; run "
-                f"`issue approve {draft_path}` first, or pass --skip-approval."
-            )
-            if fmt == "json":
-                _out({"created": False, "reason": "needs_operator_approval"}, fmt)
-            else:
-                print(message)
-            raise RuntimeError(message)
 
     config = load_config()
     plan = _build_mutation_plan(issue, config)

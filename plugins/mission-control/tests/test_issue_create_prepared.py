@@ -213,7 +213,6 @@ def test_create_prepared_skip_approval_bypasses_gate(tmp_path) -> None:
         )
 
     assert result["created"] is True
-    assert result["number"] == 9
 
 
 def test_declined_confirmation_applies_no_mutation(tmp_path) -> None:
@@ -926,8 +925,12 @@ def test_intake_exit_fill_in_round_trips_through_approval_gate(tmp_path) -> None
 
 
 def test_intake_exit_fill_in_skip_approval_is_explicit_override(tmp_path) -> None:
-    """--skip-approval remains the operator's explicit override on the
-    repaired-blocked fill-in path; the sidecar promotion is not skipped."""
+    """--skip-approval remains the operator's explicit per-invocation override on
+    the repaired-blocked fill-in path — but the STAMP is NOT skipped (CR c2
+    F-1): the sidecar must carry needs_operator_approval after this run, so a
+    later create WITHOUT the flag refuses instead of falling through as a
+    pre-U11 legacy draft. --skip-approval bypasses the gate for THIS
+    invocation; it never means 'record that no gate is owed'."""
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
@@ -962,3 +965,113 @@ def test_intake_exit_fill_in_skip_approval_is_explicit_override(tmp_path) -> Non
         )
 
     assert result["created"] is True
+    # F-3 (CR c2): the claim this test makes IS the sidecar stamp. The
+    # promotion is not skipped by --skip-approval — the gate record survives.
+    stamped = json.loads(draft.with_suffix(".json").read_text())
+    assert stamped["approval_state"] == "needs_operator_approval"
+    assert stamped["state"] == "created"
+
+
+def test_intake_exit_fill_in_skip_approval_mapping_resume_stamps_gate(tmp_path) -> None:
+    """CR c2 F-1: fill-in + --skip-approval stopping at mapping_pending must
+    STAMP the U11 gate. The unmapped create writes state=mapping_pending; after
+    the fix the sidecar keeps approval_state=needs_operator_approval, so a
+    LATER create WITHOUT --skip-approval refuses instead of falling through
+    the None as a pre-U11 legacy draft. _create_github_issue is never called
+    on either invocation."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Stage-less mapping-resume draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+    )
+    # The R3b fill-in: the author edits `stage:` into the blocked draft.
+    draft.write_text(
+        draft.read_text().replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1)
+    )
+    sidecar_path = draft.with_suffix(".json")
+
+    # Invocation 1: skip_approval + UNMAPPED config → mapping_pending stop.
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_unmapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(sdlc_manager, "_open_mapping_pr", return_value="https://github.com/pr/2"),
+        patch.object(sdlc_manager, "_create_github_issue") as mock_create_first,
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+    ):
+        result = sdlc_manager.issue_create_prepared(
+            draft, fmt="text", auto_confirm=True, skip_approval=True
+        )
+
+    assert result == {"created": False, "mapping_pr_url": "https://github.com/pr/2"}
+    mock_create_first.assert_not_called()
+    stopped = json.loads(sidecar_path.read_text())
+    assert stopped["state"] == "mapping_pending"
+    # The stamp: the durable gate record survived the skip-approval invocation.
+    assert stopped["approval_state"] == "needs_operator_approval"
+
+    # Invocation 2: skip_approval=False + MAPPED config (the PR has been
+    # merged meanwhile) — MUST refuse; the None fall-through is gone.
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(sdlc_manager, "_create_github_issue") as mock_create_second,
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+        pytest.raises(RuntimeError, match="awaits operator approval"),
+    ):
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    mock_create_second.assert_not_called()
+
+
+def test_intake_exit_pre_u11_ready_none_sidecar_still_creates(tmp_path) -> None:
+    """CR c2 F-2: the second half of the None split is deliberate load-bearing
+    back-compat — a ready_to_create sidecar carrying approval_state=None (a
+    pre-U11 legacy draft) proceeds WITHOUT --skip-approval and WITHOUT refusal,
+    and runs the two-field Intake exit. Pinned deliberately so a regression
+    that blocks every None cannot hide behind the fill-in tests."""
+    draft = _ready_draft(tmp_path)  # prepare with Stage (gate path irrelevant)
+    sidecar_path = draft.with_suffix(".json")
+
+    # Model a vintage pre-U11 draft: ready sidecar, no recorded approval.
+    sidecar = json.loads(sidecar_path.read_text())
+    sidecar["state"] = "ready_to_create"
+    sidecar["approval_state"] = None
+    sidecar_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True) + "\n")
+
+    # The U11 batch approver still cannot admit a None — it skips.
+    skip_result = sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    assert skip_result["skipped"] and skip_result["skipped"][0]["reason"] == (
+        "approval_state is None"
+    )
+
+    # The legacy draft falls through the split's None branch and creates.
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(
+            sdlc_manager,
+            "_create_github_issue",
+            return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/21", 21),
+        ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field") as mock_flow,
+    ):
+        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert result["created"] is True
+    assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]

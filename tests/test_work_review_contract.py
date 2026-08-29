@@ -32,7 +32,9 @@ def _section(text: str, start_heading: str, end_heading: str) -> str:
 
 
 def _gate_contract() -> str:
-    return _section(_read_skill(), "### 5.3 ", "### 5.3b ")
+    # W8 (sdlc#89) deleted the 5.3b Verify section outright, so the gate region now
+    # ends at the 5.4 heading; the section contract itself is unchanged.
+    return _section(_read_skill(), "### 5.3 ", "### 5.4 ")
 
 
 def _collapse(text: str) -> str:

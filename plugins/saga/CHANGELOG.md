@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.146.0] - 2026-08-29
+
+### Changed
+
+- **`Verify` begins after merge plus a succeeded non-production deployment (W8, SDLC R69/R71).**
+  The pre-merge `Verify` card move is deleted: `/work` section 5.3b ("The card moves to Verify —
+  through Mission Control, not through this skill") is removed outright, so nothing in the skill
+  signals a `Verify` transition at PR-ready, and PR-ready, green checks, code review, and merge
+  readiness leave the card in `Active`. The post-merge path (section 4.4) now names when the move
+  is permitted — merged **and** a non-production deployment succeeded, for work with no deployable
+  software the delivered artifact existing in its real form and consumption context with the
+  non-applicability recorded and no record fabricated — as prose only: Saga still asserts no
+  lifecycle-field write (W7's posture unchanged); the single authority for the condition is the
+  `verify_entry` block of `infiquetra-sdlc`'s `config/sdlc-schema.json`, resolved by
+  `tools/docs/verify_entry.py`. New `tests/test_verify_entry_contract.py` pins the boundary from
+  the plugin side (the SDLC side pins it from the schema and a skip-clean reachability checker);
+  `test_work_review_contract.py`'s section 5.3 boundary re-anchors from `### 5.3b` to `### 5.4`
+  because the deleted section can no longer serve as a boundary.
+
 ## [0.145.0] - 2026-08-29
 
 ### Changed

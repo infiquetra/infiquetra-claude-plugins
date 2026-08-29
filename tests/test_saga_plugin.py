@@ -45,8 +45,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.145.0"  # W7 (sdlc#88): no autonomous lifecycle-field
-    # write authority, successor to W18's (infiquetra-sdlc#99) publication-lane 0.144.0
+    assert plugin_json["version"] == "0.146.0"  # W8 (sdlc#89): Verify entry after merge plus a
+    # succeeded non-production deployment; successor to W7's (sdlc#88) no-autonomous-write 0.145.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

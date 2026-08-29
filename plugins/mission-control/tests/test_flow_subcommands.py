@@ -437,34 +437,40 @@ def test_field_write_resolves_or_fails_loud() -> None:
             }
         }
 
-    project_items = (
-        "PVT_kwx",
-        [_project_item(42, "PVTI_42", repo="campps-mvp")],
-    )
-
     with (
         patch.object(sdlc_manager, "load_config") as mock_load,
-        patch.object(sdlc_manager, "get_project_items") as mock_items,
         patch.object(sdlc_manager, "_graphql") as mock_gql,
     ):
         mock_load.return_value = {
             "project_mappings": {"projects": {"campps": {"number": 4, "name": "CAMPPS"}}},
         }
-        mock_items.return_value = project_items
 
+        # W6: a Status write routes through the cross-board mutation — per
+        # write: board discovery, then live field query, then the write.
         # Before the rename: live field query returns "Ready"; the write succeeds.
-        mock_gql.side_effect = [_status_response("Ready"), {}]
+        mock_gql.side_effect = [
+            _lifecycle_discovery(42, project_number=4, prior="Shaping"),
+            _status_response("Ready"),
+            {},
+        ]
         sdlc_manager.flow_set_field("campps", "campps-mvp", 42, "Status", "Ready", fmt="text")
 
         # Upstream renames "Ready" -> "In Review". A write against the NEW
         # name must resolve live (no caching from the previous call) and
         # succeed.
-        mock_gql.side_effect = [_status_response("In Review"), {}]
+        mock_gql.side_effect = [
+            _lifecycle_discovery(42, project_number=4, prior="Ready"),
+            _status_response("In Review"),
+            {},
+        ]
         sdlc_manager.flow_set_field("campps", "campps-mvp", 42, "Status", "In Review", fmt="text")
 
         # A write still using the OLD (now-removed) name must fail loud with
         # a retryable, helpful error -- never silently set a stale option id.
-        mock_gql.side_effect = [_status_response("In Review")]
+        mock_gql.side_effect = [
+            _lifecycle_discovery(42, project_number=4, prior="In Review"),
+            _status_response("In Review"),
+        ]
         with pytest.raises(RuntimeError) as exc:
             sdlc_manager.flow_set_field("campps", "campps-mvp", 42, "Status", "Ready", fmt="text")
         msg = str(exc.value)
@@ -511,10 +517,36 @@ def _project_item(number: int, item_id: str, repo: str = "infiquetra-claude-plug
     }
 
 
+def _lifecycle_discovery(
+    number: int, project_number: int = 3, item_id: str | None = None, prior: str | None = "Idea"
+) -> dict:
+    """W6: the QUERY_GET_LIFECYCLE_FIELD_BOARDS response the cross-board
+    mutation consumes — one carrying board for the given issue."""
+    field_values: dict = {"nodes": []}
+    if prior is not None:
+        field_values["nodes"].append({"name": prior, "field": {"name": "Status"}})
+    return {
+        "repository": {
+            "issue": {
+                "projectItems": {
+                    "nodes": [
+                        {
+                            "id": item_id or f"PVTI_{number}",
+                            "project": {"title": "Operations", "number": project_number},
+                            "fieldValues": field_values,
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+
 def test_set_field_bulk_reuses_discovery_and_updates_each_number() -> None:
+    """W6: a Status bulk run discovers each issue's carrying boards and
+    writes cross-board per issue (two discovery passes, one per issue)."""
     with (
         patch.object(sdlc_manager, "load_config") as mock_load,
-        patch.object(sdlc_manager, "get_project_items") as mock_items,
         patch.object(sdlc_manager, "_graphql") as mock_gql,
         patch.object(sdlc_manager, "_out") as mock_out,
     ):
@@ -523,11 +555,15 @@ def test_set_field_bulk_reuses_discovery_and_updates_each_number() -> None:
                 "projects": {"operations": {"number": 1, "name": "Operations"}},
             }
         }
-        mock_items.return_value = (
-            "PVT_kwx",
-            [_project_item(1, "PVTI_1"), _project_item(2, "PVTI_2")],
-        )
-        mock_gql.side_effect = [_field_response(), {}, {}]
+        # Per issue: discovery, field preflight, write.
+        mock_gql.side_effect = [
+            _lifecycle_discovery(1, project_number=1, prior="Idea"),
+            _field_response(),
+            {},
+            _lifecycle_discovery(2, project_number=1, prior="Idea"),
+            _field_response(),
+            {},
+        ]
 
         sdlc_manager.flow_set_field_bulk(
             "operations",
@@ -538,10 +574,15 @@ def test_set_field_bulk_reuses_discovery_and_updates_each_number() -> None:
             fmt="json",
         )
 
-    assert mock_items.call_count == 1
-    assert mock_gql.call_count == 3
-    assert mock_gql.call_args_list[0].args[0] == sdlc_manager.QUERY_GET_PROJECT_FIELDS
-    assert [call.args[0] for call in mock_gql.call_args_list[1:]] == [
+    # Two discovery passes (one per issue), two field preflights, two writes.
+    assert mock_gql.call_count == 6
+    assert mock_gql.call_args_list[0].args[0] == sdlc_manager.QUERY_GET_LIFECYCLE_FIELD_BOARDS
+    assert mock_gql.call_args_list[3].args[0] == sdlc_manager.QUERY_GET_LIFECYCLE_FIELD_BOARDS
+    assert [
+        call.args[0]
+        for call in mock_gql.call_args_list
+        if call.args[0] == sdlc_manager.QUERY_SET_FIELD_VALUE
+    ] == [
         sdlc_manager.QUERY_SET_FIELD_VALUE,
         sdlc_manager.QUERY_SET_FIELD_VALUE,
     ]
@@ -555,6 +596,9 @@ def test_set_field_bulk_reuses_discovery_and_updates_each_number() -> None:
 
 
 def test_set_fields_bulk_reuses_discovery_for_multiple_fields_and_numbers() -> None:
+    """W6 mixed bulk: Status routes cross-board per issue (its own discovery);
+    Objective keeps the single-board shared-discovery legacy path for both
+    numbers."""
     with (
         patch.object(sdlc_manager, "load_config") as mock_load,
         patch.object(sdlc_manager, "get_project_items") as mock_items,
@@ -570,7 +614,19 @@ def test_set_fields_bulk_reuses_discovery_for_multiple_fields_and_numbers() -> N
             "PVT_kwx",
             [_project_item(1, "PVTI_1"), _project_item(2, "PVTI_2")],
         )
-        mock_gql.side_effect = [_field_response(), {}, {}, {}, {}]
+        # Lifecycle part: (discovery, fields, write) x 2 issues; legacy
+        # Objective part: one field discovery, then two writes.
+        mock_gql.side_effect = [
+            _lifecycle_discovery(1, project_number=1, prior="Idea"),
+            _field_response(),
+            {},
+            _lifecycle_discovery(2, project_number=1, prior="Idea"),
+            _field_response(),
+            {},
+            _field_response(),
+            {},
+            {},
+        ]
 
         sdlc_manager.flow_set_fields_bulk(
             "operations",
@@ -580,15 +636,17 @@ def test_set_fields_bulk_reuses_discovery_for_multiple_fields_and_numbers() -> N
             fmt="json",
         )
 
-    assert mock_items.call_count == 1
-    assert mock_gql.call_count == 5
-    assert mock_gql.call_args_list[0].args[0] == sdlc_manager.QUERY_GET_PROJECT_FIELDS
-    assert [call.args[0] for call in mock_gql.call_args_list[1:]] == [
-        sdlc_manager.QUERY_SET_FIELD_VALUE,
-        sdlc_manager.QUERY_SET_FIELD_VALUE,
-        sdlc_manager.QUERY_SET_FIELD_VALUE,
-        sdlc_manager.QUERY_SET_FIELD_VALUE,
+    assert mock_items.call_count == 1  # legacy Objective path only
+    assert mock_gql.call_count == 9
+    assert mock_gql.call_args_list[0].args[0] == sdlc_manager.QUERY_GET_LIFECYCLE_FIELD_BOARDS
+    field_discoveries = [
+        c for c in mock_gql.call_args_list if c.args[0] == sdlc_manager.QUERY_GET_PROJECT_FIELDS
     ]
+    assert len(field_discoveries) == 3  # two cross-board preflights + legacy Objective resolve
+    board_writes = [
+        c for c in mock_gql.call_args_list if c.args[0] == sdlc_manager.QUERY_SET_FIELD_VALUE
+    ]
+    assert len(board_writes) == 4
     payload = mock_out.call_args.args[0]
     assert payload["assignments"] == [
         {"field": "Status", "option": "Idea"},
@@ -599,9 +657,10 @@ def test_set_fields_bulk_reuses_discovery_for_multiple_fields_and_numbers() -> N
 
 
 def test_set_field_bulk_reports_partial_failure_and_continues() -> None:
+    """Per-issue atomicity: issue 1's failed write is reported; issue 2 still
+    writes its boards."""
     with (
         patch.object(sdlc_manager, "load_config") as mock_load,
-        patch.object(sdlc_manager, "get_project_items") as mock_items,
         patch.object(sdlc_manager, "_graphql") as mock_gql,
         patch.object(sdlc_manager, "_out") as mock_out,
     ):
@@ -610,11 +669,14 @@ def test_set_field_bulk_reports_partial_failure_and_continues() -> None:
                 "projects": {"operations": {"number": 1, "name": "Operations"}},
             }
         }
-        mock_items.return_value = (
-            "PVT_kwx",
-            [_project_item(1, "PVTI_1"), _project_item(2, "PVTI_2")],
-        )
-        mock_gql.side_effect = [_field_response(), RuntimeError("mutation failed"), {}]
+        mock_gql.side_effect = [
+            _lifecycle_discovery(1, project_number=1, prior="Idea"),
+            _field_response(),
+            RuntimeError("mutation failed"),
+            _lifecycle_discovery(2, project_number=1, prior="Idea"),
+            _field_response(),
+            {},
+        ]
 
         with pytest.raises(RuntimeError, match="failed for 1 of 2"):
             sdlc_manager.flow_set_field_bulk(
@@ -626,20 +688,16 @@ def test_set_field_bulk_reports_partial_failure_and_continues() -> None:
                 fmt="json",
             )
 
-    assert mock_gql.call_count == 3
+    # Issue 1's failed write needed no compensation (nothing yet written);
+    # issue 2 wrote normally.
+    assert mock_gql.call_count == 6
     payload = mock_out.call_args.args[0]
     assert payload["updated"] == [
         {"repo": "infiquetra-claude-plugins", "number": 2, "field": "Status", "option": "Idea"}
     ]
-    assert payload["failed"] == [
-        {
-            "repo": "infiquetra-claude-plugins",
-            "number": 1,
-            "field": "Status",
-            "option": "Idea",
-            "error": "mutation failed",
-        }
-    ]
+    assert len(payload["failed"]) == 1
+    assert payload["failed"][0]["number"] == 1
+    assert "mutation failed" in payload["failed"][0]["error"]
 
 
 def test_cli_numbers_arg_routes_to_bulk_set_field() -> None:
@@ -674,6 +732,7 @@ def test_cli_numbers_arg_routes_to_bulk_set_field() -> None:
         [("Status", "Idea")],
         "text",
         correction=False,
+        reason=None,
     )
 
 
@@ -713,6 +772,7 @@ def test_cli_repeated_field_option_pairs_route_to_bulk_set_field() -> None:
         [("Status", "Idea"), ("Objective", "defects-claude-plugins")],
         "text",
         correction=False,
+        reason=None,
     )
 
 
@@ -775,21 +835,23 @@ def _status_field_response() -> dict:
 
 
 def test_correction_set_field_round_trips_field_in_identity() -> None:
-    """A Status correction carries the field name in operation, authorization, and retry."""
+    """A Status correction carries the field name in operation, authorization, and retry.
+
+    W6: the correction routes through the cross-board mutation — discovery,
+    field preflight, then the write, whose variables still name FLD_status."""
     with (
         patch.object(sdlc_manager, "load_config") as mock_load,
-        patch.object(sdlc_manager, "get_project_items") as mock_items,
         patch.object(sdlc_manager, "_graphql") as mock_gql,
         patch.object(sdlc_manager, "_out") as mock_out,
     ):
         mock_load.return_value = {
             "project_mappings": {"projects": {"operations": {"number": 3, "name": "Operations"}}},
         }
-        mock_items.return_value = (
-            "PVT_kwx",
-            [_project_item(42, "PVTI_42", repo="infiquetra-claude-plugins")],
-        )
-        mock_gql.side_effect = [_status_field_response(), {}]
+        mock_gql.side_effect = [
+            _lifecycle_discovery(42, project_number=3, item_id="PVTI_42", prior="Idea"),
+            _status_field_response(),
+            {},
+        ]
         sdlc_manager.flow_set_field(
             "operations",
             "infiquetra-claude-plugins",
@@ -811,6 +873,7 @@ def test_correction_set_field_round_trips_field_in_identity() -> None:
     assert identity["retry"] == "set-field-status:infiquetra-claude-plugins#42:Status:Verify"
     mutation_vars = mock_gql.call_args_list[-1].args[1]
     assert mutation_vars["fieldId"] == "FLD_status"
+    assert mutation_vars["itemId"] == "PVTI_42"
 
 
 def test_correction_set_field_rejects_non_status_non_stage() -> None:
@@ -887,6 +950,7 @@ def test_cli_correction_flag_routes_to_flow_set_field() -> None:
         "Verify",
         "text",
         correction=True,
+        reason=None,
     )
 
 
@@ -944,17 +1008,33 @@ def test_bulk_correction_rejects_non_status_non_stage_in_process() -> None:
 
 
 def test_bulk_correction_marks_the_result_and_carries_per_card_identity() -> None:
-    """A bulk correction is distinguishable from an operator write in the output stream."""
+    """A bulk correction is distinguishable from an operator write in the output stream.
+
+    W6: Status corrections route through the cross-board mutation per issue;
+    internals are mocked at the mutation's seams."""
     with (
-        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        patch.object(sdlc_manager, "_lifecycle_field_boards") as boards,
+        patch.object(sdlc_manager, "_resolve_project_field") as resolve_field,
         patch.object(sdlc_manager, "_resolve_field_option") as resolve_option,
-        patch.object(sdlc_manager, "_project_items_by_number") as items,
         patch.object(sdlc_manager, "_set_project_field_value"),
         patch.object(sdlc_manager, "_out") as mock_out,
     ):
-        resolve.return_value = {"Status": {"id": "FLD_status", "_project_id": "PVT_kwx"}}
+        boards.side_effect = lambda _repo, number, _field: [
+            {
+                "key": "operations",
+                "title": "Operations",
+                "project_number": 1,
+                "item_id": f"PVTI_{number}",
+                "field_present": True,
+                "prior_value": "Idea",
+            }
+        ]
+        resolve_field.return_value = {
+            "id": "FLD_status",
+            "_project_id": "PVT_kwx",
+            "options": [{"id": "o_idea", "name": "Idea"}],
+        }
         resolve_option.return_value = {"id": "o_idea", "name": "Idea"}
-        items.return_value = {1: {"id": "PVTI_1"}, 2: {"id": "PVTI_2"}}
         sdlc_manager.flow_set_fields_bulk(
             "operations",
             "infiquetra-claude-plugins",
@@ -986,16 +1066,29 @@ def test_bulk_correction_identity_omits_a_card_that_failed_to_write() -> None:
             raise RuntimeError("card 2 is not on the project")
 
     with (
-        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        patch.object(sdlc_manager, "_lifecycle_field_boards") as boards,
+        patch.object(sdlc_manager, "_resolve_project_field") as resolve_field,
         patch.object(sdlc_manager, "_resolve_field_option") as resolve_option,
-        patch.object(sdlc_manager, "_project_items_by_number") as items,
         patch.object(sdlc_manager, "_set_project_field_value", side_effect=_fail_card_two),
         patch.object(sdlc_manager, "_out") as mock_out,
         pytest.raises(RuntimeError, match="failed for 1 of"),
     ):
-        resolve.return_value = {"Status": {"id": "FLD_status", "_project_id": "PVT_kwx"}}
+        boards.side_effect = lambda _repo, number, _field: [
+            {
+                "key": "operations",
+                "title": "Operations",
+                "project_number": 1,
+                "item_id": f"PVTI_{number}",
+                "field_present": True,
+                "prior_value": "Idea",
+            }
+        ]
+        resolve_field.return_value = {
+            "id": "FLD_status",
+            "_project_id": "PVT_kwx",
+            "options": [{"id": "o_idea", "name": "Idea"}],
+        }
         resolve_option.return_value = {"id": "o_idea", "name": "Idea"}
-        items.return_value = {1: {"id": "PVTI_1"}, 2: {"id": "PVTI_2"}}
         sdlc_manager.flow_set_fields_bulk(
             "operations",
             "infiquetra-claude-plugins",

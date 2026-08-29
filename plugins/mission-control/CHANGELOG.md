@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.15.0] - 2026-08-29
+
+### Added - the Intake exit initializes both lifecycle fields (unit W10, issue infiquetra/infiquetra-sdlc#91)
+
+- `issue create-prepared` creates the issue, adds it to the correct project, and
+  then performs TWO sequential constrained lifecycle writes — `Stage` first, then
+  `Status` — through the same `flow_set_field` call site (W6's cross-board
+  mutation), stopping at the first failure; each step is removed from
+  `remaining_steps` and persisted only after its own write returns, so the
+  existing `post_create_pending` resume state recovers a partial run without
+  creating a duplicate issue.
+- `PreparedIssue` carries an author-supplied `stage` with **no default and no
+  handoff-maturity mapping** (operator ruling on sdlc#91 OQ1). A prepared draft
+  missing or holding an empty `Stage` fails readiness **blocking**, before any
+  GitHub issue is created; `issue prepare` still emits the draft file so the
+  author can fill `stage:` in (R3b — CLI prepare has no `--stage` flag by
+  settled decision). The draft writer emits the `stage:` front-matter line only
+  when a value is present, so the naive front-matter splitter can never store
+  the literal string `None` as an authored Stage.
+- A still-blocked `None`-approval sidecar whose re-read readiness now passes
+  (the R3b fill-in path) is STAMPED into the U11 approval gate even when
+  `--skip-approval` is passed — the stamp and the per-invocation bypass are
+  separate decisions — and the refusal then honors `--skip-approval` for that
+  invocation only. A stopped run (e.g. mapping_pending) therefore leaves a
+  durable gate record, and a later create without the flag refuses instead of
+  falling through as a pre-U11 legacy draft. `ready_to_create` sidecars with
+  `None` proceed unchanged (deliberate pre-U11 back-compat).
+- The mutation plan shown for confirmation names both writes (`set-stage`
+  before `set-status`).
+- A legacy `post_create_pending` sidecar whose remaining lifecycle steps lack a
+  `"stage"` token is migrated: the Stage write is inserted before `"status"`
+  and still runs on resume (`flow_set_field` is idempotent).
+
+### Changed
+
+- The interactive `issue create` path prints a non-blocking NOTE immediately
+  after the pasted issue number — before the card-contract gate — reporting
+  that the issue was created outside the Intake exit and that the prepared-path
+  initialization of both `Stage` and `Status` did not run. It never claims
+  `Status` is unset. Abort, decline-browser, no-number, and `--skip-metadata`
+  stay silent (no issue exists on those paths).
+
 ## [2.14.0] - 2026-08-29
 
 ### Added - identity-preserving single-select option-set helper (issue infiquetra/infiquetra-sdlc#94)

@@ -30,6 +30,9 @@ requirements, plans, or code.
    combine — never just judged at the end, never rubber-stamped, never silently dropped.
 4. **Rejection is first-class and revivable.** Cut ideas keep stable IDs and can be revived — but
    only by re-entering the filter with new evidence (see the convergence reference).
+5. **Durable source material only — never issue creation.** Ideate produces durable source material
+   (the ranked ideation artifact under `docs/ideation/`) and creates or mutates no GitHub issue: it
+   never runs `gh issue create`. Mission Control owns issue creation, reached through `/handoff`.
 
 ## Interaction method
 

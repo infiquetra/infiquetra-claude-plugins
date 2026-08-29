@@ -4318,6 +4318,7 @@ _PREPARED_FIELD_RISK = "Technical Risk"
 _PREPARED_FIELD_OBJECTIVE = "Objective"
 _PREPARED_FIELD_ISSUE_TYPE = "Issue Type"
 _PREPARED_FIELD_LIFECYCLE_ORIGIN = "Lifecycle Origin"
+_PREPARED_FIELD_STAGE = "Stage"
 
 
 @dataclass
@@ -4353,6 +4354,10 @@ class PreparedIssue:
     mode: str | None
     body: str
     handoff_maturity: str | None = None
+    # W10 (R77): Stage is author-supplied on every prepared draft — no default
+    # and no handoff-maturity mapping (operator ruling on sdlc#91 OQ1). `None`
+    # stays `None` at authoring time; readiness refuses it before creation.
+    stage: str | None = None
     source_artifact: dict[str, Any] | None = None
     project_fields: dict[str, str] | None = None
     draft_path: str | None = None
@@ -4382,6 +4387,10 @@ def _prepared_project_fields(
     # came from", never an author-required input.
     if issue.handoff_maturity:
         fields[_PREPARED_FIELD_LIFECYCLE_ORIGIN] = issue.handoff_maturity
+    # Stage is recorded only when the author supplied one (W10) — it never gets
+    # a derived value, so an absent author Stage stays absent here too.
+    if issue.stage:
+        fields[_PREPARED_FIELD_STAGE] = issue.stage
     # Objective is carried only when the handoff source names one; we don't
     # invent an Objective the operator didn't supply.
     if source_artifact and source_artifact.ref:
@@ -4743,6 +4752,12 @@ def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = No
         f"status: {issue.status}",
         f"labels: {labels}",
     ]
+    if issue.stage:
+        # W10: emitted ONLY when a value is present, matching the risk / mode /
+        # handoff_maturity form. `_parse_draft_frontmatter` is a naive
+        # split(":", 1) — f"stage: {None}" would be stored as the authored
+        # string "None" and pass readiness as a real Stage (sdlc#91 D2).
+        frontmatter.append(f"stage: {issue.stage}")
     if issue.risk:
         frontmatter.append(f"risk: {issue.risk}")
     if issue.mode:
@@ -5043,6 +5058,7 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         labels=_normalize_label_list(metadata.get("labels") or sidecar.get("labels")),
         risk=field("risk") or None,
         mode=field("mode") or None,
+        stage=field("stage") or None,
         body=body.strip(),
         handoff_maturity=field("handoff_maturity") or None,
         source_artifact=sidecar.get("source_artifact")
@@ -5231,6 +5247,17 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     elif not issue.handoff_maturity:
         warnings.append("Missing handoff maturity metadata")
 
+    # W10 (R77, AE32): Stage is author-supplied, with no default and no
+    # handoff-maturity mapping (operator ruling on sdlc#91 OQ1, 2026-08-29) —
+    # the deliberate divergence from the handoff_maturity warning above.
+    # `field()` returns "" (never None) when the key is absent, so treat missing
+    # AND empty as absent and record a BLOCKING gap, not a warning.
+    if not issue.stage:
+        blocking.append(
+            "Missing Stage metadata; Stage is author-supplied on every prepared "
+            "draft and must be set before the issue is created"
+        )
+
     sections = _split_sections(issue.body)
     if issue.issue_type in _DISPATCH_ACTIONABLE_TYPES:
         valid_body, body_errors = validate_card_body_for_context(
@@ -5291,6 +5318,7 @@ def _sidecar_payload(
         "team": issue.team,
         "project": issue.project,
         "status": issue.status,
+        "stage": issue.stage,
         "labels": issue.labels,
         "risk": issue.risk,
         "mode": issue.mode,
@@ -5318,6 +5346,7 @@ def issue_prepare(
     source_artifact: SourceArtifact | None = None,
     draft_dir: Path | None = None,
     fmt: str = "text",
+    stage: str | None = None,
 ) -> Path:
     if not source.strip():
         raise RuntimeError("issue prepare requires non-empty source text")
@@ -5348,6 +5377,7 @@ def issue_prepare(
         labels=_issue_expected_labels(issue_type),
         risk=risk,
         mode=mode,
+        stage=stage,
         body=_source_to_issue_body(
             source, issue_type, team, repo, risk, mode, maturity, source_artifact
         ),
@@ -5635,6 +5665,7 @@ def _build_mutation_plan(issue: PreparedIssue, config: dict[str, Any]) -> Mutati
         [
             MutationStep("issue", f"Create {issue.issue_type} in {ORG}/{issue.repo}"),
             MutationStep("board-add", f"Add issue to {issue.project}"),
+            MutationStep("set-stage", f"Set Stage to {issue.stage}"),
             MutationStep("set-status", f"Set Status to {issue.status}"),
             MutationStep("mark-draft", "Record created issue on draft and sidecar"),
         ]
@@ -5678,10 +5709,38 @@ def issue_create_prepared(
     # Enforce the U11 human gate (FIX 1): a draft sitting in
     # `needs_operator_approval` is NOT created until an operator approves it (via
     # `issue approve`) or explicitly overrides with --skip-approval. An
-    # `approved` draft proceeds; a None approval_state (legacy drafts predating
-    # the gate; blocked drafts already failed readiness above) proceeds
-    # unchanged — back-compatible, do NOT newly block None.
+    # `approved` draft proceeds. A None approval_state is split into two cases
+    # below: a sidecar still in `blocked` with None is the W10 R3b fill-in
+    # recovery — the author repaired the draft file until readiness passed —
+    # and that repaired-blocked draft must STILL enter the gate (F-1, sdlc#91
+    # CR c1): it is promoted to needs_operator_approval and refused. A sidecar
+    # in `ready_to_create` with None is a true pre-U11 legacy draft and
+    # proceeds unchanged — back-compatible, do NOT newly block None.
     approval_state = _read_sidecar_approval_state(draft_path)
+    # CR c2 F-1: the stamp and the bypass are SEPARATE decisions.
+    # --skip-approval means "bypass the gate for THIS invocation" — it must not
+    # also mean "never record that a gate is owed". A still-blocked None
+    # sidecar is therefore stamped into the gate EVEN WHEN skip_approval is
+    # True: the gate check below then honors --skip-approval for this call
+    # only, so the durable record survives a run that stops early (e.g. an
+    # unmapped repo writes mapping_pending with the stamp intact) and a LATER
+    # create without the flag still refuses. Without the stamp, fill-in +
+    # --skip-approval + mapping_pending + a later mapped create created the
+    # issue on a None fall-through.
+    if approval_state is None:
+        sidecar_state = _read_sidecar_payload(draft_path).get("state")
+        if sidecar_state == _PREPARE_STATE_BLOCKED:
+            # The draft started blocked (typically: `issue prepare` without a
+            # Stage — CLI prepare has no --stage flag by settled R3b) and was
+            # repaired by editing the draft file. The human gate applies:
+            # promote the sidecar and refuse unless --skip-approval covers
+            # this invocation.
+            _update_sidecar_state(
+                draft_path,
+                {"state": _PREPARE_STATE_READY, "approval_state": _APPROVAL_NEEDS_OPERATOR},
+            )
+            approval_state = _APPROVAL_NEEDS_OPERATOR
+
     if approval_state == _APPROVAL_NEEDS_OPERATOR and not skip_approval:
         message = (
             f"Prepared draft awaits operator approval; run "
@@ -5716,6 +5775,18 @@ def issue_create_prepared(
         url = str(resume_state["created_issue_url"])
         number = int(resume_state["created_issue_number"])
         remaining_steps = list(resume_state["remaining_steps"])
+        # W10 legacy-sidecar migration: a post_create_pending sidecar whose
+        # remaining lifecycle steps carry no "stage" token predates the two-field
+        # Intake exit and still owes the Stage write. Stage goes before Status
+        # (KTD1a); `flow_set_field` is idempotent for Stage/Status, so the
+        # rewrite on a resumed Status-failure sidecar stays safe (sdlc#91 R5).
+        if "stage" not in remaining_steps and remaining_steps:
+            insert_at = (
+                remaining_steps.index("status")
+                if "status" in remaining_steps
+                else len(remaining_steps)
+            )
+            remaining_steps.insert(insert_at, "stage")
         mapping_pr_url = (
             str(resume_state["mapping_pr_url"]) if resume_state.get("mapping_pr_url") else None
         )
@@ -5754,7 +5825,7 @@ def issue_create_prepared(
         created_at = datetime.now(UTC).isoformat()
         mutation_summary = [asdict(step) for step in plan.steps]
         pending_mapping = bool(mapping_pr_url and override_mapping)
-        remaining_steps = ["board-add", "status"]
+        remaining_steps = ["board-add", "stage", "status"]
         _append_created_issue_to_draft(draft_path, url, number)
         _update_sidecar_state(
             draft_path,
@@ -5784,6 +5855,14 @@ def issue_create_prepared(
                     strict=True,
                 )
                 remaining_steps = [step for step in remaining_steps if step != "board-add"]
+            _update_sidecar_state(draft_path, {"remaining_steps": remaining_steps})
+
+        if "stage" in remaining_steps:
+            # Readiness already refused any draft with a missing or empty Stage,
+            # so the authored value is present by the time this write runs.
+            assert issue.stage is not None
+            flow_set_field(issue.project, issue.repo, number, "Stage", issue.stage, fmt="text")
+            remaining_steps = [step for step in remaining_steps if step != "stage"]
             _update_sidecar_state(draft_path, {"remaining_steps": remaining_steps})
 
         if "status" in remaining_steps:
@@ -6463,6 +6542,25 @@ def issue_create(
             print("Skipping post-create metadata.")
             return
 
+        # Step 8a (W10, sdlc#91 R9): report the Intake-exit bypass as soon as a
+        # real issue number exists — BEFORE the card-contract gate can return,
+        # so a body-gate decline still leaves the bypass report on stdout
+        # (F-3, sdlc#91 CR c1). The interactive path created the issue OUTSIDE
+        # the prepared-issue exit, so the initialization of both lifecycle
+        # fields did not run. Status may already carry an operator-chosen
+        # value (the prompt above), so the report never claims Status is
+        # unset. Reporting is the requirement — the path proceeds unchanged
+        # (R10), and under the operator ruling there is no default Stage to
+        # apply here: this path has no prepared draft carrying an
+        # author-supplied one. Abort, decline-browser, no-number, and
+        # --skip-metadata stay silent: no issue was created on those paths.
+        print(
+            f"\nNOTE: {repo}#{issue_number} was created outside the Intake exit. "
+            "The prepared-issue initialization of both lifecycle fields (Stage, Status) "
+            "did not run. Use `issue create-prepared` to create issues through the "
+            "Intake exit."
+        )
+
         # Step 8b: gate on the card contract before carding it. The prepared
         # path has always blocked here; this path never checked.
         if not _gate_created_issue_body(repo, issue_number, issue_type, fmt):
@@ -6478,6 +6576,9 @@ def issue_create(
             field_values,
             fmt,
         )
+
+        # (The bypass NOTE fired at Step 8a, before the card-contract gate
+        # could return — see above.)
 
         # Step 10: paired-card prompt — suppressed in recursive call to
         # prevent unbounded nesting.

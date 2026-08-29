@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.148.0] - 2026-08-29
+
+### Changed
+
+- **The two Intake commands state and enforce the no-issue-creation boundary (unit W10, SDLC
+  R77, sdlc#91).** `/office-hours` (restated HARD GATE) and `/ideate` (new core principle 5)
+  each say in their own text that they produce durable source material only — they never create
+  or mutate a GitHub issue and never run `gh issue create`; the durable GitHub issue at the
+  Intake exit is created by Mission Control, reached through `/handoff`. Neither command invokes
+  `issue create-prepared` directly. `tests/test_saga_plugin.py::test_intake_exit_saga_creates_no_issue`
+  pins the boundary three ways so it cannot pass vacuously: every `gh issue create` mention must
+  sit inside a negation window; positive identity (producing verbs, durable artifact paths, and
+  the `/ideate`, `/brainstorm`, `/plan`, `/handoff` routes must survive); a seeded violation — a
+  bare runnable `gh issue create` appended to a copied corpus — fails the check. The office-hours
+  two-mode/HARD GATE contract test is otherwise unchanged.
+
 ## [0.147.0] - 2026-08-29
 
 ### Changed

@@ -45,8 +45,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.147.0"  # W8 c2 (sdlc#89): no-deployable Verify route states
-    # its merge precondition; successor to W8 c1's (sdlc#89) verify-entry 0.146.0
+    assert plugin_json["version"] == "0.148.0"  # W10 (sdlc#91): office-hours + ideate state and
+    # test the Intake no-issue-creation boundary; successor to W8 c2's (sdlc#89) Verify-precondition 0.147.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -3897,3 +3897,77 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # STILL PRESENT (KTD5): durable state fields that the card derives its cells from.
     assert "next-step" in resume_doc
     assert "blockers" in resume_doc
+
+
+def test_intake_exit_saga_creates_no_issue() -> None:
+    """W10 / sdlc#91 AE32: the two Intake commands are boundary-bounded —
+    office-hours and ideate produce durable source material and carry NO runnable
+    GitHub issue-creating instruction. Mission Control owns issue creation (its
+    `issue create-prepared` path), reached through `/handoff`.
+
+    A flat absence assert would also pass an emptied corpus, so the test pins
+    three mechanisms: (1) no `issue create-prepared` invocation and no runnable
+    `gh issue create`, with every `gh issue create` mention inside a negation
+    window; (2) POSITIVE identity — the corpora still carry their producing
+    verbs and durable artifact paths; (3) a seeded violation — a bare runnable
+    `gh issue create` appended to a copy FAILS the check, proving teeth.
+    """
+    office_doc = _read(PLUGIN_ROOT / "skills" / "office-hours" / "SKILL.md")
+    ideate = PLUGIN_ROOT / "skills" / "ideate"
+    ideate_doc = _read(ideate / "SKILL.md")
+    convergence_doc = _read(ideate / "references" / "convergence-and-partnership.md")
+    corpora = {"office-hours": office_doc, "ideate": ideate_doc + "\n" + convergence_doc}
+
+    def _boundary_check(corpus: str, surface: str) -> None:
+        assert "issue create-prepared" not in corpus, (
+            f"{surface} must not invoke Mission Control's issue creation directly"
+        )
+        for match in re.finditer(r"gh issue create", corpus):
+            window = corpus[max(0, match.start() - 60) : match.start()]
+            assert re.search(r"\b(not|never|no)\b", window, re.IGNORECASE), (
+                f"every `gh issue create` mention must sit inside a negation window "
+                f"({surface}), found near: "
+                f"{corpus[max(0, match.start() - 50) : match.end() + 30]!r}"
+            )
+
+    for surface, corpus in corpora.items():
+        _boundary_check(corpus, surface)
+
+    # --- (R6) the boundary is STATED in each command's own skill text — deleting
+    # the boundary prose from either SKILL.md fails this test. ---
+    assert "durable source material only" in office_doc, (
+        "office-hours must state that it produces durable source material only"
+    )
+    assert "Mission Control owns issue creation" in office_doc, (
+        "office-hours must name Mission Control as the issue-creation owner"
+    )
+    assert "durable source material" in ideate_doc, (
+        "ideate must state that it produces durable source material"
+    )
+    assert "never runs `gh issue create`" in ideate_doc, (
+        "ideate must carry the never-runs-gh-issue-create boundary in its own text"
+    )
+
+    # --- POSITIVE IDENTITY: withdrawing issue-creation authority removed nothing
+    # the commands produce. Each corpus still carries its producing verbs + paths. ---
+    assert "diagnos" in office_doc.lower(), "office-hours must keep its diagnostic identity"
+    assert "frame" in office_doc.lower(), "office-hours must keep its frame-finding identity"
+    for route in ("/ideate", "/brainstorm", "/plan", "/handoff"):
+        assert route in office_doc, f"office-hours routing must still name {route}"
+    for verb in ("generate", "critique", "reject"):
+        assert verb in ideate_doc.lower(), f"ideate must keep its {verb} identity"
+    assert "docs/ideation/" in ideate_doc, "ideate's durable artifact path must survive"
+    assert "/handoff" in convergence_doc, "/ideate must still route to /handoff (Mission Control)"
+
+    # --- SEEDED VIOLATION: the same check FAILS on a bare runnable `gh issue create`.
+    # The seed keeps its token >60 chars away from any negation the doc happens to carry. ---
+    seeded = office_doc + (
+        "\nAs a later step in this flow you would then: "
+        "gh issue create --repo infiquetra/infiquetra-sdlc\n"
+    )
+    failed = False
+    try:
+        _boundary_check(seeded, "seeded-violation")
+    except AssertionError:
+        failed = True
+    assert failed, "the seeded bare `gh issue create` must FAIL the boundary check"

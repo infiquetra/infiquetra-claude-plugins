@@ -32,6 +32,9 @@ Usage:
     sdlc_manager.py fields create-option --project asgard --field initiative --option "new-initiative"
     sdlc_manager.py fields set-options --project asgard --field Status --options-file options.json
     sdlc_manager.py fields discover --project asgard
+    # fields create-option ONLY inspects a field and prints its options — it
+    # performs no mutation; writes go through fields set-options (complete
+    # option list, existing ids preserved)
 
     sdlc_manager.py metrics cycle-time --project asgard [--days 30] [--type capability]
     sdlc_manager.py metrics throughput --project asgard [--weeks 4]
@@ -984,7 +987,7 @@ query($org: String!, $number: Int!, $cursor: String) {
           }
           ... on ProjectV2SingleSelectField {
             id name
-            options { id name }
+            options { id name color description }
           }
           ... on ProjectV2IterationField {
             id name
@@ -1835,6 +1838,17 @@ def _validate_option_set_request(
         )
     if not isinstance(current_options, list):
         raise OptionSetIdentityError("current_options must be a list")
+    if not current_options:
+        # A lifecycle field on a live board always carries options; an empty
+        # current list means the fetch failed or was truncated, and this
+        # submission cannot be verified as the complete desired set.
+        raise OptionSetIdentityError(
+            "live option list is empty: the complete-set guarantee cannot be "
+            "verified against a field read as having no options — fetch the "
+            "field's live options (fetch_single_select_field) and retry; a "
+            "one-option submission against the real field would overwrite the "
+            "whole set"
+        )
 
     current_by_id = {o["id"]: o for o in current_options if o.get("id")}
     current_names_ci = {str(o["name"]).casefold() for o in current_options}
@@ -6706,7 +6720,14 @@ def main() -> None:
     fields_p = subparsers.add_parser("fields", help="Project field management")
     fields_sp = fields_p.add_subparsers(dest="action", required=True)
 
-    fields_create_p = fields_sp.add_parser("create-option", help="Create new single-select option")
+    fields_create_p = fields_sp.add_parser(
+        "create-option",
+        help=(
+            "Inspect a single-select field and its existing options ahead of adding "
+            "one — performs NO mutation (a one-option write is not safe; the option "
+            "set is overwritten whole)"
+        ),
+    )
     fields_create_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
     fields_create_p.add_argument(
         "--field", required=True, help="Field name (e.g. initiative, objective)"

@@ -116,7 +116,7 @@ def test_option_identity_rejects_unknown_id_not_on_live_field() -> None:
     assert _mutation_calls(mock_graphql) == []
 
 
-def test_option_identity_rejects_duplicate_ids_and_names() -> None:
+def test_option_identity_rejects_duplicate_ids() -> None:
     with (
         patch.object(sdlc_manager, "_graphql") as mock_graphql,
         _identity_error("more than once"),
@@ -126,6 +126,18 @@ def test_option_identity_rejects_duplicate_ids_and_names() -> None:
             [_opt("OPT_idea", "Idea"), _opt("OPT_idea", "Idea (again)")],
             current_options=CURRENT,
         )
+    assert _mutation_calls(mock_graphql) == []
+
+
+def test_option_identity_rejects_case_insensitive_duplicate_names() -> None:
+    """A same-name-same-casefold collision INSIDE the submission is caught —
+    case-insensitively (cycle-1 finding F-9: this case previously hid behind a
+    shared pytest.raises and never ran). The live-option-name variant of the
+    same hazard is covered by ..._rejects_retained_option_without_existing_id."""
+    with (
+        patch.object(sdlc_manager, "_graphql") as mock_graphql,
+        _identity_error("more than once"),
+    ):
         sdlc_manager.update_field_single_select_options(
             FIELD_ID,
             [_opt("OPT_idea", "Idea"), _opt("OPT_shaping", "IDEA", "YELLOW")],
@@ -295,6 +307,70 @@ def test_fields_set_options_dry_run_writes_nothing(tmp_path) -> None:
     ):
         sdlc_manager.fields_set_options("asgard", "Status", str(opts_file), dry_run=True)
     assert mock_graphql.call_count == 0
+
+
+def test_fields_set_options_apply_sends_complete_identity_preserving_list(tmp_path) -> None:
+    """The live S8 shape (cycle-1 finding F-8): fields set-options WITHOUT
+    --dry-run sends QUERY_UPDATE_FIELD_OPTIONS carrying the complete desired
+    set with every existing option id preserved."""
+    opts_file = tmp_path / "options.json"
+    opts_file.write_text(
+        '[{"id": "OPT_idea", "name": "Capturing", "color": "GRAY"},'
+        ' {"id": "OPT_shaping", "name": "Shaping", "color": "YELLOW"},'
+        ' {"id": "OPT_ready", "name": "Ready for Active", "color": "BLUE"},'
+        ' {"name": "Blocked", "color": "RED"}]',
+        encoding="utf-8",
+    )
+    project = {"number": 2, "id": "PVT_asgard"}
+    field = {
+        "id": FIELD_ID,
+        "name": "Status",
+        "options": [{"id": o["id"], "name": o["name"], "color": o["color"]} for o in CURRENT],
+    }
+    returned = [
+        _opt("OPT_idea", "Capturing"),
+        _opt("OPT_shaping", "Shaping", "YELLOW"),
+        _opt("OPT_ready", "Ready for Active", "BLUE"),
+        _opt("OPT_new_1", "Blocked", "RED"),
+    ]
+
+    def side_effect(query, variables=None):
+        assert query == sdlc_manager.QUERY_UPDATE_FIELD_OPTIONS
+        return {"updateProjectV2Field": {"projectV2Field": {"id": FIELD_ID, "options": returned}}}
+
+    with (
+        patch.object(
+            sdlc_manager,
+            "load_config",
+            return_value={"project_mappings": {"projects": {"asgard": project}}},
+        ),
+        patch.object(sdlc_manager, "get_project_config", return_value=project),
+        patch.object(sdlc_manager, "get_project_fields", return_value=("PVT_asgard", [field])),
+        patch.object(sdlc_manager, "_graphql", side_effect=side_effect) as mock_graphql,
+    ):
+        sdlc_manager.fields_set_options("asgard", "Status", str(opts_file), dry_run=False)
+
+    (mutation,) = _mutation_calls(mock_graphql)
+    submitted = mutation.args[1]["options"]
+    submitted_ids = {o["id"] for o in submitted if "id" in o}
+    assert submitted_ids == {o["id"] for o in CURRENT}  # every live id resubmitted
+    # the rename is by-id, never a new option
+    assert next(o for o in submitted if o["id"] == "OPT_ready")["name"] == "Ready for Active"
+    assert len([o for o in submitted if "id" not in o]) == 1
+
+
+def test_option_set_complete_list_refuses_empty_live_options() -> None:
+    """A submission cannot be verified as the complete set against a field read
+    as having NO options (an empty or truncated read) — refuse and demand the
+    live option list first (cycle-1 finding F-8, the empty-current seam)."""
+    with (
+        patch.object(sdlc_manager, "_graphql") as mock_graphql,
+        _identity_error("live option list is empty"),
+    ):
+        sdlc_manager.update_field_single_select_options(
+            FIELD_ID, [{"name": "one-option", "color": "RED"}], current_options=[]
+        )
+    assert _mutation_calls(mock_graphql) == []
 
 
 def test_unsafe_reference_query_removed_from_mission_control() -> None:

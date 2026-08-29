@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.14.0] - 2026-08-29
+
+### Added - identity-preserving single-select option-set helper (issue infiquetra/infiquetra-sdlc#94)
+
+- `fields set-options --project <p> --field <f> --options-file <json> [--dry-run]`:
+  replaces a single-select field's option set via
+  `update_field_single_select_options`, which refuses — before any mutation is
+  sent — a submission that is not the COMPLETE desired list, drops a live
+  option, or omits an existing option `id` on a retained or renamed option
+  (`singleSelectOptions` overwrites the whole set; omitting an id mints a new
+  option and clears every item value pointing at the old one).
+- `fields create-option` corrected: it has never mutated anything; its doc,
+  help, and runtime output now say so plainly, and the destructive one-option
+  `QUERY_CREATE_FIELD_OPTION` reference example was removed from
+  `skills/board/references/graphql-queries.md`.
+- `QUERY_GET_PROJECT_FIELDS` now returns option `color` and `description`, so
+  a field discovery dump can feed `--options-file` directly.
+
 ## [2.13.0] - 2026-08-28
 
 ### Added - one constrained lifecycle-field mutation, atomic across every board carrying the issue (#87)

@@ -120,22 +120,16 @@ If depth is unclear, ask one targeted question, then continue.
 
 ---
 
-### 0.6 Move the card to Shaping
+### 0.6 The card moves to Shaping — through Mission Control, not through this skill
 
-**Board Status is part of a phase boundary, not only of the merge.** The card should say what is
-happening to it while it happens. The operations board's ladder is
-`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, and each move is the same reconcile tick
-Phase 4.4 uses -- `set-field-status` is `reversible` with `always_operator=False`, and its
-`target_state` is part of the idempotency key, so a repeated tick collapses to `skipped` rather than
-re-writing. Read `written`/`skipped` as success; `halt`/`gated` falls back to the operator-prompted
-path.
-
-```bash
-python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> --target-state Shaping
-```
-
-Skip it silently when there is no issue -- a plan with no card has no Status to move.
+**Saga does not write the board.** Mission Control is the only routine writer of the board's
+`Stage` and `Status` fields; a Saga command that decided on its own that a card should move would
+hold autonomous write authority over a field it no longer writes. What this skill owns is the
+*durable state the move is derived from*: the plan artifact, the saga tick (`lifecycle_phase=plan`),
+and the work-session path. Mission Control — the operator, or the run coordinator's board flow —
+moves the card to Shaping from that derived state. Do not run a reconcile tick, a `flow set-field`
+submission, or any other lifecycle-field write from here. When there is no issue, there is simply
+no card to move; say nothing further.
 
 ## Phase 1 — Ground (HOW)
 
@@ -255,24 +249,15 @@ vector). Add `deepened: YYYY-MM-DD` to frontmatter when the plan was substantive
 
 ## Phase 5 — Saga, route, and operator-choice
 
-### 5.0 Move the card to Ready
+### 5.0 The card moves to Ready — through Mission Control, not through this skill
 
 The plan exists and is committed, so the card is no longer being shaped -- it is ready to build.
 
-**Board Status is part of a phase boundary, not only of the merge.** The card should say what is
-happening to it while it happens. The operations board's ladder is
-`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, and each move is the same reconcile tick
-Phase 4.4 uses -- `set-field-status` is `reversible` with `always_operator=False`, and its
-`target_state` is part of the idempotency key, so a repeated tick collapses to `skipped` rather than
-re-writing. Read `written`/`skipped` as success; `halt`/`gated` falls back to the operator-prompted
-path.
-
-```bash
-python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> --target-state Ready
-```
-
-Skip it silently when there is no issue -- a plan with no card has no Status to move.
+**Saga does not write the board.** As in Phase 0.6, the `Status → Ready` move belongs to Mission
+Control, derived from what this skill durably produced: the committed plan, the saga tick, and the
+work-session path. Do not run a reconcile tick, a `flow set-field` submission, or any other
+lifecycle-field write from here. When there is no issue, there is no card to move; say nothing
+further.
 
 ### 5.1 Ask the destination
 

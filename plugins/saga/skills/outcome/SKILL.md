@@ -174,19 +174,29 @@ reach `fable`, and neither fact is visible in the spec itself.
 ## Autonomous board-sync (`advance --autonomous`)
 
 By default `advance` performs **no** GitHub writes — it dispatches and derives status, nothing more. The
-opt-in `--autonomous` flag lets a tick *also* move the operations board to match each leaf's derived state,
-but only inside a strictly **enumerated, reversibility-gated envelope**. Every candidate write is checked
-against the reversibility certificate (`reversibility_certificate.authorize_write`), which **defaults to
-GATE**: a write happens only when the op is one of the enumerated, reversible-or-additive kinds.
+opt-in `--autonomous` flag lets a tick *also* act on the operations board to match each leaf's derived
+state, but only inside a strictly **enumerated, reversibility-gated envelope**. Every candidate write is
+checked against the reversibility certificate (`reversibility_certificate.authorize_write`), which
+**defaults to GATE**: a write happens only when the op is one of the enumerated, reversible-or-additive
+kinds.
+
+**Since W7 (SDLC R30/R34), no lifecycle-FIELD write is ever autonomous here.** Mission Control is the only
+routine writer of the board's `Stage` and `Status` fields, and `/outcome` holds no authority to initiate
+either field's write — not autonomously, and not as a by-product of `advance`. When a leaf enters its
+ready/dispatched frontier, the derived state change surfaces through the coalesced progress comment below,
+and the field move itself belongs to Mission Control, derived from the outcome's durable state. `/outcome`
+composes no `set-field-status` op of any kind.
 
 **Performed autonomously when authorized:**
 
-- **Set the leaf's Status field** to `In Progress` when the leaf enters its ready/dispatched frontier
-  (reversible: the inverse is setting the prior value).
-- **Close the leaf's sub-issue** when the leaf reaches its done state (reversible: the inverse is reopen).
+- **Close the leaf's sub-issue** when the leaf reaches its done state (an issue-state write, not a
+  lifecycle-field write; reversible: the inverse is reopen) — routed through mission-control's
+  `issue close`, never a direct write.
 - **Add or remove an issue label** (each is the other's inverse).
 - **Post one coalesced progress comment** per meaningful leaf transition — additive, append-only, and
-  bounded by a coalescing idempotency key so rapid repeat ticks never spam duplicate comments.
+  bounded by a coalescing idempotency key so rapid repeat ticks never spam duplicate comments. This
+  comment is how a ready/dispatched state change is *surfaced* now that the Status field move routes
+  through Mission Control.
 
 **Never autonomous by default — the operator's keystroke, with ONE scoped, revocable exception (#449):**
 
@@ -235,11 +245,14 @@ and surfaces any divergence for you to resolve. It adds no writer of its own and
 leaves proceed), and on demand via `outcome reconcile <id>` (read-only; no coordinator lease). It is silent
 unless something diverged.
 
-**The saga-owned field class** is exactly what the writer writes: board **Status** and issue **open/closed**.
-A field saga never wrote (a hand-added label) is out of scope and never a false positive. An external close
-is **contract-aware**: a `completed` close that satisfies a non-code leaf's completion contract is the
-harvester's sanctioned path and stays silent; a `not_planned` close, or a close on a code leaf (whose
-contract is a merged PR, not a closed issue), is drift.
+**The saga-owned field class** is what the writer has historically written — board **Status** and issue
+**open/closed** — plus the issue-state writes it still composes (`sub-issue-close`, labels, comments). Since
+W7, new campaigns write no Status field at all, so their Status class is empty; ledgers from campaigns that
+ran before W7 keep their Status-drift detection, and a detected drift resolves through the operator (below),
+never through an automatic rewrite. A field saga never wrote (a hand-added label) is out of scope and never
+a false positive. An external close is **contract-aware**: a `completed` close that satisfies a non-code
+leaf's completion contract is the harvester's sanctioned path and stays silent; a `not_planned` close, or a
+close on a code leaf (whose contract is a merged PR, not a closed issue), is drift.
 
 **Resolving a drift.** Each divergence surfaces as one line — `{kind} {repo}#{number}: saga={X} board={Y}
 (author?)` — and offers three actions (`outcome reconcile <id> --resolve <drift-id> --action ...`):
@@ -248,7 +261,9 @@ contract is a merged PR, not a closed issue), is drift.
   `not_planned` external close this records the acceptance but mints **no** completion event — it advises
   `/outcome prune <subplot>` to drop the leaf from the frontier (a graph edit stays yours).
 - **re-assert** — saga's value wins; re-driven through the certificate (`authorize_write` first) and the
-  same board-sync writer, never a direct write.
+  same board-sync writer, never a direct write. Since W7 this is the *only* path by which `/outcome` touches
+  the Status field: an explicit operator resolution, submitted through the mission-control mutation contract
+  (`flow set-field --correction`), never an autonomous tick.
 - **hold** — records nothing; the drift resurfaces on the next detection.
 
 Resolution is **human-in-the-loop** today, behind a single replaceable policy seam so a future

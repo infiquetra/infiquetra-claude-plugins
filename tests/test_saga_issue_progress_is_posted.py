@@ -74,9 +74,6 @@ def test_it_is_routed_through_the_ledger_rather_than_the_bare_verb(skill_text: s
 
 PLAN_SKILL = ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
 
-# The operations board's ladder, read from the live project rather than assumed.
-LADDER = ["Idea", "Shaping", "Ready", "Active", "Verify", "Done"]
-
 
 @pytest.fixture(scope="module")
 def plan_text() -> str:
@@ -84,34 +81,37 @@ def plan_text() -> str:
 
 
 class TestTheCardMovesAtPhaseBoundaries:
-    """A card that only moves at merge says nothing while nine units build against it.
+    """Since W7 (SDLC R30) the phase-boundary card moves belong to Mission Control.
 
-    `set-field-status` was always reversible, prompt-free, and keyed by target state — so moving the
-    card mid-lifecycle needed no new machinery, only the instruction. Same shape as the phase comment
-    that was rendered and never posted.
+    The move instructions /plan and /work used to carry (`--target-state Shaping/Ready/Active/
+    Verify/Done` reconcile ticks) are REMOVED: a Saga command that decides on its own that a card
+    should move holds autonomous write authority over a field it no longer writes. What is pinned
+    here is the durable statement of that boundary at each former write site, that no lifecycle-
+    field write argv survives, and that the two non-field ops (progress comment, sub-issue close)
+    survive.
     """
 
-    def test_planning_moves_the_card_to_shaping_and_then_ready(self, plan_text: str) -> None:
-        assert "--target-state Shaping" in plan_text
-        assert "--target-state Ready" in plan_text
+    def test_planning_states_mission_control_owns_the_move(self, plan_text: str) -> None:
+        assert "Saga does not write the board" in plan_text
+        assert "--target-state" not in plan_text
+        assert "set-field-status" not in plan_text
 
-    def test_building_moves_the_card_to_active_and_then_verify(self, skill_text: str) -> None:
-        assert "--target-state Active" in skill_text
-        assert "--target-state Verify" in skill_text
+    def test_building_states_mission_control_owns_the_move(self, skill_text: str) -> None:
+        assert "Saga does not write the board" in skill_text
+        assert "--target-state" not in skill_text
+        assert "set-field-status" not in skill_text
 
-    def test_done_is_still_owned_by_the_post_merge_path(self, skill_text: str) -> None:
-        """Phase 4.4 has always driven Done; the new moves must not duplicate it."""
-        assert "--target-state Done" in skill_text
-        assert skill_text.count("--target-state Done") == 1
+    def test_done_is_owned_by_mission_control_and_the_close_survives(self, skill_text: str) -> None:
+        """Phase 4.4 hands the delivered-terminal Status move to Mission Control; the post-merge
+        sub-issue close (an issue-state write, not a field write) still fires."""
+        assert "--op sub-issue-close" in skill_text
+        assert "Mission Control" in skill_text.split("### 4.4")[1].split("## Phase 5")[0]
 
-    def test_every_state_named_is_on_the_real_board_ladder(
+    def test_no_lifecycle_field_argv_remains_in_either_skill(
         self, skill_text: str, plan_text: str
     ) -> None:
-        """A typo'd state is a silent no-op, not an error."""
-        import re
-
-        named = set(re.findall(r"--target-state (\w+)", skill_text + plan_text))
-        assert named <= set(LADDER), named - set(LADDER)
+        """A typo'd state would be a silent no-op; since W7 there are no state argv at all."""
+        assert "--target-state" not in (skill_text + plan_text)
 
     def test_a_plan_with_no_issue_does_not_try_to_move_a_card(self, plan_text: str) -> None:
         assert "no issue" in plan_text

@@ -161,58 +161,46 @@ def test_scope_excludes_operator_field(tmp_path: Path) -> None:
     assert any("#42" in ref for ref in status_calls)
 
 
-def test_partial_failure_no_blind_spot(tmp_path: Path) -> None:
-    """Landed-but-unrecorded Status write (AE3): live == expected, no ledger key → recover + rewrite."""
+def test_w7_lost_status_key_is_neither_drift_nor_recovered(tmp_path: Path) -> None:
+    """W7: a landed-but-unrecorded STATUS write is neither recovered nor flagged. The pre-W7
+    recover arm rewrote a lost ledger key from the schema-recomputed expected Status; since
+    ``/outcome`` composes no lifecycle-field write (SDLC R30/R34), there is no expected value to
+    recompute and no key of ours to heal — the ledger-asserted view (empty for status) is silent."""
     store = _store(tmp_path)
-    spec = _spec([_leaf("leaf1")])  # no deps, no completion → ready → expected 'Ready' (operations)
-    # In-scope via a coalesced comment record, but the set-field-status key was lost to a crash.
+    spec = _spec([_leaf("leaf1")])  # no deps, no completion → the leaf is in the ready frontier
+    # In-scope via a coalesced comment record, but (hypothetically, pre-W7) the set-field-status
+    # key was lost to a crash.
     _seed(store, op_kind="issue-progress-comment", target_state="ready")
     board_reader, issue_reader = _readers(status="Ready", state="open")
     out = RECON.detect(spec, store, board_reader=board_reader, issue_reader=issue_reader)
-    recovered = [r for r in out if r["kind"] == "recovered"]
-    assert len(recovered) == 1
-    assert recovered[0]["target_state"] == "Ready"
-    assert not [r for r in out if r["kind"] in RECON.DRIFT_KINDS]  # a recover is NOT a drift
-    # The missing key was rewritten, so a second detect is silent (baseline is whole again).
-    board_reader2, issue_reader2 = _readers(status="Ready", state="open")
-    assert RECON.detect(spec, store, board_reader=board_reader2, issue_reader=issue_reader2) == []
+    assert not [r for r in out if r["kind"] == "recovered"], (
+        "the recover arm for lifecycle-field writes is gone with W7"
+    )
+    assert not [r for r in out if r["kind"] in RECON.DRIFT_KINDS], (
+        "no status assertion exists in the ledger, so a matching live value is not drift"
+    )
+    assert RECON.detect(spec, store, board_reader=board_reader, issue_reader=issue_reader) == []
 
 
-def test_s4_expected_status_resolves_through_the_plugin_resolver(
+def test_w7_detection_never_resolves_the_schema_for_status(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """#620 KTD5/S4: the recover branch's expected-Status recomputation resolves the schema through
-    the mission-control resolver (via `_default_schema_path`), NOT the pre-#620 monorepo arithmetic.
-    Point the resolver at a fabricated root and prove the recovered target_state comes from it."""
+    """W7: drift detection never resolves the SDLC schema (the pre-W7 expected-Status recomputation
+    seam, #620 KTD5/S4, is retired with the status writes it fed) — a broken resolver cannot break
+    detection."""
     import board_progression as _bp
 
-    mc_root = tmp_path / "resolved-mc"
-    (mc_root / "config").mkdir(parents=True)
-    (mc_root / "scripts").mkdir(parents=True)
-    (mc_root / "scripts" / "sdlc_manager.py").write_text("# stub\n")
-    (mc_root / "config" / "sdlc-schema.json").write_text(
-        json.dumps(
-            {
-                "saga_lifecycle": {
-                    "phase_board_map": {
-                        "review": {"operations": ["FabricatedReady"]},
-                        "work": {"operations": ["FabricatedActive"]},
-                    }
-                }
-            }
-        )
-    )
-    monkeypatch.setattr(_bp, "resolve_mission_control_root", lambda: (mc_root, 3))
+    def must_not_resolve() -> tuple[Path, int]:
+        raise AssertionError("detect must not resolve the SDLC schema after W7")
+
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", must_not_resolve)
 
     store = _store(tmp_path)
-    spec = _spec([_leaf("leaf1")])  # ready → expected status resolved from the schema above
+    spec = _spec([_leaf("leaf1")])
     _seed(store, op_kind="issue-progress-comment", target_state="ready")
-    board_reader, issue_reader = _readers(status="FabricatedReady", state="open")
+    board_reader, issue_reader = _readers(status="Ready", state="open")
     out = RECON.detect(spec, store, board_reader=board_reader, issue_reader=issue_reader)
-    recovered = [r for r in out if r["kind"] == "recovered"]
-    assert len(recovered) == 1
-    # The status came from the RESOLVED root's schema — proving S4 no longer hardcodes the layout.
-    assert recovered[0]["target_state"] == "FabricatedReady"
+    assert out == [], "a comment-only ledger with a matching live board stays silent"
 
 
 def test_external_close_surfaced(tmp_path: Path) -> None:

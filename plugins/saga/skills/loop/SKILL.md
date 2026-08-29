@@ -149,28 +149,44 @@ saga fields** (`lifecycle_phase`, `phase_status`, `status`, `plan_path`, `review
 `destination`) — it reads no writable board Status column, board cache, or `board_progression`
 write-record, so it renders what the saga asserts, never what the board says (KD4 derived-on-read).
 
-**Boundary (#344 KTD3, refined #450): `/loop` renders, sequences, and reconciles; it never drives NEW
-forward progression.** `/loop`'s first principle is route-and-sequence, not execute-phase-work — the
-autonomous, allowlisted *forward* board progression (Status → Done, sub-issue close on merge) fires
-from **`/work`'s post-merge path** (which owns the merge), never from `/loop`. What `/loop` DOES own
-(#450) is a **level-triggered reconcile tick** over the saga-owned Status field the lifecycle has
-already asserted: at Route/Drive/Resume entry, alongside the arc render, run the shared controller in
-drift-detect mode so an outside edit made while `/loop` was at rest is re-detected and reconciled:
+**Boundary (#344 KTD3, refined #450; bounded by W7/SDLC R33): `/loop` renders, sequences, and
+reconciles; it never drives NEW forward progression and it never writes the lifecycle fields.**
+`/loop`'s first principle is route-and-sequence, not execute-phase-work — since W7, Mission Control
+is the only routine writer of the board's `Stage` and `Status` fields, so a forward Status move
+belongs to Mission Control (derived from `/work`'s durable state after it owns the merge), never
+from `/loop`. What `/loop` DOES own (#450) is a **read-only level-triggered drift tick** over the
+Status value the lifecycle has already asserted: at Route/Drive/Resume entry, alongside the arc
+render, run the shared controller's `detect` subcommand so an outside edit made while `/loop` was
+at rest is re-detected:
 
 ```bash
-python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> --target-state <saga-derived Status>
+python3 plugins/saga/scripts/reconcile_controller.py detect \
+  --op set-field-status --repo <owner/repo> --number <N> \
+  --target-state <saga-derived Status already asserted>
 ```
 
-This is the SAME shared controller `/work` uses post-merge (`/outcome` composes the same
-`board_progression` + drift-vocabulary primitives underneath, but its `advance` loop is not yet a
-controller consumer — tracked in #593). It re-asserts the saga-derived value on a reversible
-Status drift (`{"status":"corrected"}`), and HALTs with a named `halt_reason` on an irreversible
-open/closed drift (surface it, never overwrite). It reconciles only the already-asserted,
-allowlisted field — it does **not** widen `/loop`'s autonomy or make it execute phase work (#450
-non-goal). The no-new-forward-progression boundary (a first-time forward move belongs to `/work`)
-is documented convention enforced by this skill's instructions, not mechanically by the controller
-— pass a `--target-state` only for a Status `/loop` has already asserted.
+`detect` is read-only by construction — it builds no writer, mints no ledger key, and can never
+drive a write. It does not widen `/loop`'s autonomy or make it execute phase work (#450 non-goal).
+It emits one record:
+
+- `{"status":"skipped"}` — converged: the board already holds the asserted value.
+- `{"status":"drift", ...}` — a reversible outside edit to the Status field. **Submit the
+  correction through the Mission Control mutation contract, with the operator's confirmation**:
+  surface the drift record (`drift_kind`, `drift_id`, `board_value`, prepared `saga_value`), and
+  once the operator confirms, drive the re-assert through the certificate-gated reconcile tick for
+  the op the drift record carries (`set-field-status`, target `saga_value`) — the tick lands as
+  Mission Control's own `flow set-field --correction`. Never re-write the field without
+  that confirmation (M7: pause automated writes, route through the operator).
+- `{"status":"halt", "halt_reason": ...}` — an irreversible outside open/closed change; surface the
+  named reason, never overwrite, and fall back to the operator-prompted path.
+
+The same shared drift vocabulary and idempotency writer sit underneath (`/outcome` composes the
+same `board_progression` + drift-vocabulary primitives underneath, but its `advance` loop is not
+yet a controller consumer — tracked in #593). The no-new-forward-progression boundary (a
+first-time forward move belongs to `/work`, and the field move to Mission Control) is now
+mechanically enforced for this tick — `detect` cannot write — in addition to being documented
+convention: pass a `--target-state` only for a Status `/loop` has already asserted, and never run
+a writing `reconcile` tick for a lifecycle field from this skill.
 
 ---
 

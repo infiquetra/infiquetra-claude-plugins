@@ -1045,7 +1045,7 @@ def advance(
                 # moved underneath saga; a detection failure degrades to a note, never wedges the tick.
                 try:
                     drift_records = outcome_reconcile.detect(
-                        spec, store, board_reader=_br, issue_reader=_ir, project=project, now=now
+                        spec, store, board_reader=_br, issue_reader=_ir, now=now
                     )
                 except Exception as exc:  # noqa: BLE001 — best-effort; never tick-fatal
                     drift_records = [{"kind": "unreadable", "error": str(exc)}]
@@ -2803,7 +2803,6 @@ def main(argv: list[str] | None = None) -> int:
                 store,
                 board_reader=_br,
                 issue_reader=outcome_github.issue_close_info,
-                project=args.project,
             )
             if args.resolve:
                 if not args.action:

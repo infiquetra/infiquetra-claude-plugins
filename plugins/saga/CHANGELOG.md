@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.144.0] - 2026-08-29
+
+### Changed
+
+- **Saga holds no autonomous lifecycle-field write authority (W7, SDLC R30/R32).** Mission Control
+  is the only routine writer of the board `Stage`/`Status` fields. `/plan` and `/work` no longer
+  initiate any lifecycle-field write — the phase-boundary moves (Shaping, Ready, Active, Verify,
+  Done) belong to Mission Control, derived from each command's durable state; `/work` keeps the
+  post-merge `sub-issue-close` and the `issue-progress-comment` (issue-state writes, not field
+  writes). The reconcile controller's `AUTO_CORRECT_OP_KINDS` allowlist is now EMPTY: every outside
+  drift — reversible or irreversible — surfaces as a record with a named `halt_reason` for the
+  operator, who routes any correction back through the mission-control mutation contract (M7); the
+  retired auto-correct branch is deleted, not hidden behind an unused flag.
+- **`/loop` detects drift and submits corrections; it never advances (R33).** Its reconcile tick is
+  now the new read-only `detect` subcommand of `reconcile_controller.py` (also `detect_op()`): it
+  builds no writer, mints no ledger key, and can never drive a write. A `drift` record carries the
+  prepared correction (the already-asserted value) for operator-confirmed submission; `halt`
+  records keep their named reasons. The certificate's gating half is unchanged by design:
+  reversibility classification, the `Status`/`Stage` field-identity GATE, and the replay key are
+  retained (KTD4); no `set-field-stage` op kind is created, and `CORRECTION_FIELDS` is untouched.
+- **`/outcome` composes no lifecycle-field op (R34).** `outcome_board_sync` no longer resolves
+  `saga_lifecycle.phase_board_map` status targets nor drives a `set-field-status` op: leaf state
+  changes surface through the coalesced progress comment, and the field move belongs to Mission
+  Control. `outcome_reconcile.detect` drops the schema-recomputed expected-Status recover arm that
+  healed `/outcome`'s own status writes (there are none anymore) and keeps ledger-based drift
+  detection for historical campaigns — a detected drift resolves through the operator, never an
+  automatic rewrite. `/outcome` does NOT gain the per-op level-triggered tick (still tracked in
+  #593's disposition, deliberately untouched here).
+
 ## [0.143.0] - 2026-08-26
 
 ### Changed

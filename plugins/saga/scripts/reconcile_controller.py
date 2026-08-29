@@ -19,15 +19,20 @@ On top of those two shared halves this module adds the piece ``/work`` and ``/lo
 per-op **level-triggered reconcile tick** (:func:`reconcile_op`, driven in bulk by :func:`reconcile`)
 that, every tick, recomputes the expected board value from durable saga fields and re-reads the live
 board, so a rapid double tick converges on one write and an outside edit to a saga-owned field is
-re-detected and either corrected or surfaced as a named HALT — regardless of which command drives it.
+re-detected and surfaced as a named HALT — never silently corrected (W7: the controller holds no
+autonomous lifecycle-field write authority; see :data:`AUTO_CORRECT_OP_KINDS`).
 
 Threat model / self-attestation (the panel probes exact wording):
 
-* The correcting write is **fail-closed and doubly gated**: it fires only when the certificate
-  returns ``AUTHORIZED`` *and* the op is in the explicit :data:`AUTO_CORRECT_OP_KINDS` allowlist
-  (today exactly ``set-field-status`` — the saga-owned, derived-on-read board Status field). Any op
-  outside that allowlist, and any GATE verdict, HALTs; the controller never widens the
-  autonomously-writable set (that lives in ``reversibility_certificate``, #344 KTD2).
+* The controller holds **no autonomous lifecycle-field write authority** (W7, SDLC R30/R32):
+  :data:`AUTO_CORRECT_OP_KINDS` is empty, so no outside drift is ever silently re-written — every
+  drift HALTs with a named reason for the operator, who routes any correction back through the
+  mission-control mutation contract (M7: pause automated writes, route through the operator). The
+  correcting write, when an operator-ratified change restores it, is **fail-closed and doubly
+  gated**: it fires only when the certificate returns ``AUTHORIZED`` *and* the op is in the explicit
+  :data:`AUTO_CORRECT_OP_KINDS` allowlist. Any op outside that allowlist, and any GATE verdict,
+  HALTs; the controller never widens the autonomously-writable set (that lives in
+  ``reversibility_certificate``, #344 KTD2).
 * The controller **never reverses an outside issue open/closed change**. A drift whose correction
   would re-drive ``sub-issue-close`` / ``sub-issue-reopen`` is HALTed, not silently overwritten,
   because reversing an external close/reopen would destroy a human/CI lifecycle decision. This is a
@@ -74,11 +79,15 @@ def _bp():
 # Drift kinds a detection can carry (the caller drift-holds / surfaces these).
 DRIFT_KINDS = ("status-drift", "external-close", "external-reopen")
 
-# The ONLY op kinds the controller auto-corrects on outside drift (fail-closed allowlist). Today
-# exactly the saga-owned board Status field: derived-on-read, cheap, fully reversible, and not an
-# override of any human issue-lifecycle action. Everything else HALTs. Widening this set is a
-# deliberate, reviewed change — never an accident of a new op_kind slipping through.
-AUTO_CORRECT_OP_KINDS = frozenset({"set-field-status"})
+# The ONLY op kinds the controller auto-corrects on outside drift (fail-closed allowlist). Since
+# W7 (SDLC run R30/R32) this set is EMPTY: Mission Control is the only routine writer of the board
+# lifecycle fields, and a controller that re-wrote a field on its own authority would be a second
+# routine writer. Every outside drift — reversible or not — is surfaced as a record with a named
+# reason for the operator, who routes any correction through the mission-control mutation contract.
+# The allowlist mechanism stays because it is the enforcement seam R35's closed-allowlist behaviour
+# is tested against; its emptiness is the post-W7 posture. Widening it back is a deliberate,
+# reviewed, operator-ratified change — never an accident of a new op_kind slipping through.
+AUTO_CORRECT_OP_KINDS: frozenset[str] = frozenset()
 
 #: The one correction field :func:`default_live_reader` can actually read back — it calls
 #: ``outcome_github.board_status``, which has no field parameter, and :func:`_expected_live`
@@ -193,10 +202,11 @@ def reconcile_op(
        unrecorded write is safely re-driven (idempotent) then recorded (F3).
     3. **Ledger key present** (saga asserted ``target_state``) → re-read live:
        * no ``live_reader`` / unreadable / live matches expected → ``{"status":"skipped"}`` (converged).
-       * live diverges and ``op_kind`` ∈ :data:`AUTO_CORRECT_OP_KINDS` → re-drive ``target_state``
-         with bounded retry → ``{"status":"corrected"}`` (R5, reversible board-field drift).
-       * live diverges and ``op_kind`` ∉ the allowlist → ``{"status":"halt","halt":True}`` with a
-         named ``halt_reason`` — the outside issue open/closed change is surfaced, never overwritten.
+       * live diverges → ``{"status":"halt","halt":True}`` with a named ``halt_reason`` — every
+         outside change is surfaced, never overwritten. Since W7 the auto-correct allowlist
+         (:data:`AUTO_CORRECT_OP_KINDS`) is empty, so this is the only drift outcome: the outside
+         edit — irreversible open/closed change or reversible field edit alike — needs the operator,
+         who routes any correction through the mission-control mutation contract (R5; M7).
 
     Returns one record dict. ``extra`` is merged into every record (e.g. ``{"subplot_id": ...}``).
     """
@@ -257,9 +267,8 @@ def reconcile_op(
     if live_reader is None:
         return {"status": "skipped", "key": key, **base}
     # Fail closed on a field this controller cannot read back (#812). Comparing the live Status
-    # against another field's target_state would manufacture a false drift, and because
-    # `set-field-status` is in AUTO_CORRECT_OP_KINDS that false drift would be auto-corrected —
-    # a write driven by a reading that was never about this field. Skip instead of guessing.
+    # against another field's target_state would manufacture a false drift record — a correction
+    # request driven by a reading that was never about this field. Skip instead of guessing.
     if field_kw is not None and field_kw != LIVE_READABLE_CORRECTION_FIELD:
         return {
             "status": "skipped",
@@ -275,54 +284,102 @@ def reconcile_op(
     if expected_live and live == expected_live:
         return {"status": "skipped", "key": key, **base}
 
-    # OUTSIDE DRIFT: the board moved away from what saga asserted.
+    # OUTSIDE DRIFT: the board moved away from what saga asserted. Since W7 the auto-correct
+    # allowlist is empty, so there is no autonomous rewrite branch at all: every drift HALTs with a
+    # named reason. Reversing an outside issue open/closed change would destroy a human/CI lifecycle
+    # decision; re-writing a drifted field would make this controller a second routine writer of a
+    # board lifecycle field (SDLC R30). Both are the operator's to resolve (M7). If
+    # AUTO_CORRECT_OP_KINDS is ever deliberately re-widened, restore a bounded-retry auto-correct
+    # branch HERE, doubly gated (certificate AUTHORIZED + allowlist membership) — never silently.
     drift_kind = _drift_kind_for(op_kind)
     drift_id = _drift_id(drift_kind, repo, number, target_state, live)
-    if op_kind not in AUTO_CORRECT_OP_KINDS:
-        # Reversing an outside issue open/closed change would destroy a human/CI lifecycle decision.
+    return {
+        "status": "halt",
+        "halt": True,
+        "halt_reason": f"{drift_kind}:{live}",
+        "drift_id": drift_id,
+        "board_value": live,
+        "key": key,
+        **base,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Read-only drift detection (the /loop tick's post-W7 shape, SDLC R33)
+# ---------------------------------------------------------------------------
+
+
+def detect_op(
+    op_kind: str,
+    repo: str,
+    number: int,
+    target_state: str,
+    *,
+    live_reader: Callable[[str, str, int], str],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read-only level-triggered drift check for an op the lifecycle has already asserted.
+
+    W7 (SDLC R30/R33): ``/loop`` retains drift detection but holds no write authority, so its
+    reconcile tick is this pure read: re-read the live board, compare against the saga-asserted
+    value, and NEVER write — not on convergence (nothing to do) and not on drift (the correction
+    routes through the operator and the mission-control mutation contract, M7). Unlike
+    :func:`reconcile_op` there is no ledger dependency: the caller-derived ``target_state`` IS the
+    assertion under test, so this never mints a ledger key and can never drive a write.
+
+    Returns one record dict:
+
+    * ``{"status": "skipped", ...}`` — converged: the live board already holds the asserted value.
+    * ``{"status": "skipped", "note": "live unreadable", ...}`` — fail-closed: no value was read,
+      so nothing is judged and no drift is claimed.
+    * ``{"status": "drift", ...}`` — a reversible outside edit to a board lifecycle field. Carries
+      ``drift_kind`` / ``drift_id`` / ``board_value`` and the prepared ``target_state`` the operator
+      confirms and submits back through the mutation contract.
+    * ``{"status": "halt", "halt": True, ...}`` with a named ``halt_reason`` — an irreversible
+      outside open/closed change; surface it, never overwrite.
+    """
+    cert = _cert()
+    base: dict[str, Any] = dict(extra or {})
+    base.update(op_kind=op_kind, repo=repo, number=number, target_state=target_state)
+
+    # Same fail-closed order as reconcile_op: a GATE on the op means the op needs a human —
+    # read nothing, claim nothing.
+    verdict = cert.authorize_write(op_kind)
+    if verdict != cert.AUTHORIZED:
+        return {
+            "status": "gated",
+            "halt": True,
+            "halt_reason": f"certificate-gate:{op_kind}",
+            "verdict": "GATE",
+            **base,
+        }
+
+    live = live_reader(op_kind, repo, number)
+    if not live:
+        return {"status": "skipped", "note": "live unreadable", **base}
+
+    expected_live = _expected_live(op_kind, target_state)
+    if expected_live and live == expected_live:
+        return {"status": "skipped", **base}
+
+    # OUTSIDE DRIFT — surfaced, never corrected (W7: no autonomous lifecycle-field writes).
+    drift_kind = _drift_kind_for(op_kind)
+    drift_id = _drift_id(drift_kind, repo, number, target_state, live)
+    if drift_kind in ("external-close", "external-reopen"):
         return {
             "status": "halt",
             "halt": True,
             "halt_reason": f"{drift_kind}:{live}",
             "drift_id": drift_id,
             "board_value": live,
-            "key": key,
-            **base,
-        }
-
-    # Auto-correct: the certificate AUTHORIZED (checked above) and op is in the allowlist — re-drive
-    # the saga-asserted target_state with the same bounded retry the writer path uses.
-    pay = dict(payload or {})
-    if target_state and "target_state" not in pay:
-        pay["target_state"] = target_state
-    if field_kw is not None:
-        pay.setdefault("field", field_kw)
-    last_exc: Exception | None = None
-    attempts = 0
-    for _ in range(max_attempts):
-        attempts += 1
-        try:
-            board_writer(op_kind=op_kind, repo=repo, number=number, payload=pay)
-            last_exc = None
-            break
-        except Exception as exc:  # noqa: BLE001 — bounded retry, surfaced below (fail-loud)
-            last_exc = exc
-    if last_exc is not None:
-        return {
-            "status": "failed",
-            "key": key,
-            "drift_id": drift_id,
-            "board_value": live,
-            "error": str(last_exc),
-            "attempts": max_attempts,
             **base,
         }
     return {
-        "status": "corrected",
-        "key": key,
+        "status": "drift",
+        "drift_kind": drift_kind,
         "drift_id": drift_id,
-        "board_value_was": live,
-        "attempts": attempts,
+        "board_value": live,
+        "saga_value": target_state,
         **base,
     }
 
@@ -445,6 +502,16 @@ def main(argv: list[str] | None = None) -> int:
         help="skip the live re-read (write-only tick; no outside-drift detection)",
     )
 
+    d = sub.add_parser(
+        "detect",
+        help="read-only drift check for an already-asserted board op (W7: detects, never writes)",
+    )
+    d.add_argument("--op", required=True, help="OpKind, e.g. set-field-status")
+    d.add_argument("--repo", required=True, help="owner/repo (owner used only for the record)")
+    d.add_argument("--number", required=True, type=int)
+    d.add_argument("--target-state", required=True, help="the saga-asserted value to verify")
+    d.add_argument("--project", default="operations")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "reconcile":
@@ -493,6 +560,21 @@ def main(argv: list[str] | None = None) -> int:
         if status in ("gated", "halt"):
             return 0
         return 1
+
+    if args.cmd == "detect":
+        # Read-only by construction: no writer is ever built, so mission-control resolution is
+        # not needed and no ledger key is minted (SDLC R33: /loop detects, it does not write).
+        record = detect_op(
+            args.op,
+            args.repo,
+            args.number,
+            args.target_state,
+            live_reader=default_live_reader(project=args.project),
+        )
+        print(json.dumps(record))
+        # Every detect outcome is a healthy observation (exit 0): drifted/halted detections need
+        # the operator, not a crash.
+        return 0
 
     return 2
 

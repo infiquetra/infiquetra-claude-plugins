@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.143.0"  # #840: align backend-offer with narrow policy
+    assert plugin_json["version"] == "0.144.0"  # W7: no autonomous lifecycle-field write authority
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -278,8 +278,10 @@ def test_outcome_skill_documents_autonomous_board_sync() -> None:
     assert "defaults to GATE" in doc or "default-deny" in low
     assert "authorize_write" in doc
 
-    # The enumerated autonomous ops are documented (semantic content, not one keyword).
-    assert "In Progress" in doc  # set-field status target
+    # The enumerated autonomous ops are documented (semantic content, not one keyword). Since
+    # W7 (SDLC R30/R34) the envelope composes NO lifecycle-field op — the skill must carry the
+    # no-status-write boundary explicitly, and the surviving ops stay named.
+    assert "composes no `set-field-status` op" in doc
     assert "sub-issue" in doc and "reopen" in doc  # close + its inverse
     assert "coalesc" in doc  # one coalesced progress comment, no duplicate spam
 

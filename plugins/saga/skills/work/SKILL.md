@@ -244,25 +244,18 @@ rationale (it flows into the Phase-4 issue comment via `--doc-review-override`).
 finding metadata to make that decision, and do not treat chat memory alone as durable evidence after a
 resume.
 
-### 1.3b Move the card to Active
+### 1.3b The card moves to Active — through Mission Control, not through this skill
 
-Work is starting. Until this fires the card reads exactly as it did before anyone picked it up,
+Work is starting. Until the card moves, it reads exactly as it did before anyone picked it up,
 which on a wide run means a card sitting untouched while several units build against it.
 
-**Board Status is part of a phase boundary, not only of the merge.** The card should say what is
-happening to it while it happens. The operations board's ladder is
-`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, and each move is the same reconcile tick
-Phase 4.4 uses -- `set-field-status` is `reversible` with `always_operator=False`, and its
-`target_state` is part of the idempotency key, so a repeated tick collapses to `skipped` rather than
-re-writing. Read `written`/`skipped` as success; `halt`/`gated` falls back to the operator-prompted
-path.
+**Saga does not write the board.** Mission Control is the only routine writer of the board's
+`Stage` and `Status` fields; the `Status → Active` move belongs to it, derived from what this
+skill durably produced (the saga tick minted below, the work branch, the work-session path).
+Do not run a reconcile tick, a `flow set-field` submission, or any other lifecycle-field write
+from here. Say in the phase header that work is starting — the move itself is Mission Control's.
 
-```bash
-python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> --target-state Active
-```
-
-Skip it silently when there is no issue -- a plan with no card has no Status to move.
+Skip silently when there is no issue -- a unit with no card has no Status to move.
 
 ### 1.4 Offer the backend, then mint/advance the saga
 
@@ -715,16 +708,18 @@ means fall back to the operator-prompted path rather than forcing the write.
 Record durable learnings/decisions in the engineering journal as they surface. `/work` renders the
 comment and drives it through the controller; it does not mutate the issue by any other route.
 
-### 4.4 Autonomous board progression — the shared reconcile controller (post-merge, #344/#450)
+### 4.4 Post-merge board actions — the shared reconcile controller (#344/#450, bounded by W7)
 
-After a merge, drive the **allowlisted** post-merge board moves autonomously through the shared
-**level-triggered reconcile controller** instead of prompting — the same reversibility contract and
-idempotency ledger `/outcome` uses, now with the outside-drift detection `/work` previously lacked
-(#450). For each move (Status → Done, then the sub-issue close), run a reconcile tick:
+After a merge, the sub-issue close runs autonomously through the shared **level-triggered reconcile
+controller** — the same reversibility contract and idempotency ledger `/outcome` uses, with the
+outside-drift detection `/work` previously lacked (#450). The `Status → Done` move is **not** a
+`/work` action: Mission Control is the only routine writer of the board's `Stage` and `Status`
+fields, so the delivered-terminal field move routes through it (the operator, or the run
+coordinator's board flow), derived from this skill's durable state — the merged PR, the saga tick,
+and the work-session path. Do not run a reconcile tick or a `flow set-field` submission for the
+Status move. The close is the one post-merge move this skill drives:
 
 ```bash
-python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> --target-state Done
 python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --op sub-issue-close --repo <owner/repo> --number <N>
 ```
@@ -736,18 +731,19 @@ prints a record JSON:
 
 - `{"status":"written"}` / `{"status":"skipped"}` — the move fired (or was already applied) with
   **no operator prompt**.
-- `{"status":"corrected"}` — an outside actor moved the saga-owned **Status** field while `/work` was
-  at rest; the controller re-asserted the saga-derived value (reversible board-field drift, R5).
-- `{"status":"halt", ...}` with a named `halt_reason` — an **irreversible** outside change (an issue
-  reopened/closed under saga, an open/closed drift) that must NOT be silently overwritten. Surface
-  the `halt_reason` to the operator and fall back to the operator-prompted `mission-control` path.
-- `{"status":"gated"}` — which merge/deploy and any non-allowlisted op **always** return, because the
-  allowlist lives in `reversibility_certificate`, not in the controller — fall back to the existing
-  operator-prompted `mission-control` path unchanged. A `gated`/`halt` result is the controller
-  correctly withholding an op that needs a human, never a failure.
+- `{"status":"halt", ...}` with a named `halt_reason` — the outside board changed away from what
+  the lifecycle asserted while `/work` was at rest. Since W7 the controller holds **no autonomous
+  write authority over `Stage` or `Status`**: every outside drift — including a reversible
+  Status-field edit — is surfaced with its named reason, never silently overwritten or
+  auto-corrected. Surface the `halt_reason` to the operator and fall back to the operator-prompted
+  `mission-control` path.
+- `{"status":"gated"}` — which merge/deploy and any op outside the **closed** (empty since W7)
+  auto-correct allowlist returns, because the certificate lives in `reversibility_certificate` —
+  fall back to the operator-prompted `mission-control` path unchanged. A `gated`/`halt` result is
+  the controller correctly withholding an action that needs a human, never a failure.
 
-`/work` still does **not** merge or deploy autonomously (permanently gated), and the controller never
-widens the autonomously-writable set beyond what `board_progression`/`reversibility_certificate`
+`/work` still does **not** merge or deploy autonomously (permanently gated), and the controller
+never widens the autonomously-writable set beyond what `board_progression`/`reversibility_certificate`
 already establish (#450 non-goal).
 
 ---
@@ -814,24 +810,15 @@ capturing a fresh `REVIEWED_SHA`, before any PR/merge offer.
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
 via `--doc-review-override` / the work-session). Never a silent skip.
 
-### 5.3b Move the card to Verify
+### 5.3b The card moves to Verify — through Mission Control, not through this skill
 
 The gate is clean and the work is PR-ready, so what is left is review rather than building.
 
-**Board Status is part of a phase boundary, not only of the merge.** The card should say what is
-happening to it while it happens. The operations board's ladder is
-`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, and each move is the same reconcile tick
-Phase 4.4 uses -- `set-field-status` is `reversible` with `always_operator=False`, and its
-`target_state` is part of the idempotency key, so a repeated tick collapses to `skipped` rather than
-re-writing. Read `written`/`skipped` as success; `halt`/`gated` falls back to the operator-prompted
-path.
-
-```bash
-python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> --target-state Verify
-```
-
-Skip it silently when there is no issue -- a plan with no card has no Status to move.
+**Saga does not write the board.** The `Status → Verify` move is Mission Control's, derived from
+this skill's durable state — the clean gate verdict, the PR readiness, the saga tick. Do not run a
+reconcile tick, a `flow set-field` submission, or any other lifecycle-field write from here. Say in
+the phase header that the work is PR-ready and awaiting review; the move itself is Mission
+Control's. When there is no issue, there is no card to move; say nothing further.
 
 ### 5.4 Reach PR-ready and present continuation routing
 

@@ -11,15 +11,17 @@ forever. This module closes that loop.
 
 * **asserted** — the latest of {ledger write record, reconcile-override record} per op family (KTD5),
   i.e. what saga last drove or the operator last accepted.
-* **expected** — recomputed from ``derive_states`` -> ``_candidate_ops`` -> the schema status map, so
-  a landed-but-unrecorded write (ledger key lost to a crash) is reconciled by recomputation, not
-  missed — with zero change to #279's scope-locked writer.
 * **live** — the injected ``board_reader`` (board Status) and ``issue_reader`` (open/closed +
   stateReason + close author).
 
-The saga-owned field class is exactly what the writer writes (KTD3): board Status and issue
-open/closed. Scope is ledger-bearing issues only (KTD6) — an issue with no recorded write is never
-read, so a hand-added label the writer never owned can never be a false positive.
+Since W7 (SDLC R30/R34) ``/outcome`` composes no lifecycle-field write, so the pre-W7
+schema-recomputed *expected* view and its landed-but-unrecorded recover arm are gone with the
+writes they healed — detection is ledger-asserted vs. live, never recomputed from derived state.
+
+The saga-owned field class is what the writer writes or has historically written (KTD3): board
+Status and issue open/closed. Scope is ledger-bearing issues only (KTD6) — an issue with no
+recorded write is never read, so a hand-added label the writer never owned can never be a false
+positive.
 
 House pattern (mirrors ``outcome_board_sync``): pure functions over explicit values, lazy imports of
 heavy saga modules, no I/O at import. Requirement traceability: R1-R9; KTD1-KTD7.
@@ -46,15 +48,10 @@ _drift_record = _rc._drift_record
 _close_satisfies_contract = _rc._close_satisfies_contract
 
 # ---------------------------------------------------------------------------
-# Lazy module imports (house pattern — outcome pulls the whole engine graph,
-# outcome_store pulls threading/os; defer both to call time).
+# Lazy module imports (house pattern — outcome_store pulls threading/os; defer
+# to call time). Pre-W7 an ``_engine`` helper deferred the outcome-engine import
+# for the derived-state view; that view is gone with the status writes it fed.
 # ---------------------------------------------------------------------------
-
-
-def _engine():
-    import outcome as _m  # noqa: PLC0415
-
-    return _m
 
 
 def _store_mod():
@@ -184,56 +181,43 @@ def detect(
     *,
     board_reader: Callable[[str], str],
     issue_reader: Callable[[str], dict[str, str]],
-    project: str = "operations",
-    schema_path: Path | None = None,
     now: Callable[[], float] = time.time,
 ) -> list[dict[str, Any]]:
-    """Return drift + recovered records for every ledger-bearing issue whose live board diverges.
+    """Return drift records for every ledger-bearing issue whose live board diverges.
 
     An empty list means "silent" (R4): every saga-owned field matches the baseline. Each returned
     record is one of:
 
     * a **drift** record (``kind`` in :data:`DRIFT_KINDS`) — the caller drift-holds that issue's
       board ops and surfaces the {field, saga, board, author} conflict for a HITL resolution (R5);
-    * a **recovered** record (``kind == "recovered"``) — a landed-but-unrecorded write whose ledger
-      key this call rewrote (informational, never a drift, AE3);
     * an **unreadable** note (``kind == "unreadable"``) — one field could not be read this tick;
       never fatal, resurfaces next detection.
+
+    Since W7 (SDLC R30/R34) ``/outcome`` composes no lifecycle-field write, so the pre-W7
+    "landed-but-unrecorded" recover arm (which rewrote a lost ``set-field-status`` ledger key from
+    the schema-resolved expected Status) is gone with the writes it healed. The ledger-based drift
+    half stays: campaigns that ran before W7 keep their Status assertions detected, and a detected
+    drift resolves through the operator, never an automatic rewrite.
 
     Only ledger-bearing issues are read (KTD6): ``board_reader`` / ``issue_reader`` are called
     strictly for issues with >=1 recorded write or override, so an issue saga never touched is never
     probed and can never be a false positive.
 
     Args:
-        spec / store: the outcome DAG and its per-outcome store (same handles ``reconcile_board`` uses).
+        spec / store: the outcome DAG and its per-outcome store (same handles ``reconcile_board``
+                      uses). ``spec`` scopes the ledger-bearing walk below; since W7 it feeds no
+                      status recomputation.
         board_reader: injected ``(issue_ref) -> status_name`` ("" when unreadable). Default in the
-                      wiring is ``outcome_github.board_status`` bound to ``project``.
+                      wiring is ``outcome_github.board_status`` bound to the caller's project.
         issue_reader: injected ``(issue_ref) -> {state, state_reason, closed_by}``. Default is
                       ``outcome_github.issue_close_info``.
-        project / schema_path: thread through to ``_resolve_status_map`` for the expected-Status
-                      recomputation (same #326 seam as ``reconcile_board``).
-        now: time source for the recovered-record ``ts`` (injectable for tests).
+        now: time source for record timestamps (injectable for tests).
     """
-    engine = _engine()
     sync = _sync()
-    cert = _cert()
 
     by_issue = _read_ledger(store)
     if not by_issue:
         return []  # nothing recorded → nothing to contradict (scope discipline, KTD6)
-
-    states: dict[str, str] = engine.derive_states(spec, store)
-
-    # Resolve the schema status map lazily — only if some in-scope leaf is status-bearing, mirroring
-    # reconcile_board so a done-only / no-schema run never touches the file. A resolution failure is
-    # non-fatal: expected-Status stays "" and the recover branch simply does not fire.
-    status_map: dict[str, str] | None = None
-    if any(s in ("ready", "dispatched") for s in states.values()):
-        try:
-            resolved = schema_path if schema_path is not None else sync._default_schema_path()
-            status_map = sync._resolve_status_map(resolved, project)
-        except Exception:  # noqa: BLE001 — non-fatal; recover just won't fire (R2)
-            status_map = None
 
     records: list[dict[str, Any]] = []
 
@@ -253,13 +237,6 @@ def detect(
             continue  # NOT ledger-bearing → out of scope; board is never read for it (KTD6)
 
         sid = node.subplot_id
-        state = states.get(sid, "blocked")
-
-        # Expected Status from the current derived state (KTD1) — used only for the recover branch.
-        expected_status = ""
-        for op_kind_str, target in sync._candidate_ops(state, status_map or {}):
-            if op_kind_str == _STATUS_FAMILY:
-                expected_status = target
 
         # ---- Status field ---------------------------------------------------
         asserted_status = _asserted_value(issue_records, _STATUS_FAMILY)
@@ -276,50 +253,23 @@ def detect(
                         "field": "status",
                     }
                 )
-        elif asserted_status is not None:
-            # Tie-robust: consistent when live matches ANY assertion at the latest ts (a single
-            # value for distinct-ts production writes; the set only widens under an equal-ts tie).
-            if live_status not in _asserted_at_max_ts(issue_records, _STATUS_FAMILY):
-                records.append(
-                    _drift_record(
-                        "status-drift",
-                        repo=repo,
-                        number=number,
-                        subplot_id=sid,
-                        op_kind=_STATUS_FAMILY,
-                        saga_value=asserted_status,
-                        board_value=live_status,
-                    )
-                )
-            # else: live matches the latest asserted Status → silent
-        elif expected_status and live_status == expected_status:
-            # Landed-but-unrecorded write (AE3): the board holds saga's expected Status but the
-            # ledger key was lost. Rewrite the key so the baseline is whole again — informational.
-            key = cert.idempotency_key(_STATUS_FAMILY, repo, number, expected_status)
-            ledger_file = Path(store.root) / "board-sync" / sync._safe_ledger_name(key)
-            record_json = json.dumps(
-                {
-                    "key": key,
-                    "op_kind": _STATUS_FAMILY,
-                    "repo": repo,
-                    "number": number,
-                    "target_state": expected_status,
-                    "ts": now(),
-                    "recovered": True,
-                }
-            )
-            _store_mod()._write_once(ledger_file, record_json)  # False on race = benign no-op
+        # Tie-robust: consistent when live matches ANY assertion at the latest ts (a single
+        # value for distinct-ts production writes; the set only widens under an equal-ts tie).
+        elif asserted_status is not None and live_status not in _asserted_at_max_ts(
+            issue_records, _STATUS_FAMILY
+        ):
             records.append(
-                {
-                    "kind": "recovered",
-                    "repo": repo,
-                    "number": number,
-                    "subplot_id": sid,
-                    "op_kind": _STATUS_FAMILY,
-                    "target_state": expected_status,
-                    "key": key,
-                }
+                _drift_record(
+                    "status-drift",
+                    repo=repo,
+                    number=number,
+                    subplot_id=sid,
+                    op_kind=_STATUS_FAMILY,
+                    saga_value=asserted_status,
+                    board_value=live_status,
+                )
             )
+        # else: live matches the latest asserted Status → silent
 
         # ---- Open/closed field ---------------------------------------------
         close_info = issue_reader(issue_raw)

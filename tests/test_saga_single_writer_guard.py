@@ -214,9 +214,46 @@ def test_stage_is_allowlisted_by_name_and_is_not_a_live_field() -> None:
     )
 
 
-def test_correction_allowlist_excludes_the_operator_owned_fields() -> None:
-    """Initiative / Objective / Priority stay operator-owned: never a saga correction."""
-    for operator_field in ("Objective", "Priority", "Initiative", "Milestone", "Assignees"):
-        assert operator_field not in RC.CORRECTION_FIELDS, (
-            f"{operator_field} must not be submittable as a saga correction"
-        )
+def test_certificate_retains_no_autonomous_lifecycle_write_authority() -> None:
+    """W7 (SDLC R30/R32): the certificate keeps GATING a set-field-status submission, but Saga
+    holds no AUTONOMOUS write authority over a lifecycle field. The concrete autonomy site is the
+    reconcile controller's ``AUTO_CORRECT_OP_KINDS`` (plan KTD4) — post-W7 it is EMPTY, so no
+    controller tick ever re-writes a drifted lifecycle field on its own authority, and no skill
+    initiates the write either (the AE2 scan, ``tests/test_saga_no_direct_write.py``, pins the
+    skill half)."""
+    from importlib import import_module  # noqa: PLC0415 — sibling module, same scripts dir
+
+    controller = import_module("reconcile_controller")
+    assert frozenset() == controller.AUTO_CORRECT_OP_KINDS, (
+        "the controller auto-correct allowlist must be empty — an autonomous lifecycle-field "
+        "rewrite is a second routine writer (R30)"
+    )
+    # The gate the certificate still applies to a submission is field identity (GATE by field),
+    # never autonomy: an authorized verdict exists ONLY for ops the operator routes.
+    assert RC.authorize_write("set-field-status") == RC.AUTHORIZED
+
+
+def test_certificate_retains_gating_authority() -> None:
+    """W7 (SDLC R32, plan KTD4): the certificate RETAINS its gating half — reversibility
+    classification, the non-lifecycle-field GATE, and the replay key — while its autonomous half
+    is retired. Field identity is NOT re-implemented: Status/Stage stay authorized by name
+    (CORRECTION_FIELDS), and the idempotency key still varies by op, repo, number, field, target."""
+    assert RC.authorize_write("set-field-status") == RC.AUTHORIZED
+    assert RC.authorize_write("sub-issue-close") == RC.AUTHORIZED
+    # Non-lifecycle / operator-owned fields stay GATEd (field identity, retained).
+    assert RC.authorize_correction_field("Stage") == RC.AUTHORIZED  # name seam for W13
+    assert RC.authorize_correction_field("Initiative") == RC.GATE
+    assert RC.authorize_correction_field("Objective") == RC.GATE
+    assert RC.authorize_write("parent-issue-close") == RC.GATE  # ALWAYS_OPERATOR
+    # Replay key: varies by op, repo, number, field, and target (plan grounding at 0.143.0).
+    key_a = RC.idempotency_key("set-field-status", "infiquetra/x", 42, "Active", field="Status")
+    key_b = RC.idempotency_key("set-field-status", "infiquetra/x", 42, "Active", field="Stage")
+    key_c = RC.idempotency_key("set-field-status", "infiquetra/y", 42, "Active", field="Status")
+    key_d = RC.idempotency_key("set-field-status", "infiquetra/x", 42, "Done", field="Status")
+    assert len({key_a, key_b, key_c, key_d}) == 4, "the replay key discriminates on field+target"
+
+
+def test_no_set_field_stage_op_kind() -> None:
+    """Preserved from the existing guard (SDLC R32): no ``set-field-stage`` op kind exists — the
+    certificate's Stage authorization is a NAME seam for W13, never a new op kind."""
+    assert "set-field-stage" not in {ok.value for ok in RC.all_op_kinds()}

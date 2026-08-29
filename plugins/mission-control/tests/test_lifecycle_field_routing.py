@@ -361,6 +361,103 @@ def test_route_bulk_routes_cross_board_per_issue_and_stays_per_issue_atomic(caps
     assert result["failed"][0]["number"] == 43
 
 
+def test_route_case_variant_status_lower_routes_cross_board(capsys):
+    """F-1 regression (Code Review cycle 1): `--field status` — the exact
+    spelling that slipped past exact-membership routing onto one board —
+    reaches the cross-board mutation: board discovery runs, BOTH carrying
+    boards are written, and the emitted evidence carries the CANONICAL field
+    name. Failed before the `_canonical_lifecycle_field` fix."""
+    argv = [
+        "sdlc_manager.py",
+        "flow",
+        "set-field",
+        "--project",
+        "operations",
+        "--repo",
+        REPO,
+        "--number",
+        str(NUMBER),
+        "--field",
+        "status",
+        "--option",
+        "Shaping",
+    ]
+    gql, code = _route_main(
+        argv, _gql_side_effect(_TWO_BOARD_DISCOVERY, list(_STATUS_FIELDS), [{}, {}])
+    )
+    assert code == 0
+    assert len(_discovery_calls(gql)) == 1
+    assert {c.args[1]["projectId"] for c in _set_field_calls(gql)} == {
+        "PVT_asgard",
+        "PVT_operations",
+    }
+    evidence = _out_json(capsys)
+    assert evidence["field"] == "Status"  # canonicalized into the evidence
+    assert [b["project"] for b in evidence["boards"]] == ["asgard", "operations"]
+
+
+def test_route_case_variant_status_upper_routes_in_process(capsys):
+    """F-1 regression: an in-process `STATUS` call routes cross-board with the
+    canonical name — no exact-membership bypass."""
+    env = _gql_side_effect(_TWO_BOARD_DISCOVERY, list(_STATUS_FIELDS), [{}, {}])
+    with (
+        patch.object(sdlc_manager, "_graphql", side_effect=env) as gql,
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+    ):
+        sdlc_manager.flow_set_field("operations", REPO, NUMBER, "STATUS", "Shaping", "json")
+
+    assert len(_discovery_calls(gql)) == 1
+    assert {c.args[1]["projectId"] for c in _set_field_calls(gql)} == {
+        "PVT_asgard",
+        "PVT_operations",
+    }
+    evidence = _out_json(capsys)
+    assert evidence["field"] == "Status"
+
+
+def test_route_case_variant_mixed_case_routes_in_process(capsys) -> None:
+    """F-1 normalization, not a two-spelling table: `StAtUs` routes too —
+    one discovery pass, both carrying boards written, canonical field name."""
+    env = _gql_side_effect(_TWO_BOARD_DISCOVERY, list(_STATUS_FIELDS), [{}, {}])
+    with (
+        patch.object(sdlc_manager, "_graphql", side_effect=env) as gql,
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+    ):
+        sdlc_manager.flow_set_field("operations", REPO, NUMBER, "StAtUs", "Shaping", "json")
+
+    evidence = _out_json(capsys)
+
+    assert len(_discovery_calls(gql)) == 1
+    assert {c.args[1]["projectId"] for c in _set_field_calls(gql)} == {
+        "PVT_asgard",
+        "PVT_operations",
+    }
+    assert evidence["field"] == "Status"
+
+
+def test_route_bulk_case_variant_status_routes_cross_board(capsys):
+    """F-1 regression at the bulk entry point: `("status", "Shaping")` routes
+    per issue through the cross-board mutation."""
+    env = _gql_side_effect(
+        _TWO_BOARD_DISCOVERY,
+        list(_STATUS_FIELDS),
+        [{}, {}],
+    )
+    with (
+        patch.object(sdlc_manager, "_graphql", side_effect=env) as gql,
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+    ):
+        sdlc_manager.flow_set_fields_bulk(
+            "operations", REPO, [NUMBER], [("status", "Shaping")], "json"
+        )
+
+    assert len(_discovery_calls(gql)) == 1
+    assert {c.args[1]["projectId"] for c in _set_field_calls(gql)} == {
+        "PVT_asgard",
+        "PVT_operations",
+    }
+
+
 def test_non_lifecycle_fields_keep_single_board_path():
     """The guard against over-routing: an Objective write — and a Priority
     write — take the single-board path only: ONE field-write mutation and NO

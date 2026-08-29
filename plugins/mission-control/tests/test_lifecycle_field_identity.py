@@ -156,3 +156,12 @@ def test_mutation_idempotency_same_identity_on_repeat_write() -> None:
             )
         seen.append(evidence["identity"])
     assert seen[0] == seen[1]
+
+
+def test_correction_fields_plugin_oracle_pins_stage_and_status() -> None:
+    """F-2 regression (Code Review cycle 1): a hard-coded, literal oracle for
+    the plugin's enforced CORRECTION_FIELDS set, independent of any generated
+    or round-tripped value. KTD5's two-oracle rule: adding a third field name
+    here must fail this test, not silently open a new cross-board writer
+    while the sdlc-schema oracle still says Stage and Status."""
+    assert frozenset({"Status", "Stage"}) == sdlc_manager.CORRECTION_FIELDS

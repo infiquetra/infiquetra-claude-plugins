@@ -446,3 +446,53 @@ def test_stage_field_writes_route_through_the_mutation_offline() -> None:
     assert len(calls) == 2
     assert {b["project"] for b in evidence["boards"]} == {"asgard", "operations"}
     assert evidence["identity"]["retry"] == f"set-field-status:{REPO}#{NUMBER}:Stage:Build"
+
+
+def test_compensated_failure_message_names_failing_board() -> None:
+    """F-3 regression (Code Review cycle 1): the recovered-partial-write
+    RuntimeError names the board whose WRITE failed, not the last successfully
+    written board. First write here succeeds on asgard; operations' write
+    fails; the message must point at operations."""
+    write_responses = [{}, RuntimeError("board 2 down")]
+    env = _gql_side_effect(
+        _discovery(
+            [_item("PVTI_a", 2, "Asgard", "Idea"), _item("PVTI_o", 3, "Operations", "Shaping")]
+        ),
+        [
+            _fields_response("PVT_asgard", "Idea", "Shaping", "Verify", "Active"),
+            _fields_response("PVT_operations", "Idea", "Shaping", "Verify", "Active"),
+        ],
+        write_responses,
+    )
+    with (
+        patch.object(sdlc_manager, "_graphql", side_effect=env),
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(RuntimeError, match=r"failed on board 'operations'") as exc_info,
+    ):
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
+
+    message = str(exc_info.value)
+    assert "operations" in message
+    # The last SUCCESSFUL board is named only as restored, never as failed.
+    assert "failed on board 'asgard'" not in message
+
+
+def test_first_write_failure_message_names_first_board() -> None:
+    """F-3 edge: `written` is empty — the message names the FIRST board, not
+    the pre-fix "board '[]'" and similar blank output."""
+    env = _gql_side_effect(
+        _discovery(
+            [_item("PVTI_a", 2, "Asgard", "Idea"), _item("PVTI_o", 3, "Operations", "Shaping")]
+        ),
+        [
+            _fields_response("PVT_asgard", "Shaping", "Active"),
+            _fields_response("PVT_operations", "Shaping", "Active"),
+        ],
+        [RuntimeError("first board down")],
+    )
+    with (
+        patch.object(sdlc_manager, "_graphql", side_effect=env),
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(RuntimeError, match=r"failed on board 'asgard'"),
+    ):
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Active")

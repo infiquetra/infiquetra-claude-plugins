@@ -15,8 +15,6 @@
 - `board move` (KTD13/D2): the per-project best-effort write loop is gone; `board move` routes its `Status` write through the constrained cross-board mutation and no longer continues past a failed board. `#609` holds: an ordinary failure still returns `False` and exits 1 via the CLI arm; a compensation halt raises instead.
 - Non-lifecycle fields (`Initiative`, `Objective`, `Priority`, ...) keep the exact previous single-board behavior.
 
-# Changelog
-
 ## [2.12.9] - 2026-08-26
 
 ### Removed - dead rollout update subcommand and beads-config write claims (#821)

@@ -2306,6 +2306,24 @@ def rollout_deploy_all(repo: str, fmt: str) -> None:
 CORRECTION_FIELDS = frozenset({"Status", "Stage"})
 
 
+def _canonical_lifecycle_field(field_name: str) -> "str | None":
+    """Case-insensitive lookup of ``field_name`` against CORRECTION_FIELDS.
+
+    Returns the canonical field name ("Status" / "Stage") when the caller's
+    spelling names a lifecycle field — any case variant does — and None when
+    it names any other field. The KTD10 routing rule keys on THIS lookup, not
+    on exact membership: GitHub field names that ``_resolve_project_fields``
+    match case-insensitively (e.g. ``--field status``) must not slip past the
+    constrained cross-board writer onto a single board (Code Review cycle 1,
+    F-1).
+    """
+    folded = field_name.casefold()
+    for canonical in CORRECTION_FIELDS:
+        if canonical.casefold() == folded:
+            return canonical
+    return None
+
+
 def _resolve_project_field(project_name: str, field_name: str) -> dict:
     """Look up a project field by name. Returns the field node (with
     id, name, options if SINGLE_SELECT). Raises RuntimeError if missing."""
@@ -2412,11 +2430,15 @@ def flow_set_field(
     single-board restriction: a single-board Status write is no longer
     possible (R40). Every other field keeps the single-board path unchanged.
     """
-    if field_name in CORRECTION_FIELDS:
+    lifecycle_field = _canonical_lifecycle_field(field_name)
+    if lifecycle_field is not None:
+        # Case variants route too: the canonical name goes into the mutation,
+        # so the emitted identity matches saga's ledger key regardless of the
+        # caller's spelling (F-1, Code Review cycle 1).
         evidence = _set_lifecycle_field_cross_board(
             repo,
             number,
-            field_name,
+            lifecycle_field,
             option_name,
             reason=reason,
             requested_project=project_name,
@@ -2598,7 +2620,7 @@ def _lifecycle_field_boards(repo: str, number: int, field_name: str) -> list[dic
         for field_value in item.get("fieldValues", {}).get("nodes", []):
             if not isinstance(field_value, dict):
                 continue
-            if field_value.get("field", {}).get("name") != field_name:
+            if field_value.get("field", {}).get("name", "").casefold() != field_name.casefold():
                 continue
             field_present = True
             value = field_value.get("name")
@@ -2785,9 +2807,14 @@ def _set_lifecycle_field_cross_board(
                 + ". Halting WITHOUT retry — raise this divergence to the operator.",
                 board_state=board_state,
             ) from write_exc
+        # The failed write is the first board that raised — the entry after the
+        # last successful one. Naming the last SUCCESSFUL board here pointed
+        # the operator at a board that had already been restored (F-3, Code
+        # Review cycle 1); `written` empty names the FIRST board.
+        failed_board = preflight[len(written)]["key"]
         raise RuntimeError(
             f"write of {field_name}='{option_name}' to {repo}#{number} failed "
-            f"on board '{written and written[-1]['key']}': {write_exc}. All "
+            f"on board '{failed_board}': {write_exc}. All "
             f"{len(written)} already-written board(s) were restored to their "
             f"prior values."
         ) from write_exc
@@ -2859,12 +2886,23 @@ def flow_set_fields_bulk(
         raise RuntimeError("field assignments cannot be empty")
     if correction:
         for field_name, _option in assignments:
-            assert_correction_field(field_name)
+            # Case variants canonicalize like the single-card path does (F-1):
+            # the correction restriction and the routing rule see the same
+            # canonical field name.
+            canonical = _canonical_lifecycle_field(field_name)
+            assert_correction_field(canonical if canonical is not None else field_name)
 
     # KTD10: lifecycle assignments go cross-board per issue; everything else
     # keeps the existing single-board path with its one shared discovery pass.
-    lifecycle_assignments = [a for a in assignments if a[0] in CORRECTION_FIELDS]
-    other_assignments = [a for a in assignments if a[0] not in CORRECTION_FIELDS]
+    # Case-insensitive: `--field status` is a lifecycle assignment (F-1).
+    lifecycle_assignments: list[tuple[str, str]] = []
+    other_assignments: list[tuple[str, str]] = []
+    for field_name, option_name in assignments:
+        canonical = _canonical_lifecycle_field(field_name)
+        if canonical is not None:
+            lifecycle_assignments.append((canonical, option_name))
+        else:
+            other_assignments.append((field_name, option_name))
 
     updated: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
@@ -6151,7 +6189,12 @@ def main() -> None:
     board_move_p.add_argument(
         "--project",
         choices=PROJECT_CHOICES,
-        help="Target a specific project instead of repo-based default routing",
+        help=(
+            "Name a board to VALIDATE against (it must already carry the "
+            "issue) — Status is still written on EVERY board carrying the "
+            "issue, all-or-none; this flag never restricts the write to one "
+            "board"
+        ),
     )
     board_move_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     board_move_p.add_argument("--number", required=True, type=int)

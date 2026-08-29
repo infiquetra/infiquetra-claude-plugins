@@ -258,3 +258,42 @@ def test_find_repo_root_fails_loudly_when_missing(tmp_path: Path) -> None:
         match=r"repository root containing \.claude-plugin/marketplace\.json not found",
     ):
         _find_repo_root(fake_pkg_root)
+
+
+# --- W6 cross-repo Code Review cycle-1 doc-parity regressions (F-4/F-5/F-6) ---
+
+
+def test_changelog_has_single_h1() -> None:
+    """F-4 regression: exactly ONE `# Changelog` H1 — the 2.13.0 entry must
+    not sit between two document titles, or outline views split the release."""
+    changelog = _read(PLUGIN_ROOT / "CHANGELOG.md")
+    h1s = [line for line in changelog.splitlines() if line.startswith("# ")]
+    assert h1s == ["# Changelog"], f"expected one H1, found {h1s}"
+
+
+def test_board_move_project_help_describes_validation_not_targeting() -> None:
+    """F-5 regression: `board move --project` help states the validation-not-
+    restriction contract — trusting --help must not imply a single-board
+    Status write."""
+    source = _read(PLUGIN_ROOT / "scripts" / "sdlc_manager.py")
+    # Scope to the `board move` parser; `board add`'s membership targeting is
+    # a different command and keeps its own wording.
+    move_parser_start = source.index('add_parser("move"')
+    move_help_region = source[move_parser_start : source.index('add_parser("archive"')]
+    assert "VALIDATE against" in move_help_region
+    assert "EVERY board carrying the" in move_help_region
+    # The old single-board phrasing must be gone from the move help.
+    assert "Target a specific project instead of repo-based default routing" not in (
+        move_help_region
+    )
+
+
+def test_board_skill_states_compensation_halt_accuracy() -> None:
+    """F-6 regression: the board skill's W6 note must NOT claim a failed move
+    always leaves zero boards written — a compensation failure leaves boards
+    disagreeing, and the skill must tell the agent to read back before
+    retrying."""
+    board_skill = _read(PLUGIN_ROOT / "skills" / "board" / "SKILL.md")
+    assert "no longer leaves other boards written" not in board_skill
+    assert "compensation failure" in board_skill
+    assert "Do not retry blindly" in board_skill

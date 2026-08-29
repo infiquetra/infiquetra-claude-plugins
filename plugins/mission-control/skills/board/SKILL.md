@@ -92,8 +92,11 @@ python3 sdlc_manager.py board move --project campps --repo athena-service --numb
 
 > **W6**: `board move` writes `Status` to EVERY board carrying the issue, all-or-none — a
 > multi-board issue ends at one Status everywhere or nowhere. `--project` is validated as a
-> carrying board, not honored as a single-board restriction, and a failed board move no longer
-> leaves other boards written. Exit remains non-zero on failure (#609).
+> carrying board, not honored as a single-board restriction. Exit remains non-zero on failure
+> (#609). On an ordinary failure the already-written boards are rolled back to their prior
+> values before exit 1 — BUT after a failed move, read the boards back before retrying: if the
+> failure was a compensation failure, boards still disagree and the error says which board
+> holds which value. Do not retry blindly.
 
 Use `board discover-fields` when unsure which Status options exist live.
 

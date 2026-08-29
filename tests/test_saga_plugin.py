@@ -3971,16 +3971,3 @@ def test_intake_exit_saga_creates_no_issue() -> None:
     except AssertionError:
         failed = True
     assert failed, "the seeded bare `gh issue create` must FAIL the boundary check"
-
-
-def _boundary_check(corpus: str, surface: str) -> None:
-    """The W10 Intake boundary itself (shared by the happy path and the seed)."""
-    assert "issue create-prepared" not in corpus, (
-        f"{surface} must not invoke Mission Control's issue creation directly"
-    )
-    for match in re.finditer(r"gh issue create", corpus):
-        window = corpus[max(0, match.start() - 60) : match.start()]
-        assert re.search(r"\b(not|never|no)\b", window, re.IGNORECASE), (
-            f"every `gh issue create` mention must sit inside a negation window "
-            f"({surface}), found near: {corpus[max(0, match.start() - 50) : match.end() + 30]!r}"
-        )

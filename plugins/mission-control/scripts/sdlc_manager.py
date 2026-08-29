@@ -5709,9 +5709,13 @@ def issue_create_prepared(
     # Enforce the U11 human gate (FIX 1): a draft sitting in
     # `needs_operator_approval` is NOT created until an operator approves it (via
     # `issue approve`) or explicitly overrides with --skip-approval. An
-    # `approved` draft proceeds; a None approval_state (legacy drafts predating
-    # the gate; blocked drafts already failed readiness above) proceeds
-    # unchanged — back-compatible, do NOT newly block None.
+    # `approved` draft proceeds. A None approval_state is split into two cases
+    # below: a sidecar still in `blocked` with None is the W10 R3b fill-in
+    # recovery — the author repaired the draft file until readiness passed —
+    # and that repaired-blocked draft must STILL enter the gate (F-1, sdlc#91
+    # CR c1): it is promoted to needs_operator_approval and refused. A sidecar
+    # in `ready_to_create` with None is a true pre-U11 legacy draft and
+    # proceeds unchanged — back-compatible, do NOT newly block None.
     approval_state = _read_sidecar_approval_state(draft_path)
     if approval_state == _APPROVAL_NEEDS_OPERATOR and not skip_approval:
         message = (
@@ -5723,6 +5727,28 @@ def issue_create_prepared(
         else:
             print(message)
         raise RuntimeError(message)
+
+    if approval_state is None and not skip_approval:
+        sidecar_state = _read_sidecar_payload(draft_path).get("state")
+        if sidecar_state == _PREPARE_STATE_BLOCKED:
+            # The draft started blocked (typically: `issue prepare` without a
+            # Stage — CLI prepare has no --stage flag by settled R3b) and was
+            # repaired by editing the draft file. The human gate applies:
+            # promote the sidecar and refuse until `issue approve` or
+            # --skip-approval.
+            _update_sidecar_state(
+                draft_path,
+                {"state": _PREPARE_STATE_READY, "approval_state": _APPROVAL_NEEDS_OPERATOR},
+            )
+            message = (
+                f"Prepared draft awaits operator approval; run "
+                f"`issue approve {draft_path}` first, or pass --skip-approval."
+            )
+            if fmt == "json":
+                _out({"created": False, "reason": "needs_operator_approval"}, fmt)
+            else:
+                print(message)
+            raise RuntimeError(message)
 
     config = load_config()
     plan = _build_mutation_plan(issue, config)
@@ -6514,6 +6540,25 @@ def issue_create(
             print("Skipping post-create metadata.")
             return
 
+        # Step 8a (W10, sdlc#91 R9): report the Intake-exit bypass as soon as a
+        # real issue number exists — BEFORE the card-contract gate can return,
+        # so a body-gate decline still leaves the bypass report on stdout
+        # (F-3, sdlc#91 CR c1). The interactive path created the issue OUTSIDE
+        # the prepared-issue exit, so the initialization of both lifecycle
+        # fields did not run. Status may already carry an operator-chosen
+        # value (the prompt above), so the report never claims Status is
+        # unset. Reporting is the requirement — the path proceeds unchanged
+        # (R10), and under the operator ruling there is no default Stage to
+        # apply here: this path has no prepared draft carrying an
+        # author-supplied one. Abort, decline-browser, no-number, and
+        # --skip-metadata stay silent: no issue was created on those paths.
+        print(
+            f"\nNOTE: {repo}#{issue_number} was created outside the Intake exit. "
+            "The prepared-issue initialization of both lifecycle fields (Stage, Status) "
+            "did not run. Use `issue create-prepared` to create issues through the "
+            "Intake exit."
+        )
+
         # Step 8b: gate on the card contract before carding it. The prepared
         # path has always blocked here; this path never checked.
         if not _gate_created_issue_body(repo, issue_number, issue_type, fmt):
@@ -6530,20 +6575,8 @@ def issue_create(
             fmt,
         )
 
-        # Step 9b (W10, sdlc#91 R9): report the Intake-exit bypass. This
-        # interactive path created the issue OUTSIDE the prepared-issue exit,
-        # so the initialization of both lifecycle fields did not run. Status may
-        # already carry an operator-chosen value (the prompt above), so the
-        # report never claims Status is unset. Reporting is the requirement —
-        # the path proceeds unchanged (R10), and under the operator ruling there
-        # is no default Stage to apply here: this path has no prepared draft
-        # carrying an author-supplied one.
-        print(
-            f"\nNOTE: {repo}#{issue_number} was created outside the Intake exit. "
-            "The prepared-issue initialization of both lifecycle fields (Stage, Status) "
-            "did not run. Use `issue create-prepared` to create issues through the "
-            "Intake exit."
-        )
+        # (The bypass NOTE fired at Step 8a, before the card-contract gate
+        # could return — see above.)
 
         # Step 10: paired-card prompt — suppressed in recursive call to
         # prevent unbounded nesting.

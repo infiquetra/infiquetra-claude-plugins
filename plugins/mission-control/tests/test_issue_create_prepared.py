@@ -845,3 +845,120 @@ def test_intake_exit_blocked_draft_still_refuses(tmp_path) -> None:
 
     mock_create.assert_not_called()
     mock_flow.assert_not_called()
+
+
+def test_intake_exit_fill_in_round_trips_through_approval_gate(tmp_path) -> None:
+    """F-1 / sdlc#91 CR c1: the documented R3b recovery — prepare without Stage,
+    edit `stage:` into the draft, create WITHOUT --skip-approval — must not
+    bypass the U11 human gate. The repaired-blocked draft is promoted to
+    needs_operator_approval and refused; after `issue approve` it creates."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Stage-less fill-in draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+    )
+    sidecar_path = draft.with_suffix(".json")
+    blocked_sidecar = json.loads(sidecar_path.read_text())
+    assert blocked_sidecar["state"] == "blocked"
+    assert blocked_sidecar["approval_state"] is None
+
+    # The U11 batch approver cannot admit a None approval_state — it SKIPS.
+    skip_result = sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    assert skip_result["skipped"] and skip_result["skipped"][0]["reason"] == (
+        "approval_state is None"
+    )
+
+    # The author fills Stage into the draft file — R3b's fill-in surface.
+    draft_text = draft.read_text()
+    assert "\nstage: " not in draft_text
+    draft.write_text(draft_text.replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1))
+
+    # The re-read draft now passes readiness — but create-prepared without
+    # --skip-approval must still refuse, and the sidecar must be promoted.
+    re_read = sdlc_manager._read_prepared_issue(draft)
+    readiness = sdlc_manager._readiness_for_prepared_issue(re_read)
+    assert readiness.passed is True
+
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(sdlc_manager, "_create_github_issue") as mock_create,
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+        pytest.raises(RuntimeError, match="awaits operator approval"),
+    ):
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    mock_create.assert_not_called()
+    promoted = json.loads(sidecar_path.read_text())
+    assert promoted["state"] == "ready_to_create"
+    assert promoted["approval_state"] == "needs_operator_approval"
+
+    # The gate admits the promoted draft once approved, and the two-field
+    # Intake exit runs normally after approval.
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(
+            sdlc_manager,
+            "_create_github_issue",
+            return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/11", 11),
+        ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field") as mock_flow,
+    ):
+        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert result["created"] is True
+    assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
+
+
+def test_intake_exit_fill_in_skip_approval_is_explicit_override(tmp_path) -> None:
+    """--skip-approval remains the operator's explicit override on the
+    repaired-blocked fill-in path; the sidecar promotion is not skipped."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Stage-less override draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+    )
+    draft.write_text(
+        draft.read_text().replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1)
+    )
+
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(
+            sdlc_manager,
+            "_create_github_issue",
+            return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/12", 12),
+        ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+    ):
+        result = sdlc_manager.issue_create_prepared(
+            draft, fmt="text", auto_confirm=True, skip_approval=True
+        )
+
+    assert result["created"] is True

@@ -619,3 +619,49 @@ def _interactive_mapped_config() -> dict:
             }
         }
     }
+
+
+def test_intake_exit_bypass_reported_before_body_gate_decline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """F-3 / sdlc#91 CR c1: when the operator pastes an issue number back and
+    the card-contract gate then DECLINES, a real GitHub issue exists outside
+    the Intake exit — the bypass NOTE must already be on stdout. R9 requires
+    the report once the number exists; abort and --skip-metadata stay silent
+    because no issue exists there."""
+    with ExitStack() as stack:
+        for ctx in (*_issue_create_full_path_patches(), patch("builtins.input", return_value="y")):
+            stack.enter_context(ctx)
+        stack.enter_context(
+            patch.object(sdlc_manager, "_gate_created_issue_body", return_value=False)
+        )
+        mock_metadata = stack.enter_context(
+            patch.object(sdlc_manager, "_apply_post_create_metadata")
+        )
+        stack.enter_context(patch.object(sdlc_manager, "_prompt_paired_card", return_value=None))
+        sdlc_manager.issue_create("campps-mvp", "capability", "text")
+
+    out = capsys.readouterr().out
+    assert "outside the Intake exit" in out
+    assert "Stage, Status" in out
+    # The gate declined, so the normal metadata work did NOT run — but the
+    # bypass report still fired, before the gate could return.
+    call_count = mock_metadata.call_count
+    assert call_count == 0
+
+
+def test_intake_exit_body_gate_decline_returns_before_metadata(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The decline still returns early (no metadata, no paired-card prompt);
+    only the bypass report precedes it."""
+    with ExitStack() as stack:
+        for ctx in (*_issue_create_full_path_patches(), patch("builtins.input", return_value="y")):
+            stack.enter_context(ctx)
+        stack.enter_context(
+            patch.object(sdlc_manager, "_gate_created_issue_body", return_value=False)
+        )
+        mock_paired = stack.enter_context(patch.object(sdlc_manager, "_prompt_paired_card"))
+        sdlc_manager.issue_create("campps-mvp", "capability", "text")
+
+    mock_paired.assert_not_called()

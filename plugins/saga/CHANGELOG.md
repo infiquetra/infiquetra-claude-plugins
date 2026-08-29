@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.144.0] - 2026-08-28
+
+### Changed
+
+- **Narrow review-artifact publication lane in the Code Review contract (W18, infiquetra-sdlc#99).**
+  In **interactive / standalone** mode `/code-review` may now write, commit, and push its own review
+  artifact (at `docs/code-reviews/` or the evidence-ledger artifact path — never anything else) and
+  submit the GitHub pull-request review on an existing PR. That commit is evidence only and names the
+  exact implementation revision reviewed (full 40-character `reviewed_revision` in the artifact
+  frontmatter); the reviewer still never implements the fixes it requests — the author or the Work
+  process owns repair changes and implementation commits — never mutates reviewed source, never opens
+  or updates a PR, and never files SDLC issues. **Programmatic / report-only mode is unchanged**: it
+  keeps its ZERO-durable-writes, caller-owns-persistence contract so `/work`'s `REVIEWED_SHA`
+  staleness gate stays valid. Route decision (Q6): skill-contract change alone — no new registered
+  operation kind in `reversibility_certificate.OpKind`, whose registry stays default-deny and off the
+  reviewer's paths.
+
 ## [0.143.0] - 2026-08-26
 
 ### Changed

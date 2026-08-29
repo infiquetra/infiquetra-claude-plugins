@@ -12,7 +12,7 @@ All operations run locally via the `gh` CLI, providing:
 - **Flow metrics** — cycle time, throughput, WIP age using GitHub timeline events
 - **Rollout tracking** — gap analysis and full SDLC deployment to any Infiquetra repo
 - **Milestone management** — create and track Objectives via GitHub Milestones
-- **Flow helpers** — `flow set-field` / `flow assign-mimir` / `flow link-sub-issue` / `flow verify-label` / `flow validate-card` / `flow field-options` / `flow discover-project`. Operator-facing GraphQL + REST helpers for project field assignment, covered Team Mimir intake, native sub-issue linking, self-healing label create, and card pre-flight validation
+- **Flow helpers** — `flow set-field` / `flow assign-mimir` / `flow link-sub-issue` / `flow verify-label` / `flow validate-card` / `flow field-options` / `flow discover-project`. Operator-facing GraphQL + REST helpers for project field assignment, covered Team Mimir intake, native sub-issue linking, self-healing label create, and card pre-flight validation. `Status`/`Stage` writes (W6) are the constrained lifecycle-field mutation: atomic across every board carrying the issue (all-carrying-boards-or-none, halt-and-raise on a failed compensation), with `--project` validated as a carrying board and an optional `--reason` recorded per board.
 
 ## Quick Start
 
@@ -93,7 +93,7 @@ The `sdlc-operator` agent orchestrates complex multi-step operations:
 - New initiative/objective setup (labels + field options + milestone)
 - Objective progress tracking across repos
 - Batch triage of untriaged issues
-- Project field assignment via `flow set-field` (Initiative, Objective, Status, Target Team, Mode, and other live single-select fields)
+- Project field assignment via `flow set-field` (Initiative, Objective, Status, Target Team, Mode, and other live single-select fields; `Status`/`Stage` route through the W6 constrained cross-board mutation — every carrying board, all-or-none)
 - Native sub-issue linking via `flow link-sub-issue` (cross-repo, idempotent)
 - Card body pre-flight validation via `flow validate-card`
 

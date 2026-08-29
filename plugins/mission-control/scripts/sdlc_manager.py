@@ -30,7 +30,11 @@ Usage:
     sdlc_manager.py labels deploy --repo athena-service
     sdlc_manager.py labels auto-label --repo athena-service --number 42
     sdlc_manager.py fields create-option --project asgard --field initiative --option "new-initiative"
+    sdlc_manager.py fields set-options --project asgard --field Status --options-file options.json
     sdlc_manager.py fields discover --project asgard
+    # fields create-option ONLY inspects a field and prints its options — it
+    # performs no mutation; writes go through fields set-options (complete
+    # option list, existing ids preserved)
 
     sdlc_manager.py metrics cycle-time --project asgard [--days 30] [--type capability]
     sdlc_manager.py metrics throughput --project asgard [--weeks 4]
@@ -882,6 +886,45 @@ mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
 }
 """
 
+# Single-select option sets are OVERWRITTEN whole (there is no add-one-option
+# mutation): `UpdateProjectV2FieldInput.singleSelectOptions` — "Empty input is
+# ignored, provided values overwrite existing options, and existing options
+# should be fetched for partial updates." An option keeps its identity (and
+# every item value pointing at it) only if its existing id is resubmitted;
+# omitting the id mints a new option and clears every item value that pointed
+# at the old one. `update_field_single_select_options` is the only call site
+# this mutation should ever have — it refuses any submission that is not the
+# complete desired list with the existing id on every retained or renamed
+# option, BEFORE the mutation is sent.
+QUERY_UPDATE_FIELD_OPTIONS = """
+mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+  updateProjectV2Field(input: {
+    fieldId: $fieldId
+    singleSelectOptions: $options
+  }) {
+    projectV2Field {
+      ... on ProjectV2SingleSelectField {
+        id
+        name
+        options { id name color description }
+      }
+    }
+  }
+}
+"""
+
+QUERY_GET_SINGLE_SELECT_FIELD = """
+query($fieldId: ID!) {
+  node(id: $fieldId) {
+    ... on ProjectV2SingleSelectField {
+      id
+      name
+      options { id name color description }
+    }
+  }
+}
+"""
+
 QUERY_GET_PROJECT_ITEMS = """
 query($org: String!, $number: Int!, $cursor: String) {
   organization(login: $org) {
@@ -944,7 +987,7 @@ query($org: String!, $number: Int!, $cursor: String) {
           }
           ... on ProjectV2SingleSelectField {
             id name
-            options { id name }
+            options { id name color description }
           }
           ... on ProjectV2IterationField {
             id name
@@ -1515,7 +1558,9 @@ def _sync_label_fields_for_item(repo: str, number: int, proj: dict, item_id: str
 
         if not option_id:
             results.append(
-                f"No option ID for {label_prefix}:{value} — consider running 'fields create-option'"
+                f"No option ID for {label_prefix}:{value} — add it to the field's option set via "
+                "'fields set-options --options-file <complete-list.json>' (a one-option write is "
+                "refused: option sets are overwritten whole)"
             )
             continue
 
@@ -1734,8 +1779,236 @@ def labels_auto_label(repo: str, number: int, fmt: str) -> None:
         _error(f"Failed to apply labels: {e}")
 
 
+class OptionSetIdentityError(ValueError):
+    """A single-select option-set submission would violate identity preservation.
+
+    Raised BEFORE any mutating call. `UpdateProjectV2FieldInput.singleSelectOptions`
+    overwrites the whole option set, so a submission that drops a live option (or
+    drops a retained option's `id`) clears every item value pointing at it. This
+    error is the helper's refusal, not a warning."""
+
+
+# ProjectV2SingleSelectFieldOptionColor is a closed eight-value enum; anything
+# else is an API error waiting to happen on a field that may carry hundreds of
+# item values.
+VALID_OPTION_COLORS = ("GRAY", "BLUE", "GREEN", "YELLOW", "ORANGE", "RED", "PINK", "PURPLE")
+
+
+def fetch_single_select_field(field_id: str) -> dict:
+    """Fetch one single-select field and its full option list by field id.
+
+    Returns the node dict with `id`, `name`, and `options` (each carrying
+    `id`, `name`, `color`, `description`). Raises if the node is not a
+    single-select field."""
+    data = _graphql(QUERY_GET_SINGLE_SELECT_FIELD, {"fieldId": field_id})
+    node = data.get("node") or {}
+    if not node or "options" not in node:
+        raise ValueError(
+            f"field {field_id!r} is not a SINGLE_SELECT field (or does not exist); "
+            "option-set mutation is only defined for single-select fields"
+        )
+    return cast(dict, node)
+
+
+def _validate_option_set_request(
+    desired_options: list[dict],
+    current_options: list[dict],
+) -> list[dict]:
+    """Pre-flight validation for an identity-preserving option-set write.
+
+    Raises `OptionSetIdentityError` on any violation and returns the
+    normalized, submission-ready option list. Never touches the network —
+    the mutation is composed only after every assertion here passes.
+
+    Contract (V1/V2/V3 of issue infiquetra/infiquetra-sdlc#94):
+      * the submitted list must be the COMPLETE desired set — the API
+        overwrites the whole option set, and empty input is ignored;
+      * every option currently on the field must appear in the submission
+        (retire-by-omission is the value-clearing hazard, so the helper
+        refuses to drop a live option outright);
+      * every retained or renamed option carries its existing `id`; only a
+        genuinely new name omits `id`;
+      * every submitted colour is inside the eight-value enum;
+      * `description` (a REQUIRED `String!` with no default on the live
+        input type) is present on EVERY submitted entry: caller's explicit
+        value wins, a retained or renamed option whose caller omitted it
+        copies the live option's description verbatim, and a genuinely new
+        option defaults to `""` — so S8 can never wipe the live descriptions.
+    """
+    if not desired_options:
+        raise OptionSetIdentityError(
+            "empty option list refused: the API ignores empty input, so this "
+            "submission would silently change nothing — an option-set write "
+            "must be the complete desired set"
+        )
+    if not isinstance(current_options, list):
+        raise OptionSetIdentityError("current_options must be a list")
+    if not current_options:
+        # A lifecycle field on a live board always carries options; an empty
+        # current list means the fetch failed or was truncated, and this
+        # submission cannot be verified as the complete desired set.
+        raise OptionSetIdentityError(
+            "live option list is empty: the complete-set guarantee cannot be "
+            "verified against a field read as having no options — fetch the "
+            "field's live options (fetch_single_select_field) and retry; a "
+            "one-option submission against the real field would overwrite the "
+            "whole set"
+        )
+
+    current_by_id = {o["id"]: o for o in current_options if o.get("id")}
+    current_names_ci = {str(o["name"]).casefold() for o in current_options}
+
+    seen_ids: set[str] = set()
+    seen_names_ci: set[str] = set()
+    submitted: list[dict] = []
+    for opt in desired_options:
+        if not isinstance(opt, dict):
+            raise OptionSetIdentityError(f"option entry is not an object: {opt!r}")
+        name = opt.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise OptionSetIdentityError(f"option entry has an empty or missing name: {opt!r}")
+        opt_id = opt.get("id")
+        if opt_id is not None and (not isinstance(opt_id, str) or not opt_id):
+            raise OptionSetIdentityError(f"option {name!r} carries an invalid id: {opt_id!r}")
+        color = opt.get("color")
+        if color not in VALID_OPTION_COLORS:
+            raise OptionSetIdentityError(
+                f"option {name!r} colour {color!r} is outside the allowed enum "
+                f"{list(VALID_OPTION_COLORS)}"
+            )
+        description = opt.get("description")
+        if description is not None and not isinstance(description, str):
+            raise OptionSetIdentityError(f"option {name!r} description must be a string or omitted")
+        if opt_id is not None and opt_id in seen_ids:
+            raise OptionSetIdentityError(f"option id {opt_id!r} submitted more than once")
+        name_ci = name.casefold()
+        if name_ci in seen_names_ci:
+            raise OptionSetIdentityError(f"option name {name!r} submitted more than once")
+        seen_ids.add(opt_id or "")
+        seen_names_ci.add(name_ci)
+
+        if opt_id is None:
+            # Only a genuinely new option may omit its id: a name that collides
+            # (even by case alone) with a live option means the caller intends a
+            # rename but would instead mint a duplicate and clear every item
+            # value pointing at the live option.
+            if name_ci in current_names_ci:
+                raise OptionSetIdentityError(
+                    f"option {name!r} submitted without an id but an option with "
+                    "this name already exists on the field — a retained or renamed "
+                    "option MUST carry its existing id or its item values are "
+                    "cleared, and a same-name new option would duplicate it"
+                )
+        else:
+            if opt_id not in current_by_id:
+                raise OptionSetIdentityError(
+                    f"option {name!r} carries id {opt_id!r} which does not exist on "
+                    "the live field; only ids fetched from the current field "
+                    "definition may be submitted"
+                )
+        entry = {"name": name, "color": color}
+        # `ProjectV2SingleSelectFieldOptionInput.description` is a REQUIRED
+        # String! with no default: omitting the key makes GitHub reject the
+        # variables at coercion, and passing `""` blindly would wipe the live
+        # option's description on submit (same attribute-preservation rule as
+        # the option id itself, V2). So `description` is ALWAYS present:
+        # caller's explicit value wins; a retained or renamed option whose
+        # caller omitted it copies the LIVE option's description verbatim; a
+        # genuinely new option defaults to "".
+        if isinstance(description, str):
+            entry_description: str = description
+        elif opt_id is not None:
+            live_desc = (current_by_id.get(opt_id) or {}).get("description")
+            entry_description = live_desc if isinstance(live_desc, str) else ""
+        else:
+            entry_description = ""
+        entry["description"] = entry_description
+        if opt_id is not None:
+            entry["id"] = opt_id
+        submitted.append(entry)
+
+    dropped = [o["name"] for o in current_options if o.get("id") and o["id"] not in seen_ids]
+    if dropped:
+        raise OptionSetIdentityError(
+            f"submission omits live option(s) {dropped}; the API overwrites the "
+            "whole option set, so omitting an option DELETES it and clears every "
+            "item value pointing at it — the complete desired set is required"
+        )
+    return submitted
+
+
+def update_field_single_select_options(
+    field_id: str,
+    desired_options: list[dict],
+    *,
+    current_options: list[dict] | None = None,
+) -> dict:
+    """Replace a single-select field's options, preserving item values.
+
+    The ONLY sanctioned call site for `QUERY_UPDATE_FIELD_OPTIONS`. Fetches
+    the live option list (unless `current_options` is supplied — offline
+    tests use this seam), validates the submission against it, and only
+    then submits the whole desired set. Every retained or renamed option
+    carries its existing `id`, so item values follow the option instead of
+    being cleared; only genuinely new options omit the id. Refuses — before
+    any mutation leaves this process — a submission that is not the
+    complete desired set, drops a live option, lacks an existing id on a
+    retained option, or uses a colour outside the eight-value enum.
+
+    Returns the read-back field containing the post-write option list; any
+    lost option id, changed option name, or lost attribute on an id-carrying
+    option is raised as `OptionSetIdentityError` so a silent identity loss
+    cannot pass as success.
+    """
+    if current_options is None:
+        current_options = fetch_single_select_field(field_id).get("options", [])
+    submitted = _validate_option_set_request(desired_options, current_options)
+
+    data = _graphql(
+        QUERY_UPDATE_FIELD_OPTIONS,
+        {"fieldId": field_id, "options": submitted},
+    )
+    field = (data.get("updateProjectV2Field") or {}).get("projectV2Field") or {}
+    returned = field.get("options") or []
+
+    returned_by_id = {o.get("id"): o for o in returned}
+    for entry in submitted:
+        if entry.get("id"):
+            if entry["id"] not in returned_by_id:
+                raise OptionSetIdentityError(
+                    f"post-write readback lost option id {entry['id']!r} "
+                    f"(name {entry['name']!r}); refusing to report success"
+                )
+            got = returned_by_id[entry["id"]]
+            if got.get("name") != entry["name"] or got.get("description") != entry["description"]:
+                raise OptionSetIdentityError(
+                    f"post-write readback altered option id {entry['id']!r} "
+                    f"(name {entry['name']!r}): name/description "
+                    f"{got.get('name')!r}/{got.get('description')!r} differs from "
+                    f"submitted {entry['name']!r}/{entry['description']!r}; "
+                    "refusing to report success"
+                )
+    if len(returned) != len(submitted):
+        raise OptionSetIdentityError(
+            f"post-write readback carries {len(returned)} options but "
+            f"{len(submitted)} were submitted; refusing to report success"
+        )
+    return field
+
+
 def fields_create_option(project_name: str, field_name: str, option_name: str, fmt: str) -> None:
-    """Create a new single-select option on a project field."""
+    """Inspect a single-select field ahead of adding an option.
+
+    This command performs NO mutation — it never has. It discovers the
+    field, prints its id and the options already on it, and stops, because
+    the option-set mutation is destructive by design:
+    `UpdateProjectV2FieldInput.singleSelectOptions` overwrites the whole
+    option set, so a naive one-option write would delete every other option
+    and clear every item value on the field. Use
+    `fields set-options --options-file` (backed by
+    `update_field_single_select_options`) which submits the complete
+    desired list with existing option ids intact, or add the option in the
+    GitHub Projects UI."""
     config = load_config()
     proj = get_project_config(config, project_name)
 
@@ -1752,12 +2025,70 @@ def fields_create_option(project_name: str, field_name: str, option_name: str, f
         _error(f"Field '{field_name}' not found in project '{project_name}'")
         sys.exit(1)
 
-    print(f"Creating option '{option_name}' for field '{field_name}' in '{project_name}'...")
+    print(f"Inspecting option '{option_name}' for field '{field_name}' in '{project_name}'...")
     print(f"Field ID: {target_field['id']}")
     print(f"Existing options: {[o['name'] for o in target_field.get('options', [])]}")
-    print("\nNote: Option creation via GraphQL may require specific permissions.")
-    print("If this fails, add the option manually in the GitHub Projects UI:")
-    print(f"  https://github.com/orgs/{ORG}/projects/{proj['number']}/settings/fields")
+    print("\nNo mutation was performed. A field's option set is overwritten whole by")
+    print("UpdateProjectV2FieldInput.singleSelectOptions — adding one option through that")
+    print("input would delete every existing option and clear each item's value for the")
+    print("field. To add an option safely, submit the COMPLETE desired list (with every")
+    print("existing option id preserved) via:")
+    print(f"  sdlc_manager.py fields set-options --project {project_name} --field {field_name} \\")
+    print("      --options-file <complete-desired-options.json>")
+    print(
+        f"or in the Projects UI: https://github.com/orgs/{ORG}/projects/{proj['number']}/settings/fields"
+    )
+
+
+def fields_set_options(
+    project_name: str, field_name: str, options_file: str, dry_run: bool
+) -> None:
+    """Replace a field's option set via the identity-preserving helper.
+
+    `options_file` is a JSON array of `{name, color, description?, id?}`
+    objects and must be the COMPLETE desired option set — every option
+    currently on the field included, retained or renamed options carrying
+    their existing id. Validation runs before anything is written; with
+    `--dry-run` the command stops after validation and writes nothing."""
+    config = load_config()
+    proj = get_project_config(config, project_name)
+
+    _, fields = get_project_fields(proj["number"])
+
+    target_field = None
+    for f in fields:
+        if f.get("name", "").lower() == field_name.lower():
+            target_field = f
+            break
+
+    if not target_field:
+        _error(f"Field '{field_name}' not found in project '{project_name}'")
+        sys.exit(1)
+    if target_field.get("options") is None or "options" not in target_field:
+        _error(
+            f"Field '{field_name}' is not a single-select field; option sets are only defined for SINGLE_SELECT"
+        )
+        sys.exit(1)
+
+    desired = json.loads(Path(options_file).read_text(encoding="utf-8"))
+
+    print(f"Option-set write on field '{field_name}' in '{project_name}'...")
+    print(f"Field ID: {target_field['id']}")
+    print(f"Existing options: {[o['name'] for o in target_field.get('options', [])]}")
+    print(f"Desired options:  {[o.get('name') for o in desired]}")
+
+    if dry_run:
+        _validate_option_set_request(desired, target_field.get("options", []))
+        print("\nDry run: option set validated — complete list, existing ids preserved.")
+        print("No mutation was sent. Re-run without --dry-run to apply.")
+        return
+
+    field = update_field_single_select_options(
+        target_field["id"], desired, current_options=target_field.get("options", [])
+    )
+    print("\nOption set updated. Post-write readback:")
+    for o in field.get("options", []):
+        print(f"  {o.get('id')}  {o.get('name')}  ({o.get('color')})")
 
 
 def fields_discover(project_name: str, fmt: str) -> None:
@@ -6419,12 +6750,47 @@ def main() -> None:
     fields_p = subparsers.add_parser("fields", help="Project field management")
     fields_sp = fields_p.add_subparsers(dest="action", required=True)
 
-    fields_create_p = fields_sp.add_parser("create-option", help="Create new single-select option")
+    fields_create_p = fields_sp.add_parser(
+        "create-option",
+        help=(
+            "Inspect a single-select field and its existing options ahead of adding "
+            "one — performs NO mutation (a one-option write is not safe; the option "
+            "set is overwritten whole)"
+        ),
+    )
     fields_create_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
     fields_create_p.add_argument(
         "--field", required=True, help="Field name (e.g. initiative, objective)"
     )
-    fields_create_p.add_argument("--option", required=True, help="New option name")
+    fields_create_p.add_argument(
+        "--option",
+        required=True,
+        help="Name of the option to inspect the field against (NO mutation is "
+        "performed; adding an option safely goes through 'fields set-options')",
+    )
+
+    fields_setopts_p = fields_sp.add_parser(
+        "set-options",
+        help=(
+            "Replace a single-select field's option set via the identity-preserving "
+            "helper (complete desired list required; existing ids preserved)"
+        ),
+    )
+    fields_setopts_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    fields_setopts_p.add_argument(
+        "--field", required=True, help="Field name (e.g. Status, Objective)"
+    )
+    fields_setopts_p.add_argument(
+        "--options-file",
+        required=True,
+        help="JSON file holding the COMPLETE desired option list "
+        "[{name, color, description?, id?}] — retained/renamed options carry their existing id",
+    )
+    fields_setopts_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the option list against the live field and stop without writing",
+    )
 
     fields_discover_p = fields_sp.add_parser("discover", help="Discover all fields and options")
     fields_discover_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
@@ -6728,6 +7094,8 @@ def main() -> None:
         elif args.resource == "fields":
             if args.action == "create-option":
                 fields_create_option(args.project, args.field, args.option, fmt)
+            elif args.action == "set-options":
+                fields_set_options(args.project, args.field, args.options_file, args.dry_run)
             elif args.action == "discover":
                 fields_discover(args.project, fmt)
 

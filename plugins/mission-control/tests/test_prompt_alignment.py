@@ -42,7 +42,7 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "mission-control")
 
     assert plugin_json["name"] == "mission-control"
-    assert plugin_json["version"] == "2.12.9"  # #821 remove dead rollout update subcommand
+    assert plugin_json["version"] == "2.13.0"  # W6: constrained lifecycle-field mutation (#87)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]

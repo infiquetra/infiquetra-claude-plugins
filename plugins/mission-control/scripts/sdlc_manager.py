@@ -994,6 +994,31 @@ query($org: String!, $repo: String!, $number: Int!) {
 }
 """
 
+QUERY_GET_LIFECYCLE_FIELD_BOARDS = """
+# pagination-lint: allow (a single issue sits on a handful of projects, never
+# >100, and each carries far fewer than 100 field values)
+query($org: String!, $repo: String!, $number: Int!) {
+  repository(owner: $org, name: $repo) {
+    issue(number: $number) {
+      projectItems(first: 100) {
+        nodes {
+          id
+          project { id title number }
+          fieldValues(first: 100) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field { ... on ProjectV2SingleSelectField { name } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 QUERY_GET_ISSUE_TIMELINE = """
 query($org: String!, $repo: String!, $number: Int!, $cursor: String) {
   repository(owner: $org, name: $repo) {
@@ -1271,83 +1296,33 @@ def board_add(
 def board_move(
     repo: str, number: int, status: str, fmt: str, project_name: str | None = None
 ) -> bool:
-    """Move item to a different board column."""
-    config = load_config()
-    projects = (
-        [get_project_config(config, project_name)]
-        if project_name
-        else get_projects_for_repo(config, repo)
-    )
-    if not projects:
-        _error(f"Repo '{repo}' not mapped to any project")
-        sys.exit(1)
+    """Move item's Status across every board carrying the issue.
 
-    results = []
-    failed = False
-    for proj in projects:
-        project_id, items = get_project_items(proj["number"])
+    W6 (KTD13): the Status write routes through the constrained cross-board
+    mutation, which does its own board discovery from the issue's
+    projectItems — the per-project resolution loop and its
+    except-and-continue (a board-by-board best-effort write) are gone, since
+    a multi-board issue must end at one Status everywhere or nowhere
+    (R40/R67). ``project_name`` is validated against the carrying boards,
+    never obeyed as a single-board restriction.
 
-        # Find item
-        target_item = None
-        for item in items:
-            content = item.get("content", {})
-            if (
-                content.get("number") == number
-                and content.get("repository", {}).get("name") == repo
-            ):
-                target_item = item
-                break
-
-        if not target_item:
-            results.append(f"Item {repo}#{number} not found in '{proj['name']}'")
-            failed = True
-            continue
-
-        # Find Status field ID and option ID via field discovery
-        _, proj_fields = get_project_fields(proj["number"])
-
-        status_field = None
-        status_option_id = None
-        for field in proj_fields:
-            if field.get("name") == "Status":
-                status_field = field
-                for opt in field.get("options", []):
-                    if opt["name"] == status:
-                        status_option_id = opt["id"]
-                        break
-                break
-
-        if not status_field:
-            results.append(f"No Status field found in '{proj['name']}'")
-            failed = True
-            continue
-        if not status_option_id:
-            available = [o["name"] for o in status_field.get("options", [])]
-            hint = _legacy_status_hint(status, available)
-            message = f"Status '{status}' not found. Available: {', '.join(available)}"
-            if hint:
-                message = f"{message}. {hint}"
-            results.append(message)
-            failed = True
-            continue
-
-        try:
-            _graphql(
-                QUERY_SET_FIELD_VALUE,
-                {
-                    "projectId": project_id,
-                    "itemId": target_item["id"],
-                    "fieldId": status_field["id"],
-                    "optionId": status_option_id,
-                },
-            )
-            results.append(f"Moved {repo}#{number} to '{status}' in '{proj['name']}'")
-        except Exception as e:
-            results.append(f"Failed to move: {e}")
-            failed = True
-
-    _out("\n".join(results), fmt)
-    return not failed
+    `#609` fail-loud contract holds: an ordinary failure returns ``False``
+    and the CLI arm raises SystemExit(1). A LifecycleMutationHaltError — the
+    boards are divergent and a restore failed — propagates instead of
+    degrading to an ordinary failed move (KTD13 carve-out).
+    """
+    try:
+        evidence = _set_lifecycle_field_cross_board(
+            repo, number, "Status", status, requested_project=project_name
+        )
+    except LifecycleMutationHaltError:
+        raise
+    except Exception as e:
+        _out(f"Failed to move: {e}", fmt)
+        return False
+    evidence["action"] = "board-move"
+    _out(evidence, fmt)
+    return True
 
 
 def board_archive(project_name: str, dry_run: bool, fmt: str) -> None:
@@ -2421,13 +2396,35 @@ def flow_set_field(
     fmt: str,
     *,
     correction: bool = False,
+    reason: str | None = None,
 ) -> None:
     """Set a single-select field value on a card. Idempotent: re-running
     with the same option produces the same final state.
 
     ``correction=True`` is the saga submission seam (#812): only Status (and
     Stage by name) are accepted; the field name is carried in the result identity.
+
+    W6 routing (KTD10): any write naming Status or Stage — with or without
+    ``--correction`` — IS the constrained cross-board mutation. The field name
+    selects the writer, not the flag, because in-process callers (issue-create
+    post-step, prepared-issue loop, bulk delegate) never pass ``correction``.
+    ``project_name`` is validated as a carrying board, never obeyed as a
+    single-board restriction: a single-board Status write is no longer
+    possible (R40). Every other field keeps the single-board path unchanged.
     """
+    if field_name in CORRECTION_FIELDS:
+        evidence = _set_lifecycle_field_cross_board(
+            repo,
+            number,
+            field_name,
+            option_name,
+            reason=reason,
+            requested_project=project_name,
+        )
+        evidence["action"] = "set-field"
+        evidence["correction"] = bool(correction)
+        _out(evidence, fmt)
+        return
     if correction:
         field_name = assert_correction_field(field_name)
     field = _resolve_project_field(project_name, field_name)
@@ -2518,6 +2515,297 @@ def _set_project_field_value(
     )
 
 
+# ===========================
+# CONSTRAINED LIFECYCLE-FIELD MUTATION (W6, infiquetra/infiquetra-sdlc#87)
+# ===========================
+# One mutation writes `Stage` and `Status` — and nothing else (R31) — to EVERY
+# board carrying the issue (R40), all-or-none (R67). Board discovery comes from
+# the issue's own projectItems (KTD2): the repo→board map deliberately has
+# empty `repositories` arrays and cannot answer "which boards carry this".
+# Atomicity is apply-then-compensate (KTD3 — Projects v2 has no multi-project
+# transaction). An issue whose prior value was unset cannot be restored with
+# the set-only primitive below (no clear mutation exists), so that restore is
+# a FAILED restore routing into the halt (KTD8). The halt derives from
+# `Exception`, not `RuntimeError`: the prepared-issue loop's
+# `except RuntimeError` warn-and-continue must NOT absorb a compensation
+# failure (R67 — never leave the divergence unreported; W6 must not edit that
+# loop — it is W10's custody). No transition-legality check exists anywhere in
+# this path and none may be added (R65/R82).
+
+
+class LifecycleMutationHaltError(Exception):
+    """A compensating write failed; halves the boards in disagreement.
+
+    Deliberately NOT a RuntimeError: `main()` gets its own arm for this (a
+    non-zero exit with the named divergence, no traceback) and the
+    prepared-issue field loop's `except RuntimeError` must not absorb it.
+    Carries `board_state` — per-board {board, value} — for machine-readable
+    consumption by unattended callers."""
+
+    def __init__(self, message: str, *, board_state: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(message)
+        self.board_state = board_state or []
+
+
+# KTD11: the mutation always records a reason; when the caller supplied none
+# the recorded value is this explicit sentinel — never a fabricated
+# justification. Saga's deployed writer (`board_progression.py`) passes no
+# --reason and must keep working unchanged.
+REASON_NOT_SUPPLIED = "reason-not-supplied"
+
+
+def _lifecycle_field_boards(repo: str, number: int, field_name: str) -> list[dict[str, Any]]:
+    """Return one record per board carrying {repo}#{number}.
+
+    Boards are resolved from the issue's own projectItems (KTD2), never from
+    the repo→board map. Each record carries the mapping key, project title and
+    number, the project-item node id (needed by the write primitive), whether
+    the board even has the named field, and the field's current value — read in
+    the SAME query that discovers the boards, because that value is what KTD3's
+    compensation restores; reading it separately would open a window between
+    read and write. `prior_value` is None both when the board has the field but
+    no value set (`field_present` True) and when it lacks the field entirely
+    (False) — preflight halts on the latter via _resolve_project_field.
+    """
+    data = _graphql(
+        QUERY_GET_LIFECYCLE_FIELD_BOARDS,
+        {"org": ORG, "repo": repo, "number": number},
+    )
+    issue = data.get("repository", {}).get("issue")
+    if not isinstance(issue, dict):
+        raise RuntimeError(
+            f"Could not read back {ORG}/{repo}#{number} project state "
+            f"(lifecycle-field board discovery)"
+        )
+
+    # GitHub's project.title ("Operations") is not a mapping key; join on the
+    # project number to recover the key the config-based resolvers require.
+    number_to_key = {
+        cast(int, proj.get("number")): key
+        for key, proj in load_config().get("project_mappings", {}).get("projects", {}).items()
+        if isinstance(proj.get("number"), int)
+    }
+
+    records: list[dict[str, Any]] = []
+    for item in issue.get("projectItems", {}).get("nodes", []):
+        if not isinstance(item, dict):
+            continue
+        project = item.get("project", {})
+        if not isinstance(project, dict):
+            continue
+        field_present = False
+        prior_value = None
+        for field_value in item.get("fieldValues", {}).get("nodes", []):
+            if not isinstance(field_value, dict):
+                continue
+            if field_value.get("field", {}).get("name") != field_name:
+                continue
+            field_present = True
+            value = field_value.get("name")
+            if value:
+                prior_value = value
+        records.append(
+            {
+                "key": number_to_key.get(project.get("number")),
+                "title": project.get("title"),
+                "project_number": project.get("number"),
+                "item_id": item.get("id"),
+                "field_present": field_present,
+                "prior_value": prior_value,
+            }
+        )
+    # Deterministic write order (lowest project number first); tests inject
+    # failures by board position, so the order must not depend on dict order.
+    records.sort(key=lambda r: (not isinstance(r["project_number"], int), r["project_number"] or 0))
+    return records
+
+
+def _set_lifecycle_field_cross_board(
+    repo: str,
+    number: int,
+    field_name: str,
+    option_name: str,
+    *,
+    reason: str | None = None,
+    requested_project: str | None = None,
+) -> dict[str, Any]:
+    """The constrained cross-board lifecycle-field mutation (W6).
+
+    Writes `field_name` = `option_name` on EVERY board carrying {repo}#{number}
+    (R40), all-or-none (R67): preflight every board first (KTD4 — a missing
+    field or option halts before the first write), write them in sequence, and
+    on a write failure restore each already-written board's captured prior
+    value. A restore that cannot be performed — the prior value was unset and
+    no clear primitive exists (KTD8), or the restoring write itself fails —
+    raises LifecycleMutationHaltError naming which board holds which value;
+    there is no retry (R67).
+
+    Returns the evidence payload (one record per board); raises RuntimeError
+    for ordinary preflight/discovery failures and the halt exception only when
+    boards are actually divergent.
+
+    Emits no-ladder semantics by construction (KTD6): nothing here compares the
+    target value against the prior value, and no permitted-edge list exists.
+    """
+    assert_correction_field(field_name)
+    recorded_reason = reason if reason else REASON_NOT_SUPPLIED
+    identity = correction_identity(
+        field_name=field_name, repo=repo, number=number, option_name=option_name
+    )
+
+    boards = _lifecycle_field_boards(repo, number, field_name)
+    if not boards:
+        raise RuntimeError(
+            f"Issue {repo}#{number} sits on no project board; {field_name}='{option_name}' "
+            f"was written nowhere. This is an explicit no-op, not a success."
+        )
+
+    if requested_project is not None:
+        carrying = {b["key"] for b in boards if b["key"]}
+        if requested_project not in carrying:
+            raise RuntimeError(
+                f"Board '{requested_project}' does not carry {repo}#{number} "
+                f"(carrying boards: {sorted(carrying)}). A lifecycle-field write "
+                f"reaches every carrying board, not only the one named."
+            )
+
+    # KTD4 — preflight EVERY board before the first write, capturing per board
+    # the live field id, target option id, and the prior value's option id (for
+    # restoration). Option ids are resolved live, never cached (DECISIONS.md
+    # option-id-drift revisit condition).
+    preflight: list[dict[str, Any]] = []
+    for board in boards:
+        key = board["key"]
+        if key is None:
+            raise RuntimeError(
+                f"Board '{board['title']}' (number {board['project_number']}) carries "
+                f"{repo}#{number} but is not in project-mappings.json; its "
+                f"{field_name} field cannot be resolved"
+            )
+        try:
+            field = _resolve_project_field(key, field_name)
+            option = _resolve_field_option(key, field_name, field, option_name)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"preflight failed for {repo}#{number} on board '{key}' "
+                f"('{board['title']}'): {exc}"
+            ) from exc
+        prior_option_id: str | None = None
+        if board["prior_value"] is not None:
+            prior_option = next(
+                (
+                    o
+                    for o in field.get("options", [])
+                    if o.get("name", "").lower() == board["prior_value"].lower()
+                ),
+                None,
+            )
+            # No matching option id means a later restore cannot work; leave
+            # prior_option_id None and let any needed restore fail INTO the
+            # halt (safe direction, KTD8) rather than fabricating a value.
+            prior_option_id = prior_option["id"] if prior_option else None
+        preflight.append({**board, "field": field, "target_option_id": option["id"], "prior_option_id": prior_option_id})
+
+    # Write phase — apply-then-compensate (KTD3).
+    written: list[dict[str, Any]] = []
+    try:
+        for entry in preflight:
+            _set_project_field_value(
+                entry["field"]["_project_id"],
+                entry["field"],
+                {"id": entry["target_option_id"]},
+                {"id": entry["item_id"]},
+            )
+            written.append(entry)
+    except Exception as write_exc:
+        divergent: list[dict[str, Any]] = []
+        restored: list[str] = []
+        for entry in written:
+            new_value = option_name
+            prior_shown = entry["prior_value"]
+            if entry["prior_option_id"] is None:
+                # KTD8: the board carried no prior value (or the prior option no
+                # longer resolves), and no clear mutation exists — the board
+                # cannot be put back. Report it, never silently leave it.
+                divergent.append(
+                    {
+                        "board": entry["key"],
+                        "held_value": new_value,
+                        "reason": (
+                            "board's prior value was unset"
+                            if prior_shown is None
+                            else f"prior option '{prior_shown}' no longer resolvable"
+                        ),
+                    }
+                )
+                continue
+            try:
+                _set_project_field_value(
+                    entry["field"]["_project_id"],
+                    entry["field"],
+                    {"id": entry["prior_option_id"]},
+                    {"id": entry["item_id"]},
+                )
+                restored.append(entry["key"])
+            except Exception as restore_exc:
+                divergent.append(
+                    {
+                        "board": entry["key"],
+                        "held_value": new_value,
+                        "reason": f"restore failed: {restore_exc}",
+                    }
+                )
+        if divergent:
+            divergent_boards = {d["board"] for d in divergent}
+            board_state = [
+                {
+                    "board": entry["key"],
+                    "shows": (
+                        option_name if entry["key"] in divergent_boards else entry["prior_value"]
+                    ),
+                }
+                for entry in preflight
+            ]
+            raise LifecycleMutationHaltError(
+                f"COMPENSATION FAILED writing {field_name}='{option_name}' to "
+                f"{repo}#{number}. {len(divergent)} already-written board(s) could "
+                f"not be restored: "
+                + "; ".join(f"{d['board']} still shows '{d['held_value']}' ({d['reason']})" for d in divergent)
+                + f". Restored OK: {restored or 'none'}. Board state now: "
+                + "; ".join(f"{s['board']} shows '{s['shows']}'" for s in board_state)
+                + ". Halting WITHOUT retry — raise this divergence to the operator.",
+                board_state=board_state,
+            ) from write_exc
+        raise RuntimeError(
+            f"write of {field_name}='{option_name}' to {repo}#{number} failed "
+            f"on board '{written and written[-1]['key']}': {write_exc}. All "
+            f"{len(written)} already-written board(s) were restored to their "
+            f"prior values."
+        ) from write_exc
+
+    return {
+        "field": field_name,
+        "option": option_name,
+        "repo": repo,
+        "number": number,
+        "reason": recorded_reason,
+        "identity": identity,
+        "boards": [
+            {
+                "project": entry["key"],
+                "project_title": entry["title"],
+                "project_number": entry["project_number"],
+                "item_id": entry["item_id"],
+                "prior_value": entry["prior_value"],
+                "new_value": option_name,
+                "reason": recorded_reason,
+                "outcome": "written",
+            }
+            for entry in preflight
+        ],
+    }
+
+
 def flow_set_field_bulk(
     project_name: str,
     repo: str,
@@ -2538,6 +2826,7 @@ def flow_set_fields_bulk(
     fmt: str,
     *,
     correction: bool = False,
+    reason: str | None = None,
 ) -> None:
     """Set one or more single-select fields across multiple cards in one discovery pass.
 
@@ -2545,6 +2834,15 @@ def flow_set_fields_bulk(
     only Status (and Stage by name) may be written, and the result is marked as a
     correction carrying the per-assignment identity. Enforcing it HERE rather than only in
     ``main()`` means an in-process caller cannot reach a wider field set than the CLI can.
+
+    W6 routing (KTD10): every Status/Stage assignment — with or without
+    ``correction`` — routes per issue through ``_set_lifecycle_field_cross_board``,
+    so ``--numbers`` and repeated ``--field`` cannot reach the old single-board
+    path either. Atomicity is PER ISSUE, not per invocation: each number is an
+    independent all-or-none cross-board write, and a failure on the third issue
+    does not roll back the first two (the end-of-run ``failed`` report stays the
+    per-invocation result). A LifecycleMutationHaltError propagates — it is
+    never downgraded to a ``failed`` row.
     """
     if not numbers:
         raise RuntimeError("numbers cannot be empty")
@@ -2554,38 +2852,30 @@ def flow_set_fields_bulk(
         for field_name, _option in assignments:
             assert_correction_field(field_name)
 
-    field_names = [field_name for field_name, _ in assignments]
-    fields = _resolve_project_fields(project_name, field_names)
-    resolved_assignments = [
-        (
-            field_name,
-            option_name,
-            fields[field_name],
-            _resolve_field_option(project_name, field_name, fields[field_name], option_name),
-        )
-        for field_name, option_name in assignments
-    ]
-    item_by_number = _project_items_by_number(project_name, repo)
+    # KTD10: lifecycle assignments go cross-board per issue; everything else
+    # keeps the existing single-board path with its one shared discovery pass.
+    lifecycle_assignments = [a for a in assignments if a[0] in CORRECTION_FIELDS]
+    other_assignments = [a for a in assignments if a[0] not in CORRECTION_FIELDS]
 
     updated: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+
     for number in numbers:
-        target_item = item_by_number.get(number)
-        if not target_item:
-            failed.append(
-                {
-                    "repo": repo,
-                    "number": number,
-                    "error": (
-                        f"Issue {repo}#{number} is not on project '{project_name}'. "
-                        f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
-                    ),
-                }
-            )
-            continue
-        for field_name, option_name, field, option in resolved_assignments:
+        for field_name, option_name in lifecycle_assignments:
             try:
-                _set_project_field_value(field["_project_id"], field, option, target_item)
+                _set_lifecycle_field_cross_board(
+                    repo,
+                    number,
+                    field_name,
+                    option_name,
+                    reason=reason,
+                    requested_project=project_name,
+                )
+                updated.append(
+                    {"repo": repo, "number": number, "field": field_name, "option": option_name}
+                )
+            except LifecycleMutationHaltError:
+                raise
             except RuntimeError as exc:
                 failed.append(
                     {
@@ -2596,15 +2886,57 @@ def flow_set_fields_bulk(
                         "error": str(exc),
                     }
                 )
-                continue
-            updated.append(
-                {
-                    "repo": repo,
-                    "number": number,
-                    "field": field_name,
-                    "option": option_name,
-                }
+
+    if other_assignments:
+        field_names = [field_name for field_name, _ in other_assignments]
+        fields = _resolve_project_fields(project_name, field_names)
+        resolved_assignments = [
+            (
+                field_name,
+                option_name,
+                fields[field_name],
+                _resolve_field_option(project_name, field_name, fields[field_name], option_name),
             )
+            for field_name, option_name in other_assignments
+        ]
+        item_by_number = _project_items_by_number(project_name, repo)
+
+        for number in numbers:
+            target_item = item_by_number.get(number)
+            if not target_item:
+                failed.append(
+                    {
+                        "repo": repo,
+                        "number": number,
+                        "error": (
+                            f"Issue {repo}#{number} is not on project '{project_name}'. "
+                            f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
+                        ),
+                    }
+                )
+                continue
+            for field_name, option_name, field, option in resolved_assignments:
+                try:
+                    _set_project_field_value(field["_project_id"], field, option, target_item)
+                except RuntimeError as exc:
+                    failed.append(
+                        {
+                            "repo": repo,
+                            "number": number,
+                            "field": field_name,
+                            "option": option_name,
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+                updated.append(
+                    {
+                        "repo": repo,
+                        "number": number,
+                        "field": field_name,
+                        "option": option_name,
+                    }
+                )
 
     result: dict[str, Any] = {
         "action": "set-field",
@@ -6126,6 +6458,16 @@ def main() -> None:
             "seam). Operator writes of Initiative/Objective omit this flag."
         ),
     )
+    flow_setfield_p.add_argument(
+        "--reason",
+        default=None,
+        help=(
+            "Why this lifecycle move is happening, recorded verbatim in the "
+            "write evidence for every board. Optional: when omitted the "
+            "evidence records 'reason-not-supplied' rather than a fabricated "
+            "justification."
+        ),
+    )
 
     flow_options_p = flow_sp.add_parser(
         "field-options",
@@ -6353,6 +6695,7 @@ def main() -> None:
                         list(zip(args.field, args.option, strict=True)),
                         fmt,
                         correction=bool(getattr(args, "correction", False)),
+                        reason=getattr(args, "reason", None),
                     )
                 else:
                     flow_set_field(
@@ -6363,6 +6706,7 @@ def main() -> None:
                         args.option[0],
                         fmt,
                         correction=bool(getattr(args, "correction", False)),
+                        reason=getattr(args, "reason", None),
                     )
             elif args.action == "field-options":
                 flow_field_options(args.project, args.field, fmt)
@@ -6393,6 +6737,12 @@ def main() -> None:
 
     except KeyboardInterrupt:
         print("\nAborted.", file=sys.stderr)
+        sys.exit(1)
+    except LifecycleMutationHaltError as e:
+        # W6: a compensation halts with its own arm — non-zero exit, named
+        # divergence, no traceback, and never swallowed by the RuntimeError
+        # arm into an ordinary-looking command failure.
+        _error(str(e))
         sys.exit(1)
     except RuntimeError as e:
         _error(str(e))

@@ -719,6 +719,20 @@ coordinator's board flow), derived from this skill's durable state — the merge
 and the work-session path. Do not run a reconcile tick or a `flow set-field` submission for the
 Status move. The close is the one post-merge move this skill drives:
 
+**When the card may move to Verify (W8, SDLC R69/R71).** The `Status → Verify` move, like every
+lifecycle-field move, is Mission Control's — and it happens only after the change is **merged**
+**and** a non-production deployment has **succeeded**, in that order, ahead of the delivered-terminal
+`Done` move. PR-ready, green checks, code review, and merge readiness never move the card to Verify,
+and `/work` asserts no Verify move of its own at any point before merge. For work with **no
+deployable software**, the same merge precondition holds — the R71 no-deployable route relaxes the
+**deployment** requirement, never the **merge** requirement — so Verify is entered only after the
+change is merged **and** the delivered artifact exists in its real form and consumption context —
+the rendered published page for documentation, the installed version for a plugin — with the
+deployment non-applicability recorded **with a reason** and no environment or
+deployment record fabricated to satisfy the transition. The single authority for this condition is
+the `verify_entry` block of `config/sdlc-schema.json` in `infiquetra-sdlc`, resolved by
+`tools/docs/verify_entry.py`; this skill only names when the move is permitted, never fires it.
+
 ```bash
 python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --op sub-issue-close --repo <owner/repo> --number <N>
@@ -809,16 +823,6 @@ capturing a fresh `REVIEWED_SHA`, before any PR/merge offer.
 
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
 via `--doc-review-override` / the work-session). Never a silent skip.
-
-### 5.3b The card moves to Verify — through Mission Control, not through this skill
-
-The gate is clean and the work is PR-ready, so what is left is review rather than building.
-
-**Saga does not write the board.** The `Status → Verify` move is Mission Control's, derived from
-this skill's durable state — the clean gate verdict, the PR readiness, the saga tick. Do not run a
-reconcile tick, a `flow set-field` submission, or any other lifecycle-field write from here. Say in
-the phase header that the work is PR-ready and awaiting review; the move itself is Mission
-Control's. When there is no issue, there is no card to move; say nothing further.
 
 ### 5.4 Reach PR-ready and present continuation routing
 

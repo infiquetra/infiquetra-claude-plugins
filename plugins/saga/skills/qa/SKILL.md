@@ -27,6 +27,16 @@ treats a `/qa` route as advisory) and it normally runs **post-merge**. `/work` (
 here advisorily after merge and explicitly **deferred the `qa` phase advance to this rebuild** — `/qa`
 lands that advance (Phase 6).
 
+**This skill is what the board's `Verify` stage holds (W8, SDLC R69/R71).** A card enters `Verify`
+only after the change is merged plus a succeeded non-production deployment. For work with no
+deployable software, the same merge precondition still applies — the no-deployable route relaxes
+the **deployment** requirement, never the **merge** requirement — so the card enters `Verify` only
+after the change is merged **and** the delivered artifact exists in its real form and consumption
+context (`Deploying to non-production` is applicable-only and never set for it). There is no
+pre-merge entry route: PR-ready never moves a card to `Verify`; the single authority for the
+condition is the `verify_entry` block of `config/sdlc-schema.json` in `infiquetra-sdlc`. When a
+card is in `Verify`, the activity it holds is this acceptance gate.
+
 ## Core principles
 
 1. **Gate, not fixer.** `/qa` reports, assigns severity, derives a verdict, and routes. It does **NOT**

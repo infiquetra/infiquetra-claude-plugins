@@ -156,15 +156,21 @@ def _resolve_status_map(schema_path: Path, project: str) -> dict[str, str]:
 def _candidate_ops(state: str, status_map: dict[str, str]) -> list[tuple[str, str]]:
     """Return ``[(op_kind_str, target_state), ...]`` for the given derived leaf state.
 
-    ``ready``/``dispatched`` target states come from the schema-resolved ``status_map`` (KTD1) —
-    never a hardcoded literal. Negative terminals (failed/rejected/stalled) and blocked → empty
-    list (deferred non-goal per Scope Boundaries). The ``ISSUE_PROGRESS_COMMENT`` is always
-    coalesced alongside a status change so one comment is posted per meaningful state reached (R6).
+    Since W7 (SDLC R30/R34) a leaf's board moves are **not** driven from here: Mission Control is
+    the only routine writer of the board lifecycle fields, so ``ready``/``dispatched`` compose NO
+    ``SET_FIELD_STATUS`` op — the derived state change surfaces through the coalesced progress
+    comment, and the field move itself routes through Mission Control (derived from the outcome's
+    durable state). ``done`` keeps ``SUB_ISSUE_CLOSE`` (an issue-state write, not a lifecycle-FIELD
+    write). ``status_map`` is retained only so the historical call shape
+    (``outcome_reconcile.detect``) keeps resolving; it produces no status target anymore. Negative
+    terminals (failed/rejected/stalled) and blocked → empty list (deferred non-goal per Scope
+    Boundaries). The ``ISSUE_PROGRESS_COMMENT`` is always coalesced alongside a state change so one
+    comment is posted per meaningful state reached (R6).
     """
+    del status_map  # no status op is composed since W7; the param survives for call-shape compat
     cert = _cert()
     if state in ("ready", "dispatched"):
         return [
-            (str(cert.OpKind.SET_FIELD_STATUS), status_map.get(state, "")),
             (str(cert.OpKind.ISSUE_PROGRESS_COMMENT), state),
         ]
     if state == "done":
@@ -190,7 +196,6 @@ def reconcile_board(
     now: Callable[[], float] = time.time,
     max_attempts: int = 3,
     project: str = "operations",
-    schema_path: Path | None = None,
     hold_issues: set[tuple[str, int]] | None = None,
 ) -> list[dict[str, Any]]:
     """Reconcile the board for all leaf nodes against their live derived states.
@@ -198,28 +203,24 @@ def reconcile_board(
     For each leaf node with a resolvable issue ref this function:
 
     1. Derives the node's current state via ``outcome_engine.derive_states``.
-    2. Maps the state to candidate board ops (KTD6), resolving ``ready``/``dispatched`` target
-       states from the schema for ``project`` (#326 KTD1/KTD2) — never a hardcoded literal.
+    2. Maps the state to candidate board ops (KTD6). Since W7 (SDLC R30/R34) the candidate set
+       composes NO lifecycle-FIELD op: the field moves belong to Mission Control; ``ready``/
+       ``dispatched`` coalesce a progress comment and ``done`` closes the leaf's sub-issue.
     3. Delegates each candidate op's authorize/idempotency/retry/record to
        ``board_progression.authorize_and_write`` (the shared mechanism extracted in #344) — the
-       ``/outcome``-specific policy (leaf-state derivation, schema resolution, drift-hold) stays here.
+       ``/outcome``-specific policy (leaf-state derivation, drift-hold) stays here.
 
     The board-sync ledger lives under ``store.root / "board-sync"`` — NEVER in
     ``events_dir`` (KTD4). ``write_once`` is injected as ``outcome_store._write_once`` so the sticky
     ledger write keeps its exact atomicity and test-patchability (#344 R2 — zero behavior diff).
 
-    mission-control resolution (#620): the CLI root and the schema file are resolved ONCE per call
-    from the same ladder so they can never name different installations (R4). Two failure modes are
-    deliberately distinct (KTD3):
-
-    * **Root unresolvable** — mission-control cannot be found at all (a consumer repo with a stale
-      install registry, or a fleet-core too old to carry ``plugin_resolution``). The default writer
-      cannot be built, so every op is withheld and a single loud ``{"status": "unavailable"}``
-      record is returned, with no retry (R5/R6). A caller that injects its own ``board_writer``
-      (the test seam) never triggers this path.
-    * **Schema unreadable** — the root resolved but ``sdlc-schema.json`` cannot be read. Only the
-      status ops lose their target; each records a per-op ``failed`` while the coalesced progress
-      comment for the same leaf still posts (unchanged from #326).
+    mission-control resolution (#620): the CLI root is resolved ONCE per call. Failure mode
+    (KTD3): **root unresolvable** — mission-control cannot be found at all (a consumer repo with a
+    stale install registry, or a fleet-core too old to carry ``plugin_resolution``). The default
+    writer cannot be built, so every op is withheld and a single loud ``{"status": "unavailable"}``
+    record is returned, with no retry (R5/R6). A caller that injects its own ``board_writer``
+    (the test seam) never triggers this path. (The pre-W7 schema-resolution failure mode is gone
+    with the status ops it fed.)
 
     Args:
         spec:                 ``OutcomeSpec`` — the DAG of leaf nodes.
@@ -230,7 +231,6 @@ def reconcile_board(
         now:                  Time source (injectable for tests).
         max_attempts:         Retry cap per op (default 3 — bounded, not infinite).
         project:              The target board's mission-control project slug.
-        schema_path:          Override for the SDLC schema location.
         hold_issues:          ``{(repo, number), ...}`` of issues with a detected board<->saga drift
                               (#295 U5/KTD3) — every candidate op for a held issue is WITHHELD as
                               ``{status:"drift-hold"}`` instead of driven.
@@ -282,19 +282,9 @@ def reconcile_board(
         else {}
     )
 
-    # Lazy, at-most-once-per-call resolution (#326 KTD3) — skipped entirely when no leaf is in a
-    # status-bearing state, so a done-only / no-schema-file test run never touches the schema.
-    status_map: dict[str, str] | None = None
-    status_map_error: str | None = None
-    if any(s in ("ready", "dispatched") for s in states.values()):
-        try:
-            if schema_path is not None:
-                resolved_path = schema_path
-            else:
-                resolved_path = _default_schema_path(resolved_root)
-            status_map = _resolve_status_map(resolved_path, project)
-        except Exception as exc:  # noqa: BLE001
-            status_map_error = str(exc)
+    # Pre-W7 this tick resolved saga_lifecycle phase_board_map per project to name a status
+    # target; since W7 no status op is composed, so the schema is never read here (the helpers
+    # above survive for outcome_reconcile.detect's ledger-based recovery).
 
     for node in spec.nodes:
         if node.is_outcome:
@@ -318,7 +308,7 @@ def reconcile_board(
 
         repo, number = parsed
         state = states.get(node.subplot_id, "blocked")
-        candidate_ops = _candidate_ops(state, status_map or {})
+        candidate_ops = _candidate_ops(state, {})
 
         # #295 U5/KTD3: a detected drift on this issue withholds ALL its board ops for the tick —
         # never write against a board that moved underneath saga until the operator resolves it.
@@ -337,27 +327,6 @@ def reconcile_board(
             continue
 
         for op_kind_str, target_state in candidate_ops:
-            # #326 R5/KTD4: schema resolution failed for a ready/dispatched leaf — the status op
-            # has no status to write. Fail loud + retryable (no ledger key); the coalesced
-            # ISSUE_PROGRESS_COMMENT for this same leaf is unaffected and proceeds below.
-            if (
-                op_kind_str == str(cert.OpKind.SET_FIELD_STATUS)
-                and state in ("ready", "dispatched")
-                and status_map is None
-            ):
-                records.append(
-                    {
-                        "status": "failed",
-                        "subplot_id": node.subplot_id,
-                        "op_kind": op_kind_str,
-                        "repo": repo,
-                        "number": number,
-                        "target_state": "",
-                        "error": f"board status schema resolution failed: {status_map_error}",
-                    }
-                )
-                continue
-
             # The coalesced additive comment payload is /outcome-specific; the mechanism is shared.
             payload: dict[str, Any] = {}
             if op_kind_str == str(cert.OpKind.ISSUE_PROGRESS_COMMENT):

@@ -106,13 +106,15 @@ class RecordingWriter:
 
 
 # ---------------------------------------------------------------------------
-# AE1: ready state → set-field-status schema-resolved status written (#326, R5, R16, R19)
+# W7 (SDLC R30/R34): ready state composes NO lifecycle-field write — the derived
+# state change surfaces through the coalesced progress comment only
 # ---------------------------------------------------------------------------
 
 
-def test_ae1_ready_state_writes_set_field_status(tmp_path: Path) -> None:
-    """AE1: a leaf in ready state on the default (operations) board resolves to "Ready" — the
-    intent_flow schema value, NOT the campps-workflow "In Progress" literal (#326)."""
+def test_w7_ready_state_writes_no_lifecycle_field(tmp_path: Path) -> None:
+    """A leaf in ready state composes NO set-field-status op — Mission Control is the only routine
+    writer of the board lifecycle fields (W7/R30/R34). The coalesced progress comment still posts,
+    which is how the state change is surfaced."""
     store = _store(tmp_path)
     # No completion events and no deps → leaf1 is in the ready frontier.
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
@@ -120,58 +122,40 @@ def test_ae1_ready_state_writes_set_field_status(tmp_path: Path) -> None:
 
     result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)
 
-    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
-    assert sf_records, "expected a set-field-status record for a ready leaf"
-    r = sf_records[0]
-    assert r["status"] == "written", f"expected written, got {r['status']!r}"
-    assert r["target_state"] == "Ready"
-    assert r["repo"] == "infiquetra/x"
-    assert r["number"] == 42
-
-    sf_calls = writer.calls_for("set-field-status")
-    assert len(sf_calls) == 1, "board_writer must be called exactly once for set-field-status"
-    assert sf_calls[0]["repo"] == "infiquetra/x"
-    assert sf_calls[0]["number"] == 42
-    assert sf_calls[0]["payload"].get("target_state") == "Ready"
+    assert [r for r in result if r.get("op_kind") == "set-field-status"] == [], (
+        "a ready leaf must compose no set-field-status op (W7/R34)"
+    )
+    assert writer.calls_for("set-field-status") == [], "no lifecycle-field write is driven"
+    comment_records = [r for r in result if r.get("op_kind") == "issue-progress-comment"]
+    assert comment_records and comment_records[0]["status"] == "written", (
+        "the derived state change still surfaces through the coalesced progress comment"
+    )
 
 
-@pytest.mark.parametrize(
-    ("project", "state", "expected"),
-    [
-        ("operations", "dispatched", "Active"),
-        ("asgard", "dispatched", "Active"),
-        ("campps", "dispatched", "In Progress"),
-        ("asgard", "ready", "Ready"),
-        ("campps", "ready", "Committed"),
-    ],
-)
-def test_schema_resolved_status_per_project(
-    tmp_path: Path, project: str, state: str, expected: str
-) -> None:
-    """#326 KTD1/KTD2: ready/dispatched resolve per-project from the real sdlc-schema.json — proves
-    the fix is correct for every board, not just a literal Active swap for operations."""
+@pytest.mark.parametrize("project", ["operations", "asgard", "campps"])
+def test_w7_no_lifecycle_field_op_for_any_board(tmp_path: Path, project: str) -> None:
+    """W7: the no-status-write posture holds for EVERY board, not just the default project —
+    the pre-W7 per-project schema-resolved status targets are retired with the op."""
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
-    if state == "dispatched":
-        # A settled (commit-phase) dispatch ledger record — the same shape derive_states()
-        # requires (outcome.py:319) to surface LIVE_DISPATCHED instead of LIVE_READY.
-        STORE_MOD.append_ledger(
-            store,
-            {
-                "phase": "commit",
-                "kind": "dispatch",
-                "key": "d:leaf1",
-                "subplot_id": "leaf1",
-                "leaf_saga_id": "l-leaf1",
-            },
-        )
+    # A settled (commit-phase) dispatch ledger record — the same shape derive_states()
+    # requires (outcome.py:319) to surface LIVE_DISPATCHED instead of LIVE_READY.
+    STORE_MOD.append_ledger(
+        store,
+        {
+            "phase": "commit",
+            "kind": "dispatch",
+            "key": "d:leaf1",
+            "subplot_id": "leaf1",
+            "leaf_saga_id": "l-leaf1",
+        },
+    )
     writer = RecordingWriter()
 
     result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer, project=project)
 
-    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
-    assert sf_records and sf_records[0]["status"] == "written"
-    assert sf_records[0]["target_state"] == expected
+    assert [r for r in result if r.get("op_kind") == "set-field-status"] == []
+    assert writer.calls_for("set-field-status") == []
 
 
 def test_candidate_ops_no_hardcoded_board_status_literal() -> None:
@@ -285,29 +269,32 @@ def test_ae5_gate_surfaces_no_write_no_ledger(tmp_path: Path) -> None:
 
 
 def test_ae8_retry_on_transient_failure_succeeds(tmp_path: Path) -> None:
-    """AE8: board_writer raises on first call then succeeds → status 'written', one ledger key."""
+    """AE8: board_writer raises on first call then succeeds → status 'written', one ledger key.
+
+    Since W7 the ready/dispatched candidate set composes no lifecycle-field op, so the bounded
+    retry is proven against the surviving sub-issue-close op (a done leaf)."""
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
-    # leaf1 is "ready"
+    _done(store, "leaf1", "done")
 
     call_count: dict[str, int] = {"n": 0}
 
     def flaky_writer(*, op_kind: str, repo: str, number: int, payload: dict) -> None:
         call_count["n"] += 1
-        if call_count["n"] == 1 and op_kind == "set-field-status":
+        if call_count["n"] == 1 and op_kind == "sub-issue-close":
             raise RuntimeError("transient network error")
 
     result = SYNC_MOD.reconcile_board(spec, store, board_writer=flaky_writer, max_attempts=3)
 
-    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
-    assert sf_records and sf_records[0]["status"] == "written", (
-        f"expected written, got {sf_records}"
+    close_records = [r for r in result if r.get("op_kind") == "sub-issue-close"]
+    assert close_records and close_records[0]["status"] == "written", (
+        f"expected written, got {close_records}"
     )
-    # Exactly one ledger file for the set-field-status op — use the module's own
+    # Exactly one ledger file for the sub-issue-close op — use the module's own
     # _safe_ledger_name to handle the SHA-1 fallback for keys with unsafe characters.
     ledger_dir = Path(store.root) / "board-sync"
-    sf_key = sf_records[0]["key"]
-    ledger_file = ledger_dir / SYNC_MOD._safe_ledger_name(sf_key)
+    close_key = close_records[0]["key"]
+    ledger_file = ledger_dir / SYNC_MOD._safe_ledger_name(close_key)
     assert ledger_file.exists(), "ledger key must be written on success"
 
 
@@ -320,6 +307,7 @@ def test_ae8_always_fails_surfaced_and_retryable(tmp_path: Path) -> None:
     """AE8: always-raising writer → 'failed' record; re-run re-attempts (no ledger on fail)."""
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    _done(store, "leaf1", "done")
 
     def always_fail(*, op_kind: str, repo: str, number: int, payload: dict) -> None:
         raise RuntimeError("always fails")
@@ -327,20 +315,17 @@ def test_ae8_always_fails_surfaced_and_retryable(tmp_path: Path) -> None:
     result1 = SYNC_MOD.reconcile_board(spec, store, board_writer=always_fail, max_attempts=3)
 
     failed = [
-        r for r in result1 if r.get("op_kind") == "set-field-status" and r["status"] == "failed"
+        r for r in result1 if r.get("op_kind") == "sub-issue-close" and r["status"] == "failed"
     ]
-    assert failed, "expected 'failed' record for set-field-status after max_attempts exhausted"
+    assert failed, "expected 'failed' record for sub-issue-close after max_attempts exhausted"
     assert failed[0]["attempts"] == 3
 
     # Ledger NOT written on failure → next tick can re-attempt
     ledger_dir = Path(store.root) / "board-sync"
     if ledger_dir.exists():
         ledger_files = list(ledger_dir.glob("*.json"))
-        # No set-field-status ledger key was written
-        sf_ledger = [
-            f for f in ledger_files if "set_field_status" in f.name or "set-field-status" in f.name
-        ]
-        assert not sf_ledger, "ledger key must NOT be written when the op fails"
+        close_ledger = [f for f in ledger_files if "sub_issue_close" in f.name]
+        assert not close_ledger, "ledger key must NOT be written when the op fails"
 
     # Re-run succeeds with a writer that works
     good_calls: list[str] = []
@@ -349,13 +334,13 @@ def test_ae8_always_fails_surfaced_and_retryable(tmp_path: Path) -> None:
         good_calls.append(op_kind)
 
     result2 = SYNC_MOD.reconcile_board(spec, store, board_writer=good_writer, max_attempts=3)
-    sf_written = [
-        r for r in result2 if r.get("op_kind") == "set-field-status" and r["status"] == "written"
+    close_written = [
+        r for r in result2 if r.get("op_kind") == "sub-issue-close" and r["status"] == "written"
     ]
-    assert sf_written, (
-        "re-run must attempt set-field-status again (ledger not written on first fail)"
+    assert close_written, (
+        "re-run must attempt sub-issue-close again (ledger not written on first fail)"
     )
-    assert "set-field-status" in good_calls
+    assert "sub-issue-close" in good_calls
 
 
 # ---------------------------------------------------------------------------
@@ -481,15 +466,27 @@ def test_advance_autonomous_drives_board_sync(tmp_path: Path) -> None:
     assert result.to_dict()["board_synced"], "board_synced surfaces in the AdvanceResult envelope"
 
 
-def test_advance_threads_project_to_reconcile_board_for_nondefault_project(tmp_path: Path) -> None:
-    """#326 R4: advance(project=...) threads the SAME project value into reconcile_board's schema
-    resolution — proven through the REAL advance() entrypoint, not just a direct reconcile_board
-    call, for both asgard and campps (not just the default operations).
+def test_advance_threads_project_to_reconcile_board_for_nondefault_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#326 R4: advance(project=...) threads the SAME project value into reconcile_board's writer
+    construction — proven through the REAL advance() entrypoint with board_writer=None, for both
+    asgard and campps (not just the default operations). Since W7 no lifecycle-field op is
+    composed, so the writer's project seam is where the threading stays observable."""
+    seen_projects: list[str] = []
 
-    A leaf starting "ready" is dispatched within the SAME advance() tick (dispatch runs before
-    board-sync each tick), so by the time board-sync observes it the derived state is
-    "dispatched" — this test proves threading through that real, naturally-reached path."""
-    for project, expected_dispatched in (("asgard", "Active"), ("campps", "In Progress")):
+    def fake_writer_factory(
+        *, mission_control_root: Path, project: str = "operations", runner: Any = None
+    ):
+        seen_projects.append(project)
+
+        def _w(*, op_kind: str, repo: str, number: int, payload: dict) -> None:
+            pass
+
+        return _w
+
+    monkeypatch.setattr(_live_bp(), "default_board_writer", fake_writer_factory)
+    for project in ("asgard", "campps"):
         project_root = tmp_path / project
         project_root.mkdir()
         repo = _git_repo(project_root)
@@ -497,22 +494,17 @@ def test_advance_threads_project_to_reconcile_board_for_nondefault_project(tmp_p
         store = ENG_MOD._store(repo, "o")
         DEC_MOD.approve_frontier(store, ENG_MOD.load_spec(repo, "o"))
         # No completion event → leaf1 starts "ready"; advance() dispatches it this same tick.
+        del seen_projects[:]
 
-        writer = RecordingWriter()
         result = ENG_MOD.advance(
-            repo, "o", autonomous=True, board_writer=writer, project=project, attending=False
+            repo, "o", autonomous=True, board_writer=None, project=project, attending=False
         )
 
-        sf_records = [r for r in result.board_synced if r.get("op_kind") == "set-field-status"]
-        assert sf_records and sf_records[0]["status"] == "written", (
-            f"{project}: expected a written set-field-status record, got {sf_records}"
+        assert seen_projects == [project], (
+            f"{project}: advance() did not thread its project into the writer construction"
         )
-        assert sf_records[0]["target_state"] == expected_dispatched, (
-            f"{project}: advance() did not thread its project into reconcile_board's resolution"
-        )
-        assert (
-            writer.calls_for("set-field-status")[0]["payload"]["target_state"]
-            == expected_dispatched
+        assert [r for r in result.board_synced if r.get("op_kind") == "set-field-status"] == [], (
+            f"{project}: advance() composes no lifecycle-field op (W7/R34)"
         )
 
 
@@ -647,12 +639,12 @@ def _make_schema_root(base: Path) -> Path:
     return base
 
 
-def test_production_path_resolves_once_and_threads_root_to_schema_and_writer(
+def test_production_path_resolves_once_and_threads_root_to_writer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """R2/R3/R4: with board_writer=None (production), reconcile_board resolves the mission-control
-    root ONCE and uses it for BOTH the schema read and the writer — proven by driving a ready leaf
-    whose status comes from the resolved root's schema, from a simulated non-monorepo layout."""
+    root ONCE and builds the writer from it — proven with a ready leaf (which since W7 surfaces
+    only its progress comment) from a simulated non-monorepo layout."""
     mc_root = _make_schema_root(
         tmp_path / "cache" / "infiquetra-plugins" / "mission-control" / "2.10.1"
     )
@@ -683,24 +675,24 @@ def test_production_path_resolves_once_and_threads_root_to_schema_and_writer(
     # R4: exactly one resolution for the whole tick — a double-resolving implementation fails here.
     assert resolve_count["n"] == 1
 
-    sf = [r for r in result if r.get("op_kind") == "set-field-status"]
-    assert sf and sf[0]["status"] == "written"
-    assert (
-        sf[0]["target_state"] == "Ready"
-    )  # resolved from mc_root's schema, not a hardcoded literal
-    assert any(c["op_kind"] == "set-field-status" for c in calls)
-    # R7: provenance on the returned record, from the SAME resolution that fed the schema.
-    assert sf[0]["board_sync_root"] == str(mc_root)
-    assert sf[0]["board_sync_rung"] == 3
+    assert [r for r in result if r.get("op_kind") == "set-field-status"] == [], (
+        "no lifecycle-field op is composed (W7/R34)"
+    )
+    comment = [r for r in result if r.get("op_kind") == "issue-progress-comment"]
+    assert comment and comment[0]["status"] == "written"
+    assert any(c["op_kind"] == "issue-progress-comment" for c in calls)
+    # R7: provenance on the returned record, from the SAME resolution that fed the writer.
+    assert comment[0]["board_sync_root"] == str(mc_root)
+    assert comment[0]["board_sync_rung"] == 3
 
     # R7 (F3): provenance is PERSISTED to the durable board-sync ledger, not just the return value —
     # so a stale resolution is diagnosable by reading the ledger later, never re-derived.
     ledger_files = list((Path(store.root) / "board-sync").glob("*.json"))
     persisted = [json.loads(p.read_text()) for p in ledger_files]
-    sf_persisted = [rec for rec in persisted if rec.get("op_kind") == "set-field-status"]
-    assert sf_persisted, "expected a persisted set-field-status ledger record"
-    assert sf_persisted[0]["board_sync_root"] == str(mc_root)
-    assert sf_persisted[0]["board_sync_rung"] == 3
+    comment_persisted = [rec for rec in persisted if rec.get("op_kind") == "issue-progress-comment"]
+    assert comment_persisted, "expected a persisted comment ledger record"
+    assert comment_persisted[0]["board_sync_root"] == str(mc_root)
+    assert comment_persisted[0]["board_sync_rung"] == 3
 
 
 def test_unresolvable_root_withholds_the_whole_cohort_with_one_record(
@@ -792,10 +784,9 @@ def test_injected_writer_never_triggers_root_resolution(
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
     writer = RecordingWriter()
-    # schema_path supplied so the ready leaf's status resolves without touching the resolver either.
-    schema = _make_schema_root(tmp_path / "mc") / "config" / "sdlc-schema.json"
-    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer, schema_path=schema)
-    assert any(r.get("op_kind") == "set-field-status" for r in result)
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)
+    assert any(r.get("op_kind") == "issue-progress-comment" for r in result)
+    assert writer.calls_for("set-field-status") == [], "no lifecycle-field op (W7/R34)"
 
 
 # ---------------------------------------------------------------------------
@@ -804,7 +795,7 @@ def test_injected_writer_never_triggers_root_resolution(
 
 
 def test_cross_repo_same_issue_number_does_not_collide(tmp_path: Path) -> None:
-    """P2 regression: two ready leaves with the SAME issue number in DIFFERENT repos must EACH get
+    """P2 regression: two leaves with the SAME issue number in DIFFERENT repos must EACH get
     their board write — the repo-qualified idempotency key prevents one silently skipping the other."""
     store = _store(tmp_path)
     spec = _spec(
@@ -823,14 +814,16 @@ def test_cross_repo_same_issue_number_does_not_collide(tmp_path: Path) -> None:
             },
         ]
     )
+    _done(store, "a", "done")
+    _done(store, "b", "done")
     writer = RecordingWriter()
     result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)
 
-    repos = {c["repo"] for c in writer.calls_for("set-field-status")}
+    repos = {c["repo"] for c in writer.calls_for("sub-issue-close")}
     assert repos == {"infiquetra/saga", "infiquetra/mission-control"}, (
         f"both repos' #5 must be written, not collide on one ledger key; got {repos}"
     )
-    written = [r for r in result if r["op_kind"] == "set-field-status" and r["status"] == "written"]
+    written = [r for r in result if r["op_kind"] == "sub-issue-close" and r["status"] == "written"]
     assert len(written) == 2, "neither same-number cross-repo write may be silently skipped"
 
 
@@ -917,131 +910,41 @@ def test_parse_issue_ref_accepts_three_forms_and_rejects_garbage() -> None:
 
 
 # ---------------------------------------------------------------------------
-# #326 R5/KTD4: schema resolution failure is per-op fail-loud + retryable, never tick-fatal
+# W7 (SDLC R30/R34): the tick reads NO schema — the status ops it fed are gone
 # ---------------------------------------------------------------------------
 
 
-def test_schema_resolution_missing_file_fails_status_op_but_comment_still_posts(
-    tmp_path: Path,
+def test_w7_reconcile_board_never_reads_the_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A missing schema file: set-field-status records 'failed' with no ledger key (retryable);
-    the coalesced issue-progress-comment for the same leaf still proceeds and is written."""
+    """Since W7 no candidate op is a schema-resolved lifecycle-field write, so the tick must not
+    read the SDLC schema at all — any schema access after the W7 removal is a regression."""
     store = _store(tmp_path)
-    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    spec = _spec([_leaf("l1", "infiquetra/x#42"), _leaf("l2", "infiquetra/x#99")])
+    _done(store, "l2", "done")  # mix a done leaf with a ready one
+
+    def must_not_resolve(*a: Any, **k: Any) -> Any:
+        raise AssertionError("reconcile_board must not resolve the SDLC schema after W7")
+
+    monkeypatch.setattr(SYNC_MOD, "_default_schema_path", must_not_resolve)
+    monkeypatch.setattr(SYNC_MOD, "_resolve_status_map", must_not_resolve)
     writer = RecordingWriter()
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)
 
-    result = SYNC_MOD.reconcile_board(
-        spec, store, board_writer=writer, schema_path=tmp_path / "nonexistent-schema.json"
-    )
-
-    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
-    assert sf_records and sf_records[0]["status"] == "failed"
-    assert "error" in sf_records[0]
-
+    assert [r for r in result if r.get("op_kind") == "set-field-status"] == []
+    assert writer.calls_for("set-field-status") == []
     comment_records = [r for r in result if r.get("op_kind") == "issue-progress-comment"]
     assert comment_records and comment_records[0]["status"] == "written"
-    assert writer.calls_for("issue-progress-comment"), "comment write must still fire"
-    assert not writer.calls_for("set-field-status"), (
-        "no board_writer attempt without a resolved status"
-    )
-
-    ledger_dir = Path(store.root) / "board-sync"
-    ledger_files = list(ledger_dir.glob("*.json")) if ledger_dir.exists() else []
-    assert len(ledger_files) == 1, "only the comment's ledger key is written, not a status key"
-
-
-def test_schema_resolution_missing_project_fails_status_op_retryably(tmp_path: Path) -> None:
-    """A project absent from phase_board_map: same failed/retryable semantics as a missing file —
-    including no board_writer attempt, no ledger key, and the comment still posting."""
-    store = _store(tmp_path)
-    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
-    writer = RecordingWriter()
-
-    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer, project="no-such-project")
-
-    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
-    assert sf_records and sf_records[0]["status"] == "failed"
-    assert "error" in sf_records[0]
-    assert not writer.calls_for("set-field-status"), (
-        "no board_writer attempt without a resolved status"
-    )
-
-    comment_records = [r for r in result if r.get("op_kind") == "issue-progress-comment"]
-    assert comment_records and comment_records[0]["status"] == "written"
-    assert writer.calls_for("issue-progress-comment"), "comment write must still fire"
-
-    ledger_dir = Path(store.root) / "board-sync"
-    ledger_files = list(ledger_dir.glob("*.json")) if ledger_dir.exists() else []
-    assert len(ledger_files) == 1, "only the comment's ledger key is written, not a status key"
-
-
-@pytest.mark.parametrize(
-    "corrupt_schema",
-    [
-        "not valid json {{{",
-        json.dumps({"no_saga_lifecycle_key": True}),
-        json.dumps({"saga_lifecycle": {"phase_board_map": {}}}),  # missing review/work rows
-        json.dumps(
-            {
-                "saga_lifecycle": {
-                    "phase_board_map": {
-                        "review": {"operations": []},
-                        "work": {"operations": ["Active"]},
-                    }
-                }
-            }
-        ),  # noqa: E501
-    ],
-    ids=["malformed-json", "missing-saga-lifecycle", "missing-phase-rows", "empty-status-list"],
-)
-def test_schema_resolution_corrupt_schema_fails_status_op(
-    tmp_path: Path, corrupt_schema: str
-) -> None:
-    """#326: every corrupt-schema shape (malformed JSON, missing keys, empty status list) hits the
-    same fail-loud/retryable path as a missing file — never a raw exception escaping reconcile_board."""
-    bad_schema = tmp_path / "bad-schema.json"
-    bad_schema.write_text(corrupt_schema)
-    store = _store(tmp_path)
-    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
-    writer = RecordingWriter()
-
-    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer, schema_path=bad_schema)
-
-    sf_records = [r for r in result if r.get("op_kind") == "set-field-status"]
-    assert sf_records and sf_records[0]["status"] == "failed"
-    assert "error" in sf_records[0]
-
-
-def test_schema_resolution_retries_successfully_on_next_call(tmp_path: Path) -> None:
-    """After a failed resolution (no ledger key written), a subsequent call with a valid schema
-    path succeeds — proving the failure is genuinely retryable, not permanently stuck."""
-    store = _store(tmp_path)
-    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
-
-    bad_writer = RecordingWriter()
-    SYNC_MOD.reconcile_board(
-        spec, store, board_writer=bad_writer, schema_path=tmp_path / "nonexistent-schema.json"
-    )
-
-    good_writer = RecordingWriter()
-    result2 = SYNC_MOD.reconcile_board(spec, store, board_writer=good_writer)
-
-    sf_records = [r for r in result2 if r.get("op_kind") == "set-field-status"]
-    assert sf_records and sf_records[0]["status"] == "written"
-    assert sf_records[0]["target_state"] == "Ready"
 
 
 def test_done_leaf_never_touches_schema_file(tmp_path: Path) -> None:
-    """A done-only leaf never needs a status resolution — a missing/bogus schema_path must not
-    affect it (the lazy-resolution guarantee KTD3 depends on)."""
+    """A done-only leaf composes close/comment ops only — no field write, hence no schema need."""
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
     _done(store, "leaf1", "done")
     writer = RecordingWriter()
 
-    result = SYNC_MOD.reconcile_board(
-        spec, store, board_writer=writer, schema_path=tmp_path / "nonexistent-schema.json"
-    )
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer)
 
     close_records = [r for r in result if r.get("op_kind") == "sub-issue-close"]
     assert close_records and close_records[0]["status"] == "written"

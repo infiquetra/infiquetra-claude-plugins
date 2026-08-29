@@ -5,8 +5,11 @@ modules (imported by path, not faked), the ``board_writer`` and ``live_reader`` 
 and the ledger is a real on-disk dir under ``tmp_path`` — no live gh, no mission-control child.
 
 Every green assertion carries a baseline control (a sibling run where the guarded mechanism is
-absent) proving the check could have failed: the dedup, the crash-retry, the drift-correction, and
-the HALT are each shown to be load-bearing, not vacuously true.
+absent) proving the check could have failed: the dedup, the crash-retry, the drift surfacing, and
+the HALT are each shown to be load-bearing, not vacuously true. Since W7 (SDLC R30/R32) the
+controller holds no autonomous lifecycle-field write authority — the auto-correct allowlist is
+empty, every outside drift halts with a named reason, and ``/loop`` drives the read-only
+``detect_op`` tick.
 """
 
 from __future__ import annotations
@@ -225,9 +228,11 @@ def _seed_asserted_status(ledger: Path, writer: RecordingWriter, live: LiveBoard
     live.set("set-field-status", "infiquetra/saga", 450, "Done")
 
 
-def test_work_outside_drift_is_corrected(tmp_path: Path) -> None:
+def test_work_outside_drift_halts_with_named_reason_not_rewrite(tmp_path: Path) -> None:
     """/work at rest, an operator/CI moves the saga-owned Status field away from `Done`; the next
-    /work reconcile tick re-detects the drift and re-asserts `Done` (reversible board-field drift)."""
+    /work reconcile tick re-detects the drift and HALTs with a named reason — since W7 the
+    controller holds no autonomous lifecycle-field write authority, so a drift is surfaced for the
+    operator (M7), never auto-corrected into a second routine write."""
     ledger = _ledger(tmp_path)
     writer = RecordingWriter()
     live = LiveBoard()
@@ -235,8 +240,9 @@ def test_work_outside_drift_is_corrected(tmp_path: Path) -> None:
 
     # Outside edit while /work is at rest.
     live.set("set-field-status", "infiquetra/saga", 450, "In-Progress")
+    writes_before_tick = len(writer.calls)
 
-    corrected = RC.reconcile_op(
+    halted = RC.reconcile_op(
         "set-field-status",
         "infiquetra/saga",
         450,
@@ -245,10 +251,12 @@ def test_work_outside_drift_is_corrected(tmp_path: Path) -> None:
         ledger_dir=ledger,
         live_reader=live.reader,
     )
-    assert corrected["status"] == "corrected"
-    assert corrected["board_value_was"] == "In-Progress"
-    assert writer.calls[-1]["payload"]["target_state"] == "Done", (
-        "re-drives the saga-asserted value"
+    assert halted["status"] == "halt" and halted["halt"] is True
+    assert halted["halt_reason"] == "status-drift:In-Progress", (
+        "the surfaced reason names the drift kind and the live value"
+    )
+    assert len(writer.calls) == writes_before_tick, (
+        "a reversible board-field drift is surfaced, never auto-rewritten (W7/R30)"
     )
 
 
@@ -273,28 +281,31 @@ def test_work_outside_drift_control_no_drift_no_write(tmp_path: Path) -> None:
     assert len(writer.calls) == 1, "no drift → no corrective write"
 
 
-def test_loop_outside_drift_is_corrected(tmp_path: Path) -> None:
-    """/loop at rest (route-and-sequence), an outside edit moves the Status field; /loop's next
-    reconcile tick re-detects and corrects it — the same shared mechanism /work uses (R5)."""
+def test_loop_detect_tick_surfaces_drift_without_write(tmp_path: Path) -> None:
+    """/loop at rest (route-and-sequence), an outside edit moves the Status field; /loop's post-W7
+    tick is the READ-ONLY ``detect_op`` — it reports the drift with the prepared saga value and
+    drives no write of any kind (R33: /loop detects and submits, never writes)."""
     ledger = _ledger(tmp_path)
     writer = RecordingWriter()
     live = LiveBoard()
     _seed_asserted_status(ledger, writer, live)
 
     live.set("set-field-status", "infiquetra/saga", 450, "Backlog")  # outside move
+    writes_before_tick = len(writer.calls)
 
-    corrected = RC.reconcile_op(
+    detected = RC.detect_op(
         "set-field-status",
         "infiquetra/saga",
         450,
         "Done",
-        board_writer=writer,
-        ledger_dir=ledger,
         live_reader=live.reader,
     )
-    assert corrected["status"] == "corrected"
-    assert corrected["board_value_was"] == "Backlog"
-    assert writer.calls[-1]["payload"]["target_state"] == "Done"
+    assert detected["status"] == "drift"
+    assert detected["drift_kind"] == "status-drift"
+    assert detected["board_value"] == "Backlog"
+    assert detected["saga_value"] == "Done", "the prepared correction is the asserted value"
+    assert len(writer.calls) == writes_before_tick, "a detect tick can never drive a write"
+    assert len(_ledger_files(ledger)) == 1, "detect mints no ledger key — it is not a write"
 
 
 def test_loop_outside_drift_control_unreadable_live_skips(tmp_path: Path) -> None:
@@ -383,25 +394,55 @@ def test_halt_on_certificate_gated_op(tmp_path: Path, consumer: str) -> None:
     assert len(writer.calls) == 0 and _ledger_files(ledger) == []
 
 
-def test_halt_control_reversible_status_drift_is_corrected_not_halted(tmp_path: Path) -> None:
-    """BASELINE CONTROL: the SAME outside-drift setup on the auto-correctable Status field is
-    corrected, not halted — proving the HALT above is specific to the irreversible class, not a
-    blanket refusal to reconcile any drift."""
+def test_detect_distinguishes_reversible_drift_from_irreversible_halt(tmp_path: Path) -> None:
+    """BASELINE CONTROL (post-W7): the unified halt in ``reconcile_op`` is not a loss of
+    classification — the read-only ``detect_op`` still DISTINGUISHES the two drift classes. A
+    reversible Status edit is surfaced as ``drift`` with a prepared correction; an irreversible
+    open/closed change stays ``halt`` with its named reason. The operator sees which is which (R5).
+    """
     ledger = _ledger(tmp_path)
     writer = RecordingWriter()
     live = LiveBoard()
+
+    # Reversible class: a Status-field edit.
     _seed_asserted_status(ledger, writer, live)
     live.set("set-field-status", "infiquetra/saga", 450, "In-Progress")
-    rec = RC.reconcile_op(
+    reversible = RC.detect_op(
         "set-field-status",
         "infiquetra/saga",
         450,
         "Done",
-        board_writer=writer,
-        ledger_dir=ledger,
         live_reader=live.reader,
     )
-    assert rec["status"] == "corrected", "reversible board-field drift is corrected, not halted"
+    assert reversible["status"] == "drift" and reversible["drift_kind"] == "status-drift"
+
+    # Irreversible class: an outside reopen. Seed a clean close, then flip it.
+    close_writer = RecordingWriter()
+    close_live = LiveBoard()
+    close_ledger = _ledger(tmp_path, "halt-side")
+    seeded = RC.reconcile_op(
+        "sub-issue-close",
+        "infiquetra/saga",
+        450,
+        "",
+        board_writer=close_writer,
+        ledger_dir=close_ledger,
+        live_reader=close_live.reader,
+    )
+    assert seeded["status"] == "written"
+    close_live.set("sub-issue-close", "infiquetra/saga", 450, "open")
+    irreversible = RC.detect_op(
+        "sub-issue-close",
+        "infiquetra/saga",
+        450,
+        "",
+        live_reader=close_live.reader,
+    )
+    assert irreversible["status"] == "halt" and irreversible["halt"] is True
+    assert irreversible["halt_reason"] == "external-reopen:open"
+    assert len(writer.calls) + len(close_writer.calls) == 2, (
+        "neither class drives a corrective write in detect (W7)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -547,8 +588,9 @@ def test_present_key_skips_drift_check_for_a_field_the_live_reader_cannot_read(
     ``default_live_reader`` maps ``set-field-status`` to ``outcome_github.board_status``,
     which has no field parameter, and ``_expected_live`` takes no field either. Since #812
     admits ``Stage`` to the correction allowlist by name, a present-key tick for ``Stage``
-    would otherwise compare the live *Status* against the Stage target and — because
-    ``set-field-status`` is in ``AUTO_CORRECT_OP_KINDS`` — auto-correct on that false drift.
+    would otherwise compare the live *Status* against the Stage target and manufacture a
+    false drift record — a correction request driven by a reading that was never about
+    this field.
     """
     ledger = _ledger(tmp_path)
     writer = RecordingWriter()
@@ -577,8 +619,12 @@ def test_present_key_skips_drift_check_for_a_field_the_live_reader_cannot_read(
     assert len(writer.calls) == writes_after_seed, "no write from an uninterpretable reading"
 
 
-def test_present_key_still_drift_corrects_the_readable_status_field(tmp_path: Path) -> None:
-    """CONTROL: the #812 fail-closed skip does not disarm Status drift correction."""
+def test_present_key_drift_on_the_readable_status_field_surfaces_never_corrects(
+    tmp_path: Path,
+) -> None:
+    """CONTROL: the #812 fail-closed skip for unreadable fields is not a special-casing of Status —
+    drift on the fully readable Status field is surfaced with the same halt, never auto-corrected
+    (W7: the controller holds no autonomous lifecycle-field write authority)."""
     ledger = _ledger(tmp_path)
     writer = RecordingWriter()
     live = LiveBoard()
@@ -592,9 +638,12 @@ def test_present_key_still_drift_corrects_the_readable_status_field(tmp_path: Pa
         "set-field-status", "infiquetra/saga", 450, "Done", payload={"field": "Status"}, **kw
     )
     live.set("set-field-status", "infiquetra/saga", 450, "In-Progress")
+    writes_before_tick = len(writer.calls)
 
-    corrected = RC.reconcile_op(
+    record = RC.reconcile_op(
         "set-field-status", "infiquetra/saga", 450, "Done", payload={"field": "Status"}, **kw
     )
-    assert corrected["status"] == "corrected"
-    assert corrected["board_value_was"] == "In-Progress"
+    assert record["status"] == "halt" and record["halt"] is True
+    assert record["halt_reason"] == "status-drift:In-Progress"
+    assert record["board_value"] == "In-Progress"
+    assert len(writer.calls) == writes_before_tick

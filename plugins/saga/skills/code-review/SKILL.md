@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Run a structured Infiquetra code-quality review at the work-to-PR boundary. Reads the merge-base diff, runs a built-vs-planned audit plus the four always-on lenses and operator-approved conditionals, validates findings, writes a durable review artifact, appends to the work-thread saga, and routes — without mutating code. Triggers on "review this PR", "code review", "check my diff", "pre-PR review", or a /work hand-in before shipping.
+description: Run a structured Infiquetra code-quality review at the work-to-PR boundary. Reads the merge-base diff, runs a built-vs-planned audit plus the four always-on lenses and operator-approved conditionals, validates findings, writes a durable review artifact, appends to the work-thread saga, and routes — never mutating reviewed code, and publishing only its own review artifact (interactive mode, §5.7). Triggers on "review this PR", "code review", "check my diff", "pre-PR review", or a /work hand-in before shipping.
 ---
 
 # Code Review
@@ -9,8 +9,12 @@ description: Run a structured Infiquetra code-quality review at the work-to-PR b
 fires at the **work -> PR boundary**: after `/work` produces code, before a PR is opened or a merge
 happens. It reads a diff (working tree, branch, or PR), audits built-vs-planned, runs the lenses the
 diff actually warrants, validates the surviving findings, classifies and routes them, and writes a
-durable review artifact. It reports and routes — it does **not** fix, commit, push, open PRs, or file
-issues.
+durable review artifact. It reports and routes. It never implements the fixes it requests — the author
+or the Work process owns repair changes and implementation commits — never opens or updates a PR, and
+never files issues. The one write lane it holds is its own review artifact: in **interactive /
+standalone** mode it may write, commit, and push that artifact and submit the GitHub pull-request
+review on an existing PR (§5.7). In **programmatic / report-only** mode it makes **ZERO durable
+writes** — the caller owns persistence.
 
 ## Position in the lifecycle
 
@@ -32,10 +36,12 @@ where `/work` set it.
 ## Core principles
 
 1. **Gate, not fixer.** `/code-review` reports, classifies, and routes findings. It does **NOT** mutate
-   code, does **NOT** commit, does **NOT** push, does **NOT** open or update a PR, and does **NOT** file
-   SDLC issues (`/work`, ship gates, and `mission-control` own those). The programmatic mode is **ZERO file
-   writes to reviewed code** — it is strictly read-only over the diff. Fixer dispatch is *offered*, never
-   auto-run.
+   reviewed source, does **NOT** implement the fixes it requests (fixer dispatch is *offered*, never
+   auto-run), does **NOT** open or update a PR, and does **NOT** file SDLC issues (`/work`, ship gates,
+   and `mission-control` own those). Its one write lane is its own review artifact (§5.7): in
+   **interactive / standalone** mode it may write, commit, and push that artifact and submit the
+   GitHub pull-request review on an existing PR; in **programmatic / report-only** mode it makes
+   **ZERO file writes to reviewed code** and is strictly read-only over the diff.
 2. **Verify, don't guess.** Every finding cites `file:line` evidence. Claims of "safe", "handled
    elsewhere", or "tested" must cite the proving line, the handling code, or the test name — or be flagged
    as unverified. Never say "likely handled" or "probably tested". "This looks fine" is not a finding:
@@ -466,6 +472,15 @@ path is the durable code-review artifact for 5.4's `--review-paths`. When Phase 
 work-thread saga, use `--saga-id adhoc-<branch-slug>` (the branch-or-pr stem) so the write still lands
 in the ledger — only the saga *tick* (5.4) is skipped in that case, never the custody entry.
 
+In **interactive / standalone** mode only, the reviewer may also publish the artifact itself: it may
+commit and push the review artifact (at its own path — `docs/code-reviews/` or the ledger artifact
+path above, never anything else) to the branch under review, and submit the GitHub pull-request
+review on the existing PR. That commit is **evidence only**, never an implementation commit: the
+artifact's frontmatter records `reviewed_revision` as the full 40-character commit SHA of the exact
+implementation revision reviewed, and the commit subject names that revision. An abbreviated SHA or a
+symbolic ref like `HEAD` is not a valid reviewed revision — it stops meaning anything once the branch
+moves.
+
 In **programmatic / report-only** mode, return the serialized `review_result.v1` plus the optional human
 rendering grouped by `autofix_class`. Write **ZERO file writes to reviewed code and ZERO ledger writes**;
 the caller owns durable persistence and downstream routing.
@@ -498,8 +513,11 @@ the CLI.
 ### 5.5 Offer fixer dispatch (never auto-run)
 
 When the typed result says `repairs_requested`, route its consolidated `safe_auto`/`gated_auto`/`manual`
-fix requests to Work. `/code-review` never applies the fix itself. `advisory` findings are report-only,
-and Priority or confidence never changes this outcome.
+fix requests to Work (`dispatch_repairs` in `review_consensus.py` is the existing hand-back path).
+`/code-review` never applies the fix itself and never authors a fix for a finding it raised: **the
+author or the Work process owns repair changes and implementation commits**, and the reviewer hands
+findings back. `advisory` findings are report-only, and Priority or confidence never changes this
+outcome.
 
 ### 5.6 Route
 
@@ -512,9 +530,20 @@ and Priority or confidence never changes this outcome.
 
 ### 5.7 Hard boundary
 
-`/code-review` reviews, classifies, and routes. It does **NOT** implement fixes, does **NOT** commit,
-does **NOT** push, does **NOT** open or update a PR, and does **NOT** file SDLC issues. In interactive
-mode: review, write the artifact, append the saga tick (if one exists), route — then stop. In
+`/code-review` reviews, classifies, and routes. It does **NOT** implement the fixes it requests — the
+author or the Work process owns repair changes and implementation commits — does **NOT** mutate
+reviewed source, does **NOT** open or update a PR, and does **NOT** file SDLC issues. The one granted
+write lane is **review-artifact publication**, and only in **interactive / standalone** mode: write,
+commit, and push the review artifact at its own path (`docs/code-reviews/` or the evidence-ledger
+artifact path), and submit the GitHub pull-request review on the existing PR. That commit is evidence
+only and names the exact implementation revision reviewed (full 40-character `reviewed_revision` in
+the artifact frontmatter) — it is never an implementation commit. When `/work` is the caller the
+review runs in **programmatic / report-only** mode, where nothing changes: ZERO durable writes, no
+commit, no push, no review submission — `/work` persists through the evidence ledger, which does not
+advance `HEAD`, so its `REVIEWED_SHA` staleness check stays valid.
+
+In interactive mode: review, write the artifact, (optionally publish it per the publication lane above),
+append the saga tick (if one exists), route — then stop. In
 programmatic mode: review and return `review_result.v1` — the caller owns persistence and routing.
 
 ---

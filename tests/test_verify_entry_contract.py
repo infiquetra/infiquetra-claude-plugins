@@ -16,8 +16,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).parent.parent
 WORK_SKILL = ROOT / "plugins" / "saga" / "skills" / "work" / "SKILL.md"
 QA_SKILL = ROOT / "plugins" / "saga" / "skills" / "qa" / "SKILL.md"

@@ -111,7 +111,10 @@ def _set_field_calls(mock_gql) -> list:
 
 def _two_board_env(
     *,
-    prior_a="Active",
+    # Uniform priors by default: since F-7, a call from ALREADY-divergent
+    # boards halts before the first write, so behavior tests of the write/
+    # compensate path start from a consistent pre-call state.
+    prior_a="Idea",
     prior_o="Idea",
     field_responses=None,
     write_responses=None,
@@ -124,8 +127,10 @@ def _two_board_env(
         field_responses
         if field_responses is not None
         else [
-            _fields_response("PVT_asgard", "Shaping", "Active", "Verify", "Done"),
-            _fields_response("PVT_operations", "Shaping", "Active", "Verify", "Ready to merge"),
+            _fields_response("PVT_asgard", "Idea", "Shaping", "Active", "Verify", "Done"),
+            _fields_response(
+                "PVT_operations", "Idea", "Shaping", "Active", "Verify", "Ready to merge"
+            ),
         ]
     )
     return _gql_side_effect(_discovery([board_a, board_o]), fields, write_responses or [])
@@ -154,7 +159,7 @@ def test_cross_board_atomic_write_reaches_every_carrying_board_with_evidence() -
         "opt_PVT_operations_Verify",
     }
     assert [(b["project"], b["prior_value"], b["new_value"]) for b in evidence["boards"]] == [
-        ("asgard", "Active", "Verify"),
+        ("asgard", "Idea", "Verify"),
         ("operations", "Idea", "Verify"),
     ]
     assert all(b["outcome"] == "written" for b in evidence["boards"])
@@ -179,7 +184,7 @@ def test_cross_board_atomic_partial_write_failure_restores_prior_value() -> None
     assert len(calls) == 3  # write asgard, write operations (fails), restore asgard
     restore_call = calls[-1]
     assert restore_call.args[1]["projectId"] == "PVT_asgard"
-    assert restore_call.args[1]["optionId"] == "opt_PVT_asgard_Active", (
+    assert restore_call.args[1]["optionId"] == "opt_PVT_asgard_Idea", (
         "the restore must carry board 1's PRIOR option id, not the target one"
     )
 
@@ -427,7 +432,7 @@ def test_stage_field_writes_route_through_the_mutation_offline() -> None:
         _discovery(
             [
                 _item("PVTI_a", 2, "Asgard", "Design"),
-                _item("PVTI_o", 3, "Operations", "Build"),
+                _item("PVTI_o", 3, "Operations", "Design"),
             ]
         ),
         [
@@ -456,7 +461,7 @@ def test_compensated_failure_message_names_failing_board() -> None:
     write_responses = [{}, RuntimeError("board 2 down")]
     env = _gql_side_effect(
         _discovery(
-            [_item("PVTI_a", 2, "Asgard", "Idea"), _item("PVTI_o", 3, "Operations", "Shaping")]
+            [_item("PVTI_a", 2, "Asgard", "Idea"), _item("PVTI_o", 3, "Operations", "Idea")]
         ),
         [
             _fields_response("PVT_asgard", "Idea", "Shaping", "Verify", "Active"),
@@ -482,7 +487,7 @@ def test_first_write_failure_message_names_first_board() -> None:
     the pre-fix "board '[]'" and similar blank output."""
     env = _gql_side_effect(
         _discovery(
-            [_item("PVTI_a", 2, "Asgard", "Idea"), _item("PVTI_o", 3, "Operations", "Shaping")]
+            [_item("PVTI_a", 2, "Asgard", "Idea"), _item("PVTI_o", 3, "Operations", "Idea")]
         ),
         [
             _fields_response("PVT_asgard", "Shaping", "Active"),
@@ -496,3 +501,79 @@ def test_first_write_failure_message_names_first_board() -> None:
         pytest.raises(RuntimeError, match=r"failed on board 'asgard'"),
     ):
         sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Active")
+
+
+def test_mixed_prior_boards_halt_before_any_write() -> None:
+    """F-7 regression (Code Review cycle 2): a call that STARTS from
+    already-divergent carrying boards must raise LifecycleMutationHaltError
+    and write NOTHING. At 4afc6ef4 this call proceeded: each board's
+    divergent value became its "captured prior", the restore "succeeded",
+    and the halt hid as an ordinary restore-success while the boards kept
+    disagreeing — exactly what saga's live retry loop (max_attempts=3) and
+    any operator retry hit after a first-attempt halt. On the unfixed
+    revision this test fails with a plain RuntimeError (or success), never
+    this halt.
+    """
+    # Pre-call state: asgard already shows Verify, operations already shows
+    # Shaping — boards disagree BEFORE the call.
+    env = _gql_side_effect(
+        _discovery(
+            [_item("PVTI_a", 2, "Asgard", "Verify"), _item("PVTI_o", 3, "Operations", "Shaping")]
+        ),
+        [
+            _fields_response("PVT_asgard", "Idea", "Shaping", "Verify", "Active"),
+            _fields_response("PVT_operations", "Idea", "Shaping", "Verify"),
+        ],
+        [{}, {}],  # both writes would succeed if the call were (wrongly) made
+    )
+    with (
+        patch.object(sdlc_manager, "_graphql", side_effect=env) as gql,
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(sdlc_manager.LifecycleMutationHaltError) as exc_info,
+    ):
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
+
+    message = str(exc_info.value)
+    assert "ALREADY disagree" in message
+    assert (
+        "no board is written" in message
+        or "do not write" in message.lower()
+        or "REFUSING" in message
+    )
+    assert "asgard shows 'Verify'" in message
+    assert "operations shows 'Shaping'" in message
+    assert exc_info.value.board_state == [
+        {"board": "asgard", "shows": "Verify"},
+        {"board": "operations", "shows": "Shaping"},
+    ]
+    # The refusal happens BEFORE the first write — not even a retry-shaped
+    # write attempt appears, and preflight never runs.
+    assert gql.call_count == 1  # discovery only; zero field queries, zero writes
+    assert _set_field_calls(gql) == []
+
+
+def test_mixed_prior_refusal_does_not_describe_restore() -> None:
+    """F-7 wording guard: the mixed-prior halt must not present itself as a
+    completed restore / all-or-none success — the captured priors were the
+    divergence itself."""
+    env = _gql_side_effect(
+        _discovery(
+            [_item("PVTI_a", 2, "Asgard", "Verify"), _item("PVTI_o", 3, "Operations", "Shaping")]
+        ),
+        [
+            _fields_response("PVT_asgard", "Idea", "Shaping", "Verify", "Active"),
+            _fields_response("PVT_operations", "Idea", "Shaping", "Active"),
+        ],
+        [{}, {}],
+    )
+    with (
+        patch.object(sdlc_manager, "_graphql", side_effect=env),
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(sdlc_manager.LifecycleMutationHaltError) as exc_info,
+    ):
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Active")
+
+    message = str(exc_info.value)
+    assert "REFUSING to write" in message
+    assert "were restored" not in message
+    assert "restored to their prior values" not in message

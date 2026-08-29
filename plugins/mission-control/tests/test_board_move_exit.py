@@ -257,7 +257,7 @@ def test_no_best_effort_continue_two_board_move_is_all_or_none(
                 "projectItems": {
                     "nodes": [
                         _item("PVTI_a", 2, "Asgard", "Idea"),
-                        _item("PVTI_o", 3, "Operations", "Shaping"),
+                        _item("PVTI_o", 3, "Operations", "Idea"),
                     ]
                 }
             }
@@ -271,7 +271,7 @@ def test_no_best_effort_continue_two_board_move_is_all_or_none(
                 discovery,
                 [
                     _fields_response("PVT_asgard", "Idea", "Active"),
-                    _fields_response("PVT_operations", "Shaping", "Active"),
+                    _fields_response("PVT_operations", "Idea", "Active"),
                 ],
                 [{}, RuntimeError("second board down")],
             ),
@@ -310,7 +310,7 @@ def test_compensation_halt_propagates_not_downgraded() -> None:
                 "projectItems": {
                     "nodes": [
                         _item("PVTI_a", 2, "Asgard", "Idea"),
-                        _item("PVTI_o", 3, "Operations", "Shaping"),
+                        _item("PVTI_o", 3, "Operations", "Idea"),
                     ]
                 }
             }
@@ -324,7 +324,7 @@ def test_compensation_halt_propagates_not_downgraded() -> None:
                 discovery,
                 [
                     _fields_response("PVT_asgard", "Idea", "Active"),
-                    _fields_response("PVT_operations", "Shaping", "Active"),
+                    _fields_response("PVT_operations", "Idea", "Active"),
                 ],
                 [{}, RuntimeError("second board down"), RuntimeError("restore down")],
             ),

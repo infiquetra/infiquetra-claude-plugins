@@ -2660,7 +2660,11 @@ def _set_lifecycle_field_cross_board(
     value. A restore that cannot be performed — the prior value was unset and
     no clear primitive exists (KTD8), or the restoring write itself fails —
     raises LifecycleMutationHaltError naming which board holds which value;
-    there is no retry (R67).
+    there is no retry (R67). A call whose carrying boards ALREADY disagree on
+    the named field halts before the first write (F-7): writing from mixed
+    priors would make later compensation report restore-success over a
+    divergence it can never fix, so the mutation refuses instead of
+    reconcile-or-hide.
 
     Returns the evidence payload (one record per board); raises RuntimeError
     for ordinary preflight/discovery failures and the halt exception only when
@@ -2690,6 +2694,32 @@ def _set_lifecycle_field_cross_board(
                 f"(carrying boards: {sorted(carrying)}). A lifecycle-field write "
                 f"reaches every carrying board, not only the one named."
             )
+
+    # F-7 (Code Review cycle 2): a call that STARTS from already-divergent
+    # carrying boards must not write. Its per-board "captured priors" would BE
+    # the divergent values, so a later compensation would "succeed" right back
+    # into divergence and the halt would hide as an ordinary restore success —
+    # exactly what saga's live retry loop (and any operator retry) does after a
+    # first-attempt halt. Refuse BEFORE the first write, naming which board
+    # holds which value; this is a refusal to write, never a
+    # restore-to-consistent outcome. (R42 is untouched: this refuses a WRITE,
+    # never a person's hand edit, and W6 never reconciles.)
+    divergent = [b for b in boards if b["field_present"] and b["prior_value"] is not None]
+    distinct_priors = {b["prior_value"] for b in divergent}
+    if len(distinct_priors) > 1:
+        board_state = [
+            {"board": b["key"], "shows": b["prior_value"] if b["field_present"] else None}
+            for b in boards
+        ]
+        raise LifecycleMutationHaltError(
+            f"REFUSING to write {field_name}='{option_name}' to {repo}#{number}: the "
+            f"carrying boards ALREADY disagree on {field_name} ("
+            + "; ".join(f"{b['key']} shows '{b['prior_value']}'" for b in divergent)
+            + "). A write from mixed priors would record each board's divergent "
+            "value as its restoration point, so no later compensation could "
+            "report truthfully (R67). Raise this divergence to the operator.",
+            board_state=board_state,
+        )
 
     # KTD4 — preflight EVERY board before the first write, capturing per board
     # the live field id, target option id, and the prior value's option id (for

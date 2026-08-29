@@ -143,10 +143,12 @@ def _discovery_calls(mock_gql):
     ]
 
 
+# Uniform priors: since F-7 a call from ALREADY-divergent boards halts before
+# the first write, so routing tests start from a consistent pre-call state.
 _TWO_BOARD_DISCOVERY = _discovery(
     [
         _item("PVTI_a", 2, "Asgard", "Idea"),
-        _item("PVTI_o", 3, "Operations", "Shaping"),
+        _item("PVTI_o", 3, "Operations", "Idea"),
     ]
 )
 

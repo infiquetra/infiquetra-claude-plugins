@@ -71,7 +71,7 @@ def _discovery():
                             "id": "PVTI_o",
                             "project": {"title": "Operations", "number": 3},
                             "fieldValues": {
-                                "nodes": [{"name": "Shaping", "field": {"name": "Status"}}]
+                                "nodes": [{"name": "Idea", "field": {"name": "Status"}}]
                             },
                         },
                     ]
@@ -84,7 +84,7 @@ def _discovery():
 def _gql_side_effect():
     fields = [
         _fields_response("PVT_asgard", ["Idea", "Active"], ["Design", "Build", "Active"]),
-        _fields_response("PVT_operations", ["Shaping", "Active"], ["Design", "Active"]),
+        _fields_response("PVT_operations", ["Idea", "Active"], ["Design", "Active"]),
     ]
 
     def side_effect(query, variables=None):

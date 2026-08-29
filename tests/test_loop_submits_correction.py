@@ -5,10 +5,14 @@ Two halves of R33, each with the failure it guards against:
 * **detect-and-submit**: a detected drift produces a *submission* through the Mission Control
   mutation contract, never a direct write. Post-W7 the tick /loop drives is the read-only
   ``reconcile_controller.detect_op``; the correction itself (once the operator confirms) rides the
-  certificate-gated reconcile tick, whose writer is mission-control's ``flow set-field
-  --correction``. Binding note (plan UNKNOWN-1): W6's constrained mutation does not exist yet;
-  until it merges, this test pins the path to the existing Mission Control submission. Re-bind the
-  argv assertion to W6's actual constrained mutation when #87 lands.
+  certificate-gated reconcile tick, whose writer is mission-control's ``flow set-field``
+  submission. UNKNOWN-1 is RESOLVED against W6's merged code (#87, ``sdlc_manager.py``): any
+  ``flow set-field`` naming Status or Stage — with or without ``--correction`` — IS the
+  constrained cross-board lifecycle-field mutation
+  (``_set_lifecycle_field_cross_board``; the field NAME selects the writer, KTD10), with
+  casefold field normalisation, a pre-write refusal when carrying boards already disagree (F-7),
+  and a compensation halt naming the failing board. The argv asserted below therefore IS W6's
+  mutation; byte-identity of the identity keys is proven separately below.
 * **no self-advancement**: given a card eligible for a FORWARD move (the board sits at an earlier
   value than the lifecycle's next step), /loop reports it and performs no advancement — the
   first-time forward move belongs to /work, and the field write belongs to Mission Control.
@@ -129,8 +133,10 @@ def test_loop_submits_correction_through_mission_control(tmp_path: Path) -> None
         }
     ]
 
-    # The correction lands on mission-control's mutation contract, not a Saga-side client:
-    # default_board_writer builds the sdlc_manager ``flow set-field --correction`` argv.
+    # The correction lands on W6's constrained cross-board mutation, not a Saga-side client:
+    # default_board_writer builds the sdlc_manager ``flow set-field --correction`` argv, and
+    # (post-W6) ANY such argv naming Status/Stage routes into
+    # ``_set_lifecycle_field_cross_board`` — the field name selects the writer, not the flag.
     commands: list[list[str]] = []
 
     class _Ok:
@@ -265,3 +271,51 @@ def test_controller_detect_cli_writes_nothing(
     assert record["board_value"] == "Ready"
     assert record["target_state"] == "Active"
     assert list(tmp_path.iterdir()) == [], "the CLI detect subcommand writes nothing locally"
+
+
+# ---------------------------------------------------------------------------
+# UNKNOWN-1 resolution: the submission's byte identity IS W6's mutation identity
+# ---------------------------------------------------------------------------
+
+
+def test_saga_ledger_key_is_byte_identical_to_w6_correction_identity() -> None:
+    """UNKNOWN-1, resolved concretely against W6's merged code (#87): the identity mission-control
+    emits for a correction write is byte-identical to saga's ledger key for the same submission, so
+    a retried write correlates to the saga tick that submitted it. ``_canonical_lifecycle_field``
+    (casefold routing) resolves the caller's spelling to the SAME canonical name that goes into
+    both keys. Corrections bound for non-correction fields never reach a valid identity."""
+    import importlib.util as _ilu
+
+    mc_scripts = ROOT / "plugins" / "mission-control" / "scripts"
+    if str(mc_scripts) not in sys.path:
+        sys.path.insert(0, str(mc_scripts))
+    spec = _ilu.spec_from_file_location("_w6_sdlc_manager", mc_scripts / "sdlc_manager.py")
+    assert spec is not None and spec.loader is not None
+    w6 = _ilu.module_from_spec(spec)
+    sys.modules[spec.name] = w6
+    spec.loader.exec_module(w6)
+
+    evidence = w6.correction_identity(
+        field_name="Status", repo="infiquetra/saga", number=450, option_name="Active"
+    )
+    ledger_key = CERT.idempotency_key(
+        "set-field-status", "infiquetra/saga", 450, "Active", field="Status"
+    )
+    assert evidence["retry"] == ledger_key, (
+        "W6's retry identity must stay byte-identical to saga's ledger key (#812 contract)"
+    )
+    # Casefold routing (W6 F-1) happens UPSTREAM, in ``flow_set_field`` via
+    # ``_canonical_lifecycle_field``, which resolves the caller's spelling to the canonical name
+    # it then feeds to ``_set_lifecycle_field_cross_board`` (whose ``assert_correction_field`` is
+    # exact-match, so only the canonical name flows onward). Assert the routing location
+    # precisely: a lower-case spelling canonicalises to the SAME name saga's key carries.
+    assert w6._canonical_lifecycle_field("STATUS") == "Status"
+    assert (
+        w6.correction_identity(
+            field_name=w6._canonical_lifecycle_field("STATUS"),
+            repo="infiquetra/saga",
+            number=450,
+            option_name="Active",
+        )["retry"]
+        == ledger_key
+    )

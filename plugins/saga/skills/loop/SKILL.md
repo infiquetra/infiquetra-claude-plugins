@@ -174,8 +174,10 @@ It emits one record:
   correction through the Mission Control mutation contract, with the operator's confirmation**:
   surface the drift record (`drift_kind`, `drift_id`, `board_value`, prepared `saga_value`), and
   once the operator confirms, drive the re-assert through the certificate-gated reconcile tick for
-  the op the drift record carries (`set-field-status`, target `saga_value`) — the tick lands as
-  Mission Control's own `flow set-field --correction`. Never re-write the field without
+  the op the drift record carries (`set-field-status`, target `saga_value`) — the tick lands in
+  mission-control's **constrained cross-board lifecycle-field mutation** (W6, #87: any set-field
+  naming Status or Stage is routed to it, cross-board atomic, and it refuses-or-halts rather than
+  write from divergent carrying boards). Never re-write the field without
   that confirmation (M7: pause automated writes, route through the operator).
 - `{"status":"halt", "halt_reason": ...}` — an irreversible outside open/closed change; surface the
   named reason, never overwrite, and fall back to the operator-prompted path.

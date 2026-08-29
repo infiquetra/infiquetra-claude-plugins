@@ -43,8 +43,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.14.0"
-    )  # W13: identity-preserving option-set helper (infiquetra-sdlc#94)
+        plugin_json["version"] == "2.15.0"
+    )  # W10: prepared-issue Intake exit initializes Stage + Status (infiquetra-sdlc#91)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]

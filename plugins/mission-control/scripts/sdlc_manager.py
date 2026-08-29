@@ -5423,7 +5423,9 @@ def issue_create_prepared(
         # rewrite on a resumed Status-failure sidecar stays safe (sdlc#91 R5).
         if "stage" not in remaining_steps and remaining_steps:
             insert_at = (
-                remaining_steps.index("status") if "status" in remaining_steps else len(remaining_steps)
+                remaining_steps.index("status")
+                if "status" in remaining_steps
+                else len(remaining_steps)
             )
             remaining_steps.insert(insert_at, "stage")
         mapping_pr_url = (

@@ -513,7 +513,9 @@ def _intake_exit_patches(draft: Path, *, flow_side_effect=None):
             "_create_github_issue",
             return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
         ),
-        "item_exists": patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        "item_exists": patch.object(
+            sdlc_manager, "_prepared_project_item_exists", return_value=False
+        ),
         "board": patch.object(sdlc_manager, "board_add"),
         "flow": flow_patch,
     }
@@ -526,9 +528,15 @@ def test_intake_exit_sets_stage_and_status_at_creation(tmp_path) -> None:
     sdlc_manager.prepared_approve_batch([draft], fmt="text")
 
     patches = _intake_exit_patches(draft)
-    with patches["config"], patches["labels"], patches["templates"], \
-            patches["create"] as mock_create, patches["item_exists"], \
-            patches["board"] as mock_board, patches["flow"] as mock_flow:
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"] as mock_create,
+        patches["item_exists"],
+        patches["board"] as mock_board,
+        patches["flow"] as mock_flow,
+    ):
         result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     assert result["created"] is True
@@ -556,8 +564,15 @@ def test_intake_exit_writes_stage_before_status(tmp_path) -> None:
         recorder.append(field_name)
 
     patches = _intake_exit_patches(draft, flow_side_effect=_record)
-    with patches["config"], patches["labels"], patches["templates"], patches["create"], \
-            patches["item_exists"], patches["board"], patches["flow"]:
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"],
+        patches["item_exists"],
+        patches["board"],
+        patches["flow"],
+    ):
         sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     assert recorder == ["Stage", "Status"]
@@ -579,8 +594,15 @@ def test_intake_exit_joins_project_before_writing_fields(tmp_path) -> None:
 
     patches = _intake_exit_patches(draft, flow_side_effect=_record_flow)
     patches["board"] = patch.object(sdlc_manager, "board_add", side_effect=_record_board)
-    with patches["config"], patches["labels"], patches["templates"], patches["create"], \
-            patches["item_exists"], patches["board"], patches["flow"]:
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"],
+        patches["item_exists"],
+        patches["board"],
+        patches["flow"],
+    ):
         sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     # One shared recorder: board-add precedes both lifecycle writes, and the
@@ -599,9 +621,16 @@ def test_intake_exit_stage_failure_does_not_attempt_status(tmp_path) -> None:
             raise RuntimeError("Stage write failed")
 
     patches = _intake_exit_patches(draft, flow_side_effect=_raise_on_stage)
-    with patches["config"], patches["labels"], patches["templates"], patches["create"], \
-            patches["item_exists"], patches["board"], patches["flow"] as mock_flow, \
-            pytest.raises(RuntimeError, match="Stage write failed"):
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"],
+        patches["item_exists"],
+        patches["board"],
+        patches["flow"] as mock_flow,
+        pytest.raises(RuntimeError, match="Stage write failed"),
+    ):
         sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage"]
@@ -620,9 +649,16 @@ def test_intake_exit_status_failure_leaves_stage_written_and_resumable(tmp_path)
             raise RuntimeError("Status write failed")
 
     patches = _intake_exit_patches(draft, flow_side_effect=_raise_on_status)
-    with patches["config"], patches["labels"], patches["templates"], patches["create"], \
-            patches["item_exists"], patches["board"], patches["flow"] as mock_flow, \
-            pytest.raises(RuntimeError, match="Status write failed"):
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"],
+        patches["item_exists"],
+        patches["board"],
+        patches["flow"] as mock_flow,
+        pytest.raises(RuntimeError, match="Status write failed"),
+    ):
         sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     # `Stage` was attempted exactly once and completed; `Status` was attempted
@@ -674,9 +710,16 @@ def test_intake_exit_missing_stage_creates_no_issue(tmp_path) -> None:
     )
 
     patches = _intake_exit_patches(draft)
-    with patches["config"], patches["labels"], patches["templates"], \
-            patches["create"] as mock_create, patches["item_exists"], patches["board"], \
-            patches["flow"], pytest.raises(RuntimeError, match="blocking readiness"):
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"] as mock_create,
+        patches["item_exists"],
+        patches["board"],
+        patches["flow"],
+        pytest.raises(RuntimeError, match="blocking readiness"),
+    ):
         sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     mock_create.assert_not_called()
@@ -700,7 +743,10 @@ def test_intake_exit_stage_has_no_default(tmp_path) -> None:
         draft_dir=tmp_path,
         handoff_maturity="deferred-context",  # ruled: no maturity maps to Stage
         source_artifact=sdlc_manager.SourceArtifact(
-            ref="objective-x", kind="spec", title="t", content="c",
+            ref="objective-x",
+            kind="spec",
+            title="t",
+            content="c",
             inferred_maturity="idea-ready",
         ),
     )
@@ -720,9 +766,15 @@ def test_intake_exit_resume_does_not_duplicate_issue(tmp_path) -> None:
     _write_post_create_pending(draft, remaining_steps=["stage", "status"])
 
     patches = _intake_exit_patches(draft)
-    with patches["config"], patches["labels"], patches["templates"], \
-            patches["create"] as mock_create, patches["item_exists"], \
-            patch.object(sdlc_manager, "board_add"), patches["flow"] as mock_flow:
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"] as mock_create,
+        patches["item_exists"],
+        patch.object(sdlc_manager, "board_add"),
+        patches["flow"] as mock_flow,
+    ):
         result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     assert result["created"] is True
@@ -741,9 +793,15 @@ def test_intake_exit_resume_honors_legacy_sidecar_without_stage(tmp_path) -> Non
     _write_post_create_pending(draft, remaining_steps=["status"])
 
     patches = _intake_exit_patches(draft)
-    with patches["config"], patches["labels"], patches["templates"], \
-            patches["create"] as mock_create, patches["item_exists"], \
-            patch.object(sdlc_manager, "board_add"), patches["flow"] as mock_flow:
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"] as mock_create,
+        patches["item_exists"],
+        patch.object(sdlc_manager, "board_add"),
+        patches["flow"] as mock_flow,
+    ):
         sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     mock_create.assert_not_called()
@@ -773,10 +831,16 @@ def test_intake_exit_blocked_draft_still_refuses(tmp_path) -> None:
     draft = _blocked_draft(tmp_path)
 
     patches = _intake_exit_patches(draft)
-    with patches["config"], patches["labels"], patches["templates"], \
-            patches["create"] as mock_create, patches["item_exists"], \
-            patch.object(sdlc_manager, "board_add"), patches["flow"] as mock_flow, \
-            pytest.raises(RuntimeError, match="blocking readiness"):
+    with (
+        patches["config"],
+        patches["labels"],
+        patches["templates"],
+        patches["create"] as mock_create,
+        patches["item_exists"],
+        patch.object(sdlc_manager, "board_add"),
+        patches["flow"] as mock_flow,
+        pytest.raises(RuntimeError, match="blocking readiness"),
+    ):
         sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
     mock_create.assert_not_called()

@@ -3899,7 +3899,6 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     assert "blockers" in resume_doc
 
 
-
 def test_intake_exit_saga_creates_no_issue() -> None:
     """W10 / sdlc#91 AE32: the two Intake commands are boundary-bounded —
     office-hours and ideate produce durable source material and carry NO runnable

@@ -497,9 +497,7 @@ def test_intake_exit_bypass_is_reported(
     with ExitStack() as stack:
         for ctx in (*_issue_create_full_path_patches(), patch("builtins.input", return_value="y")):
             stack.enter_context(ctx)
-        mock_meta = stack.enter_context(
-            patch.object(sdlc_manager, "_apply_post_create_metadata")
-        )
+        mock_meta = stack.enter_context(patch.object(sdlc_manager, "_apply_post_create_metadata"))
         stack.enter_context(patch.object(sdlc_manager, "_prompt_paired_card", return_value=None))
         sdlc_manager.issue_create("campps-mvp", "capability", "text")
 

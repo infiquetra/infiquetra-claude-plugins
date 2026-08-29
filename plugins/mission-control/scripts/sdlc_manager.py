@@ -3987,6 +3987,7 @@ _PREPARED_FIELD_RISK = "Technical Risk"
 _PREPARED_FIELD_OBJECTIVE = "Objective"
 _PREPARED_FIELD_ISSUE_TYPE = "Issue Type"
 _PREPARED_FIELD_LIFECYCLE_ORIGIN = "Lifecycle Origin"
+_PREPARED_FIELD_STAGE = "Stage"
 
 
 @dataclass
@@ -4022,6 +4023,10 @@ class PreparedIssue:
     mode: str | None
     body: str
     handoff_maturity: str | None = None
+    # W10 (R77): Stage is author-supplied on every prepared draft — no default
+    # and no handoff-maturity mapping (operator ruling on sdlc#91 OQ1). `None`
+    # stays `None` at authoring time; readiness refuses it before creation.
+    stage: str | None = None
     source_artifact: dict[str, Any] | None = None
     project_fields: dict[str, str] | None = None
     draft_path: str | None = None
@@ -4051,6 +4056,10 @@ def _prepared_project_fields(
     # came from", never an author-required input.
     if issue.handoff_maturity:
         fields[_PREPARED_FIELD_LIFECYCLE_ORIGIN] = issue.handoff_maturity
+    # Stage is recorded only when the author supplied one (W10) — it never gets
+    # a derived value, so an absent author Stage stays absent here too.
+    if issue.stage:
+        fields[_PREPARED_FIELD_STAGE] = issue.stage
     # Objective is carried only when the handoff source names one; we don't
     # invent an Objective the operator didn't supply.
     if source_artifact and source_artifact.ref:
@@ -4412,6 +4421,12 @@ def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = No
         f"status: {issue.status}",
         f"labels: {labels}",
     ]
+    if issue.stage:
+        # W10: emitted ONLY when a value is present, matching the risk / mode /
+        # handoff_maturity form. `_parse_draft_frontmatter` is a naive
+        # split(":", 1) — f"stage: {None}" would be stored as the authored
+        # string "None" and pass readiness as a real Stage (sdlc#91 D2).
+        frontmatter.append(f"stage: {issue.stage}")
     if issue.risk:
         frontmatter.append(f"risk: {issue.risk}")
     if issue.mode:
@@ -4712,6 +4727,7 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         labels=_normalize_label_list(metadata.get("labels") or sidecar.get("labels")),
         risk=field("risk") or None,
         mode=field("mode") or None,
+        stage=field("stage") or None,
         body=body.strip(),
         handoff_maturity=field("handoff_maturity") or None,
         source_artifact=sidecar.get("source_artifact")
@@ -4900,6 +4916,17 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     elif not issue.handoff_maturity:
         warnings.append("Missing handoff maturity metadata")
 
+    # W10 (R77, AE32): Stage is author-supplied, with no default and no
+    # handoff-maturity mapping (operator ruling on sdlc#91 OQ1, 2026-08-29) —
+    # the deliberate divergence from the handoff_maturity warning above.
+    # `field()` returns "" (never None) when the key is absent, so treat missing
+    # AND empty as absent and record a BLOCKING gap, not a warning.
+    if not issue.stage:
+        blocking.append(
+            "Missing Stage metadata; Stage is author-supplied on every prepared "
+            "draft and must be set before the issue is created"
+        )
+
     sections = _split_sections(issue.body)
     if issue.issue_type in _DISPATCH_ACTIONABLE_TYPES:
         valid_body, body_errors = validate_card_body_for_context(
@@ -4960,6 +4987,7 @@ def _sidecar_payload(
         "team": issue.team,
         "project": issue.project,
         "status": issue.status,
+        "stage": issue.stage,
         "labels": issue.labels,
         "risk": issue.risk,
         "mode": issue.mode,
@@ -4987,6 +5015,7 @@ def issue_prepare(
     source_artifact: SourceArtifact | None = None,
     draft_dir: Path | None = None,
     fmt: str = "text",
+    stage: str | None = None,
 ) -> Path:
     if not source.strip():
         raise RuntimeError("issue prepare requires non-empty source text")
@@ -5017,6 +5046,7 @@ def issue_prepare(
         labels=_issue_expected_labels(issue_type),
         risk=risk,
         mode=mode,
+        stage=stage,
         body=_source_to_issue_body(
             source, issue_type, team, repo, risk, mode, maturity, source_artifact
         ),
@@ -5304,6 +5334,7 @@ def _build_mutation_plan(issue: PreparedIssue, config: dict[str, Any]) -> Mutati
         [
             MutationStep("issue", f"Create {issue.issue_type} in {ORG}/{issue.repo}"),
             MutationStep("board-add", f"Add issue to {issue.project}"),
+            MutationStep("set-stage", f"Set Stage to {issue.stage}"),
             MutationStep("set-status", f"Set Status to {issue.status}"),
             MutationStep("mark-draft", "Record created issue on draft and sidecar"),
         ]
@@ -5385,6 +5416,16 @@ def issue_create_prepared(
         url = str(resume_state["created_issue_url"])
         number = int(resume_state["created_issue_number"])
         remaining_steps = list(resume_state["remaining_steps"])
+        # W10 legacy-sidecar migration: a post_create_pending sidecar whose
+        # remaining lifecycle steps carry no "stage" token predates the two-field
+        # Intake exit and still owes the Stage write. Stage goes before Status
+        # (KTD1a); `flow_set_field` is idempotent for Stage/Status, so the
+        # rewrite on a resumed Status-failure sidecar stays safe (sdlc#91 R5).
+        if "stage" not in remaining_steps and remaining_steps:
+            insert_at = (
+                remaining_steps.index("status") if "status" in remaining_steps else len(remaining_steps)
+            )
+            remaining_steps.insert(insert_at, "stage")
         mapping_pr_url = (
             str(resume_state["mapping_pr_url"]) if resume_state.get("mapping_pr_url") else None
         )
@@ -5423,7 +5464,7 @@ def issue_create_prepared(
         created_at = datetime.now(UTC).isoformat()
         mutation_summary = [asdict(step) for step in plan.steps]
         pending_mapping = bool(mapping_pr_url and override_mapping)
-        remaining_steps = ["board-add", "status"]
+        remaining_steps = ["board-add", "stage", "status"]
         _append_created_issue_to_draft(draft_path, url, number)
         _update_sidecar_state(
             draft_path,
@@ -5453,6 +5494,14 @@ def issue_create_prepared(
                     strict=True,
                 )
                 remaining_steps = [step for step in remaining_steps if step != "board-add"]
+            _update_sidecar_state(draft_path, {"remaining_steps": remaining_steps})
+
+        if "stage" in remaining_steps:
+            # Readiness already refused any draft with a missing or empty Stage,
+            # so the authored value is present by the time this write runs.
+            assert issue.stage is not None
+            flow_set_field(issue.project, issue.repo, number, "Stage", issue.stage, fmt="text")
+            remaining_steps = [step for step in remaining_steps if step != "stage"]
             _update_sidecar_state(draft_path, {"remaining_steps": remaining_steps})
 
         if "status" in remaining_steps:
@@ -6146,6 +6195,21 @@ def issue_create(
             parent,
             field_values,
             fmt,
+        )
+
+        # Step 9b (W10, sdlc#91 R9): report the Intake-exit bypass. This
+        # interactive path created the issue OUTSIDE the prepared-issue exit,
+        # so the initialization of both lifecycle fields did not run. Status may
+        # already carry an operator-chosen value (the prompt above), so the
+        # report never claims Status is unset. Reporting is the requirement —
+        # the path proceeds unchanged (R10), and under the operator ruling there
+        # is no default Stage to apply here: this path has no prepared draft
+        # carrying an author-supplied one.
+        print(
+            f"\nNOTE: {repo}#{issue_number} was created outside the Intake exit. "
+            "The prepared-issue initialization of both lifecycle fields (Stage, Status) "
+            "did not run. Use `issue create-prepared` to create issues through the "
+            "Intake exit."
         )
 
         # Step 10: paired-card prompt — suppressed in recursive call to

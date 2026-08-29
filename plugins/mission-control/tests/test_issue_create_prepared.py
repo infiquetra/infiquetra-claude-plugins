@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -48,6 +48,8 @@ _none_
 
 
 def _ready_draft(tmp_path: Path) -> Path:
+    # W10: every readiness-passing draft must carry an author-supplied Stage —
+    # no default exists (sdlc#91 OQ1 ruling), so the helper supplies one.
     return cast(
         Path,
         sdlc_manager.issue_prepare(
@@ -61,6 +63,7 @@ def _ready_draft(tmp_path: Path) -> Path:
             risk="medium",
             mode=None,
             draft_dir=tmp_path,
+            stage="Intake",
         ),
     )
 
@@ -264,14 +267,11 @@ def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
         project_name="campps",
         strict=True,
     )
-    mock_status.assert_called_once_with(
-        "campps",
-        "hermes-claude-code-router",
-        42,
-        "Status",
-        "Idea",
-        fmt="text",
-    )
+    # W10: the Intake exit writes BOTH lifecycle fields — Stage then Status.
+    assert mock_status.call_args_list == [
+        call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+    ]
 
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
@@ -295,7 +295,7 @@ def test_create_prepared_records_pending_state_when_board_add_fails(tmp_path) ->
         patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
         patch.object(sdlc_manager, "board_add", side_effect=RuntimeError("board add failed")),
         patch.object(sdlc_manager, "flow_set_field") as mock_status,
-        pytest.raises(RuntimeError, match="Remaining steps: board-add, status"),
+        pytest.raises(RuntimeError, match="Remaining steps: board-add, stage, status"),
     ):
         sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
 
@@ -303,7 +303,8 @@ def test_create_prepared_records_pending_state_when_board_add_fails(tmp_path) ->
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "post_create_pending"
     assert sidecar["created_issue_number"] == 42
-    assert sidecar["remaining_steps"] == ["board-add", "status"]
+    # W10: both lifecycle writes are still outstanding after the board-add failure.
+    assert sidecar["remaining_steps"] == ["board-add", "stage", "status"]
     assert "## Created Issue" in draft.read_text()
 
 
@@ -334,14 +335,12 @@ def test_create_prepared_resumes_post_create_without_duplicate_issue(tmp_path) -
         project_name="campps",
         strict=True,
     )
-    mock_status.assert_called_once_with(
-        "campps",
-        "hermes-claude-code-router",
-        42,
-        "Status",
-        "Idea",
-        fmt="text",
-    )
+    # W10: the legacy sidecar (no "stage" token) still owes the Stage write, and
+    # it happens before the Status write (KTD1a).
+    assert mock_status.call_args_list == [
+        call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+    ]
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
     assert sidecar["remaining_steps"] == []
@@ -367,7 +366,11 @@ def test_create_prepared_resume_skips_existing_board_membership(tmp_path) -> Non
     assert result["number"] == 42
     mock_create.assert_not_called()
     mock_board.assert_not_called()
-    mock_status.assert_called_once()
+    # W10: the legacy sidecar still owes Stage, written before Status.
+    assert mock_status.call_args_list == [
+        call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+    ]
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
     assert sidecar["remaining_steps"] == []
@@ -485,3 +488,296 @@ def test_mapping_pr_uses_temporary_worktree(tmp_path) -> None:
     written_path = mock_write.call_args.args[0]
     assert written_path != mapping_path
     assert written_path.name == "project-mappings.json"
+
+
+# ---------------------------------------------------------------------------
+# W10 — Mission Control owns the Intake exit (sdlc#91, AE32).
+#
+# Every test below round-trips through the production path:
+# issue_prepare -> draft written -> _read_prepared_issue -> readiness -> create.
+# No test hand-builds a draft file that skips the writer, because
+# `_parse_draft_frontmatter` is a naive split(":", 1): a hand-built file could
+# never witness that the writer itself never emits the literal "stage: None".
+# ---------------------------------------------------------------------------
+
+
+def _intake_exit_patches(draft: Path, *, flow_side_effect=None):
+    """Standard stub set for an approved-draft create: no real GitHub calls."""
+    flow_patch = patch.object(sdlc_manager, "flow_set_field", side_effect=flow_side_effect)
+    return {
+        "config": patch.object(sdlc_manager, "load_config", return_value=_mapped_config()),
+        "labels": patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        "templates": patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        "create": patch.object(
+            sdlc_manager,
+            "_create_github_issue",
+            return_value=("https://github.com/infiquetra/hermes-claude-code-router/issues/42", 42),
+        ),
+        "item_exists": patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        "board": patch.object(sdlc_manager, "board_add"),
+        "flow": flow_patch,
+    }
+
+
+def test_intake_exit_sets_stage_and_status_at_creation(tmp_path) -> None:
+    """AE32: Mission Control creates the issue, joins the project, and sets BOTH
+    Stage and Status — exactly two lifecycle writes, once each."""
+    draft = _ready_draft(tmp_path)  # carries author-supplied Stage "Intake"
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+
+    patches = _intake_exit_patches(draft)
+    with patches["config"], patches["labels"], patches["templates"], \
+            patches["create"] as mock_create, patches["item_exists"], \
+            patches["board"] as mock_board, patches["flow"] as mock_flow:
+        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert result["created"] is True
+    mock_create.assert_called_once()
+    assert mock_board.call_count == 1
+    assert mock_board.call_args.kwargs["project_name"] == "campps"
+    # Exactly two lifecycle writes, one per field — asserted on the recorded call
+    # list, not a count, so writing the same field twice fails.
+    assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
+    assert [c.args[4] for c in mock_flow.call_args_list] == ["Intake", "Idea"]
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "created"
+    assert sidecar["remaining_steps"] == []
+
+
+def test_intake_exit_writes_stage_before_status(tmp_path) -> None:
+    """KTD1a: if the sequence ever breaks, the surviving card carries a Stage and
+    no Status — never the R30/R31 Status-only shape."""
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+
+    recorder: list[str] = []
+
+    def _record(_project, _repo, _number, field_name, _option, *, fmt):  # noqa: ARG001
+        recorder.append(field_name)
+
+    patches = _intake_exit_patches(draft, flow_side_effect=_record)
+    with patches["config"], patches["labels"], patches["templates"], patches["create"], \
+            patches["item_exists"], patches["board"], patches["flow"]:
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert recorder == ["Stage", "Status"]
+
+
+def test_intake_exit_joins_project_before_writing_fields(tmp_path) -> None:
+    """R4: the project is joined before either lifecycle field is written — a
+    field cannot be set on a board the issue has not joined."""
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+
+    events: list[str] = []
+
+    def _record_board(*_args, **_kwargs):
+        events.append("board-add")
+
+    def _record_flow(_p, _r, _n, field_name, _o, *, fmt):  # noqa: ARG001
+        events.append(field_name)
+
+    patches = _intake_exit_patches(draft, flow_side_effect=_record_flow)
+    patches["board"] = patch.object(sdlc_manager, "board_add", side_effect=_record_board)
+    with patches["config"], patches["labels"], patches["templates"], patches["create"], \
+            patches["item_exists"], patches["board"], patches["flow"]:
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    # One shared recorder: board-add precedes both lifecycle writes, and the
+    # writes themselves arrive Stage-then-Status.
+    assert events == ["board-add", "Stage", "Status"]
+
+
+def test_intake_exit_stage_failure_does_not_attempt_status(tmp_path) -> None:
+    """R2 fail-stop: a failed Stage write is never followed by a Status write —
+    the direct guard against flow_set_fields_bulk's continue-on-failure shape."""
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+
+    def _raise_on_stage(_p, _r, _n, field_name, _o, *, fmt):  # noqa: ARG001
+        if field_name == "Stage":
+            raise RuntimeError("Stage write failed")
+
+    patches = _intake_exit_patches(draft, flow_side_effect=_raise_on_stage)
+    with patches["config"], patches["labels"], patches["templates"], patches["create"], \
+            patches["item_exists"], patches["board"], patches["flow"] as mock_flow, \
+            pytest.raises(RuntimeError, match="Stage write failed"):
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage"]
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "post_create_pending"
+    assert sidecar["remaining_steps"] == ["stage", "status"]
+
+
+def test_intake_exit_status_failure_leaves_stage_written_and_resumable(tmp_path) -> None:
+    """W10 does not roll back a written Stage: recovery is resume, not rollback."""
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+
+    def _raise_on_status(_p, _r, _n, field_name, _o, *, fmt):  # noqa: ARG001
+        if field_name == "Status":
+            raise RuntimeError("Status write failed")
+
+    patches = _intake_exit_patches(draft, flow_side_effect=_raise_on_status)
+    with patches["config"], patches["labels"], patches["templates"], patches["create"], \
+            patches["item_exists"], patches["board"], patches["flow"] as mock_flow, \
+            pytest.raises(RuntimeError, match="Status write failed"):
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    # `Stage` was attempted exactly once and completed; `Status` was attempted
+    # (recorded before its side effect raised) and no rollback re-wrote Stage.
+    assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
+    assert len([c for c in mock_flow.call_args_list if c.args[3] == "Stage"]) == 1
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "post_create_pending"
+    assert sidecar["remaining_steps"] == ["status"]
+
+
+def test_intake_exit_missing_stage_fails_readiness(tmp_path) -> None:
+    """R3a: the check runs against a RE-READ draft, so it sees `field()`'s ""
+    (not an in-memory None) — and it lands in blocking, not warnings."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Stage-less draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+    )
+    issue = sdlc_manager._read_prepared_issue(draft)
+
+    readiness = sdlc_manager._readiness_for_prepared_issue(issue)
+
+    assert readiness.passed is False
+    assert any("Stage" in gap for gap in readiness.blocking_gaps)
+    assert not any("Stage" in warning for warning in readiness.warnings)
+
+
+def test_intake_exit_missing_stage_creates_no_issue(tmp_path) -> None:
+    """The ruling: a draft missing Stage is refused BEFORE GitHub issue creation."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Stage-less draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+    )
+
+    patches = _intake_exit_patches(draft)
+    with patches["config"], patches["labels"], patches["templates"], \
+            patches["create"] as mock_create, patches["item_exists"], patches["board"], \
+            patches["flow"], pytest.raises(RuntimeError, match="blocking readiness"):
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    mock_create.assert_not_called()
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar.get("state") != "post_create_pending"
+
+
+def test_intake_exit_stage_has_no_default(tmp_path) -> None:
+    """R3: no team default, no handoff-maturity mapping, no phase-derived value —
+    and the writer never serializes Python None as an authored Stage."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Default probe draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+        handoff_maturity="deferred-context",  # ruled: no maturity maps to Stage
+        source_artifact=sdlc_manager.SourceArtifact(
+            ref="objective-x", kind="spec", title="t", content="c",
+            inferred_maturity="idea-ready",
+        ),
+    )
+
+    assert draft.exists()  # R3b: prepare still produces the draft file
+    re_read = sdlc_manager._read_prepared_issue(draft)
+    assert not re_read.stage  # missing or empty — never a team default, maturity, or phase value
+    # The front matter must not carry the authored string "None" — the naive
+    # split(":", 1) parser would otherwise store it as a real Stage.
+    assert "stage: None" not in draft.read_text()
+
+
+def test_intake_exit_resume_does_not_duplicate_issue(tmp_path) -> None:
+    """A crashed run resumes against post_create_pending and never re-creates."""
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    _write_post_create_pending(draft, remaining_steps=["stage", "status"])
+
+    patches = _intake_exit_patches(draft)
+    with patches["config"], patches["labels"], patches["templates"], \
+            patches["create"] as mock_create, patches["item_exists"], \
+            patch.object(sdlc_manager, "board_add"), patches["flow"] as mock_flow:
+        result = sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    assert result["created"] is True
+    mock_create.assert_not_called()
+    assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "created"
+    assert sidecar["remaining_steps"] == []
+
+
+def test_intake_exit_resume_honors_legacy_sidecar_without_stage(tmp_path) -> None:
+    """A sidecar written before W10 owes the Stage write even without a stage
+    token in its remaining_steps — otherwise the draft finishes Status-only."""
+    draft = _ready_draft(tmp_path)
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+    _write_post_create_pending(draft, remaining_steps=["status"])
+
+    patches = _intake_exit_patches(draft)
+    with patches["config"], patches["labels"], patches["templates"], \
+            patches["create"] as mock_create, patches["item_exists"], \
+            patch.object(sdlc_manager, "board_add"), patches["flow"] as mock_flow:
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    mock_create.assert_not_called()
+    assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
+
+
+def test_intake_exit_mutation_plan_lists_stage_and_status(tmp_path) -> None:
+    """The confirmation plan shows both writes, in write order."""
+    draft = _ready_draft(tmp_path)
+    issue = sdlc_manager._read_prepared_issue(draft)
+
+    with (
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+    ):
+        plan = sdlc_manager._build_mutation_plan(issue, _mapped_config())
+
+    actions = [step.action for step in plan.steps]
+    assert actions.index("set-stage") < actions.index("set-status")
+    stage_step = next(step for step in plan.steps if step.action == "set-stage")
+    assert stage_step.detail == f"Set Stage to {issue.stage}"
+
+
+def test_intake_exit_blocked_draft_still_refuses(tmp_path) -> None:
+    """Existing refusal contract: a blocked draft creates nothing and reaches no
+    lifecycle write."""
+    draft = _blocked_draft(tmp_path)
+
+    patches = _intake_exit_patches(draft)
+    with patches["config"], patches["labels"], patches["templates"], \
+            patches["create"] as mock_create, patches["item_exists"], \
+            patch.object(sdlc_manager, "board_add"), patches["flow"] as mock_flow, \
+            pytest.raises(RuntimeError, match="blocking readiness"):
+        sdlc_manager.issue_create_prepared(draft, fmt="text", auto_confirm=True)
+
+    mock_create.assert_not_called()
+    mock_flow.assert_not_called()

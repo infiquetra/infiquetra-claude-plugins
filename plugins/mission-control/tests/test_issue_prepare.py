@@ -78,6 +78,7 @@ def test_prepare_olympus_writes_ready_draft_and_sidecar(tmp_path) -> None:
         risk="medium",
         mode=None,
         draft_dir=tmp_path,
+        stage="Intake",  # W10: readiness-passing drafts carry an author-supplied Stage
     )
 
     sidecar = json.loads(draft.with_suffix(".json").read_text())
@@ -159,6 +160,7 @@ def test_prepare_asgard_accepts_shaping_quality_input(tmp_path) -> None:
         risk="low",
         mode="Rapid Action",
         draft_dir=tmp_path,
+        stage="Intake",  # W10: readiness-passing drafts carry an author-supplied Stage
     )
 
     sidecar = json.loads(draft.with_suffix(".json").read_text())

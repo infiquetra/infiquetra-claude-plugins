@@ -345,7 +345,7 @@ commands:
     routes_in: [/work, PR boundary]
     routes_out: [/work, PR-ready]
     gates: P0/P1 findings block PR-ready unless overridden.
-    ownership_boundary: Owns review findings, not fixes, commits, PR creation, or issue filing.
+    ownership_boundary: Owns review findings and, in interactive mode only, review-artifact publication (write, commit, and push the review document; submit the GitHub pull-request review). Does not own fixes, implementation commits, PR creation, or issue filing.
     common_mistakes:
       - Expecting /code-review to fix its own findings.
       - Running it against a stale diff.

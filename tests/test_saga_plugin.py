@@ -435,9 +435,17 @@ def test_code_review_engine_merge_contract() -> None:
     assert sum(1 for lens in conditional if lens in lens_doc) >= 4
     assert "deploy/migration-verification" in lens_doc
 
-    # SKILL.md: gate-only negatives (does not commit / push / file). E1 bolds the NOT.
-    for negative in ("does **NOT** commit", "does **NOT** push", "does **NOT** file"):
-        assert negative in skill_doc
+    # SKILL.md: narrowed gate-only negatives (no source mutation / implementation commit /
+    # PR creation / issue filing). E1 bolds the NOT. The review-artifact publication lane
+    # (W18) narrowed the old blanket "does **NOT** commit / push" prohibition, so the
+    # assertion follows the narrowed grant-plus-denial shape rather than the blanket ban.
+    for negative in (
+        "does **NOT** mutate reviewed source",
+        "does **NOT** commit an implementation change",
+        "does **NOT** open or update a PR",
+        "does **NOT** file SDLC issues",
+    ):
+        assert negative in " ".join(skill_doc.split())
     # Saga literals: an append-only review-track write with both flags.
     assert "saga.py" in skill_doc
     assert "--review-paths" in skill_doc

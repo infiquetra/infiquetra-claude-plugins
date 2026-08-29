@@ -49,10 +49,18 @@ def _collapse(text: str) -> str:
 
 # --- R3: the pre-merge Verify write is gone, not renamed ----------------------
 
+# Both titles the pre-merge Verify move shipped under (review cycle 1, F-2):
+# the retired <= 0.143.0 form and W7's renamed 0.145.0 form, which carried the
+# same PR-ready timing defect as prose. Either reappearing is a regression.
+PRE_MERGE_VERIFY_HEADING = re.compile(
+    r"^#{2,6}\s.*(?:Move the card to Verify|The card moves to Verify).*$",
+    re.MULTILINE,
+)
 
-def test_no_move_the_card_to_verify_heading_survives() -> None:
+
+def test_no_pre_merge_verify_move_heading_survives_in_either_form() -> None:
     text = _read(WORK_SKILL)
-    assert not re.search(r"^#{2,6}\s.*Move the card to Verify\s*$", text, re.MULTILINE)
+    assert not PRE_MERGE_VERIFY_HEADING.search(text)
 
 
 def test_no_target_state_verify_inside_the_pr_ready_region() -> None:

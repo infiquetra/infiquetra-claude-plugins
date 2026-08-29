@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.147.0] - 2026-08-29
+
+### Changed
+
+- **The no-deployable Verify route states its merge precondition everywhere it is described (W8
+  cycle-2 F-7, SDLC R69/R71).** Verify begins after merge; the R71 no-deployable route relaxes the
+  **deployment** requirement, never the **merge** requirement. `/qa`'s Verify-stage paragraph no
+  longer offers an `or` route that enters Verify without merge: for no-deployable work it now
+  requires merged **and** the delivered artifact existing in its real form and consumption context,
+  and states outright that there is no pre-merge entry route (`Deploying to non-production` stays
+  applicable-only). `/work` section 4.4's no-deployable sentence is composed the same way. This
+  makes the agent-facing contract agree with the resolver (`may_enter_verify` requires merge on
+  this route), the schema's `verify_entry.no_deployable_software.require_merge: true`, and
+  `infiquetra-sdlc`'s `docs/process/verify-entry.md`. New contract tests pin both sentences and
+  forbid the retired unmerged-route wording. No board-write behavioral change: Saga still asserts
+  no lifecycle-field write (W7's posture).
+
 ## [0.146.0] - 2026-08-29
 
 ### Changed

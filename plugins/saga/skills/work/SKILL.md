@@ -724,9 +724,11 @@ lifecycle-field move, is Mission Control's — and it happens only after the cha
 **and** a non-production deployment has **succeeded**, in that order, ahead of the delivered-terminal
 `Done` move. PR-ready, green checks, code review, and merge readiness never move the card to Verify,
 and `/work` asserts no Verify move of its own at any point before merge. For work with **no
-deployable software**, Verify is entered when the delivered artifact exists in its real form and
-consumption context — the rendered published page for documentation, the installed version for a
-plugin — with the deployment non-applicability recorded **with a reason** and no environment or
+deployable software**, the same merge precondition holds — the R71 no-deployable route relaxes the
+**deployment** requirement, never the **merge** requirement — so Verify is entered only after the
+change is merged **and** the delivered artifact exists in its real form and consumption context —
+the rendered published page for documentation, the installed version for a plugin — with the
+deployment non-applicability recorded **with a reason** and no environment or
 deployment record fabricated to satisfy the transition. The single authority for this condition is
 the `verify_entry` block of `config/sdlc-schema.json` in `infiquetra-sdlc`, resolved by
 `tools/docs/verify_entry.py`; this skill only names when the move is permitted, never fires it.

@@ -99,3 +99,29 @@ def test_qa_skill_names_the_post_merge_verify_relationship() -> None:
     assert "merged plus a succeeded non-production deployment" in collapsed
     assert "PR-ready never moves a card to `Verify`" in collapsed
     assert "verify_entry" in collapsed
+
+
+def test_qa_no_deployable_route_states_the_merge_precondition() -> None:
+    """Cycle-2 F-7 regression: /qa's no-deployable route must name merge as a
+    precondition (R71 relaxes the DEPLOYMENT requirement, never the MERGE
+    requirement), matching the resolver, the schema's require_merge flag, and
+    docs/process/verify-entry.md -- and there must be no `or` that introduces a
+    second, unmerged entry route."""
+    collapsed = _collapse(_read(QA_SKILL))
+    assert "no deployable software, the same merge precondition still applies" in collapsed
+    assert "relaxes" in collapsed and "deployment" in collapsed and "merge" in collapsed
+    assert "merged **and** the delivered artifact exists" in collapsed
+    assert "There is no pre-merge entry route" in collapsed
+    # The retired unmerged-route wording must not survive anywhere.
+    assert "or, for work with no deployable software, once the delivered artifact" not in collapsed
+
+
+def test_work_post_merge_no_deployable_route_names_the_merge_precondition() -> None:
+    """Cycle-2 F-7 (folded sentence): /work 4.4's no-deployable route must also
+    state merge, not artifact-in-context alone."""
+    collapsed = _collapse(_post_merge_region())
+    assert "same merge precondition holds" in collapsed
+    assert "relaxes the **deployment** requirement, never the **merge** requirement" in collapsed
+    assert "merged **and** the delivered artifact exists in its real form" in collapsed
+    assert "never move the card to Verify" in collapsed
+    assert "verify_entry" in collapsed

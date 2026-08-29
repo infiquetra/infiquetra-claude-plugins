@@ -33,10 +33,16 @@ MAPPING_CONFIG = {
 
 def _fields_response(project_id: str, statuses, stages):
     nodes = [
-        {"id": f"F_{project_id}_Status", "name": "Status",
-         "options": [{"id": f"opt_{project_id}_Status_{o}", "name": o} for o in statuses]},
-        {"id": f"F_{project_id}_Stage", "name": "Stage",
-         "options": [{"id": f"opt_{project_id}_Stage_{o}", "name": o} for o in stages]},
+        {
+            "id": f"F_{project_id}_Status",
+            "name": "Status",
+            "options": [{"id": f"opt_{project_id}_Status_{o}", "name": o} for o in statuses],
+        },
+        {
+            "id": f"F_{project_id}_Stage",
+            "name": "Stage",
+            "options": [{"id": f"opt_{project_id}_Stage_{o}", "name": o} for o in stages],
+        },
     ]
     return {
         "organization": {
@@ -54,10 +60,20 @@ def _discovery():
             "issue": {
                 "projectItems": {
                     "nodes": [
-                        {"id": "PVTI_a", "project": {"title": "Asgard", "number": 2},
-                         "fieldValues": {"nodes": [{"name": "Idea", "field": {"name": "Status"}}]}},
-                        {"id": "PVTI_o", "project": {"title": "Operations", "number": 3},
-                         "fieldValues": {"nodes": [{"name": "Shaping", "field": {"name": "Status"}}]}},
+                        {
+                            "id": "PVTI_a",
+                            "project": {"title": "Asgard", "number": 2},
+                            "fieldValues": {
+                                "nodes": [{"name": "Idea", "field": {"name": "Status"}}]
+                            },
+                        },
+                        {
+                            "id": "PVTI_o",
+                            "project": {"title": "Operations", "number": 3},
+                            "fieldValues": {
+                                "nodes": [{"name": "Shaping", "field": {"name": "Status"}}]
+                            },
+                        },
                     ]
                 }
             }
@@ -102,6 +118,7 @@ def test_field_identity_stage_and_status_differ_for_same_literal_value() -> None
     assert stage_identity["operation"] == "set-field:Stage"
     assert status_identity["operation"] == "set-field:Status"
 
+
 def test_mutation_idempotency_stage_and_status_both_apply() -> None:
     """AE3 end to end: both mutations apply to every carrying board, under
     DIFFERENT identity strings, from the same literal value."""
@@ -117,9 +134,10 @@ def test_mutation_idempotency_stage_and_status_both_apply() -> None:
         identities[field_name] = evidence["identity"]["retry"]
         # Both apply: every carrying board receives the write.
         assert {b["project"] for b in evidence["boards"]} == {"asgard", "operations"}
-        assert len(
-            [c for c in gql.call_args_list if c.args[0] == sdlc_manager.QUERY_SET_FIELD_VALUE]
-        ) == 2
+        assert (
+            len([c for c in gql.call_args_list if c.args[0] == sdlc_manager.QUERY_SET_FIELD_VALUE])
+            == 2
+        )
 
     assert identities["Stage"] != identities["Status"]
 

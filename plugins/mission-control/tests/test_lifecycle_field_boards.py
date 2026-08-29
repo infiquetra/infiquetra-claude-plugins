@@ -38,7 +38,7 @@ _STATUS = "Status"
 def _item(item_id: str, number: int, title: str, status_value=...):
     """Build one projectItems node. status_value ... (sentinel) = field absent,
     None = field present with no value, str = field present with that value."""
-    field_values = {"nodes": []}
+    field_values: dict = {"nodes": []}
     if status_value is not ...:
         node = {"field": {"name": _STATUS}}
         if status_value is not None:
@@ -82,8 +82,10 @@ def test_two_board_issue_returns_one_record_per_board_with_prior_values() -> Non
 
 def test_issue_on_zero_boards_returns_empty_list() -> None:
     response = _discovery_response([])
-    with patch.object(sdlc_manager, "_graphql", return_value=response), \
-         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG):
+    with (
+        patch.object(sdlc_manager, "_graphql", return_value=response),
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+    ):
         records = sdlc_manager._lifecycle_field_boards("demo-repo", 42, _STATUS)
 
     assert records == []
@@ -100,8 +102,10 @@ def test_field_present_unset_distinct_from_field_absent() -> None:
             _item("PVTI_c", 4, "CAMPPS"),  # field absent entirely
         ]
     )
-    with patch.object(sdlc_manager, "_graphql", return_value=response), \
-         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG):
+    with (
+        patch.object(sdlc_manager, "_graphql", return_value=response),
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+    ):
         records = sdlc_manager._lifecycle_field_boards("demo-repo", 42, _STATUS)
 
     assert [r["key"] for r in records] == ["asgard", "operations", "campps"]
@@ -115,9 +119,11 @@ def test_field_present_unset_distinct_from_field_absent() -> None:
 
 
 def test_missing_issue_node_raises_runtime_error_naming_issue() -> None:
-    with patch.object(sdlc_manager, "_graphql", return_value={"repository": {}}):
-        with pytest.raises(RuntimeError) as exc_info:
-            sdlc_manager._lifecycle_field_boards("demo-repo", 42, _STATUS)
+    with (
+        patch.object(sdlc_manager, "_graphql", return_value={"repository": {}}),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        sdlc_manager._lifecycle_field_boards("demo-repo", 42, _STATUS)
 
     assert "demo-repo#42" in str(exc_info.value)
 
@@ -128,14 +134,14 @@ def test_non_dict_project_item_nodes_are_skipped() -> None:
     response = {
         "repository": {
             "issue": {
-                "projectItems": {
-                    "nodes": [None, "junk", _item("PVTI_a", 2, "Asgard", "Active")]
-                }
+                "projectItems": {"nodes": [None, "junk", _item("PVTI_a", 2, "Asgard", "Active")]}
             }
         }
     }
-    with patch.object(sdlc_manager, "_graphql", return_value=response), \
-         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG):
+    with (
+        patch.object(sdlc_manager, "_graphql", return_value=response),
+        patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+    ):
         records = sdlc_manager._lifecycle_field_boards("demo-repo", 42, _STATUS)
 
     assert len(records) == 1

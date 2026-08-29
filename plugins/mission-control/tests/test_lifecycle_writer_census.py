@@ -23,7 +23,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import sdlc_manager  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 SOURCE_PATH = SCRIPTS / "sdlc_manager.py"

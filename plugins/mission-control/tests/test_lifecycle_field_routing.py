@@ -44,7 +44,7 @@ NUMBER = 42
 def _item(item_id: str, number: int, title: str, status_value):
     """Build one projectItems node. status_value may be _ABSENT (the field is
     not on the board), None (field present, unset), or a prior value string."""
-    field_values = {"nodes": []}
+    field_values: dict = {"nodes": []}
     if status_value is not _ABSENT:
         node = {"field": {"name": "Status"}}
         if status_value is not None:
@@ -92,7 +92,10 @@ def _items_response():
             "projectV2": {
                 "items": {
                     "nodes": [
-                        {"id": "PVTI_legacy", "content": {"number": NUMBER, "repository": {"name": REPO}}}
+                        {
+                            "id": "PVTI_legacy",
+                            "content": {"number": NUMBER, "repository": {"name": REPO}},
+                        }
                     ],
                     "pageInfo": {"hasNextPage": False},
                 }
@@ -101,12 +104,13 @@ def _items_response():
     }
 
 
-def _gql_side_effect(discovery, field_responses, write_responses, items_responses=()):
+def _gql_side_effect(discovery, field_responses, write_responses, items_responses=None):
     """One side_effect over the query kinds. Queue entries are returned; an
     Exception entry is raised; an exhausted write queue returns {}."""
+    items_responses = list(items_responses) if items_responses is not None else []
 
-    def _pop(queue, default={}):
-        entry = queue.pop(0) if queue else default
+    def _pop(queue, default=None):
+        entry = queue.pop(0) if queue else (default if default is not None else {})
         if isinstance(entry, Exception):
             raise entry
         return entry
@@ -147,7 +151,9 @@ _TWO_BOARD_DISCOVERY = _discovery(
 )
 
 _STATUS_FIELDS = [
-    _fields_response("PVT_asgard", ("Status", ["Shaping", "Active"]), ("Objective", ["platform-v1"])),
+    _fields_response(
+        "PVT_asgard", ("Status", ["Shaping", "Active"]), ("Objective", ["platform-v1"])
+    ),
     _fields_response(
         "PVT_operations", ("Status", ["Shaping", "Active"]), ("Objective", ["platform-v1"])
     ),
@@ -304,7 +310,16 @@ def test_route_bulk_routes_cross_board_per_issue_and_stays_per_issue_atomic(caps
     discoveries = deque(
         [
             _TWO_BOARD_DISCOVERY,
-            _discovery([_item("PVTI_b", 2, "Asgard", "Shaping", )]),
+            _discovery(
+                [
+                    _item(
+                        "PVTI_b",
+                        2,
+                        "Asgard",
+                        "Shaping",
+                    )
+                ]
+            ),
         ]
     )
     fields = [
@@ -394,7 +409,11 @@ def test_mixed_bulk_routes_status_cross_board_and_objective_single_board(capsys)
         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
     ):
         sdlc_manager.flow_set_fields_bulk(
-            "operations", REPO, [NUMBER], [("Status", "Shaping"), ("Objective", "platform-v1")], "json"
+            "operations",
+            REPO,
+            [NUMBER],
+            [("Status", "Shaping"), ("Objective", "platform-v1")],
+            "json",
         )
 
     writes = _set_field_calls(gql)

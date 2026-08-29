@@ -43,7 +43,7 @@ NUMBER = 42
 
 
 def _item(item_id: str, number: int, title: str, status_value=_ABSENT):
-    field_values = {"nodes": []}
+    field_values: dict = {"nodes": []}
     if status_value is not _ABSENT:
         node = {"field": {"name": "Status"}}
         if status_value is not None:
@@ -71,8 +71,7 @@ def _fields_response(project_id: str, *options: str) -> dict:
                             "id": f"PVTSSF_status_{project_id}",
                             "name": "Status",
                             "options": [
-                                {"id": f"opt_{project_id}_{name}", "name": name}
-                                for name in options
+                                {"id": f"opt_{project_id}_{name}", "name": name} for name in options
                             ],
                         }
                     ],
@@ -121,10 +120,14 @@ def _two_board_env(
     (#3, item PVTI_o) — the deterministic write order."""
     board_a = _item("PVTI_a", 2, "Asgard", prior_a)
     board_o = _item("PVTI_o", 3, "Operations", prior_o)
-    fields = field_responses if field_responses is not None else [
-        _fields_response("PVT_asgard", "Shaping", "Active", "Verify", "Done"),
-        _fields_response("PVT_operations", "Shaping", "Active", "Verify", "Ready to merge"),
-    ]
+    fields = (
+        field_responses
+        if field_responses is not None
+        else [
+            _fields_response("PVT_asgard", "Shaping", "Active", "Verify", "Done"),
+            _fields_response("PVT_operations", "Shaping", "Active", "Verify", "Ready to merge"),
+        ]
+    )
     return _gql_side_effect(_discovery([board_a, board_o]), fields, write_responses or [])
 
 
@@ -132,9 +135,11 @@ def test_cross_board_atomic_write_reaches_every_carrying_board_with_evidence() -
     """AE9 happy half: a two-board Status write produces the SAME semantic
     Status on both boards, plus one evidence record per board (AE9's first
     clause)."""
-    write_responses = [{}, {}]
+    write_responses: list = [{}, {}]
     with (
-        patch.object(sdlc_manager, "_graphql", side_effect=_two_board_env(write_responses=write_responses)) as gql,
+        patch.object(
+            sdlc_manager, "_graphql", side_effect=_two_board_env(write_responses=write_responses)
+        ) as gql,
         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
     ):
         evidence = sdlc_manager._set_lifecycle_field_cross_board(
@@ -160,13 +165,15 @@ def test_cross_board_atomic_partial_write_failure_restores_prior_value() -> None
     """AE9 middle clause: board 1 writes, board 2's write fails — board 1 is
     restored to its CAPTURED PRIOR value (never the target) and the failure is
     surfaced as an ordinary RuntimeError (the boards agree again)."""
-    write_responses = [{}, RuntimeError("board 2 write failed")]
+    write_responses: list = [{}, RuntimeError("board 2 write failed")]
     with (
-        patch.object(sdlc_manager, "_graphql", side_effect=_two_board_env(write_responses=write_responses)) as gql,
+        patch.object(
+            sdlc_manager, "_graphql", side_effect=_two_board_env(write_responses=write_responses)
+        ) as gql,
         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(RuntimeError, match="restored"),
     ):
-        with pytest.raises(RuntimeError, match="restored"):
-            sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
 
     calls = _set_field_calls(gql)
     assert len(calls) == 3  # write asgard, write operations (fails), restore asgard
@@ -185,11 +192,13 @@ def test_cross_board_atomic_preflight_failure_writes_no_board() -> None:
         _fields_response("PVT_operations", "Shaping", "Active"),  # Verify missing
     ]
     with (
-        patch.object(sdlc_manager, "_graphql", side_effect=_two_board_env(field_responses=fields)) as gql,
+        patch.object(
+            sdlc_manager, "_graphql", side_effect=_two_board_env(field_responses=fields)
+        ) as gql,
         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(RuntimeError, match="preflight failed .* operations"),
     ):
-        with pytest.raises(RuntimeError, match="preflight failed .* operations"):
-            sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
 
     assert _set_field_calls(gql) == []
 
@@ -201,11 +210,13 @@ def test_compensation_failure_halts_with_named_reason_and_raises() -> None:
     call count)."""
     write_responses = [{}, RuntimeError("board 2 down"), RuntimeError("restore down")]
     with (
-        patch.object(sdlc_manager, "_graphql", side_effect=_two_board_env(write_responses=write_responses)) as gql,
+        patch.object(
+            sdlc_manager, "_graphql", side_effect=_two_board_env(write_responses=write_responses)
+        ) as gql,
         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(sdlc_manager.LifecycleMutationHaltError) as exc_info,
     ):
-        with pytest.raises(sdlc_manager.LifecycleMutationHaltError) as exc_info:
-            sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
 
     message = str(exc_info.value)
     assert "COMPENSATION FAILED" in message
@@ -239,9 +250,9 @@ def test_compensation_failure_with_unset_prior_value_treats_restore_as_failed() 
     with (
         patch.object(sdlc_manager, "_graphql", side_effect=env) as gql,
         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(sdlc_manager.LifecycleMutationHaltError) as exc_info,
     ):
-        with pytest.raises(sdlc_manager.LifecycleMutationHaltError) as exc_info:
-            sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Verify")
 
     message = str(exc_info.value)
     assert "prior value was unset" in message
@@ -255,9 +266,11 @@ def test_mutation_rejects_non_lifecycle_field_before_any_discovery() -> None:
     """R31 guard: naming any other field is rejected before a board is
     touched — asserted by ZERO graphql calls."""
     for field in ("Objective", "Priority", "Initiative"):
-        with patch.object(sdlc_manager, "_graphql") as gql:
-            with pytest.raises(RuntimeError, match="correction set-field rejects"):
-                sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, field, "Anything")
+        with (
+            patch.object(sdlc_manager, "_graphql") as gql,
+            pytest.raises(RuntimeError, match="correction set-field rejects"),
+        ):
+            sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, field, "Anything")
         assert gql.call_count == 0, f"{field} must be rejected before discovery"
 
 
@@ -357,11 +370,13 @@ def test_explicit_noop_when_issue_sits_on_no_board() -> None:
     """Edge: zero carrying boards reports the no-op explicitly — never
     success."""
     with (
-        patch.object(sdlc_manager, "_graphql", side_effect=_gql_side_effect(_discovery([]), [], [])),
+        patch.object(
+            sdlc_manager, "_graphql", side_effect=_gql_side_effect(_discovery([]), [], [])
+        ),
         patch.object(sdlc_manager, "load_config", return_value=MAPPING_CONFIG),
+        pytest.raises(RuntimeError, match="explicit no-op"),
     ):
-        with pytest.raises(RuntimeError, match="explicit no-op"):
-            sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Active")
+        sdlc_manager._set_lifecycle_field_cross_board(REPO, NUMBER, "Status", "Active")
 
 
 def test_single_board_issue_takes_the_same_path() -> None:

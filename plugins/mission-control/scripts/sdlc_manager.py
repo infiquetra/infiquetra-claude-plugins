@@ -2687,8 +2687,7 @@ def _set_lifecycle_field_cross_board(
             option = _resolve_field_option(key, field_name, field, option_name)
         except RuntimeError as exc:
             raise RuntimeError(
-                f"preflight failed for {repo}#{number} on board '{key}' "
-                f"('{board['title']}'): {exc}"
+                f"preflight failed for {repo}#{number} on board '{key}' ('{board['title']}'): {exc}"
             ) from exc
         prior_option_id: str | None = None
         if board["prior_value"] is not None:
@@ -2704,7 +2703,14 @@ def _set_lifecycle_field_cross_board(
             # prior_option_id None and let any needed restore fail INTO the
             # halt (safe direction, KTD8) rather than fabricating a value.
             prior_option_id = prior_option["id"] if prior_option else None
-        preflight.append({**board, "field": field, "target_option_id": option["id"], "prior_option_id": prior_option_id})
+        preflight.append(
+            {
+                **board,
+                "field": field,
+                "target_option_id": option["id"],
+                "prior_option_id": prior_option_id,
+            }
+        )
 
     # Write phase — apply-then-compensate (KTD3).
     written: list[dict[str, Any]] = []
@@ -2770,7 +2776,10 @@ def _set_lifecycle_field_cross_board(
                 f"COMPENSATION FAILED writing {field_name}='{option_name}' to "
                 f"{repo}#{number}. {len(divergent)} already-written board(s) could "
                 f"not be restored: "
-                + "; ".join(f"{d['board']} still shows '{d['held_value']}' ({d['reason']})" for d in divergent)
+                + "; ".join(
+                    f"{d['board']} still shows '{d['held_value']}' ({d['reason']})"
+                    for d in divergent
+                )
                 + f". Restored OK: {restored or 'none'}. Board state now: "
                 + "; ".join(f"{s['board']} shows '{s['shows']}'" for s in board_state)
                 + ". Halting WITHOUT retry — raise this divergence to the operator.",

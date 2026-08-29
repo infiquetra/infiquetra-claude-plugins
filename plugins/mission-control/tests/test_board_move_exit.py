@@ -26,7 +26,7 @@ NUMBER = 609
 
 
 def _item(item_id: str, number: int, title: str, status_value):
-    field_values = {"nodes": []}
+    field_values: dict = {"nodes": []}
     if status_value is not ...:
         node = {"field": {"name": "Status"}}
         if status_value is not None:
@@ -50,8 +50,7 @@ def _fields_response(project_id: str, *options: str) -> dict:
                             "id": f"PVTSSF_status_{project_id}",
                             "name": "Status",
                             "options": [
-                                {"id": f"opt_{project_id}_{name}", "name": name}
-                                for name in options
+                                {"id": f"opt_{project_id}_{name}", "name": name} for name in options
                             ],
                         }
                     ],
@@ -82,14 +81,24 @@ def _gql_side_effect(discovery, field_responses, write_responses):
 
 
 def _set_field_calls(mock_graphql):
-    return [c for c in mock_graphql.call_args_list if c.args[0] == sdlc_manager.QUERY_SET_FIELD_VALUE]
+    return [
+        c for c in mock_graphql.call_args_list if c.args[0] == sdlc_manager.QUERY_SET_FIELD_VALUE
+    ]
 
 
 def test_board_move_success_returns_true() -> None:
     """A move writes through the cross-board mutation and returns True."""
-    discovery = {"repository": {"issue": {"projectItems": {"nodes": [
-        _item("PVTI_x", 3, "Operations", "Idea"),
-    ]}}}}
+    discovery = {
+        "repository": {
+            "issue": {
+                "projectItems": {
+                    "nodes": [
+                        _item("PVTI_x", 3, "Operations", "Idea"),
+                    ]
+                }
+            }
+        }
+    }
     with (
         patch.object(sdlc_manager, "load_config", return_value={}),
         patch.object(
@@ -130,9 +139,17 @@ def test_board_move_success_returns_true() -> None:
 def test_unavailable_status_returns_false_and_does_not_mutate(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    discovery = {"repository": {"issue": {"projectItems": {"nodes": [
-        _item("PVTI_x", 3, "Operations", "Idea"),
-    ]}}}}
+    discovery = {
+        "repository": {
+            "issue": {
+                "projectItems": {
+                    "nodes": [
+                        _item("PVTI_x", 3, "Operations", "Idea"),
+                    ]
+                }
+            }
+        }
+    }
     with (
         patch.object(
             sdlc_manager,
@@ -190,9 +207,17 @@ def test_mutation_failure_returns_false_after_reporting(
 ) -> None:
     """#609: an ordinary write failure (fully compensated) returns False and
     is reported, not raised."""
-    discovery = {"repository": {"issue": {"projectItems": {"nodes": [
-        _item("PVTI_x", 3, "Operations", "Idea"),
-    ]}}}}
+    discovery = {
+        "repository": {
+            "issue": {
+                "projectItems": {
+                    "nodes": [
+                        _item("PVTI_x", 3, "Operations", "Idea"),
+                    ]
+                }
+            }
+        }
+    }
     with (
         patch.object(
             sdlc_manager,
@@ -226,10 +251,18 @@ def test_no_best_effort_continue_two_board_move_is_all_or_none(
     """The pre-W6 per-project except-and-continue is GONE: an injected failure
     on the second of two boards leaves NEITHER board written — the first is
     restored to its prior value by the mutation's compensation."""
-    discovery = {"repository": {"issue": {"projectItems": {"nodes": [
-        _item("PVTI_a", 2, "Asgard", "Idea"),
-        _item("PVTI_o", 3, "Operations", "Shaping"),
-    ]}}}}
+    discovery = {
+        "repository": {
+            "issue": {
+                "projectItems": {
+                    "nodes": [
+                        _item("PVTI_a", 2, "Asgard", "Idea"),
+                        _item("PVTI_o", 3, "Operations", "Shaping"),
+                    ]
+                }
+            }
+        }
+    }
     with (
         patch.object(
             sdlc_manager,
@@ -261,9 +294,9 @@ def test_no_best_effort_continue_two_board_move_is_all_or_none(
     assert result is False
     calls = _set_field_calls(mock_graphql)
     assert [c.args[1]["optionId"] for c in calls] == [
-        "opt_PVT_asgard_Active",      # the doomed write to board 1
+        "opt_PVT_asgard_Active",  # the doomed write to board 1
         "opt_PVT_operations_Active",  # the failed write to board 2
-        "opt_PVT_asgard_Idea",        # board 1's PRIOR value restored
+        "opt_PVT_asgard_Idea",  # board 1's PRIOR value restored
     ]
 
 
@@ -271,10 +304,18 @@ def test_compensation_halt_propagates_not_downgraded() -> None:
     """KTD13 carve-out: when the restore ALSO fails, the halt propagates out
     of board_move by TYPE instead of collapsing into a bool False — a
     divergent-boards halt must never present as an ordinary move failure."""
-    discovery = {"repository": {"issue": {"projectItems": {"nodes": [
-        _item("PVTI_a", 2, "Asgard", "Idea"),
-        _item("PVTI_o", 3, "Operations", "Shaping"),
-    ]}}}}
+    discovery = {
+        "repository": {
+            "issue": {
+                "projectItems": {
+                    "nodes": [
+                        _item("PVTI_a", 2, "Asgard", "Idea"),
+                        _item("PVTI_o", 3, "Operations", "Shaping"),
+                    ]
+                }
+            }
+        }
+    }
     with (
         patch.object(
             sdlc_manager,

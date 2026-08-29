@@ -437,11 +437,6 @@ def test_field_write_resolves_or_fails_loud() -> None:
             }
         }
 
-    project_items = (
-        "PVT_kwx",
-        [_project_item(42, "PVTI_42", repo="campps-mvp")],
-    )
-
     with (
         patch.object(sdlc_manager, "load_config") as mock_load,
         patch.object(sdlc_manager, "_graphql") as mock_gql,
@@ -527,7 +522,7 @@ def _lifecycle_discovery(
 ) -> dict:
     """W6: the QUERY_GET_LIFECYCLE_FIELD_BOARDS response the cross-board
     mutation consumes — one carrying board for the given issue."""
-    field_values = {"nodes": []}
+    field_values: dict = {"nodes": []}
     if prior is not None:
         field_values["nodes"].append({"name": prior, "field": {"name": "Status"}})
     return {
@@ -583,7 +578,11 @@ def test_set_field_bulk_reuses_discovery_and_updates_each_number() -> None:
     assert mock_gql.call_count == 6
     assert mock_gql.call_args_list[0].args[0] == sdlc_manager.QUERY_GET_LIFECYCLE_FIELD_BOARDS
     assert mock_gql.call_args_list[3].args[0] == sdlc_manager.QUERY_GET_LIFECYCLE_FIELD_BOARDS
-    assert [call.args[0] for call in mock_gql.call_args_list if call.args[0] == sdlc_manager.QUERY_SET_FIELD_VALUE] == [
+    assert [
+        call.args[0]
+        for call in mock_gql.call_args_list
+        if call.args[0] == sdlc_manager.QUERY_SET_FIELD_VALUE
+    ] == [
         sdlc_manager.QUERY_SET_FIELD_VALUE,
         sdlc_manager.QUERY_SET_FIELD_VALUE,
     ]

@@ -15,8 +15,13 @@
   help, and runtime output now say so plainly, and the destructive one-option
   `QUERY_CREATE_FIELD_OPTION` reference example was removed from
   `skills/board/references/graphql-queries.md`.
-- `QUERY_GET_PROJECT_FIELDS` now returns option `color` and `description`, so
-  a field discovery dump can feed `--options-file` directly.
+- `QUERY_GET_PROJECT_FIELDS` now returns option `color` and `description`
+  alongside `id` and `name`, so the helper has the full live attribute set
+  when composing a submission. The `--options-file` itself must still be a
+  JSON **array of option objects** (`[{name, color, description?, id?}]`),
+  not the discover command's printed report (whose shape is
+  `{project, fields}`): run `fields discover` to read the current names,
+  ids, colours and descriptions, then write the complete list file by hand.
 
 ## [2.13.0] - 2026-08-28
 

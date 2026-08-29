@@ -1828,7 +1828,12 @@ def _validate_option_set_request(
         refuses to drop a live option outright);
       * every retained or renamed option carries its existing `id`; only a
         genuinely new name omits `id`;
-      * every submitted colour is inside the eight-value enum.
+      * every submitted colour is inside the eight-value enum;
+      * `description` (a REQUIRED `String!` with no default on the live
+        input type) is present on EVERY submitted entry: caller's explicit
+        value wins, a retained or renamed option whose caller omitted it
+        copies the live option's description verbatim, and a genuinely new
+        option defaults to `""` — so S8 can never wipe the live descriptions.
     """
     if not desired_options:
         raise OptionSetIdentityError(
@@ -1902,8 +1907,22 @@ def _validate_option_set_request(
                     "definition may be submitted"
                 )
         entry = {"name": name, "color": color}
-        if description is not None:
-            entry["description"] = description
+        # `ProjectV2SingleSelectFieldOptionInput.description` is a REQUIRED
+        # String! with no default: omitting the key makes GitHub reject the
+        # variables at coercion, and passing `""` blindly would wipe the live
+        # option's description on submit (same attribute-preservation rule as
+        # the option id itself, V2). So `description` is ALWAYS present:
+        # caller's explicit value wins; a retained or renamed option whose
+        # caller omitted it copies the LIVE option's description verbatim; a
+        # genuinely new option defaults to "".
+        if isinstance(description, str):
+            entry_description: str = description
+        elif opt_id is not None:
+            live_desc = (current_by_id.get(opt_id) or {}).get("description")
+            entry_description = live_desc if isinstance(live_desc, str) else ""
+        else:
+            entry_description = ""
+        entry["description"] = entry_description
         if opt_id is not None:
             entry["id"] = opt_id
         submitted.append(entry)
@@ -1937,8 +1956,9 @@ def update_field_single_select_options(
     retained option, or uses a colour outside the eight-value enum.
 
     Returns the read-back field containing the post-write option list; any
-    lost option id is raised as `OptionSetIdentityError` so a silent
-    identity loss cannot pass as success.
+    lost option id, changed option name, or lost attribute on an id-carrying
+    option is raised as `OptionSetIdentityError` so a silent identity loss
+    cannot pass as success.
     """
     if current_options is None:
         current_options = fetch_single_select_field(field_id).get("options", [])
@@ -1951,13 +1971,23 @@ def update_field_single_select_options(
     field = (data.get("updateProjectV2Field") or {}).get("projectV2Field") or {}
     returned = field.get("options") or []
 
-    returned_ids = {o.get("id") for o in returned}
+    returned_by_id = {o.get("id"): o for o in returned}
     for entry in submitted:
-        if entry.get("id") and entry["id"] not in returned_ids:
-            raise OptionSetIdentityError(
-                f"post-write readback lost option id {entry['id']!r} "
-                f"(name {entry['name']!r}); refusing to report success"
-            )
+        if entry.get("id"):
+            if entry["id"] not in returned_by_id:
+                raise OptionSetIdentityError(
+                    f"post-write readback lost option id {entry['id']!r} "
+                    f"(name {entry['name']!r}); refusing to report success"
+                )
+            got = returned_by_id[entry["id"]]
+            if got.get("name") != entry["name"] or got.get("description") != entry["description"]:
+                raise OptionSetIdentityError(
+                    f"post-write readback altered option id {entry['id']!r} "
+                    f"(name {entry['name']!r}): name/description "
+                    f"{got.get('name')!r}/{got.get('description')!r} differs from "
+                    f"submitted {entry['name']!r}/{entry['description']!r}; "
+                    "refusing to report success"
+                )
     if len(returned) != len(submitted):
         raise OptionSetIdentityError(
             f"post-write readback carries {len(returned)} options but "
@@ -6732,7 +6762,12 @@ def main() -> None:
     fields_create_p.add_argument(
         "--field", required=True, help="Field name (e.g. initiative, objective)"
     )
-    fields_create_p.add_argument("--option", required=True, help="New option name")
+    fields_create_p.add_argument(
+        "--option",
+        required=True,
+        help="Name of the option to inspect the field against (NO mutation is "
+        "performed; adding an option safely goes through 'fields set-options')",
+    )
 
     fields_setopts_p = fields_sp.add_parser(
         "set-options",

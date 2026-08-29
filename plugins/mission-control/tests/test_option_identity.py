@@ -37,9 +37,9 @@ def _opt(opt_id: str, name: str, color: str = "GRAY", description: str | None = 
 
 
 CURRENT = [
-    _opt("OPT_idea", "Idea", "GRAY"),
-    _opt("OPT_shaping", "Shaping", "YELLOW"),
-    _opt("OPT_ready", "Ready", "GREEN"),
+    _opt("OPT_idea", "Idea", "GRAY", "Captured but not shaped"),
+    _opt("OPT_shaping", "Shaping", "YELLOW", "Being shaped by the operator"),
+    _opt("OPT_ready", "Ready", "GREEN", "Ready for dispatch"),
 ]
 
 
@@ -179,18 +179,21 @@ def test_option_identity_rejects_missing_colour() -> None:
 def test_rename_round_trip_preserves_option_ids_and_values() -> None:
     """The migration's core write: same ids, new names, plus a genuinely new option —
     every current id survives in the submitted payload and in the readback, so no
-    item value is cleared."""
+    item value is cleared. The caller omits descriptions, so the composed payload
+    copies each retained option's LIVE description (cycle-2 finding F-1)."""
     desired = [
         _opt("OPT_idea", "Capturing"),
         _opt("OPT_shaping", "Discovering", "YELLOW"),
         _opt("OPT_ready", "Ready for Active", "BLUE"),
         {"name": "Blocked", "color": "RED"},
     ]
+    # the post-image the server would return: retained options keep the LIVE
+    # description the helper copied for the caller, the new one got ""
     returned = [
-        _opt("OPT_idea", "Capturing"),
-        _opt("OPT_shaping", "Discovering", "YELLOW"),
-        _opt("OPT_ready", "Ready for Active", "BLUE"),
-        _opt("OPT_new_1", "Blocked", "RED"),
+        _opt("OPT_idea", "Capturing", "GRAY", "Captured but not shaped"),
+        _opt("OPT_shaping", "Discovering", "YELLOW", "Being shaped by the operator"),
+        _opt("OPT_ready", "Ready for Active", "BLUE", "Ready for dispatch"),
+        _opt("OPT_new_1", "Blocked", "RED", ""),
     ]
     with patch.object(sdlc_manager, "_graphql") as mock_graphql:
         mock_graphql.return_value = {
@@ -203,14 +206,150 @@ def test_rename_round_trip_preserves_option_ids_and_values() -> None:
     calls = _mutation_calls(mock_graphql)
     assert len(calls) == 1
     submitted_options = calls[0].args[1]["options"]
+    _assert_option_input_coercible(submitted_options)
     submitted_by_id = {o["id"]: o for o in submitted_options if "id" in o}
-    desired_by_id = {o["id"]: o for o in desired if "id" in o}
+    live_by_id = {o["id"]: o for o in CURRENT}
     # Every live option id survives the round trip — identity preserved, no value cleared.
     for cur in CURRENT:
-        assert submitted_by_id[cur["id"]]["name"] == desired_by_id[cur["id"]]["name"]
+        assert submitted_by_id[cur["id"]]["name"] == next(
+            d["name"] for d in desired if d.get("id") == cur["id"]
+        )
+        # the LIVE description survives composition verbatim (F-1's wipe hazard)
+        assert submitted_by_id[cur["id"]]["description"] == live_by_id[cur["id"]]["description"]
         assert any(o["id"] == cur["id"] for o in field["options"])
-    # Only the genuinely new option omitted its id.
-    assert len([o for o in submitted_options if "id" not in o]) == 1
+    # Only the genuinely new option omitted its id — and it defaulted to "".
+    new_entries = [o for o in submitted_options if "id" not in o]
+    assert len(new_entries) == 1
+    assert new_entries[0]["description"] == ""
+
+
+def _assert_option_input_coercible(entries: list[dict]) -> None:
+    """Compile the composed payload against the LIVE input contract.
+
+    `ProjectV2SingleSelectFieldOptionInput` as introspected live on 2026-08-29
+    (cycle-2 F-1 controller proof): `id` String (optional), `name` String!,
+    `color` ProjectV2SingleSelectFieldOptionColor!, `description` String! with
+    NO default — omitting description is rejected at variable coercion, and a
+    blind `""` would wipe the live description. This validator is what a
+    mocked `_graphql` can never catch: any composed payload that GitHub would
+    refuse at coercion fails HERE instead, offline.
+    """
+    enum = set(sdlc_manager.VALID_OPTION_COLORS)
+    for entry in entries:
+        assert isinstance(entry, dict), f"entry not an object: {entry!r}"
+        assert set(entry) <= {"id", "name", "color", "description"}, (
+            f"entry carries a key outside the live input's fields: {entry!r}"
+        )
+        assert isinstance(entry.get("name"), str) and entry["name"].strip(), (
+            f"name is String! — missing or empty would fail coercion: {entry!r}"
+        )
+        assert entry.get("color") in enum, (
+            f"color is enum! — value must be inside the eight-value enum: {entry!r}"
+        )
+        assert isinstance(entry.get("description"), str), (
+            f"description is String! with no default — omitting it makes GitHub "
+            f"reject the variables at coercion (cycle-2 F-1): {entry!r}"
+        )
+        if "id" in entry:
+            assert isinstance(entry["id"], str) and entry["id"], f"bad id: {entry!r}"
+
+
+def test_composed_payload_carries_description_on_every_entry() -> None:
+    """The composed submission ALWAYS carries `description` — required String!
+
+    with no default live, so omitting it means GitHub rejects the mutation at
+    variable coercion and S8 cannot execute at all (cycle-2 finding F-1)."""
+    desired = [
+        _opt("OPT_idea", "Capturing", "GRAY"),
+        _opt("OPT_shaping", "Discovering", "YELLOW", "explicit caller description"),
+        _opt("OPT_ready", "Ready for Active", "BLUE"),  # description omitted
+        {"name": "Blocked", "color": "RED", "description": "Cross-cutting"},
+        {"name": "Backlog", "color": "PURPLE"},  # new, caller omits description
+    ]
+    submitted = sdlc_manager._validate_option_set_request(desired, CURRENT)
+    assert len(submitted) == 5
+    for entry in submitted:
+        assert isinstance(entry.get("description"), str), (
+            f"entry lacks the REQUIRED description: {entry!r}"
+        )
+
+
+def test_retained_option_live_description_survives_composition() -> None:
+    """Live Asgard Status options carry non-empty descriptions. `description`
+    is String! with no default, so a blind `""` on submit would WIPE them
+    (V2 exactly). A retained option whose caller omits the description gets
+    the live one copied verbatim."""
+    submitted = sdlc_manager._validate_option_set_request(
+        [
+            _opt("OPT_idea", "Capturing", "GRAY"),  # renamed, description omitted
+            _opt("OPT_shaping", "Shaping", "YELLOW"),  # retained, omitted
+            _opt("OPT_ready", "Ready for Active", "BLUE"),
+        ],
+        CURRENT,
+    )
+    submitted_by_id = {o["id"]: o for o in submitted}
+    live_by_id = {o["id"]: o for o in CURRENT}
+    for opt_id in ("OPT_idea", "OPT_shaping", "OPT_ready"):
+        assert submitted_by_id[opt_id]["description"] == live_by_id[opt_id]["description"], (
+            f"live description of {opt_id} was not copied through — the naive "
+            "empty-string fix would wipe it on submit"
+        )
+    # the explicit caller value still wins over the live copy
+    explicit = sdlc_manager._validate_option_set_request(
+        [
+            _opt("OPT_idea", "Idea", "GRAY", "caller override"),
+            _opt("OPT_shaping", "Shaping", "YELLOW"),
+            _opt("OPT_ready", "Ready for Active", "BLUE"),
+        ],
+        CURRENT,
+    )
+    assert explicit[0]["description"] == "caller override"
+
+
+def test_payload_compiles_against_live_option_input_shape() -> None:
+    """Every composed payload validates against the LIVE input contract via
+    `_assert_option_input_coercible` — the compile-the-real-shape check a
+    mocked `_graphql` can never provide (cycle-2 F-1's root pattern). The
+    S8-shaped mixed write — renames, retained options, genuinely new options —
+    coerces cleanly under the live field/type contract."""
+    desired = [
+        _opt("OPT_idea", "Capturing", "GRAY"),  # rename, description omitted
+        _opt("OPT_shaping", "Shaping", "YELLOW"),  # retained, omitted
+        _opt("OPT_ready", "Ready for Active", "BLUE"),
+        {"name": "Blocked", "color": "RED", "description": "Cross-cutting"},
+        {"name": "Backlog", "color": "PURPLE"},  # new, no description
+    ]
+    submitted = sdlc_manager._validate_option_set_request(desired, CURRENT)
+    _assert_option_input_coercible(submitted)
+
+
+def test_retained_option_live_description_survives_a_mutating_round_trip() -> None:
+    """End-to-end through the helper's live path: the server returns exactly
+    what was composed; a retained option's live description arrives back
+    unchanged — composition, not a wipe."""
+    desired = [
+        _opt("OPT_idea", "Capturing", "GRAY"),
+        _opt("OPT_shaping", "Shaping", "YELLOW"),
+        _opt("OPT_ready", "Ready for Active", "BLUE"),
+        {"name": "Blocked", "color": "RED"},
+    ]
+    submitted = sdlc_manager._validate_option_set_request(desired, CURRENT)
+    returned = [
+        {**entry, "id": entry.get("id", f"OPT_new_{i}")} for i, entry in enumerate(submitted, 1)
+    ]
+    with patch.object(sdlc_manager, "_graphql") as mock_graphql:
+        mock_graphql.return_value = {
+            "updateProjectV2Field": {"projectV2Field": {"id": FIELD_ID, "options": returned}}
+        }
+        field = sdlc_manager.update_field_single_select_options(
+            FIELD_ID, desired, current_options=CURRENT
+        )
+    (mutation,) = _mutation_calls(mock_graphql)
+    submitted_by_id = {o["id"]: o for o in mutation.args[1]["options"] if "id" in o}
+    assert submitted_by_id["OPT_idea"]["description"] == "Captured but not shaped"
+    returned_by_id = {o["id"]: o for o in field["options"]}
+    assert returned_by_id["OPT_idea"]["description"] == "Captured but not shaped"
+    assert returned_by_id["OPT_ready"]["description"] == "Ready for dispatch"
 
 
 def test_rename_is_not_mistaken_for_a_new_option() -> None:
@@ -220,9 +359,14 @@ def test_rename_is_not_mistaken_for_a_new_option() -> None:
         _opt("OPT_shaping", "Shaping", "YELLOW"),
         _opt("OPT_ready", "Ready for Active", "BLUE"),
     ]
+    returned = [
+        _opt("OPT_idea", "Idea", "GRAY", "Captured but not shaped"),
+        _opt("OPT_shaping", "Shaping", "YELLOW", "Being shaped by the operator"),
+        _opt("OPT_ready", "Ready for Active", "BLUE", "Ready for dispatch"),
+    ]
     with patch.object(sdlc_manager, "_graphql") as mock_graphql:
         mock_graphql.return_value = {
-            "updateProjectV2Field": {"projectV2Field": {"id": FIELD_ID, "options": list(desired)}}
+            "updateProjectV2Field": {"projectV2Field": {"id": FIELD_ID, "options": returned}}
         }
         field = sdlc_manager.update_field_single_select_options(
             FIELD_ID, desired, current_options=CURRENT
@@ -235,7 +379,7 @@ def test_rename_is_not_mistaken_for_a_new_option() -> None:
 def test_genuinely_new_option_without_id_is_accepted() -> None:
     new_opt = {"name": "Blocked", "color": "RED"}
     desired = list(CURRENT) + [new_opt]
-    returned = list(CURRENT) + [_opt("OPT_new_1", "Blocked", "RED")]
+    returned = list(CURRENT) + [_opt("OPT_new_1", "Blocked", "RED", "")]
     with patch.object(sdlc_manager, "_graphql") as mock_graphql:
         mock_graphql.return_value = {
             "updateProjectV2Field": {"projectV2Field": {"id": FIELD_ID, "options": returned}}
@@ -328,10 +472,10 @@ def test_fields_set_options_apply_sends_complete_identity_preserving_list(tmp_pa
         "options": [{"id": o["id"], "name": o["name"], "color": o["color"]} for o in CURRENT],
     }
     returned = [
-        _opt("OPT_idea", "Capturing"),
-        _opt("OPT_shaping", "Shaping", "YELLOW"),
-        _opt("OPT_ready", "Ready for Active", "BLUE"),
-        _opt("OPT_new_1", "Blocked", "RED"),
+        _opt("OPT_idea", "Capturing", "GRAY", ""),
+        _opt("OPT_shaping", "Shaping", "YELLOW", ""),
+        _opt("OPT_ready", "Ready for Active", "BLUE", ""),
+        _opt("OPT_new_1", "Blocked", "RED", ""),
     ]
 
     def side_effect(query, variables=None):
@@ -357,6 +501,8 @@ def test_fields_set_options_apply_sends_complete_identity_preserving_list(tmp_pa
     # the rename is by-id, never a new option
     assert next(o for o in submitted if o["id"] == "OPT_ready")["name"] == "Ready for Active"
     assert len([o for o in submitted if "id" not in o]) == 1
+    # and the composed payload compiles against the LIVE input contract
+    _assert_option_input_coercible(submitted)
 
 
 def test_option_set_complete_list_refuses_empty_live_options() -> None:

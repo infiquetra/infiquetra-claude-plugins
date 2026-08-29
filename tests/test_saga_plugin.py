@@ -45,7 +45,9 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.143.0"  # #840: align backend-offer with narrow policy
+    assert (
+        plugin_json["version"] == "0.144.0"
+    )  # W18 (infiquetra-sdlc#99): Code Review publication lane
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -435,17 +437,27 @@ def test_code_review_engine_merge_contract() -> None:
     assert sum(1 for lens in conditional if lens in lens_doc) >= 4
     assert "deploy/migration-verification" in lens_doc
 
-    # SKILL.md: narrowed gate-only negatives (no source mutation / implementation commit /
-    # PR creation / issue filing). E1 bolds the NOT. The review-artifact publication lane
-    # (W18) narrowed the old blanket "does **NOT** commit / push" prohibition, so the
-    # assertion follows the narrowed grant-plus-denial shape rather than the blanket ban.
+    # SKILL.md: gate-only negatives under the W18 publication lane (does not mutate reviewed
+    # source / commit an implementation change / implement fixes / open or update a PR / file).
+    # E1 bolds the NOT. Assert against whitespace-collapsed text so line wraps inside the prose
+    # cannot split a negative. Note: "does **NOT** commit" survives only in its narrowed form
+    # ("...an implementation change"); the retired blanket form is guarded against in
+    # test_review_publication_lane.py's carrier sweep, which checks the full retired sentences
+    # rather than this substring.
+    flat_skill = " ".join(skill_doc.split())
+    assert "does **NOT** commit, does **NOT** push" not in flat_skill, (
+        "the blanket reviewer-commit prohibition was narrowed by W18's publication lane "
+        "(interactive mode may publish its own review artifact) — the gate-only negatives "
+        "must assert the narrowed grant + denial, not the retired blanket form"
+    )
     for negative in (
         "does **NOT** mutate reviewed source",
         "does **NOT** commit an implementation change",
+        "does **NOT** implement the fixes it requests",
         "does **NOT** open or update a PR",
-        "does **NOT** file SDLC issues",
+        "does **NOT** file",
     ):
-        assert negative in " ".join(skill_doc.split())
+        assert negative in flat_skill
     # Saga literals: an append-only review-track write with both flags.
     assert "saga.py" in skill_doc
     assert "--review-paths" in skill_doc

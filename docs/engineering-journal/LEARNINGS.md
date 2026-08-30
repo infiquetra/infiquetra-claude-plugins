@@ -21,6 +21,42 @@
 
 ## 2026-08-30
 
+### A volatile line count with no live target must be recorded, not manufactured  {#916-dispatch-line-count-no-target}
+
+**Context.** The design record described a volatile hand-maintained Brainstorm source-line count in a dispatch table. At Saga 0.148.0 the target does not exist: `plugins/saga/references/sandbox-spawn-sites.md` has no Brainstorm row and no `~line` Brainstorm surface exists, verified at `3b2b7083`.
+**Evidence.** Preflight F1 at `e26b5c69`; `grep -rn "~line" plugins/saga/references/sandbox-spawn-sites.md` shows four rows (code-review, qa, investigate, resume) and no brainstorm; `grep -rn "brainstorm" plugins/saga/skills/brainstorm/` shows no line reference. The duplicated lifecycle block F2 appears in four skills (ideate L15, loop L26, office-hours L27, plan L19), not three — Strategy has only inline mentions, founder-review a variant.
+**Mechanism.** A volatile count that never existed cannot be removed — manufacturing a removal would be a vacuous edit that hides the finding. The correct fix is to record the finding and retire the count concept, while pinning the lifecycle ordering mechanically rather than by prose edit (KTD6).
+**Fix.** Recorded F1 and F2 in `LEARNINGS.md` and commit message; left `sandbox-spawn-sites.md` Brainstorm surface untouched (one new verifier row added by B2 for different reason); added mechanical `tests/test_saga_lifecycle_consistency.py` discovering block by shape; added Shaping distinction once in `saga-spec.md`.
+**Generalizable rule.** When a design record names a volatile value, verify it against the live tree before acting — a count with no live target is a finding to record, not a line to delete.
+**Refs.** Issue #916 (B4); F1/F2; run plan §U4.
+
+### Authored cases are design input; mislabelled captured transcripts are the failure  {#915-evidence-authored-vs-captured}
+
+**Context.** B3's scenario harness must distinguish authored case data (idea seed, independent variables, expected per-dimension outcome) from captured transcripts (evidence of real behaviour). The checkpoint that could have produced captured transcripts is parked, so all six cases are `transcript: none` and the suite must be green that way.
+**Evidence.** `tests/data/brainstorm/scenarios.json` six cases, `rubric.json` five dimensions, `calibration.json` three cases at `e26b5c69`; `plugins/saga/scripts/engine_benchmark.py` grader is never model-graded; `scripts/lint_test_shape.py` flags a fake-only module via AST.
+**Mechanism.** A synthesized transcript labelled `captured` is a harness-substitution failure: it presents a fabricated conversation as evidence. The correct shape is authored data as design input (permitted) plus an explicit `transcript: none|captured` label, with the offline suite proving grading/gating machinery rather than any given brainstorm's quality. `lint_test_shape` catches a fake grader without a production import, so every evidence module path-loads a real `plugins/saga/scripts/` target.
+**Fix.** Built three layers: deterministic AST check (no question-shaped assert), scenario data with independent `product_size`/`consequence`, per-dimension `grade()` with no aggregate, `is_blocking()` requiring reproducible + second-grader agreement or adjudication, calibration drift floor, eight mutation proofs. Reference `plugins/saga/references/brainstorm-evidence-model.md` records prior-art verdicts and what the suite does not prove.
+**Generalizable rule.** Separate design input (authored cases) from evidence (captured transcripts) with an explicit label, and prove the label's honesty mechanically — a suite that is green with `transcript: none` proves its machinery, not a conversation.
+**Refs.** Issue #915 (B3); R17/R19/R20/R22/R23; run plan §U3.
+
+### A bounded helper ceiling needs a distinct-question guard, not just a count  {#914-judgment-helper-ceiling-distinct-question}
+
+**Context.** Brainstorm's Phase 1 context scan permitted parallel `Explore` agents with no count ceiling and no distinct-question requirement, so a Standard/Deep run could fan out arbitrarily and two helpers could chase the same evidence.
+**Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:17` and `:139-140` at `e84be5f2`; `plugins/saga/references/sandbox-spawn-sites.md` had four in-scope rows and no Brainstorm row; `tests/test_sandbox_spawn_sites.py` `IN_SCOPE_SKILLS` hardcoded four skills (D6).
+**Mechanism.** A count ceiling alone still permits two helpers on one question — the waste is not the number but the duplication. The guard must tie each helper to a distinct evidence question, and the inventory must enforce its own class contract: the in-scope table is `read-only-verify` only, so a survey-class `Explore` scout filed there would be false.
+**Fix.** Bounded helpers: Lightweight 0, Standard/Deep at most one `Explore` scout and one `saga:readonly-verifier` claim verifier, each requiring a distinct evidence question. Added one `judgment` row for the verifier; recorded the scout outside the table as survey-class, read-only by omission of `Edit`/`Write`/`NotebookEdit` with `Bash` retained (residual stated, no "structurally cannot write"), not worktree-isolated. Added `brainstorm` to `IN_SCOPE_SKILLS`.
+**Generalizable rule.** When bounding fan-out, bound by count *and* by distinct work — a ceiling without a distinct-question guard still permits duplication, and an inventory table's class contract must be kept truthful even when it means recording a helper outside the table.
+**Refs.** Issue #914 (B2); KTD4; run plan §U2.
+
+### A deferred telemetry write on a path that never writes is an unreachable promise  {#913-continuity-telemetry-unreachable}
+
+**Context.** Brainstorm instructed a `gate_id` record "on the next `saga.py save` call" while never performing that save, so the measurement vanished with no observable failure and no demonstrated consumer.
+**Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:46-50` at `5660c719`; `plugins/saga/references/gate-divergence-instrumentation.md:65` still listed `brainstorm-<decision>` as a gate example; production lint `lint_gate_absence_contract.py` failed when the marker was deleted in a scratch copy (F3).
+**Mechanism.** A telemetry consumer tied to a write boundary the producer never hits is not optional telemetry but a leaked promise — the section-scoped lint makes deleting the marker a second failure, so the telemetry paragraph and its id had to be separated.
+**Fix.** Removed the telemetry paragraph, kept and repointed the marker to `brainstorm-interrogation-gate` (KTD2), and removed the `brainstorm-<decision>` gate example. Added the durable `pending-confirmation` checkpoint and frontmatter-aware `infer_maturity` (KTD7) so an unconfirmed artifact no longer hands off as `requirements-ready`.
+**Generalizable rule.** When a measurement rides a write path its producer never exercises, delete the instruction rather than deferring it — and keep any lint coverage that was sharing the same marker.
+**Refs.** Issue #913 (B1); KTD1/KTD2/KTD7; run plan `docs/plans/2026-08-30-issue-912-saga-brainstorm-improvement-run-plan.md` §U1.
+
 ### Leaving a stale adjacent section does not license a "same as" claim against it  {#w19-no-sameness-claim-against-stale-rows}
 
 **Context.** W19 replaced the CAMPPS ladder in Mission Control's kanban reference with `stage_flow` and, per KTD3, left the Operations/Asgard `intent_flow` rows in the same file. The replacement sentence then said CAMPPS uses "the same six stages as Operations and Asgard."

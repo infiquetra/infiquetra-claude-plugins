@@ -180,8 +180,10 @@ historical `status`↔`phase_status` ambiguity.
   **MUST** be a member of `STATUSES`. **MUST NOT** ever take `pending` or `in_progress` — those values
   belong exclusively to `phase_status`. A saga can be `phase_status=complete` while `status=active` (phase
   done, thread still going) or `status=done` (thread finished).
-- **`maturity`** — **DERIVED, NEVER STORED.** Computed at `/handoff` time from `lifecycle_phase` via
-  `PHASE_TO_MATURITY`. No `maturity` key ever appears in frontmatter; any consumer that needs it derives it.
+- **`maturity`** — **DERIVED, NEVER STORED in saga-tick frontmatter.** Computed at `/handoff` time
+  from `lifecycle_phase` via `PHASE_TO_MATURITY`. No `maturity` key ever appears in saga-tick
+  frontmatter; any consumer that needs it derives it. Off-chain artifacts declare their own `maturity`
+  in their own frontmatter under their own contract (see §3.3 note).
 
 ### 3.3 `lifecycle_phase` -> `maturity` derivation (handoff only)
 
@@ -202,6 +204,15 @@ chain: `handoff_envelope.infer_lifecycle_phase` returns `"unknown"` for it (no `
 `LIFECYCLE_PHASES`), and `infer_maturity` maps `docs/specs/` → `requirements-ready` directly (a sharp
 WHAT — equals the unmapped fallback, set explicitly for consistency). A spec hands off as
 `requirements-ready` with `lifecycle_phase: unknown`.
+
+**Off-chain artifact maturity note.** The derived-never-stored rule above governs saga-tick
+frontmatter only. An off-chain artifact (e.g. a Brainstorm requirements doc under
+`docs/brainstorms/`) declares its own `maturity` in its own frontmatter under its own section
+contract (`plugins/saga/skills/brainstorm/references/requirements-sections.md`);
+`pending-confirmation` is a valid artifact maturity meaning the boundary is recorded, unconfirmed,
+and carries no durable route. The declared `brainstorm-scope-confirmation` gate (see
+`plugins/saga/skills/brainstorm/SKILL.md` Phase 2.5) is the gate that promotes that artifact
+maturity from `pending-confirmation` to `requirements-ready`.
 
 ### 3.4 Concrete example envelope
 
@@ -287,15 +298,19 @@ read-modify-write by an older reader — forward-compatible round-trip. Consumer
 ## 4. Enum domains (authoritative)
 
 ```python
-LIFECYCLE_PHASES   = ("ideation", "brainstorm", "plan", "review", "work", "qa", "retro")
-PHASE_STATUSES     = ("pending", "in_progress", "complete")
-STATUSES           = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
-DESTINATIONS       = ("plan-only", "pr", "merge", "nonprod-deploy")
-ORCHESTRATION_MODES= ("inline", "team-execution", "cc-workflows-ultracode")
+LIFECYCLE_PHASES = ("ideation", "brainstorm", "plan", "review", "work", "qa", "retro")
+PHASE_STATUSES = ("pending", "in_progress", "complete")
+STATUSES = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
+DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
+ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
+HANDOFF_MATURITIES = ("idea-ready", "requirements-ready", "plan-ready", "resume-ready", "deferred-context", "pending-confirmation")
 ```
 
 `destination` mirrors `lifecycle_state.normalize_destination`'s canonical set — use that helper to normalize
-user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing.
+user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing. `HANDOFF_MATURITIES` is
+implemented in `plugins/saga/scripts/handoff_envelope.py`.
+
+Shaping is an Operations board Status, not a Saga lifecycle phase, not a Saga command, and not an automatic consequence of any Saga capability completing. Mission Control is the only routine writer of that field. Cross-reference `plugins/saga/skills/plan/SKILL.md` §0.6, which already states the same derivation boundary, and note that Office Hours' lowercase "discovery / shaping" (lines 3, 19, and 149) is ordinary English for its own activity, unrelated to the board column.
 
 ---
 

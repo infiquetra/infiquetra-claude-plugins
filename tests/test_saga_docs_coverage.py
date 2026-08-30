@@ -152,14 +152,16 @@ def test_readiness_is_derived_not_stored() -> None:
 
     assert state_axes == {"lifecycle_phase", "phase_status", "status"}
     assert "maturity" not in state_axes
-    assert maturity["derived_not_stored"] is True
+    assert maturity["derived_not_stored"] == "saga_ticks_only"
     assert set(maturity["values"]) >= {
         "idea-ready",
         "requirements-ready",
         "plan-ready",
         "resume-ready",
+        "pending-confirmation",
     }
     assert "docs/specs/" in maturity["values"]["requirements-ready"]["from"]
+    assert maturity["values"]["pending-confirmation"]["from"] == []
 
 
 def test_required_scenarios_pairs_and_visual_inventory_are_present() -> None:

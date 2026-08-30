@@ -25,7 +25,7 @@ state_axes:
       - plugins/saga/references/saga-spec.md
 
 maturity:
-  derived_not_stored: true
+  derived_not_stored: saga_ticks_only
   values:
     idea-ready:
       from: [docs/ideation/]
@@ -42,6 +42,9 @@ maturity:
     deferred-context:
       from: [explicit preserve/defer language]
       consumed_by: [/handoff]
+    pending-confirmation:
+      from: []
+      consumed_by: []
   source_refs:
     - plugins/saga/references/saga-spec.md
     - plugins/saga/skills/handoff/SKILL.md

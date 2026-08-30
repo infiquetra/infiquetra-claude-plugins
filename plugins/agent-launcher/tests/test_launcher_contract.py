@@ -6,6 +6,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -1275,3 +1276,188 @@ def test_skill_declares_herdr_dependency_and_no_duplicate_herdr_skill() -> None:
     assert "does not ship a copy" in skill
     herdr_skill = REPO / "plugins" / "agent-launcher" / "skills" / "herdr"
     assert not herdr_skill.exists()
+
+
+SKILL_MD = REPO / "plugins" / "agent-launcher" / "skills" / "agent-launcher" / "SKILL.md"
+LAUNCHER_README = REPO / "plugins" / "agent-launcher" / "README.md"
+BINARY_AUTHORITY_HEADING = "## The binary is the authority"
+PREFLIGHT_HEADING = "## The only real preflight is a bounded live launch with a read-back"
+ORDERING_HEADING = "## Ordering — the most common mistake"
+CREDENTIAL_WORDS = ("key", "token", "secret", "password", "credential")
+ALLOWLIST_ENTRIES = (
+    "model",
+    "reasoning effort",
+    "permission posture",
+    "account or route",
+    "working directory",
+    "workspace",
+)
+
+
+def _skill_section(skill: str, heading: str, stop: str) -> str:
+    start = skill.index(heading)
+    end = skill.index(stop)
+    assert start < end
+    return skill[start:end]
+
+
+def _code_fences(text: str) -> list[str]:
+    return re.findall(r"```[^\n]*\n(.*?)```", text, flags=re.DOTALL)
+
+
+def _environment_dump_violations(text: str) -> list[str]:
+    violations: list[str] = []
+    for pattern in (r"\benv\b", r"\bprintenv\b", r"os\.environ", r"\bdiff\b[^\n]*\benv"):
+        violations.extend(re.findall(pattern, text))
+    return violations
+
+
+def _value_persist_violations(text: str) -> list[str]:
+    violations: list[str] = []
+    for pattern in (r"\bsha256\w*", r"\bmd5\w*", r"\bbase64\b", r"cut -c", r"head -c"):
+        violations.extend(re.findall(pattern, text))
+    for line in text.splitlines():
+        if ">" in line and any(word in line.lower() for word in CREDENTIAL_WORDS):
+            violations.append(line)
+    return violations
+
+
+def _downstream_redaction_violations(text: str) -> list[str]:
+    violations: list[str] = []
+    for line in text.splitlines():
+        segments = line.split("|")
+        if len(segments) > 1 and any(
+            re.search(r"\b(sed|awk|grep|tr)\b", segment) for segment in segments[1:]
+        ):
+            violations.append(line)
+    return violations
+
+
+def _guidance_fences() -> list[str]:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    guidance = _skill_section(skill, BINARY_AUTHORITY_HEADING, ORDERING_HEADING)
+    readme = LAUNCHER_README.read_text(encoding="utf-8")
+    return _code_fences(guidance) + _code_fences(readme)
+
+
+def test_dry_run_guidance_names_what_it_does_not_validate() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    section = _skill_section(skill, BINARY_AUTHORITY_HEADING, PREFLIGHT_HEADING)
+    assert "does not validate the model" in section
+    assert "reasoning effort" in section
+    assert "account" in section
+
+
+def test_dry_run_is_not_described_as_sufficient_preflight() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    assert "Use it before every creation command." not in skill
+    assert PREFLIGHT_HEADING in skill
+
+
+def test_readme_and_skill_agree_on_dry_run() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8").lower()
+    readme = LAUNCHER_README.read_text(encoding="utf-8").lower()
+    for surface in (skill, readme):
+        assert "does not confirm model, effort, or account" in surface
+
+
+def test_guidance_names_an_allowlist_with_no_credential_entry() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    section = _skill_section(skill, PREFLIGHT_HEADING, ORDERING_HEADING)
+    marker = "allowlist of launch arguments when reading a session back:"
+    start = section.index(marker) + len(marker)
+    entries = section[start : section.index("Never inspect argv wholesale", start)]
+    for entry in ALLOWLIST_ENTRIES:
+        assert entry in entries
+    for word in CREDENTIAL_WORDS:
+        assert word not in entries
+
+
+def test_guidance_states_the_ordering_rule() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    section = _skill_section(skill, PREFLIGHT_HEADING, ORDERING_HEADING)
+    identify = section.index("Identify the selected client auth mechanism")
+    oauth = section.index("For an OAuth session")
+    declared = section.index("Only when a declared run contract")
+    assert identify < oauth < declared
+
+
+def test_oauth_path_is_the_default_and_touches_no_environment() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    section = _skill_section(skill, PREFLIGHT_HEADING, ORDERING_HEADING)
+    start = section.index("For an OAuth session")
+    end = section.index("Only when a declared run contract")
+    assert start < end
+    passage = section[start:end]
+    assert "documented default" in passage
+    for pattern in (r"\benv\b", r"\bprintenv\b", r"os\.environ", r"\$[A-Z][A-Z0-9_]*"):
+        assert re.search(pattern, passage) is None
+
+
+def test_environment_access_is_gated_on_a_declared_contract() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    dry_run = _skill_section(skill, BINARY_AUTHORITY_HEADING, PREFLIGHT_HEADING)
+    preflight = _skill_section(skill, PREFLIGHT_HEADING, ORDERING_HEADING)
+    assert "environment" not in dry_run
+    assert "declared run contract" in preflight
+
+
+def test_environment_check_asserts_presence_of_a_name_only() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    preflight = _skill_section(skill, PREFLIGHT_HEADING, ORDERING_HEADING)
+    assert "presence of the required variable name" in preflight
+    assert "never its value" in preflight
+    for fence in _code_fences(preflight):
+        assert "==" not in fence and "!=" not in fence
+        assert "echo $" not in fence
+
+
+def test_no_specific_credential_variable_is_named() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    readme = LAUNCHER_README.read_text(encoding="utf-8")
+    pattern = r"[A-Z][A-Z0-9_]{3,}_(KEY|TOKEN|SECRET|PASSWORD)"
+    assert re.search(pattern, skill) is None
+    assert re.search(pattern, readme) is None
+
+
+def test_no_example_dumps_diffs_or_serialises_an_environment() -> None:
+    for fence in _guidance_fences():
+        assert _environment_dump_violations(fence) == []
+
+
+def test_no_example_hashes_truncates_or_persists_a_value() -> None:
+    for fence in _guidance_fences():
+        assert _value_persist_violations(fence) == []
+
+
+def test_redaction_appears_inside_the_producing_command() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    preflight = _skill_section(skill, PREFLIGHT_HEADING, ORDERING_HEADING)
+    assert "Redact inside the producing command" in preflight
+    for fence in _guidance_fences():
+        assert _downstream_redaction_violations(fence) == []
+
+
+def test_no_credential_shaped_literal_appears() -> None:
+    for surface in (
+        SKILL_MD.read_text(encoding="utf-8"),
+        LAUNCHER_README.read_text(encoding="utf-8"),
+    ):
+        for run in re.findall(r"[A-Za-z0-9_-]{20,}", surface):
+            uppercase = sum(1 for ch in run if ch.isupper())
+            assert uppercase < 3, f"credential-shaped literal {run!r}"
+
+
+def test_environment_dump_example_would_fail_its_guard() -> None:
+    fixture = "some-command && printenv"
+    assert _environment_dump_violations(fixture) != []
+
+
+def test_hashing_example_would_fail_its_guard() -> None:
+    fixture = "sha256sum ./receipt.json"
+    assert _value_persist_violations(fixture) != []
+
+
+def test_downstream_only_redaction_would_fail_its_guard() -> None:
+    fixture = "launch | sed 's/.*/REDACTED/'"
+    assert _downstream_redaction_violations(fixture) != []

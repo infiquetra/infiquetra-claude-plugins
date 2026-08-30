@@ -52,9 +52,34 @@ agents --recipes     # every recipe and layout name
 agents --crews       # crews as they resolve on THIS machine
 ```
 
-`--dry-run` previews any launch without executing it. Use it before every creation command.
+`--dry-run` previews any launch without executing it: it confirms the resolved working directory, the resolved Herdr workspace, the flag ordering, and the exact command that would run. It does not validate the model, the reasoning effort, or the account — each is passed through unchecked, and a nonexistent value still exits 0. It is therefore a preview, not a preflight, and must not be the only check before dispatching a fleet.
 
 Some real flags are absent from `--help`. `--herdr-control-only` is one of them — it is implemented in the wrapper and is the correct flag for the common case below. Do not "fix" it away because help does not list it.
+
+## The only real preflight is a bounded live launch with a read-back
+
+A dry run cannot catch an unanswerable launch; only a live launch can. Launch one bounded probe session, read back what it actually resolved to, and stop there — before dispatching any fleet. The read-back touches the routes that hold credentials, so it follows a strict secret-safety contract, and the order of its steps is the substance:
+
+1. **Identify the selected client auth mechanism before proving anything.** A client may hold an existing interactive OAuth session or draw on an environment-backed credential, and the correct proof differs entirely between the two. Do not assume the route: guidance that skips this step pushes callers toward whichever proof it happened to describe.
+2. **For an OAuth session, prove it without inspecting anything outside the client.** Interactive readiness plus the client's own non-secret auth status is the whole proof: a ready session that reports itself authenticated *is* the evidence the route works. This is the common case and the documented default.
+3. **Only when a declared run contract explicitly names an environment-backed credential** may the read-back test for it — and then only for the presence of the required variable name, never its value. Absent such a declaration, inspecting the environment is out of scope.
+
+Safeguards that apply to every route, whichever step it reached:
+
+- Inspect only this allowlist of launch arguments when reading a session back: model, reasoning effort, permission posture, account or route, working directory, workspace. Never inspect argv wholesale — argv is not guaranteed free of credentials, and the allowlist contains no credential-bearing entry.
+- Never dump an environment: no `env`, no `printenv`, no `os.environ` dump, and no diff of two environments, since a diff prints values as surely as a dump.
+- Never read, hash, copy, truncate, fingerprint, or persist a credential value. Hashing is not a safe compromise: a hash of a short secret is attackable, and a hash in a transcript is still durable proof of possession.
+- Redact inside the producing command, before output exists. Piping output through a redacting filter is not sufficient — by then the value has been produced and buffered and may already be in a transcript, a log, or a failure path that bypasses the filter.
+
+The read-back shape, using only allowlisted non-secret arguments:
+
+```bash
+python3 "$S" launch --vendor <tool> --task <probe-name> --cwd "$PWD" --model <model> --effort <effort> > receipt.json
+jq '{model, account, account_evidence, permission_resolved}' receipt.json
+python3 "$S" close --receipt-json receipt.json
+```
+
+Whatever the read-back reports as missing or wrong is a stop: tear the probe session down using the receipt and resolve it before anything else launches.
 
 ## Ordering — the most common mistake
 
@@ -169,7 +194,7 @@ Not every host runs every tool — the default crew resolves per machine so it o
 
 ## Safety rules
 
-- Preview with `--dry-run` before any creation command. Confirm `cwd` and `herdr_workspace`.
+- Preview with `--dry-run` before any creation command. It confirms `cwd` and `herdr_workspace`; it does not confirm model, effort, or account.
 - Use `--no-focus` unless the user asked to switch context.
 - Honor the requested agent kind and topology exactly. Do not silently upgrade a tab into a crew or a machine view into a fleet.
 - Do not add `--new`, `--recipe`, `--crew`, or a pane split unless asked for that shape.

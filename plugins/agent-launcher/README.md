@@ -27,7 +27,7 @@ Standard library only, so `python3` — not `uv run`.
 
 ## Boundaries
 
-- Preview with `--dry-run` before every creation. Stop if `cwd` or `herdr_workspace` is wrong.
+- Preview with `--dry-run` before every creation. It confirms `cwd` and `herdr_workspace`; it does not confirm model, effort, or account. Stop if either is wrong.
 - Launch is no-focus. Do not steal the operator's pane.
 - Do not silently substitute an unavailable vendor, model, effort, or topology.
 - Close only a session whose `tab_id` matches the launch receipt.

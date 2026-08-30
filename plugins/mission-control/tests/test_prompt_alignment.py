@@ -43,8 +43,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.15.0"
-    )  # W10: prepared-issue Intake exit initializes Stage + Status (infiquetra-sdlc#91)
+        plugin_json["version"] == "2.15.1"
+    )  # W10 repair: starting Status derives from Stage via the R49 entry-option rule (infiquetra-sdlc#91)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]
@@ -99,7 +99,12 @@ def test_operator_prompt_honors_the_card_contract_split() -> None:
     assert "hermes-not-actionable" not in operator
     assert "issue prepare" in operator
     assert "issue create-prepared" in operator
-    assert "Asgard `Shaping`, CAMPPS `Idea`" in operator
+    # W10 cycle-5: starting Status is Stage-derived (R49 entry-option default);
+    # readiness accepts any Stage-configured Status or Blocked.
+    assert "Status` defaulting to the declared `Stage`'s entry option" in operator
+    # The retired team-keyed starting statuses must not come back.
+    assert "Asgard `Shaping`, CAMPPS `Idea`" not in operator
+    assert "safe statuses: Asgard" not in operator
     # Olympus is retired; it must not be presented as an active safe-start board.
     assert "Olympus `Backlog`" not in operator
     assert "every new card has a parent by default" not in operator
@@ -165,7 +170,7 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
     schema = json.loads(_read(PLUGIN_ROOT / "config/sdlc-schema.json"))
     roles = schema["work_hierarchy"]["roles"]
 
-    assert schema["schema_version"] == "2026-06-17"
+    assert schema["schema_version"] == "2026-08-29"
     assert roles["objective"]["project_view_group_by"] == "Objective"
     assert roles["outcome"]["required_by_default"] is False
     assert roles["capability"]["default_parent_role"] is None
@@ -175,16 +180,16 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
     assert schema["teams"]["olympus"]["board"] is None
     assert "olympus" not in schema["boards"]
     assert schema["boards"]["campps"]["status"] == "active"
-    assert "Transfer Target" in schema["fields"]["asgard"]
+    # 2026-08-29 schema: the Asgard field set slimmed to the lifecycle pair
+    # (Stage/Status) + Objective/Priority; Mode, target surface, risk and
+    # transfer intent moved into the issue body per the card contract, and the
+    # retired target_team_values list was deleted from team_routing.
+    assert "Stage" in schema["fields"]["asgard"]
+    assert "Transfer Target" not in schema["fields"]["asgard"]
     assert "Promotion Target" not in schema["fields"]["asgard"]
     assert "cross_team_transfer_rule" in schema["team_routing"]
     assert "asgard_to_olympus_rule" not in schema["team_routing"]
-    assert schema["team_routing"]["target_team_values"] == [
-        "Asgard",
-        "CAMPPS",
-        "Jeff",
-        "External/Deferred",
-    ]
+    assert "target_team_values" not in schema["team_routing"]
     assert "Asgard and CAMPPS" in schema["team_routing"]["cross_team_transfer_rule"]
     assert (
         "Mount Olympus is retired historical context"
@@ -209,6 +214,11 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
         "Asgard Seeds Olympus",
         "seed Olympus",
         "promote to Olympus",
+        # W10 cycle-5: the retired team-keyed starting statuses (F-1) must not
+        # come back on any active surface — readiness now derives from Stage.
+        "Asgard starts in `Shaping`",
+        "CAMPPS starts in `Idea`",
+        "safe statuses: Asgard `Shaping`",
     ]
 
     for path in active_surfaces:

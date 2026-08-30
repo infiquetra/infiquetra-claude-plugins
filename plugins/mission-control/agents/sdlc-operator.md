@@ -235,7 +235,8 @@ hints such as "from the brainstorm" or "handoff the plan". Prepared drafts inclu
 `handoff_maturity` and source metadata so the receiving team can execute without
 `saga`. `issue create-prepared` re-runs readiness, renders every side effect before
 mutation, repairs missing labels/templates after confirmation, opens a mapping PR for unmapped
-repos, and starts new cards in safe statuses: Asgard `Shaping`, CAMPPS `Idea`. If team,
+repos, and starts new cards with a `Status` defaulting to the declared `Stage`'s entry option
+(readiness accepts any Status configured for that Stage, or `Blocked`). If team,
 project, or source artifact is ambiguous, ask the operator; do not guess or bypass this path with
 direct `gh issue create`. Suggest `/plan <issue>` or `/work <issue>` only as optional
 `saga` follow-up commands; do not suggest `/loop` for team recipients.

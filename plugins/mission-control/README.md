@@ -61,8 +61,9 @@ python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 Prepared drafts are written under `docs/sdlc-issue-drafts/` with a JSON sidecar. The sidecar
 includes handoff maturity and source artifact metadata when available. Creation renders a mutation
 plan before side effects, repairs missing labels/templates after confirmation, opens a mapping PR
-when the repo is not mapped to the requested project, and starts issues in safe statuses: Asgard
-`Shaping`, CAMPPS `Idea`.
+when the repo is not mapped to the requested project, and starts issues with a `Status`
+defaulting to the declared `Stage`'s entry option (readiness accepts any Status configured
+for that Stage, or `Blocked`).
 
 ## Slash Commands
 

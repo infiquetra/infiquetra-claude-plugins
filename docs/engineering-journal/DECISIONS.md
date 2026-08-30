@@ -1,4 +1,19 @@
 # Decisions — Infiquetra Claude Plugins
+
+## 2026-08-30
+
+### Prepared-issue readiness accepts any Stage-configured Status plus Blocked; the entry option is a default, not a closed set (sdlc#91)  {#w10-readiness-stage-scoped-r91}
+
+**Decision.** For the prepared-issue path (mission-control `issue prepare` / `issue create-prepared`), readiness accepts any Status configured within the declared Stage's `stage_statuses` list plus the cross-cutting statuses (`Blocked`). It continues to refuse retired (`Idea`, `Shaping`, `Done`), unknown, and out-of-Stage values, and refuses a declared Stage outside the schema's `stage_flow` block altogether. Preparation may default an omitted Status to the declared Stage's FIRST configured option (the R49 entry option); on a draft re-read, a declared Stage with an empty Status receives that default before readiness evaluates. Preparation itself never defaults the Stage — Stage stays author-supplied per the OQ1 ruling.
+
+**Date:** 2026-08-30 · **Issue:** infiquetra/infiquetra-sdlc#91 · **Origin:** Operator ruling of 2026-08-30 settling cycle-5 code review finding F-2 (issue comment 5466945489); an earlier operator ruling was cited in OQ1 (2026-08-29).
+
+**Why.** R49's `workflows.stage_flow.entry_option_rule` defines the first name in each per-stage list as the entry DEFAULT ("defaulting there invents no recorded progress"), not a closed set, and R42's `status_scoping` keeps card-to-card Status consistency descriptive. The first repair (plugins `66b82b00`) collapsed "author-supplied with a derived default" into "must be the default", refusing in-Stage values such as `Triage` on `Intake` — stricter than the written contract.
+
+**Rejected.** Keeping the exact-entry-option pin and documenting it as exclusive occupancy (option (b) of the ruling): it contradicts R49's defaulting language and the defect-analysis contract that "an author value wins", and it refuses board-valid in-Stage Statuses for no recorded-progress reason — a new issue may legitimately be born mid-Stage when its intake context was never formalized on the board.
+
+**Revisit when.** The operator wants creation-time occupancy discipline stricter than the schema's descriptive rules (a deliberate policy upgrade, to be recorded here first), or the schema grows a creation-authority block that supersedes `entry_option_rule`.
+
 ## 2026-08-25
 
 ### Plan and Work default-offer only inline and team-execution (#808 phase B) {#cc-workflows-explicit-invocation-808}

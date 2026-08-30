@@ -354,7 +354,11 @@ def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
 
             content = base64.b64decode(result.strip()).decode()
             return cast(dict[str, Any], json.loads(content))
-    except (GhApiError, RuntimeError):
+    except Exception:
+        # Broad by design (matching load_config's remote fallback): any gh
+        # failure OR undecodable/unparseable payload must degrade to the
+        # vendored copy, never crash the caller (W10 repair: a stubbed or
+        # malformed gh result previously escaped as UnicodeDecodeError).
         pass
 
     if _VENDORED_SDLC_SCHEMA_PATH.exists():
@@ -367,6 +371,29 @@ def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
             return cast(dict[str, Any], json.load(f))
 
     return {}
+
+
+def _stage_flow_rules() -> dict[str, Any]:
+    """The schema's `workflows.stage_flow` block, via one _resolve_sdlc_schema() call (R49, sdlc#91).
+
+    Resolving through `_resolve_sdlc_schema()` keeps GitHub main as the live
+    source and the vendored copy as the offline fallback, so the vocabulary lives
+    in one versioned place instead of a second hardcoded Python copy (the W10
+    repair retired `_TEAM_SAFE_STATUSES`, whose team-keyed literal "Shaping"/
+    "Idea" no longer exist in the board Status vocabulary).
+    """
+    schema = _resolve_sdlc_schema(get_sdlc_path())
+    stage_flow = schema.get("workflows", {}).get("stage_flow", {})
+    return stage_flow if isinstance(stage_flow, dict) else {}
+
+
+def _stage_entry_options() -> dict[str, str]:
+    """Stage -> entry Status (the FIRST configured option of the Stage's list)."""
+    return {
+        stage: options[0]
+        for stage, options in _stage_flow_rules().get("stage_statuses", {}).items()
+        if options
+    }
 
 
 def get_project_config(config: dict, project_name: str) -> dict:
@@ -4223,7 +4250,6 @@ _ISSUE_TYPES = (
 # CAMPPS (strict actionable dispatch profile on the initiative execution board).
 # Mount Olympus is retired historical context and is not an active prepare target.
 _TEAM_CHOICES = ("asgard", "campps")
-_TEAM_SAFE_STATUSES = {"asgard": "Shaping", "campps": "Idea"}
 _DISPATCH_ACTIONABLE_TYPES = frozenset({"capability", "enhancement", "defect"})
 _ISSUE_TYPE_LABELS = {
     "capability": ["capability", "needs-plan"],
@@ -4749,7 +4775,7 @@ def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = No
         f"type: {issue.issue_type}",
         f"team: {issue.team}",
         f"project: {issue.project}",
-        f"status: {issue.status}",
+        *([f"status: {issue.status}"] if issue.status else []),
         f"labels: {labels}",
     ]
     if issue.stage:
@@ -5089,6 +5115,14 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         raise RuntimeError(f"Unknown issue type in prepared draft: {issue.issue_type}")
     if issue.team not in _TEAM_CHOICES:
         raise RuntimeError(f"Unknown team in prepared draft: {issue.team}")
+    if issue.stage and not issue.status:
+        # W10 cycle-5 (F-3, sdlc#91): the R3b fill-in path repairs a stage-less
+        # blocked draft by adding ONLY `stage:` — stage-less prepare legitimately
+        # emitted no `status:` line, because no default is derivable without a
+        # Stage. Apply the entry-option default on read, BEFORE readiness
+        # evaluates: the declared Stage makes the default resolvable, and the
+        # create path then writes a real Status instead of an empty one.
+        issue.status = _stage_entry_options().get(issue.stage, "")
     return issue
 
 
@@ -5225,13 +5259,30 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     if envelope_error:
         blocking.append(envelope_error)
 
-    expected_status = _TEAM_SAFE_STATUSES.get(issue.team)
+    # W10 cycle-5 repair (operator ruling of 2026-08-30, sdlc#91): readiness
+    # accepts any Status configured WITHIN the declared Stage plus the
+    # cross-cutting statuses (Blocked); retired, unknown, and out-of-Stage values
+    # are still refused. The entry option (first configured name) is a DEFAULT,
+    # not a closed set — R49's entry_option_rule defines defaulting, and R42
+    # keeps Status consistency descriptive.
+    stage_flow = _stage_flow_rules()
+    stage_statuses = stage_flow.get("stage_statuses", {})
+    cross_cutting = set(stage_flow.get("cross_cutting_statuses", []))
     if issue.status == "Ready":
         blocking.append("Prepared issues must not start in Ready")
-    elif expected_status and issue.status != expected_status:
-        blocking.append(
-            f"Prepared {issue.team} issues must start in {expected_status!r}, not {issue.status!r}"
-        )
+    elif issue.stage:
+        stage_configured = stage_statuses.get(issue.stage)
+        if stage_configured is None:
+            blocking.append(
+                f"Unknown Stage {issue.stage!r}; its accepted Statuses cannot be derived "
+                "for a Stage outside the schema's stage_flow stage_statuses"
+            )
+        elif issue.status not in set(stage_configured) | cross_cutting:
+            blocking.append(
+                f"Prepared issues at Stage {issue.stage!r} must start in one of the "
+                f"Stage's configured Statuses {stage_configured!r} or the cross-cutting "
+                f"statuses {sorted(cross_cutting)!r}, not {issue.status!r}"
+            )
 
     if issue.project not in PROJECT_CHOICES:
         blocking.append(f"Unknown project {issue.project!r}")
@@ -5359,7 +5410,11 @@ def issue_prepare(
             f"Unknown project {project!r}; expected one of {', '.join(PROJECT_CHOICES)}"
         )
 
-    safe_status = status or _TEAM_SAFE_STATUSES[team]
+    # W10 repair (R49): the default Status is the entry option of the DECLARED
+    # Stage — it exists only when the author supplied a Stage (Stage itself has
+    # no default per the OQ1 ruling), so a stage-less prepare leaves Status
+    # empty and readiness blocks on the missing Stage instead.
+    safe_status = status or _stage_entry_options().get(stage or "", "")
     draft_title = title or f"{issue_type}: {repo} {team} work"
     maturity = handoff_maturity or (
         source_artifact.inferred_maturity if source_artifact else "requirements-ready"

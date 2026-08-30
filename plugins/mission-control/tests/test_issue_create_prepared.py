@@ -269,7 +269,7 @@ def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
     # W10: the Intake exit writes BOTH lifecycle fields — Stage then Status.
     assert mock_status.call_args_list == [
         call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
-        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Capturing", fmt="text"),
     ]
 
     sidecar = json.loads(draft.with_suffix(".json").read_text())
@@ -338,7 +338,7 @@ def test_create_prepared_resumes_post_create_without_duplicate_issue(tmp_path) -
     # it happens before the Status write (KTD1a).
     assert mock_status.call_args_list == [
         call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
-        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Capturing", fmt="text"),
     ]
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
@@ -368,7 +368,7 @@ def test_create_prepared_resume_skips_existing_board_membership(tmp_path) -> Non
     # W10: the legacy sidecar still owes Stage, written before Status.
     assert mock_status.call_args_list == [
         call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
-        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Capturing", fmt="text"),
     ]
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
@@ -545,7 +545,7 @@ def test_intake_exit_sets_stage_and_status_at_creation(tmp_path) -> None:
     # Exactly two lifecycle writes, one per field — asserted on the recorded call
     # list, not a count, so writing the same field twice fails.
     assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
-    assert [c.args[4] for c in mock_flow.call_args_list] == ["Intake", "Idea"]
+    assert [c.args[4] for c in mock_flow.call_args_list] == ["Intake", "Capturing"]
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
     assert sidecar["remaining_steps"] == []
@@ -877,7 +877,13 @@ def test_intake_exit_fill_in_round_trips_through_approval_gate(tmp_path) -> None
     # The author fills Stage into the draft file — R3b's fill-in surface.
     draft_text = draft.read_text()
     assert "\nstage: " not in draft_text
-    draft.write_text(draft_text.replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1))
+    draft.write_text(
+        draft_text.replace(
+            "labels: capability, needs-plan\n",
+            "stage: Intake\nstatus: Capturing\nlabels: capability, needs-plan\n",
+            1,
+        )
+    )
 
     # The re-read draft now passes readiness — but create-prepared without
     # --skip-approval must still refuse, and the sidecar must be promoted.
@@ -924,6 +930,46 @@ def test_intake_exit_fill_in_round_trips_through_approval_gate(tmp_path) -> None
     assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
 
 
+def test_intake_exit_fill_in_stage_only_defaults_status_on_read(tmp_path) -> None:
+    """F-3 / cycle-5 (sdlc#91): the R3b fill-in may add ONLY `stage:` — a
+    stage-less blocked prepare legitimately emitted no `status:` line, because
+    no default is derivable without a Stage. `_read_prepared_issue` applies the
+    entry-option default BEFORE readiness evaluates, so the repaired draft is
+    readable and readiness-passing without a hand-written Status."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Stage-only fill-in draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+    )
+    sidecar_path = draft.with_suffix(".json")
+    assert json.loads(sidecar_path.read_text())["state"] == "blocked"
+    assert "\nstatus: " not in draft.read_text()
+
+    # The author fills Stage into the draft file — R3b's fill-in surface —
+    # and nothing else.
+    draft.write_text(
+        draft.read_text().replace(
+            "labels: capability, needs-plan\n",
+            "stage: Intake\nlabels: capability, needs-plan\n",
+            1,
+        )
+    )
+
+    re_read = sdlc_manager._read_prepared_issue(draft)
+    assert re_read.stage == "Intake"
+    assert re_read.status == "Capturing"
+    readiness = sdlc_manager._readiness_for_prepared_issue(re_read)
+    assert readiness.passed is True
+    assert readiness.blocking_gaps == []
+
+
 def test_intake_exit_fill_in_skip_approval_is_explicit_override(tmp_path) -> None:
     """--skip-approval remains the operator's explicit per-invocation override on
     the repaired-blocked fill-in path — but the STAMP is NOT skipped (CR c2
@@ -944,7 +990,11 @@ def test_intake_exit_fill_in_skip_approval_is_explicit_override(tmp_path) -> Non
         draft_dir=tmp_path,
     )
     draft.write_text(
-        draft.read_text().replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1)
+        draft.read_text().replace(
+            "labels: capability, needs-plan\n",
+            "stage: Intake\nstatus: Capturing\nlabels: capability, needs-plan\n",
+            1,
+        )
     )
 
     with (
@@ -993,7 +1043,11 @@ def test_intake_exit_fill_in_skip_approval_mapping_resume_stamps_gate(tmp_path) 
     )
     # The R3b fill-in: the author edits `stage:` into the blocked draft.
     draft.write_text(
-        draft.read_text().replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1)
+        draft.read_text().replace(
+            "labels: capability, needs-plan\n",
+            "stage: Intake\nstatus: Capturing\nlabels: capability, needs-plan\n",
+            1,
+        )
     )
     sidecar_path = draft.with_suffix(".json")
 

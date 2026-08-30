@@ -187,7 +187,7 @@ repo: hermes-claude-code-router
 type: capability
 team: campps
 project: campps
-status: Idea
+status: Capturing
 labels: capability, needs-plan
 risk: medium
 handoff_maturity: requirements-ready
@@ -201,7 +201,7 @@ repo: hermes-claude-code-router
 type: capability
 team: campps
 project: campps
-status: Idea
+status: Capturing
 labels: capability, needs-plan
 risk: medium
 handoff_maturity: requirements-ready
@@ -249,7 +249,7 @@ _none_
                 "issue_type": "capability",
                 "team": "campps",
                 "project": "campps",
-                "status": "Idea",
+                "status": "Capturing",
                 "labels": ["capability", "needs-plan"],
                 "risk": "medium",
                 "handoff_maturity": "requirements-ready",
@@ -361,7 +361,7 @@ def test_created_body_strip_cleans_a_contaminated_body() -> None:
         issue_type="capability",
         team="campps",
         project="campps",
-        status="Idea",
+        status="Capturing",
         labels=["capability", "needs-plan"],
         risk="medium",
         mode=None,
@@ -387,7 +387,7 @@ def test_created_body_strip_cleans_a_contaminated_body() -> None:
         issue_type="capability",
         team="campps",
         project="campps",
-        status="Idea",
+        status="Capturing",
         labels=["capability", "needs-plan"],
         risk="medium",
         mode=None,
@@ -410,7 +410,7 @@ def test_readiness_blocks_duplicate_h3_and_h2_h3_section_pairs(tmp_path: Path) -
         issue_type="capability",
         team="campps",
         project="campps",
-        status="Idea",
+        status="Capturing",
         labels=["capability", "needs-plan"],
         risk="medium",
         mode=None,
@@ -429,7 +429,7 @@ def test_readiness_blocks_duplicate_h3_and_h2_h3_section_pairs(tmp_path: Path) -
         issue_type="capability",
         team="campps",
         project="campps",
-        status="Idea",
+        status="Capturing",
         labels=["capability", "needs-plan"],
         risk="medium",
         mode=None,

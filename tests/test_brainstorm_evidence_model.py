@@ -4,9 +4,10 @@ Proves mechanically that no deterministic test asserts a question, its
 wording, or the order of the creative dialogue, and that the six named
 areas each have coverage.
 
-Scope: the check catches a question-shaped string literal appearing inside an
-`assert` statement, and it does not see literals held in module constants,
-helper predicates, `parametrize` decorators, or JSON data files.
+Scope: the check collects question-shaped string constants module-wide,
+walking every string literal outside docstrings, including module-level
+Assign targets, Return values, and parametrize decorator arguments, and
+keeps the assert-node rule as an additional signal.
 """
 
 from __future__ import annotations
@@ -72,6 +73,56 @@ def _is_question_shaped(literal: str) -> bool:
 class _DialogueVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.violations: list[str] = []
+        self._parent_stack: list[ast.AST] = []
+
+    def visit(self, node: ast.AST) -> None:
+        self._parent_stack.append(node)
+        super().visit(node)
+        self._parent_stack.pop()
+
+    def _is_docstring(self, node: ast.Constant) -> bool:
+        # Docstring is the first Expr(Constant) in a Module/ClassDef/FunctionDef
+        # visit() pushes the current node, so stack is [..., parent, node]
+        if len(self._parent_stack) < 2:
+            return False
+        parent = self._parent_stack[-2]
+        if not isinstance(parent, ast.Expr):
+            return False
+        if len(self._parent_stack) < 3:
+            return False
+        grandparent = self._parent_stack[-3]
+        return (
+            isinstance(
+                grandparent, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            )
+            and grandparent.body is not None
+            and len(grandparent.body) > 0
+            and grandparent.body[0] is parent
+        )
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str) and _is_question_shaped(node.value):
+            if self._is_docstring(node):
+                return
+            # Skip the file's own definition of what a question-shaped string is:
+            # _INTERROGATIVES tuple and the "?" literal inside _is_question_shaped
+            for parent in self._parent_stack:
+                if isinstance(parent, ast.Assign):
+                    for target in parent.targets:
+                        if isinstance(target, ast.Name) and target.id == "_INTERROGATIVES":
+                            return
+                if (
+                    isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and parent.name == "_is_question_shaped"
+                ):
+                    return
+            # Collect question-shaped constants module-wide: Assign targets, Return values,
+            # parametrize args, and any other string literal that is question-shaped.
+            # This catches module constants, helper return values, and ordered dialogue lists.
+            self.violations.append(
+                f"question-shaped string constant: {node.value!r} at line {node.lineno}"
+            )
+        self.generic_visit(node)
 
     def visit_Assert(self, node: ast.Assert) -> None:
         literals: list[str] = []
@@ -109,6 +160,49 @@ class _DialogueVisitor(ast.NodeVisitor):
             ]
             if len(seq_lits) >= 2 and sum(1 for lit in seq_lits if _is_question_shaped(lit)) >= 2:
                 self.violations.append(f"ordered question sequence in assert at line {node.lineno}")
+        # Also detect ordered dialogue list in a module constant (e.g., DIALOGUE_ORDER = ["What ...?", "How ...?"])
+        # This is already covered by visit_Constant for each element, but we also check for list constants
+        # that contain 2+ question-shaped strings, even outside assert.
+        self.generic_visit(node)
+
+    def visit_List(self, node: ast.List) -> None:
+        # Skip the definition of _INTERROGATIVES itself
+        for parent in self._parent_stack:
+            if isinstance(parent, ast.Assign):
+                for target in parent.targets:
+                    if isinstance(target, ast.Name) and target.id == "_INTERROGATIVES":
+                        self.generic_visit(node)
+                        return
+        # Detect ordered dialogue list in a constant (e.g., DIALOGUE_ORDER = ["What ...?", "How ...?"])
+        # This catches non-assert ordered lists.
+        lits = [
+            e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        ]
+        if len(lits) >= 2 and sum(1 for lit in lits if _is_question_shaped(lit)) >= 2:
+            # Only report if this list is not already inside an assert (which already reported)
+            in_assert = any(isinstance(p, ast.Assert) for p in self._parent_stack)
+            if not in_assert:
+                self.violations.append(
+                    f"ordered question sequence list at line {node.lineno}: {lits!r}"
+                )
+        self.generic_visit(node)
+
+    def visit_Tuple(self, node: ast.Tuple) -> None:
+        for parent in self._parent_stack:
+            if isinstance(parent, ast.Assign):
+                for target in parent.targets:
+                    if isinstance(target, ast.Name) and target.id == "_INTERROGATIVES":
+                        self.generic_visit(node)
+                        return
+        lits = [
+            e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        ]
+        if len(lits) >= 2 and sum(1 for lit in lits if _is_question_shaped(lit)) >= 2:
+            in_assert = any(isinstance(p, ast.Assert) for p in self._parent_stack)
+            if not in_assert:
+                self.violations.append(
+                    f"ordered question sequence tuple at line {node.lineno}: {lits!r}"
+                )
         self.generic_visit(node)
 
 

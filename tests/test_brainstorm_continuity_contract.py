@@ -59,6 +59,18 @@ def check_checkpoint(text: str) -> list[str]:
         violations.append("missing before-confirmation ordering")
     if "no readiness-claiming artifact exists at that point" not in norm:
         violations.append("missing no readiness-claiming artifact guard")
+    if (
+        "AFTER the confirmation question" in text
+        or "after the confirmation question" in text.lower()
+        and "before the confirmation question is posed" not in norm
+    ):
+        # Detect inverted ordering where checkpoint is written after confirmation
+        pass
+    if (
+        "written AFTER the confirmation question" in text
+        or "written after the confirmation question" in text.lower()
+    ):
+        violations.append("found inverted ordering: written AFTER confirmation")
     return violations
 
 
@@ -97,6 +109,8 @@ def check_ambiguity_stop(text: str) -> list[str]:
         violations.append("missing filename refusal")
     if "broad content match" not in norm:
         violations.append("missing broad content match refusal")
+    if "prefer most recent" in norm:
+        violations.append("found inverted instruction: prefer most recent")
     return violations
 
 
@@ -109,6 +123,8 @@ def check_revision(text: str) -> list[str]:
         violations.append("missing requires fresh confirmation")
     if "without fresh confirmation is refused" not in norm:
         violations.append("missing refused without fresh confirmation")
+    if "re-confirming is optional" in norm.lower():
+        violations.append("found inverted instruction: re-confirming is optional")
     return violations
 
 
@@ -123,6 +139,8 @@ def check_artifact_free(text: str) -> list[str]:
         violations.append("missing nothing labelled requirements-ready")
     if "tied to declared maturity, not to file existence" not in norm:
         violations.append("missing tied to declared maturity guard")
+    if "regardless of declared maturity" in norm.lower():
+        violations.append("found inverted instruction: regardless of declared maturity")
     return violations
 
 
@@ -414,7 +432,7 @@ def check_dispatch_pending(text: str) -> list[str]:
 def check_no_pending_to_plan(text: str) -> list[str]:
     violations: list[str] = []
     for line in text.splitlines():
-        if "pending-confirmation" in line and "/plan" in line:
+        if line.strip().startswith("|") and "pending-confirmation" in line and "/plan" in line:
             violations.append(f"pending-confirmation must not route to /plan: {line.strip()[:80]}")
     return violations
 

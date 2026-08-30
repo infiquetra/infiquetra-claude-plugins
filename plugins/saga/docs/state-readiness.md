@@ -1,6 +1,6 @@
 # Saga State And Readiness
 
-Saga has three stored state axes. Handoff readiness is derived from those axes or artifact paths, and is never stored as saga frontmatter.
+Saga has three stored state axes. Handoff readiness is derived from those axes, artifact paths, or a declared maturity in an off-chain artifact's own frontmatter (which wins over path inference per the off-chain maturity note in `plugins/saga/references/saga-spec.md`), and is never stored as saga tick frontmatter.
 
 ![State and Readiness Ladder](assets/state-readiness-ladder.svg)
 
@@ -24,6 +24,7 @@ Stored saga ticks live under git-ignored `.claude/saga/`. The append-only tick l
 |--------|------------------|-------------|
 | `docs/ideation/` | `idea-ready` | `/plan` |
 | `docs/brainstorms/` | `requirements-ready` | `/plan` |
+| `docs/brainstorms/` frontmatter `pending-confirmation` | `pending-confirmation` | `/brainstorm` (no durable route) |
 | `docs/specs/` | `requirements-ready` | `/plan` or `/handoff` |
 | `docs/plans/` | `plan-ready` | `/work` |
 | `docs/reviews/` | `plan-ready` | `/work` |

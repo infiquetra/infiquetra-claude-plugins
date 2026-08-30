@@ -43,8 +43,8 @@ maturity:
       from: [explicit preserve/defer language]
       consumed_by: [/handoff]
     pending-confirmation:
-      from: []
-      consumed_by: []
+      from: [docs/brainstorms/ frontmatter pending-confirmation]
+      consumed_by: [/brainstorm, /resume]
   source_refs:
     - plugins/saga/references/saga-spec.md
     - plugins/saga/skills/handoff/SKILL.md

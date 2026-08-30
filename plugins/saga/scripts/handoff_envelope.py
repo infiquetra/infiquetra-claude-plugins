@@ -42,15 +42,23 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
         return None
     frontmatter = text[3:end]
     for line in frontmatter.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("maturity:"):
+        # Require unindented top-level key (API-03); ignore indented nested keys
+        if line.startswith("maturity:"):
+            stripped = line.strip()
             value = stripped[len("maturity:") :].strip()
             # Strip inline YAML comment
             if "#" in value:
                 value = value.split("#", 1)[0].strip()
             value = value.strip("\"'").strip()
-            if value and value in HANDOFF_MATURITIES:
+            if not value:
+                return ""  # Empty maturity — signal, do not fall through
+            if value in HANDOFF_MATURITIES:
                 return value
+            # Unrecognized non-empty — signal as unknown: (fail-closed)
+            return f"unknown:{value}"
+        if line.strip().startswith("maturity:") and line[0] in (" ", "\t"):
+            # Indented nested key — ignore, not a top-level declaration
+            continue
     return None
 
 
@@ -59,14 +67,13 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
     # Frontmatter-declared maturity wins when the source resolves to an existing file
     # that declares one (KTD7) — so a pending-confirmation checkpoint under
     # docs/brainstorms/ no longer hands off as requirements-ready.
+    # Single root-relative candidate: explicit root always wins over cwd (fix-28/0d).
     base = root or Path.cwd()
-    candidate = base / normalized if not Path(normalized).is_absolute() else Path(normalized)
-    # Also try the literal path for absolute tmp_path sources
-    for cand in (Path(normalized), candidate):
-        if cand.is_file():
-            declared = _read_frontmatter_maturity(cand)
-            if declared is not None:
-                return declared
+    candidate = Path(normalized) if Path(normalized).is_absolute() else base / normalized
+    if candidate.is_file():
+        declared = _read_frontmatter_maturity(candidate)
+        if declared is not None:
+            return declared
     if "docs/ideation/" in normalized:
         return "idea-ready"
     if "docs/brainstorms/" in normalized:
@@ -158,11 +165,20 @@ def build_handoff_envelope(
         raise RuntimeError("No handoff source found; provide --source or create a durable artifact")
 
     maturity = infer_maturity(selected_source, root)
+    # Fail-closed for unrecognized/empty maturity (API-03) and pending-confirmation
     if maturity == "pending-confirmation":
         suggested_command = (
             f"Boundary recorded but unconfirmed for {selected_source} — "
             "no durable route exists until the operator confirms in Brainstorm Phase 2.5"
         )
+    elif maturity == "" or maturity.startswith("unknown:"):
+        raw = maturity.removeprefix("unknown:") if maturity.startswith("unknown:") else "(empty)"
+        suggested_command = (
+            f"Unrecognized maturity {raw!r} for {selected_source} — "
+            "no durable route; fix frontmatter to one of "
+            f"{', '.join(HANDOFF_MATURITIES)}"
+        )
+        # Keep handoff_maturity as the raw signal for diagnostics, but do not emit a route
     else:
         suggested_command = f"/issue --prepare --from {selected_source} --maturity {maturity}"
         if target_team:
@@ -171,7 +187,7 @@ def build_handoff_envelope(
             suggested_command += f" in {target_repo}"
 
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "created_at": datetime.now(UTC).isoformat(),
         "source": selected_source,
         "lifecycle_phase": infer_lifecycle_phase(selected_source),

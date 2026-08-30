@@ -79,15 +79,18 @@ uses this ack contract.
 
 4. If the helper finds no source, ask for one.
 5. If multiple durable artifacts are plausible, ask the user to choose.
-6. Route with the envelope's `suggested_command`, shaped like
-   `/issue --prepare --from <source> --maturity <maturity>`.
+6. Route with the envelope's `suggested_command` when `handoff_maturity` is not `pending-confirmation` — it is shaped like
+   `/issue --prepare --from <source> --maturity <maturity>` and is runnable. When `handoff_maturity` is `pending-confirmation` (declared frontmatter), `suggested_command` is a non-routable prose sentence with no durable route — stop rather than route.
 7. Review the prepared issue draft before mutation.
 8. Use `issue create-prepared` only after confirmation.
 
 ## Maturity
 
+A declared frontmatter `maturity` in an off-chain artifact's own frontmatter wins over path inference.
+
 - `docs/ideation/` -> `idea-ready`
 - `docs/brainstorms/` -> `requirements-ready`
+- `docs/brainstorms/` frontmatter `pending-confirmation` -> `pending-confirmation` (no durable route)
 - `docs/specs/` -> `requirements-ready`
 - `docs/plans/` or `docs/reviews/` -> `plan-ready`
 - `docs/work-sessions/` or branch refs -> `resume-ready`

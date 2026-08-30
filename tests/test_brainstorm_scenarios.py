@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
+import ast
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,17 +11,6 @@ ROOT = Path(__file__).parent.parent
 SCENARIOS_PATH = ROOT / "tests/data/brainstorm/scenarios.json"
 RUBRIC_PATH = ROOT / "tests/data/brainstorm/rubric.json"
 CALIBRATION_PATH = ROOT / "tests/data/brainstorm/calibration.json"
-
-_PROD = ROOT / "plugins/saga/scripts/handoff_envelope.py"
-
-
-def _load(name: str, path: Path):  # type: ignore[no-untyped-def]
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def _load_json(path: Path) -> Any:
@@ -215,14 +203,29 @@ def test_no_aggregate_negative() -> None:
         for banned in ("score", "total", "aggregate", "overall", "quality"):
             assert banned not in case["expected"]
             assert banned not in case
-    # No consumer computes an aggregate — scan this file for banned patterns
-    src = Path(__file__).read_text(encoding="utf-8")
-    for banned in ("aggregate", "overall", "quality"):
-        # Allow the word in comments/assert messages but not as a computed variable
-        # Simple check: no assignment to aggregate
-        assert f"{banned} =" not in src.lower() or f"no {banned}" in src.lower(), (
-            f"file computes banned aggregate {banned!r}"
-        )
+    # No consumer computes an aggregate — AST walk over Assign/AnnAssign targets
+    # Widened to every tests/test_brainstorm_*.py module; no escape clause
+    banned_names = {"score", "total", "aggregate", "overall", "quality"}
+    for path in sorted(ROOT.glob("tests/test_brainstorm_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in banned_names:
+                        raise AssertionError(
+                            f"{path.name}:{node.lineno} computes banned aggregate '{target.id}'"
+                        )
+                    if isinstance(target, ast.Attribute) and target.attr in banned_names:
+                        raise AssertionError(
+                            f"{path.name}:{node.lineno} computes banned aggregate '{target.attr}'"
+                        )
+            elif isinstance(node, ast.AnnAssign) and node.target:
+                target = node.target
+                name = target.id if isinstance(target, ast.Name) else getattr(target, "attr", None)
+                if name in banned_names:
+                    raise AssertionError(
+                        f"{path.name}:{node.lineno} computes banned aggregate '{name}'"
+                    )
 
 
 # ---------------------------------------------------------------------------

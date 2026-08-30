@@ -505,7 +505,7 @@ def test_build_handoff_envelope_output_unchanged(tmp_path: Path) -> None:
         "body_template_owner",
         "git",
     }
-    assert envelope["schema_version"] == "1.0"
+    assert envelope["schema_version"] == "1.1"
     assert envelope["lifecycle_owner"] == "saga"
     assert envelope["handoff_maturity"] == "plan-ready"
 

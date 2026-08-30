@@ -62,8 +62,19 @@ doc; a rich one produces a rich doc. Do not add ceremony to make a slim brainsto
 
 ## Metadata
 
-Markdown frontmatter at the top of the file. Field names are stable — never rename or repurpose them;
-adding new fields is fine.
+The block is YAML delimited by a literal `---` first line and a closing `---` line. Every brainstorm artifact must start with that block at the file's first byte; a bullet list is not frontmatter and will not be recognized. Example:
+
+```yaml
+---
+date: 2026-08-30
+topic: saga-worktree-prune
+capability: brainstorm
+activity: brainstorm-saga-worktree-prune-20260830T143000Z
+maturity: pending-confirmation
+---
+```
+
+Field names are stable — never rename or repurpose them; adding new fields is fine.
 
 - **`date`** — ISO 8601 (`YYYY-MM-DD`), ASCII digits. Used in the filename.
 - **`topic`** — kebab-case slug identifying the subject (e.g. `surface-scope-earlier`). Used in the

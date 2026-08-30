@@ -161,7 +161,11 @@ def test_readiness_is_derived_not_stored() -> None:
         "pending-confirmation",
     }
     assert "docs/specs/" in maturity["values"]["requirements-ready"]["from"]
-    assert maturity["values"]["pending-confirmation"]["from"] == []
+    assert "docs/brainstorms/" in str(maturity["values"]["pending-confirmation"]["from"])
+    assert set(maturity["values"]["pending-confirmation"]["consumed_by"]) == {
+        "/brainstorm",
+        "/resume",
+    }
 
 
 def test_required_scenarios_pairs_and_visual_inventory_are_present() -> None:

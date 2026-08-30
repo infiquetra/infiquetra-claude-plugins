@@ -28,6 +28,7 @@ HANDOFF_MATURITY_VALUES = {
     "plan-ready",
     "resume-ready",
     "deferred-context",
+    "pending-confirmation",
 }
 
 

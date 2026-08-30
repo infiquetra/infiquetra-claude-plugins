@@ -14,9 +14,7 @@ product behavior, scope boundaries, or success criteria. This skill does not wri
 code. It explores, clarifies, and records product decisions.
 
 The engine is **orchestrator-side dialogue**: the steps below run sequentially, in this session, one
-question at a time. The only parallel work allowed is the bounded Phase 1 helper set (at most one
-read-only repository-grounding scout and at most one independent claim verifier, each only with a
-distinct evidence question; Lightweight launches none) described in Phase 1.1. Resolve product
+question at a time. The only parallel work allowed is the bounded helper set described in Phase 1.1. Resolve product
 decisions here; defer schemas, endpoints, file layouts, and code-level design to `/plan` unless the
 brainstorm is itself about a technical or architectural decision.
 
@@ -152,14 +150,14 @@ establish product shape or inherit it:
 Product-tier triggers the extra Phase 1.2 probes and the extra requirements sections noted in the
 section contract. Feature-tier uses Deep behavior unchanged.
 
-### Consequence calibration (internal)
+### 0.5 Consequence calibration (internal)
 
 Product size and assurance need are different signals. Calibrate rigor from the concrete
 consequence factors actually present in scope, separately from product size: data sensitivity,
 granted authority, exposure to untrusted input, reversibility and blast radius, safety, financial,
 legal or operational consequence, recovery expectations, and auditability or consent obligations.
 Rigor rises and falls as those factors enter or leave scope. The trigger is never a domain name
-alone. No named tiers are used — the factors themselves are named.
+alone. No named tiers are used — the factors themselves are named. What changes with consequence is how much time the dialogue spends on mitigations rather than whether a checklist appears: a factor in scope means more questions about its mitigations, a different ordering of those questions, and an explicit assumption recorded when an obligation is left unaddressed. For example, a small one-line webhook credential rotation carries high consequence via granted authority and blast radius, so the dialogue probes retention and revert expectations before narrowing on scope boundaries, even though the product tier is Lightweight.
 
 ## Phase 1 — Understand the idea
 
@@ -173,7 +171,7 @@ when it has a distinct evidence question — two helpers on the same question is
 These are ceilings, not required launches. The grounding scout is `subagent_type: Explore`; the claim
 verifier is `subagent_type: saga:readonly-verifier` with `isolation: "worktree"`, degrading through
 the fallback ladder in `plugins/saga/references/sandbox-spawn-sites.md` when the agent type is absent
-from the session roster. Helpers may not choose requirements and may not address the operator. The claim verifier is read-only by tool omission, worktree-isolated, and may not write files; the grounding scout is read-only by omission of `Edit`/`Write`/`NotebookEdit` but retains `Bash` and is not worktree-isolated — a deliberate, recorded acceptance. At the ladder's terminal rung, read-only is a prose request rather than an enforced constraint. The primary process retains
+from the session roster. Helpers may not choose requirements and may not address the operator. The claim verifier is worktree-isolated and read-only by omission of `Edit`/`Write`/`NotebookEdit` with `Bash` retained — the worktree fence is the sole protection — and may not choose requirements or address the operator; the grounding scout is read-only by omission of `Edit`/`Write`/`NotebookEdit` but retains `Bash` and is not worktree-isolated — a deliberate, recorded acceptance. At the ladder's terminal rung, read-only is a prose request rather than an enforced constraint. A state-free capability with no tick such as Brainstorm states the rung and the agent type spawned in its own turn text to the operator instead of persisting the fields. The primary process retains
 synthesis, creativity, the private concern model, and every operator-facing exchange. Before launching a grounding scout against a tree with uncommitted work, commit or stash first, because the scout retains `Bash` and is not worktree-isolated.
 
 **Lightweight** — search for the topic, check whether something similar already exists, move on.
@@ -356,23 +354,22 @@ that needs no dialogue only because everything was pre-stated (Standard/Deep →
 
 <!-- gate-record: id=brainstorm-scope-confirmation absence=HALT transport=ask-user-question -->
 On Path B only, before posing the confirmation question, write the pending-confirmation artifact to
-`docs/brainstorms/YYYY-MM-DD-<topic>-requirements.md` with frontmatter `date`, `topic`,
+`docs/brainstorms/YYYY-MM-DD-<topic>-requirements.md` with YAML frontmatter delimited by a literal `---` first line and a closing `---` line carrying `date`, `topic`,
 `capability: brainstorm`, `activity` (the `brainstorm-<topic-slug>-<UTC timestamp YYYYMMDDTHHMMSSZ>`
 identity formed at the moment the artifact is first written, whether as a pending-confirmation artifact or a Path A document), optional `run` (the
 `.orchestrate/run.json` `run_id` when that file exists), optional `source`, and `maturity: pending-confirmation`, and a body carrying the
 exact proposed boundary — what is being built, what is in scope, what is explicitly out, and the open
 questions. The pending-confirmation artifact is written with `pending-confirmation` maturity and the exact proposed
 boundary before the confirmation question is posed, and no readiness-claiming artifact exists at that
-point. Then ask the confirmation question. On an explicit operator rejection, say plainly that the pending-confirmation artifact remains on disk and will be restored as the proposal next time, and offer to revise the boundary rather than leaving it stale silently. Path A stays exactly as it is: it has no confirmation to
+point. Then ask the confirmation question. On an explicit operator rejection, say plainly that the pending-confirmation artifact remains on disk and will be restored as the proposal next time, and offer to revise the boundary rather than leaving it stale silently. If the operator accepts the revision offer, return to Phase 1.3 and re-enter Phase 2.5 for fresh confirmation; if the operator declines, go to Phase 4 with the artifact still at `maturity: pending-confirmation`, where only the non-routing options are visible. Path A stays exactly as it is: it has no confirmation to
 declare, and no second approval step is added.
 
 ## Phase 3 — Capture the requirements
 
 Write or update a requirements document only when the dialogue produced durable decisions worth
 preserving. Skip it when the operator needed only brief alignment and the decisions can flow straight
-to `/plan` or a commit message without a brainstorm artifact in between. An exploratory-only outcome
-writes no file at all — no artifact exists, no route from options 1 through 4 is shown, and nothing is
-labelled `requirements-ready`.
+to `/plan` or a commit message without a brainstorm artifact in between. An exploratory-only outcome that never reached Phase 2.5 Path B writes no file at all — no artifact exists, no route from options 1 through 4 is shown, and nothing is
+labelled `requirements-ready`; a Path B run declined at confirmation leaves a pending-confirmation artifact with no durable route.
 
 When a doc is warranted, compose it from the section contract:
 
@@ -388,10 +385,10 @@ Use repo-relative paths inside the doc. Confirm completion with the absolute pat
 clickable.
 
 Promotion rewrites the same Path B pending-confirmation artifact path in place with `maturity: requirements-ready` upon
-confirmation, preserving the pending-confirmation artifact's original `date` frontmatter and its filename verbatim, and a resumed session restores the path from the matched artifact rather than recomputing it. A Path A run writes its document directly at `maturity: requirements-ready`, and the Phase 2.5 announce-mode summary is its confirmation. The minimum artifact is defined in `plugins/saga/skills/brainstorm/references/requirements-sections.md`. Any change to the boundary after a Path B confirmation rewrites the file back to
+confirmation, preserving the pending-confirmation artifact's original `date` frontmatter and its filename verbatim, and a resumed session restores the path from the matched artifact rather than recomputing it. A Path A run writes its document directly at `maturity: requirements-ready`, and the Phase 2.5 announce-mode summary is its confirmation. The minimum artifact is defined in `plugins/saga/skills/brainstorm/references/requirements-sections.md`. Any change to the boundary after confirmation rewrites the file back to
 `pending-confirmation` and requires a fresh Phase 2.5 confirmation before it can return to
 `requirements-ready`. Writing at `requirements-ready` without fresh confirmation is refused: maturity
-returns to `pending-confirmation` until the operator confirms again (this governs a revision after a Path B confirmation, not a Path A first write).
+returns to `pending-confirmation` until the operator confirms again. This holds for any artifact declaring `requirements-ready`, regardless of the path that created it.
 
 ## Legacy artifacts
 
@@ -426,7 +423,7 @@ Options:
 4. **Review with `/doc-review`** — dispatch a readiness review of the requirements doc before
    planning. Shown only when the artifact on disk declares `maturity: requirements-ready`.
 5. **More clarifying questions** — return to Phase 1.3, keep refining scope, edge cases, and
-   constraints one question at a time, then return here. Always shown.
+   constraints one question at a time, then return here. If the refinement changed the boundary of an already-confirmed Path B artifact, rewrite the file to `maturity: pending-confirmation` and re-enter Phase 2.5 for fresh confirmation before any durable route is offered. Always shown.
 6. **Back to `/office-hours`** — when the topic turns out to be more open thought-partner work than a
    concrete requirements ask. Always available.
 7. **Done for now** — the requirements doc is saved and resumable later, or, when no document was written, nothing durable was recorded. Always shown.

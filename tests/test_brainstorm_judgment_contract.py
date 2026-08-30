@@ -53,6 +53,8 @@ def check_privacy_skill(text: str) -> list[str]:
         violations.append("missing never shown as a score")
     if "never surfaced to the operator" not in norm:
         violations.append("missing never surfaced to the operator")
+    if "render the private" in norm.lower() or "gap map visibly" in norm.lower():
+        violations.append("found inverted instruction: render private gap map visibly")
     return violations
 
 
@@ -113,27 +115,39 @@ def check_lightweight_helpers(text: str) -> list[str]:
     return violations
 
 
+def _phase_1_1(text: str) -> str:
+    start = text.find("### 1.1 Existing-context scan")
+    end = text.find("### 1.2", start)
+    if start != -1 and end != -1:
+        return text[start:end]
+    return text
+
+
 def check_helper_ceiling(text: str) -> list[str]:
     violations: list[str] = []
-    norm = _norm(text)
+    section = _phase_1_1(text)
+    norm = _norm(section)
     if "at most one read-only repository-grounding scout" not in norm:
-        violations.append("missing at most one grounding scout")
+        violations.append("missing at most one grounding scout in Phase 1.1")
     if "at most one independent claim verifier" not in norm:
-        violations.append("missing at most one claim verifier")
+        violations.append("missing at most one claim verifier in Phase 1.1")
     if "distinct evidence question" not in norm:
-        violations.append("missing distinct evidence question")
+        violations.append("missing distinct evidence question in Phase 1.1")
     if "two helpers on the same question is one helper too many" not in norm:
-        violations.append("missing two helpers on same question guard")
+        violations.append("missing two helpers on same question guard in Phase 1.1")
     if "These are ceilings, not required launches" not in norm:
-        violations.append("missing ceilings not required launches")
+        violations.append("missing ceilings not required launches in Phase 1.1")
+    # Inverted instruction anywhere in file, not just Phase 1.1 — weakened text appended at EOF must be caught
+    if "launch as many" in text.lower() or "as many as warranted" in text.lower():
+        violations.append("found inverted instruction: launch as many as warranted")
     return violations
 
 
 def check_helper_capability(text: str) -> list[str]:
     violations: list[str] = []
     norm = _norm(text)
-    if "may not write files" not in norm:
-        violations.append("missing may not write files")
+    if "worktree-isolated" not in norm:
+        violations.append("missing worktree-isolated")
     if "may not choose requirements" not in norm:
         violations.append("missing may not choose requirements")
     if "may not address the operator" not in norm:
@@ -142,6 +156,10 @@ def check_helper_capability(text: str) -> list[str]:
         violations.append("missing subagent_type: Explore")
     if "subagent_type: saga:readonly-verifier" not in text:
         violations.append("missing subagent_type: saga:readonly-verifier")
+    if "A state-free capability with no tick" not in text:
+        violations.append("missing state-free capability sentence")
+    if "helpers may write" in norm.lower():
+        violations.append("found inverted instruction: helpers may write")
     return violations
 
 
@@ -298,7 +316,7 @@ def test_helper_ceiling_negative_and_mutation_fails() -> None:
 def test_helper_capability_negative_and_mutation_fails() -> None:
     text = _read(BRAINSTORM_SKILL)
     assert check_helper_capability(text) == [], f"capability: {check_helper_capability(text)}"
-    mutated = _mutate(text, "may not write")
+    mutated = _mutate(text, "A state-free capability with no tick")
     assert check_helper_capability(mutated) != []
     mutated2 = _mutate(text, "subagent_type: Explore")
     assert check_helper_capability(mutated2) != []

@@ -55,16 +55,18 @@ def _extract_commands_in_order(text: str) -> list[str]:
 
 
 def _has_block_shape(text: str) -> bool:
-    # The duplicated block's shape: three lines in order containing /ideate, /brainstorm, /plan answers
-    idx_ideate = text.find("`/ideate` answers:")
-    idx_brain = text.find("`/brainstorm` answers:")
-    idx_plan = text.find("`/plan` answers:")
-    return (
-        idx_ideate != -1
-        and idx_brain != -1
-        and idx_plan != -1
-        and idx_ideate < idx_brain < idx_plan
-    )
+    # The duplicated block's shape: three markers in order, as an ordered window over all occurrences
+    ideate_positions = [m.start() for m in re.finditer(r"`/ideate` answers:", text)]
+    brain_positions = [m.start() for m in re.finditer(r"`/brainstorm` answers:", text)]
+    plan_positions = [m.start() for m in re.finditer(r"`/plan` answers:", text)]
+    for i in ideate_positions:
+        for b in brain_positions:
+            if b <= i:
+                continue
+            for p in plan_positions:
+                if p > b:
+                    return True
+    return False
 
 
 def check_block_membership(texts: dict[Path, str]) -> list[str]:
@@ -78,13 +80,6 @@ def check_block_membership(texts: dict[Path, str]) -> list[str]:
         violations.append(
             f"discovered {sorted(str(p.relative_to(ROOT)) for p in discovered)!r} != expected {sorted(str(p.relative_to(ROOT)) for p in expected)!r}"
         )
-        # Also report out-of-set presence
-        for path in OUT_OF_SET:
-            if path in discovered:
-                violations.append(
-                    f"out-of-set file {path.relative_to(ROOT)} was discovered as block-carrying"
-                )
-    # Ensure out-of-set files are indeed not discovered
     for path in OUT_OF_SET:
         if path in discovered:
             violations.append(f"out-of-set {path.relative_to(ROOT)} incorrectly in discovered set")
@@ -270,7 +265,7 @@ def test_shaping_negative() -> None:
                 if "Shaping is an Operations board Status, not a Saga lifecycle phase" in line:
                     continue
                 raise AssertionError(
-                    f"automatic Brainstorm-to-board transition in {path}: {line.strip()[:120]} — Shaping is an Operations board Status stated once at saga-spec.md:311; a second authoritative statement would couple Saga's command vocabulary to a board column"
+                    f"automatic Brainstorm-to-board transition in {path}: {line.strip()[:120]} — Shaping is an Operations board Status stated once at saga-spec.md §4 (Enum domains); a second authoritative statement would couple Saga's command vocabulary to a board column"
                 )
     # No new Shaping mention beyond enumerated set — anchored to board-Status capitalization
     allowed_files = {
@@ -287,5 +282,5 @@ def test_shaping_negative() -> None:
         text = path.read_text(encoding="utf-8")
         if re.search(r"\bShaping\b", text):
             raise AssertionError(
-                f"unexpected Shaping mention in {path.relative_to(ROOT)} beyond enumerated set — Shaping is an Operations board Status stated authoritatively once at saga-spec.md:311; a second authoritative statement would couple Saga's command vocabulary to a board column"
+                f"unexpected Shaping mention in {path.relative_to(ROOT)} beyond enumerated set — Shaping is an Operations board Status stated authoritatively once at saga-spec.md §4 (Enum domains); a second authoritative statement would couple Saga's command vocabulary to a board column"
             )

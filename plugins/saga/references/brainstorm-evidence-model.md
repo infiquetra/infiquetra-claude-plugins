@@ -62,11 +62,9 @@ dimensions, and the expected outcome per dimension. That is design input,
 not evidence.
 
 **Captured transcripts are optional and additive.** Where a checkpoint
-transcript exists, `grade()` runs against it and the case records
+transcript exists, a future `grade()` would run against it and the case would record
 `transcript: captured`. Where none exists, the case records
-`transcript: none` and the offline suite still proves everything it
-claims — shape, coverage, per-dimension reporting, no-aggregate, gating,
-and calibration agreement. A missing failure-mode transcript never
+`transcript: none` and the offline suite proves only what it can honestly prove today — shape, coverage, per-dimension reporting, no-aggregate, and gating. Calibration agreement will be proven when a grader exists; until then the offline suite proves the calibration data shape only. A missing failure-mode transcript never
 blocks U3.
 
 **The one thing that stays forbidden is mislabelling.** No case may
@@ -78,24 +76,21 @@ exposes no `score`, `total`, `aggregate`, `overall`, or `quality` key at
 any level, and no consumer computes one (R19). Reporting is per
 dimension only.
 
-## Layer 3 — Evaluator trust and mutation proof
+## Layer 3 — Evaluator trust and safeguard-phrase drift guard
+
+*Audience: maintainer of tests and contract files. Version: 0.149.0.*
 
 **Evaluator-trust rule (R20).** `is_blocking(finding, *, reproducible,
 second_grader_agrees, operator_adjudicated) -> bool` returns `True`
 unconditionally for a deterministic contract failure, and for a
 model-judged finding returns `True` only when the scenario is
 reproducible **and** either a second independent grader agrees or an
-operator adjudication is recorded. Every combination is asserted
-directly.
+operator adjudication is recorded. The deterministic case plus the four decisive model-judged combinations are asserted directly.
 
 **Calibration (R21).** `tests/data/brainstorm/calibration.json` holds a
-small fixed set of cases with expected grades. The test runs the grader
-over them, reports agreement per case, and fails when agreement drops
-below the recorded floor. A seeded disagreeing grade drops the reported
-agreement, proving drift is surfaced. The calibration set produces no
-aggregate target of its own.
+small fixed set of cases with expected grades and a `drift_floor` key that today has no consumer. No grader exists yet; the test asserts only that the calibration data has the expected shape (three cases, each with `id` and `expected` per rubric dimension) and that no aggregate target exists. Drift will be surfaced when a grader is built; until then the floor is data only.
 
-**Mutation proof (R22).** `tests/test_brainstorm_mutation_proofs.py`
+**Safeguard-phrase drift guard (R22).** `tests/test_brainstorm_mutation_proofs.py`
 carries one case per safeguard U1 and U2 declared critical — eight in
 total: the ambiguity stop, the fresh-confirmation rule, the route-gating
 on declared readiness, the no-deferred-save rule, the helper ceiling,
@@ -103,14 +98,14 @@ the map-privacy rule, the no-named-assurance-level rule, and the helper
 read-only capability rule. Each case reads the real file, removes the
 rule's text in memory, calls the same `check_*` predicate the contract
 test calls, asserts violation, then asserts the unmutated text reports
-none. A meta-assertion requires every safeguard named in the
+none. These prove the safeguard sentence is present and its predicate is wired — not that the safeguard's behaviour holds. A meta-assertion requires every safeguard named in the
 declared-critical list to have a case, so adding a safeguard without a
-mutation case fails.
+drift-guard case fails.
 
 ## What this suite does not prove
 
 The suite proves the deterministic boundary, the data shape and per-dimension structure, and the gating machinery. It does **not** prove that any
-given brainstorm was good and it does not prove any transcript was graded — Layer 2 has no grader yet and the drift check is deferred. Formal completeness and contradiction review
+given brainstorm was good and it does not prove any transcript was graded — Layer 2 has no grader yet and the drift check is deferred. Layer 3's eight cases prove a safeguard sentence is present and its predicate is wired, not that the safeguard's behaviour holds — a file edited to instruct the opposite of a safeguard while keeping its sentence would still pass the string check. Formal completeness and contradiction review
 stay after the confirmed artifact, in Document Review or a narrow
 post-write validator, never in the live dialogue. A green scenario run
 without a captured transcript proves the case set's shape, not the quality of a conversation that was never

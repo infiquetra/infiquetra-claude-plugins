@@ -3971,3 +3971,70 @@ def test_intake_exit_saga_creates_no_issue() -> None:
     except AssertionError:
         failed = True
     assert failed, "the seeded bare `gh issue create` must FAIL the boundary check"
+
+
+def test_parse_issue_pending_confirmation_distinguishable(tmp_path: Path) -> None:
+    """fix-41f71b5ccacd: pending-confirmation is not blanked and is distinguishable from no handoff."""
+    mod = _load_module("parse_issue.py")
+    # Real path: parse an issue body carrying pending-confirmation
+    body_pending = "### Handoff maturity\npending-confirmation\n\n### Source context\n- Source: docs/brainstorms/2026-08-30-x-requirements.md\n"
+    parsed_pending = mod.extract(body_pending)
+    assert parsed_pending["handoff"]["maturity"] == "pending-confirmation"
+    # Must not be can_plan/can_work, and blank must be different
+    body_blank = "### Objective\nNo handoff here\n"
+    parsed_blank = mod.extract(body_blank)
+    assert parsed_blank["handoff"]["maturity"] == ""
+    assert parsed_pending["handoff"]["maturity"] != parsed_blank["handoff"]["maturity"]
+    # pending-confirmation is not a planning/working maturity, but is distinct from blank
+    assert parsed_pending["handoff"]["can_plan"] is False
+    assert parsed_pending["handoff"]["can_work"] is False
+    # If HANDOFF_MATURITY_VALUES lacked pending-confirmation, this would have returned "" and failed
+
+
+def test_loop_pending_confirmation_routes_to_brainstorm(tmp_path: Path) -> None:
+    """fix-a0f2528fe992: loop routing and dispatch table row for pending-confirmation are live."""
+    # Real path: parse_issue vocabulary and loop skill routing bullet
+    mod = _load_module("parse_issue.py")
+    assert "pending-confirmation" in mod.HANDOFF_MATURITY_VALUES, (
+        "allowlist must contain pending-confirmation"
+    )
+    loop_skill = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
+    assert "pending-confirmation" in loop_skill and "/brainstorm" in loop_skill, (
+        "loop must route pending-confirmation to /brainstorm"
+    )
+    # Dispatch table row must be reachable: (none) | — | pending-confirmation | /brainstorm
+    dispatch = _read(PLUGIN_ROOT / "skills" / "loop" / "references" / "dispatch-table.md")
+    assert "| (none) | — | `pending-confirmation` | `/brainstorm` |" in dispatch
+    # Also verify parse_issue actually returns it via real path
+    body = "### Handoff maturity\npending-confirmation\n"
+    assert mod.extract(body)["handoff"]["maturity"] == "pending-confirmation"
+
+
+def test_unrecognized_maturity_fails_closed_and_vocabularies_synced(tmp_path: Path) -> None:
+    """fix-13e628f20af7: unrecognized maturity fails closed with no signal, vocabularies in sync."""
+    handoff = _load_module("handoff_envelope.py")
+    parse_mod = _load_module("parse_issue.py")
+    # Real path: frontmatter with unknown maturity under docs/brainstorms must not emit a route
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-x-requirements.md"
+    target.write_text("---\nmaturity: not-a-real-maturity\n---\n\nBody\n", encoding="utf-8")
+    envelope = handoff.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-x-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"], (
+        "unrecognized maturity must not emit a route"
+    )
+    assert envelope["handoff_maturity"].startswith("unknown:")
+    # Indented nested key must be ignored — falls through to path rule (requirements-ready)
+    target.write_text("---\n  maturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8")
+    assert (
+        handoff.infer_maturity("docs/brainstorms/2026-08-30-x-requirements.md", root=tmp_path)
+        == "requirements-ready"
+    )
+    # Vocabulary drift guard: every code-level maturity vocab is superset of HANDOFF_MATURITIES
+    handoff_mats = set(handoff.HANDOFF_MATURITIES)
+    assert set(parse_mod.HANDOFF_MATURITY_VALUES) == handoff_mats
+    spec_text = _read(ROOT / "plugins/saga/references/saga-spec.md")
+    for val in handoff_mats:
+        assert val in spec_text

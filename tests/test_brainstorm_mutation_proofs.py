@@ -103,7 +103,7 @@ def _cases():  # type: ignore[no-untyped-def]
             "helper_read_only",
             judg.check_helper_capability,
             BRAINSTORM_SKILL,
-            "may not write",
+            "A state-free capability with no tick",
         ),
     ]
 
@@ -153,6 +153,16 @@ def test_safeguard_drift_helper_read_only() -> None:
     _assert_mutation("helper_read_only")
 
 
+_WEAKENED = {
+    "ambiguity_stop": "prefer most recent, filename, or broad content match",
+    "fresh_confirmation": "re-confirming is optional",
+    "route_gating": "regardless of declared maturity",
+    "helper_ceiling": "launch as many helpers as warranted",
+    "map_privacy": "render the private gap map visibly",
+    "helper_read_only": "helpers may write files",
+}
+
+
 def _assert_mutation(name: str) -> None:
     cases = _cases()
     lookup: dict[str, tuple[Any, Any, Any]] = {n: (fn, p, nd) for n, fn, p, nd in cases}  # type: ignore[assignment]
@@ -164,7 +174,14 @@ def _assert_mutation(name: str) -> None:
     # Special handling for no_deferred_save which is tested separately
     if name == "no_deferred_save":
         return
-    # Mutated must fail — remove the needle in memory
+    # Deletion must fail
     assert needle in text, f"needle {needle!r} not in {path}"
-    mutated = text.replace(needle, "", 1)
-    assert fn(mutated) != [], f"{name} mutated did not fail"  # type: ignore[operator]
+    deleted = text.replace(needle, "", 1)
+    assert fn(deleted) != [], f"{name} deletion did not fail"  # type: ignore[operator]
+    # Weakening must also fail — inject contradictory instruction while keeping needle
+    weakened_text = _WEAKENED.get(name, "")
+    if weakened_text:
+        mutated = text + f"\n{weakened_text}\n"
+        assert fn(mutated) != [], (
+            f"{name} weakened did not fail — predicate detects deletion not weakening"
+        )  # type: ignore[operator]

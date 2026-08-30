@@ -20,21 +20,21 @@ A route to a **stub** target is **advisory**: `/loop` names it as the next comma
 
 | Target | State | Routing |
 |---|---|---|
-| `/office-hours` | shipped (232L) | normal |
-| `/ideate` | shipped (529L) | normal |
-| `/brainstorm` | shipped (342L) | normal |
+| `/office-hours` | shipped | normal |
+| `/ideate` | shipped | normal |
+| `/brainstorm` | shipped | normal |
 | `/spec` | shipped (spec-interrogation engine) | **advisory + off-chain** — never block |
 | `/plan` | shipped | normal |
-| `/doc-review` | shipped (178L) | **HARD gate** (P0/P1 block, see below) |
+| `/doc-review` | shipped | **HARD gate** (P0/P1 block, see below) |
 | `/work` | shipped | normal |
 | `/code-review` | shipped | normal |
-| `/founder-review` | shipped (239L) | normal |
-| `/handoff` | shipped (68L, functional) | normal + handoff envelope |
+| `/founder-review` | shipped | normal |
+| `/handoff` | shipped (functional) | normal + handoff envelope |
 | `/qa` | shipped (gate-only) | **advisory** — never block |
 | `/investigate` | shipped (systematic-debugging engine) | **advisory + off-chain** — never block |
 | `/retro` | shipped (meta-improvement engine) | **advisory + terminal** — never block |
-| `/resume` | **stub (24L)** | **advisory / opt-in** — never auto-route |
-| `/strategy` | shipped (STRATEGY.md engine) | **advisory** — never block |
+| `/resume` | **stub** | **advisory / opt-in** — never auto-route |
+| `/strategy` | shipped | **advisory** — never block |
 | `/optimize` | **shipped (metric-loop engine)** | **advisory + off-chain** — never block |
 
 ---
@@ -70,7 +70,7 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 |---|---|---|---|
 | (none) | — | `idea-ready` / `requirements-ready` | `/plan` |
 | `ideation` | any | — | `/plan` (settle HOW) |
-| `brainstorm` | any | `pending-confirmation` | `/brainstorm` |
+| (none) | — | `pending-confirmation` | `/brainstorm` |
 | `brainstorm` | any | `requirements-ready` | `/plan` (settle HOW) |
 | `plan` | `complete` | `plan-ready` | `/doc-review` (readiness) |
 | `plan` | `pending` / `in_progress` | — | `/plan` (finish the plan) |
@@ -83,7 +83,7 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 | `retro` | any | — | **terminal** — done; `/handoff` if a learning should become an issue |
 
 For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `idea-ready` /
-`requirements-ready`, it is `/plan` (matches `parse_issue.py`'s `handoff.can_plan` / `can_work`).
+`requirements-ready`, it is `/plan` (matches `parse_issue.py`'s `handoff.can_plan` / `can_work` for those maturities). `pending-confirmation` is not routed via `can_plan`/`can_work`; it routes to `/brainstorm` via the no-saga row above.
 
 ---
 

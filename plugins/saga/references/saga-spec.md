@@ -308,9 +308,12 @@ HANDOFF_MATURITIES = ("idea-ready", "requirements-ready", "plan-ready", "resume-
 
 `destination` mirrors `lifecycle_state.normalize_destination`'s canonical set — use that helper to normalize
 user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing. `HANDOFF_MATURITIES` is
-implemented in `plugins/saga/scripts/handoff_envelope.py`.
+implemented in `plugins/saga/scripts/handoff_envelope.py`. Frontmatter `maturity` must be an
+unindented top-level `maturity:` key inside YAML delimited by `---` lines; indented nested keys are
+ignored. An unrecognized non-empty or empty declared maturity fails closed with no durable route and a
+diagnostic, rather than falling through to the path rule.
 
-Shaping is an Operations board Status, not a Saga lifecycle phase, not a Saga command, and not an automatic consequence of any Saga capability completing. Mission Control is the only routine writer of that field. Cross-reference `plugins/saga/skills/plan/SKILL.md` §0.6, which already states the same derivation boundary, and note that Office Hours' lowercase "discovery / shaping" (lines 3, 19, and 149) is ordinary English for its own activity, unrelated to the board column.
+Shaping is an Operations board Status, not a Saga lifecycle phase, not a Saga command, and not an automatic consequence of any Saga capability completing. Mission Control is the only routine writer of that field. Cross-reference `plugins/saga/skills/plan/SKILL.md` §0.6, which already states the same derivation boundary, and note that Office Hours' lowercase "discovery / shaping" phrasing is ordinary English for its own activity, unrelated to the board column (the lifecycle-consistency check pins those exact phrases mechanically).
 
 ---
 
@@ -483,6 +486,12 @@ directory. (The cached `branch`/`head_sha` may be stale — that is fine, git is
   parseable.
 - The plugin's own SemVer (`plugin.json` / `marketplace.json`) tracks the capability; `schema_version`
   tracks the on-disk envelope contract. They move independently.
+- The handoff envelope built by `handoff_envelope.py` carries its own `schema_version` (currently
+  `"1.1"`) under the same rule: bump it on any breaking change to a field's meaning or layout, even
+  when the JSON type is stable. (1.0 → 1.1 is the precedent: `suggested_command` changed from a field
+  that always holds a runnable slash command to one that can hold a non-routable prose diagnostic when
+  `handoff_maturity` is `pending-confirmation` or unrecognized — consumers must branch on
+  `handoff_maturity` before trusting `suggested_command`.)
 
 ---
 

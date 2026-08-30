@@ -52,11 +52,17 @@ def test_frontmatter_maturity_pending_confirmation_wins(tmp_path: Path) -> None:
 
 
 def test_frontmatter_maturity_requirements_ready_wins(tmp_path: Path) -> None:
-    brainstorms = tmp_path / "docs" / "brainstorms"
-    brainstorms.mkdir(parents=True)
-    target = brainstorms / "2026-08-30-test-topic-requirements.md"
-    _write_file(target, "requirements-ready")
+    # Relocated to a directory whose path rule disagrees (ideation -> idea-ready) so
+    # removing the frontmatter reader flips the result.
+    ideation = tmp_path / "docs" / "ideation"
+    ideation.mkdir(parents=True)
+    target = ideation / "2026-08-30-test-topic-requirements.md"
+    target.write_text("---\nmaturity: requirements-ready\n---\n\nBody\n", encoding="utf-8")
     assert HE.infer_maturity(str(target)) == "requirements-ready"
+    assert (
+        HE.infer_maturity("docs/ideation/2026-08-30-test-topic-requirements.md", root=tmp_path)
+        == "requirements-ready"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -110,22 +116,28 @@ def test_out_of_domain_declared_value_falls_through(tmp_path: Path) -> None:
     ideation.mkdir(parents=True)
     target = ideation / "2026-06-19-plugin-grooming-next-steps.md"
     target.write_text("---\nmaturity: ready-to-execute\n---\n\nBody\n", encoding="utf-8")
-    assert HE.infer_maturity(str(target)) == "idea-ready"
-    # Also via root-relative
-    assert (
-        HE.infer_maturity("docs/ideation/2026-06-19-plugin-grooming-next-steps.md", root=tmp_path)
-        == "idea-ready"
+    # Unrecognized non-empty declared maturity now fails closed (API-03), not fall-through
+    assert HE.infer_maturity(str(target)) == "unknown:ready-to-execute"
+    envelope = HE.build_handoff_envelope(
+        "docs/ideation/2026-06-19-plugin-grooming-next-steps.md", root=tmp_path
     )
+    assert "/issue --prepare" not in envelope["suggested_command"]
 
 
 def test_inline_comment_stripped(tmp_path: Path) -> None:
-    brainstorms = tmp_path / "docs" / "brainstorms"
-    brainstorms.mkdir(parents=True)
-    target = brainstorms / "2026-08-30-topic-requirements.md"
+    # Use a value that differs from the path default so broken comment-stripping is detectable:
+    # ideation's path rule is idea-ready, but pending-confirmation with trailing comment should win.
+    ideation = tmp_path / "docs" / "ideation"
+    ideation.mkdir(parents=True)
+    target = ideation / "2026-08-30-topic-requirements.md"
     target.write_text(
-        "---\nmaturity: requirements-ready   # some note\n---\n\nBody\n", encoding="utf-8"
+        "---\nmaturity: pending-confirmation   # some note\n---\n\nBody\n", encoding="utf-8"
     )
-    assert HE.infer_maturity(str(target)) == "requirements-ready"
+    assert HE.infer_maturity(str(target)) == "pending-confirmation"
+    assert (
+        HE.infer_maturity("docs/ideation/2026-08-30-topic-requirements.md", root=tmp_path)
+        == "pending-confirmation"
+    )
 
 
 def test_shell_shaped_value_rejected(tmp_path: Path) -> None:
@@ -133,7 +145,11 @@ def test_shell_shaped_value_rejected(tmp_path: Path) -> None:
     brainstorms.mkdir(parents=True)
     target = brainstorms / "2026-08-30-topic-requirements.md"
     target.write_text("---\nmaturity: ; rm -rf ~\n---\n\nBody\n", encoding="utf-8")
-    assert HE.infer_maturity(str(target)) == "requirements-ready"
+    assert HE.infer_maturity(str(target)) == "unknown:; rm -rf ~"
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
 
 
 def test_non_utf8_file_does_not_raise(tmp_path: Path) -> None:
@@ -150,9 +166,15 @@ def test_root_honoured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     brainstorms.mkdir(parents=True)
     target = brainstorms / "2026-08-30-topic-requirements.md"
     _write_file(target, "pending-confirmation")
-    # Call from a different working directory — root must be honoured
+    # Plant a decoy at the same relative path under the cwd that declares a different maturity
+    # — root must win even when cwd has a colliding file.
     other = tmp_path / "other"
     other.mkdir()
+    decoy_dir = other / "docs" / "brainstorms"
+    decoy_dir.mkdir(parents=True)
+    (decoy_dir / "2026-08-30-topic-requirements.md").write_text(
+        "---\nmaturity: requirements-ready\n---\n\nBody\n", encoding="utf-8"
+    )
     monkeypatch.chdir(other)
     assert (
         HE.infer_maturity("docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path)
@@ -162,6 +184,8 @@ def test_root_honoured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
     )
     assert envelope["handoff_maturity"] == "pending-confirmation"
+    # Also direct check: infer with root vs without
+    assert HE.infer_maturity(str(target)) == "pending-confirmation"
 
 
 def test_non_routable_guard(tmp_path: Path) -> None:
@@ -174,3 +198,52 @@ def test_non_routable_guard(tmp_path: Path) -> None:
     )
     assert envelope["handoff_maturity"] == "pending-confirmation"
     assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_unrecognized_maturity_fails_closed(tmp_path: Path) -> None:
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    # Empty maturity
+    target = brainstorms / "2026-08-30-topic-requirements.md"
+    target.write_text("---\nmaturity: \n---\n\nBody\n", encoding="utf-8")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+    # Misspelled value
+    target.write_text("---\nmaturity: requirments-ready\n---\n\nBody\n", encoding="utf-8")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+    # Indented nested key should be ignored -> falls through to path rule (requirements-ready) but
+    # if same file also has no top-level maturity, it should be ignored
+    target.write_text("---\n  maturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8")
+    assert (
+        HE.infer_maturity("docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path)
+        == "requirements-ready"
+    )
+
+
+def test_maturity_vocabularies_in_sync() -> None:
+    # Drift guard: every code-level maturity vocabulary must be superset of HANDOFF_MATURITIES
+    handoff_mats = set(HE.HANDOFF_MATURITIES)  # type: ignore[attr-defined]
+    # parse_issue.py vocabulary
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "parse_issue_check", ROOT / "plugins/saga/scripts/parse_issue.py"
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    import sys
+
+    sys.modules[spec.name] = mod  # type: ignore[attr-defined]
+    spec.loader.exec_module(mod)
+    parse_vals = set(mod.HANDOFF_MATURITY_VALUES)  # type: ignore[attr-defined]
+    assert parse_vals == handoff_mats, f"parse_issue vocab {parse_vals} != handoff {handoff_mats}"
+    # saga-spec.md HANDOFF_MATURITIES tuple must also match
+    spec_text = (ROOT / "plugins/saga/references/saga-spec.md").read_text(encoding="utf-8")
+    assert "pending-confirmation" in spec_text
+    for val in handoff_mats:
+        assert val in spec_text, f"saga-spec missing {val}"

@@ -21,6 +21,24 @@
 
 ## 2026-08-30
 
+### Leaving a stale adjacent section does not license a "same as" claim against it  {#w19-no-sameness-claim-against-stale-rows}
+
+**Context.** W19 replaced the CAMPPS ladder in Mission Control's kanban reference with `stage_flow` and, per KTD3, left the Operations/Asgard `intent_flow` rows in the same file. The replacement sentence then said CAMPPS uses "the same six stages as Operations and Asgard."
+**Evidence.** `plugins/mission-control/skills/board/references/kanban-workflow.md:53` at `379d23504e8d51a223ed2fcd72d3dfce6fa3194e`; Operations fence at `:31` (`Idea -> Shaping -> Ready -> Active -> Verify -> Done`); schema `workflows.stage_flow.canonical_for` is all three boards. Document Review cycle 1 finding D1.
+**Mechanism.** The phrase was true of the live schema and false of the file the agent is reading. "Same as" against a section you deliberately left stale is a leak path: the stale names can travel into the corrected surface.
+**Fix (or queued).** Dropped the comparative clause and added the same deferred-correction pointer the board skill already carries. Review artifact `docs/reviews/2026-08-30-w19-docrev-c1-379d23504e8d.md`.
+**Generalizable rule.** When a unit corrects one row and leaves its neighbors stale, do not claim the new text is the same as those neighbors. Name the new source of truth, and say the neighbors are still wrong.
+**Refs.** infiquetra-sdlc#100 (unit W19); plan KTD1 / KTD3.
+
+### A nearby `mount-olympus` ternary is not a guard around the token  {#w19-read-the-full-guard-expression}
+
+**Context.** The W19 work session claimed every `In Progress` token in `sdlc_manager.py` sits under a `project_name == "mount-olympus"` guard or the alias map.
+**Evidence.** `plugins/mission-control/scripts/sdlc_manager.py:480`: `return {"Ready": 10, "In Progress": 10 if project_name == "mount-olympus" else 5}`. The ternary picks the integer; the key is unconditional.
+**Mechanism.** A reviewer who greps `In Progress` and sees `mount-olympus` on the same line will classify the site as retired. The retired-context test is whether the *token is presented as live vocabulary*, not whether the string `mount-olympus` appears nearby.
+**Fix (or queued).** No code change in W19 (documentation-only). Recorded as residual risk in the Document Review artifact; the three active boards do not hit this fallback while `wip_limits.<board>` is a non-empty dict.
+**Generalizable rule.** When someone reports leftover tokens as "guarded," read the full expression. A ternary that changes a number does not retire the key.
+**Refs.** infiquetra-sdlc#100 (unit W19); AE34 live-vs-retired distinction.
+
 ### A readiness rule pinned to one literal word dies the day the vocabulary moves; derive it from the declaring field  {#w10-entry-option-from-stage}
 
 **Context.** Post-merge W10 acceptance failed live: `issue create-prepared` refused every valid Status because the starting-status rule was `_TEAM_SAFE_STATUSES = {"asgard": "Shaping", "campps": "Idea"}` — two Status names the W13 board migration had retired. (`Shaping` survived only as a Stage value, a different field.) The rule was unsatisfiable both ways: readiness refused every author-supplied Status, and prepare's `status or <team-literal>` defaulted to a value no board accepts.

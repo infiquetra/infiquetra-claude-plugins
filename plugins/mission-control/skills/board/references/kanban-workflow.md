@@ -50,7 +50,9 @@ Asgard modes:
 
 ### CAMPPS
 
-CAMPPS runs the shared `stage_flow` workflow — the same six stages as Operations and Asgard:
+CAMPPS runs the shared `stage_flow` workflow. The Operations and Asgard section
+above still shows the retired `intent_flow` names; correcting them is tracked as
+a separate change and is not done here:
 
 ```
 Intake -> Shaping -> Planning -> Active -> Verify -> Retro

@@ -16,6 +16,10 @@
   terminal status).
 - The Mount Olympus legacy timeline facts are preserved as pointers to
   `LIVE_LEGACY_STATUS_ALIASES` in `sdlc_manager.py` instead of hand-copied value lists.
+- Document Review cycle 1 dropped the kanban-reference claim that CAMPPS uses "the same
+  six stages as Operations and Asgard." That phrase was schema-true and contradicted the
+  still-stale Operations/Asgard `intent_flow` section in the same file. The CAMPPS section
+  now states `stage_flow` and points at the deferred correction, matching the board skill.
 
 ## [2.15.1] - 2026-08-30
 

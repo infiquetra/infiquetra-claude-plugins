@@ -10,7 +10,7 @@ when_to_use: |
   Board review and status:
   - Review or view Operations, Asgard, or CAMPPS board state
   - Check overall board health or get a snapshot of current work
-  - See what's in a specific status, such as Shaping, Active, or In Progress
+  - See what's in a specific status, such as Implementing, Ready to merge, or Blocked
 
   Moving items between statuses:
   - Move an issue to a different board status
@@ -38,11 +38,18 @@ requires an explicit `--project`.
 |-------------|-------|----------|
 | `operations` | Operations | `Idea -> Shaping -> Ready -> Active -> Verify -> Done` |
 | `asgard` | Asgard | `Idea -> Shaping -> Ready -> Active -> Verify -> Done` |
-| `campps` | CAMPPS | `Idea -> Committed -> In Progress -> Done` (pause: `Parked`) |
+| `campps` | CAMPPS | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
 
 The former project #1 (Mount Olympus) is retired-historical and closed; it is not an active
 board and is not a routing target. Deployment state is not a workflow status; use deployment
 fields and GitHub Deployments/Environments for environment movement.
+
+The Operations and Asgard rows in the table above still show the retired `intent_flow` ladder
+names; correcting them is tracked as a separate change and is not done here. CAMPPS follows the
+`stage_flow` workflow recorded in `$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`: `Stage` is
+the board column and `Status` carries the in-stage condition (the cross-cutting `Blocked`
+status applies everywhere). No active board carries a pause column; a paused card is expressed
+through labels and issue state.
 
 ## Script Location
 
@@ -65,7 +72,7 @@ python3 sdlc_manager.py board view --project campps
 
 # Filter to a specific status
 python3 sdlc_manager.py board view --project asgard --status "Active"
-python3 sdlc_manager.py board view --project campps --status "In Progress"
+python3 sdlc_manager.py board view --project campps --status "Implementing"
 ```
 
 ### Add Item
@@ -84,10 +91,11 @@ python3 sdlc_manager.py board add --project campps --repo athena-service --numbe
 python3 sdlc_manager.py board move --project asgard --repo infiquetra-sdlc --number 42 --status "Active"
 python3 sdlc_manager.py board move --project operations --repo infiquetra-sdlc --number 42 --status "Shaping"
 
-# CAMPPS initiative flow
-python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Committed"
-python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "In Progress"
-python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Done"
+# CAMPPS: board move writes Status (the in-stage condition), not the Stage column
+python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Implementing"
+python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Ready to merge"
+# Write the Stage column through flow set-field, not board move
+python3 sdlc_manager.py flow set-field --project campps --repo athena-service --number 42 --field Stage --option Verify
 ```
 
 > **W6**: `board move` writes `Status` to EVERY board carrying the issue, all-or-none — a
@@ -112,7 +120,7 @@ python3 sdlc_manager.py board archive --project campps
 ```
 
 The command archives terminal workflow items. For Operations and Asgard that means `Done`.
-For CAMPPS that means `Done`.
+For CAMPPS, whose workflow is `stage_flow`, that means `Ready to close`.
 
 ### WIP And Standup
 
@@ -148,7 +156,8 @@ python3 sdlc_manager.py board discover-fields --project operations
 
 CAMPPS is an initiative rollup board and does not enforce per-column WIP limits.
 When WIP is exceeded, stop pulling new work on that board and focus on finishing, swarming,
-or moving blocked cards to the right pause state.
+or leaving cards in `Blocked`. No active board carries a pause column; a paused card is
+expressed through labels and issue state, not a workflow status.
 
 ## Natural Language Examples
 

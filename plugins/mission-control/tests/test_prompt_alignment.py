@@ -43,8 +43,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.15.1"
-    )  # W10 repair: starting Status derives from Stage via the R49 entry-option rule (infiquetra-sdlc#91)
+        plugin_json["version"] == "2.15.2"
+    )  # W19: retired CAMPPS ladder removed from board skill docs (infiquetra-sdlc#100)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]

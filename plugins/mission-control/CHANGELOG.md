@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.15.2] - 2026-08-30
+
+### Fixed - retire the CAMPPS ladder from the board skill and kanban reference (unit W19, issue infiquetra/infiquetra-sdlc#100)
+
+- `skills/board/SKILL.md` and `skills/board/references/kanban-workflow.md` no longer document
+  the retired CAMPPS ladder as current. CAMPPS is documented with the shared `stage_flow`
+  workflow (`Intake -> Shaping -> Planning -> Active -> Verify -> Retro`), whose stages and
+  per-stage Status sets are transcribed from `config/sdlc-schema.json` at schema version
+  `2026-08-29`. No active board carries a pause column; a paused card is expressed through
+  labels and issue state.
+- Command examples now name flags and values that exist: `board move` examples use live
+  `stage_flow` Status values, the Stage-column example uses `flow set-field --field Stage`,
+  and the CAMPPS archive and standup-review prose follow the schema (`Ready to close` is the
+  terminal status).
+- The Mount Olympus legacy timeline facts are preserved as pointers to
+  `LIVE_LEGACY_STATUS_ALIASES` in `sdlc_manager.py` instead of hand-copied value lists.
+
 ## [2.15.1] - 2026-08-30
 
 ### Fixed - prepared-issue starting Status derives from Stage (unit W10 repair, issue infiquetra/infiquetra-sdlc#91)

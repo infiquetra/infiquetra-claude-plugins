@@ -71,13 +71,15 @@ Safeguards that apply to every route, whichever step it reached:
 - Never read, hash, copy, truncate, fingerprint, or persist a credential value. Hashing is not a safe compromise: a hash of a short secret is attackable, and a hash in a transcript is still durable proof of possession.
 - Redact inside the producing command, before output exists. Piping output through a redacting filter is not sufficient — by then the value has been produced and buffered and may already be in a transcript, a log, or a failure path that bypasses the filter.
 
-The read-back shape, using only allowlisted non-secret arguments:
+The read-back shape, using only allowlisted non-secret arguments. The probe takes a real prompt and, when the run names an account, the account flag: without a prompt the launch delivers nothing and exits nonzero on its ordinary path, and without the flag the read-back's account is null. Delivered, the probe exits 0 and writes the receipt.
 
 ```bash
-python3 "$S" launch --vendor <tool> --task <probe-name> --cwd "$PWD" --model <model> --effort <effort> > receipt.json
-jq '{model, account, account_evidence, permission_resolved}' receipt.json
+python3 "$S" launch --vendor <tool> --task <probe-name> --cwd "$PWD" --model <model> --effort <effort> --account <selection> --prompt <probe-task> > receipt.json
+jq '{confirmed_against_herdr, requested_only, account, account_evidence, permission_resolved}' receipt.json
 python3 "$S" close --receipt-json receipt.json
 ```
+
+Read back only what the receipt can supply: `confirmed_against_herdr` against `requested_only`, the account evidence, and the argv record of the permission posture. `model` in the receipt is the requested string echoed back, not a read-back — do not treat it as confirmed — and the receipt carries no reasoning-effort value at all.
 
 Whatever the read-back reports as missing or wrong is a stop: tear the probe session down using the receipt and resolve it before anything else launches.
 

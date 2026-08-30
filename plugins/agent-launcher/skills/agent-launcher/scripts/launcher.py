@@ -703,6 +703,14 @@ def _sgr_ends_styled_span(params: str) -> bool:
     return all(code in _STYLE_OFF_SGR_CODES for code in codes)
 
 
+def _composer_line_content(line: str) -> str:
+    """The line's text once its styling and its leading marker glyph are removed."""
+    text = strip_ansi(line).lstrip()
+    if text[:1] in COMPOSER_MARKERS:
+        text = text[1:]
+    return text.strip()
+
+
 def composer_staged_text(ansi_text: str) -> str | None:
     """Text a human staged in the input box, or None when no composer line was found.
 
@@ -710,34 +718,41 @@ def composer_staged_text(ansi_text: str) -> str | None:
     anything" arrives wrapped in a dim foreground SGR, and claude's hints the same way --
     while text somebody typed carries no styling. Discarding a placeholder is harmless and
     discarding staged operator text is not, so only unstyled runs count as staged -- with one
-    exception: when styling spans the whole line and never ends, nothing distinguishes the
-    client's decoration from typed text, and the text counts as staged rather than being
-    discarded.
+    exception: when a styled span is still open at the end of the line, nothing distinguishes
+    the client's decoration from typed text, and the text counts as staged rather than being
+    discarded, whatever resets appeared earlier on the row.
     """
-    strong: str | None = None
-    weak: str | None = None
+    strong: list[str] = []
+    weak: list[str] = []
     for line in ansi_text.splitlines():
         # The marker itself can sit inside a styled run, so find it with styling stripped.
         first = strip_ansi(line).lstrip()[:1]
         if first in _STRONG_COMPOSER_MARKERS:
-            strong = line
+            strong.append(line)
         elif first == ">":
-            weak = line
-    composer = strong if strong is not None else weak
+            weak.append(line)
+    # The winning line must be the box, and the box is the last marker line that is non-empty
+    # after stripping: an empty later row -- a decoy menu row, a quoted line, an echo of the
+    # glyph -- must not shadow a box holding text. The decorated-glyph class outranks the bare
+    # ">" class; when every line of the stronger class is empty, the weaker class still names a
+    # box; only when every marker line is empty does the bare last one stand.
+    composer: str | None = None
+    for lines in (strong, weak):
+        non_empty = [line for line in lines if _composer_line_content(line)]
+        if non_empty:
+            composer = non_empty[-1]
+            break
+    if composer is None:
+        composer = (strong or weak)[-1] if (strong or weak) else None
     if composer is None:
         return None
     unstyled: list[str] = []
     styled = False
-    saw_reset = False
     cursor = 0
     for sgr in re.finditer(r"\x1b\[[0-9;]*m", composer):
         if not styled:
             unstyled.append(composer[cursor : sgr.start()])
-        if _sgr_ends_styled_span(sgr.group(0)[2:-1]):
-            styled = False
-            saw_reset = True
-        else:
-            styled = True
+        styled = not _sgr_ends_styled_span(sgr.group(0)[2:-1])
         cursor = sgr.end()
     if not styled:
         unstyled.append(composer[cursor:])
@@ -745,7 +760,9 @@ def composer_staged_text(ansi_text: str) -> str | None:
     if staged[:1] in COMPOSER_MARKERS:
         staged = staged[1:]
     staged = staged.strip()
-    if not staged and not saw_reset and re.search(r"\x1b\[[0-9;]*m", composer):
+    if not staged and styled:
+        # A span still open at end of line: apply the fallback on that fact alone. An earlier
+        # reset anywhere on the row says nothing about the span that ends the line.
         whole = strip_ansi(composer).lstrip()
         if whole[:1] in COMPOSER_MARKERS:
             whole = whole[1:]
@@ -1240,6 +1257,14 @@ def verify_unit_preflight(
         "verified": True,
         "prompt_delivered": (getattr(unit, "launch_receipt", {}) or {}).get("prompt_delivered"),
     }
+    # The guard annotates this same receipt just before this rebuild on the branches where it
+    # lets the launch continue. Carry its keys forward the way prompt_delivered is carried, or
+    # the emitted receipt no longer says the box was inspected or what was found.
+    carried = getattr(unit, "launch_receipt", None)
+    if isinstance(carried, dict):
+        for key in ("input_box", "input_box_text_chars"):
+            if key in carried:
+                receipt[key] = carried[key]
     unit.launch_receipt = receipt
     return receipt
 

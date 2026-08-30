@@ -339,7 +339,20 @@ def _prepare_guard_launch(
     # launch() resolves the wrapper in agent_argv before run(); stubbing run is not enough.
     monkeypatch.setattr(launcher, "launcher", lambda: "agents")
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
-    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    # verify_unit_preflight is deliberately NOT stubbed: it rebuilds unit.launch_receipt, and a
+    # stub that skips the rebuild hid the rebuild discarding the guard's keys. Its own
+    # collaborators (the herdr row read) are the seam; the function under guard must be real.
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda unit, agents=None: {
+            "pane_id": "w80:p9",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w80",
+            "interactive_ready": True,
+            "agent": "codex",
+        },
+    )
     monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
     unit = launcher.LaunchRequest(name="reviewer", vendor="codex", worktree="/tmp/wt")
@@ -457,13 +470,96 @@ def test_menu_rows_below_staged_text_are_not_the_composer(launcher: ModuleType) 
     assert launcher.composer_staged_text(dump) == "deploy now"
 
 
-def test_a_scrollback_echo_is_not_the_composer(launcher: ModuleType) -> None:
+def test_a_non_empty_marker_line_outranks_a_later_empty_one(launcher: ModuleType) -> None:
+    """A later empty marker row must not shadow a row holding text. The scan cannot tell a
+    scrollback echo from a live box when both carry the same glyph, so the last NON-EMPTY
+    marker line wins: reading a draft as staged is a safe stop, while reading an empty box over
+    a draft dispatches the prompt into it."""
     dump = "❯ earlier submitted prompt\npane output line\n❯ "
-    assert launcher.composer_staged_text(dump) == ""
+    assert launcher.composer_staged_text(dump) == "earlier submitted prompt"
 
 
 def test_escapes_inside_staged_text_are_stripped(launcher: ModuleType) -> None:
     assert launcher.composer_staged_text("❯ deploy the \x1b[Kfleet") == "deploy the fleet"
+
+
+# The style-reset predicate, unit-tested directly over the attribute-off code set AND its
+# complement: emptying the set or reducing the predicate to a literal-zero test must fail
+# these, not survive behind the never-reset fallback.
+ATTRIBUTE_OFF_CODES = ("21", "22", "23", "24", "27", "28", "29", "39", "49")
+ATTRIBUTE_ON_CODES = (
+    "1",
+    "3",
+    "4",
+    "5",
+    "7",
+    "8",
+    "9",
+    "31",
+    "38",
+    "44",
+    "90",
+    "101",
+    "38;2;153;153;153",
+)
+
+
+@pytest.mark.parametrize("code", ATTRIBUTE_OFF_CODES)
+def test_every_attribute_off_code_ends_a_styled_span(launcher: ModuleType, code: str) -> None:
+    assert launcher._sgr_ends_styled_span(code) is True
+    assert launcher._sgr_ends_styled_span(f"0;{code}") is True
+
+
+@pytest.mark.parametrize("code", ATTRIBUTE_ON_CODES)
+def test_attribute_on_codes_do_not_end_a_styled_span(launcher: ModuleType, code: str) -> None:
+    assert launcher._sgr_ends_styled_span(code) is False
+
+
+@pytest.mark.parametrize("params", ["", "0", "00", "0;10", "0;38;2;1;2;3"])
+def test_reset_forms_end_a_styled_span(launcher: ModuleType, params: str) -> None:
+    assert launcher._sgr_ends_styled_span(params) is True
+
+
+# The marker scan: the winning line must be the box -- the last marker line that is non-empty
+# after stripping -- in each decoy shape the review executed.
+def test_same_class_decoy_does_not_shadow_a_box_holding_text(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("❯ draft text\n❯ ") == "draft text"
+
+
+def test_cross_glyph_decoy_does_not_shadow_a_box_holding_text(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("❯ draft text\n› ") == "draft text"
+
+
+def test_weak_class_decoy_does_not_shadow_a_box_holding_text(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("❯ \n> draft text") == "draft text"
+
+
+def test_styled_draft_reopened_after_a_close_is_staged(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("\x1b[2m❯\x1b[0m\x1b[2m draft text") == "draft text"
+
+
+# The never-reset fallback: a span still open at end of line triggers it, whatever resets
+# appeared earlier on the row.
+def test_leading_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("\x1b[0m\x1b[2m❯ /deploy prod") == "/deploy prod"
+
+
+def test_bare_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("\x1b[m\x1b[2m❯ /deploy prod") == "/deploy prod"
+
+
+def test_lone_colour_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("\x1b[39m\x1b[2m❯ /deploy prod") == "/deploy prod"
+
+
+def test_closed_hint_then_reopened_span_keeps_the_draft(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("\x1b[2m❯ \x1b[0m\x1b[2mdeploy prod") == "deploy prod"
+
+
+def test_closed_placeholder_still_reads_empty(launcher: ModuleType) -> None:
+    """The fallback gate must not fire when every span closes: a codex placeholder ends with
+    its reset, and reading it as staged would stop every idle launch."""
+    assert launcher.composer_staged_text(CODEX_PLACEHOLDER) == ""
 
 
 def test_unreadable_box_is_marked_and_the_prompt_still_goes(
@@ -498,7 +594,19 @@ def test_unreadable_box_is_marked_and_the_prompt_still_goes(
     monkeypatch.setattr(launcher, "run", fake_run)
     monkeypatch.setattr(launcher, "launcher", lambda: "agents")
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
-    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    # The real verify_unit_preflight must run: it rebuilds unit.launch_receipt, and stubbing it
+    # once hid the rebuild discarding this very key. Only its row-read collaborator is stubbed.
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda unit, agents=None: {
+            "pane_id": "w80:p9",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w80",
+            "interactive_ready": True,
+            "agent": "codex",
+        },
+    )
     monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
     unit = launcher.LaunchRequest(name="reader", vendor="codex", worktree="/tmp/wt")
@@ -1604,3 +1712,23 @@ def test_hashing_example_would_fail_its_guard() -> None:
 def test_downstream_only_redaction_would_fail_its_guard() -> None:
     fixture = "launch | sed 's/.*/REDACTED/'"
     assert _downstream_redaction_violations(fixture) != []
+
+
+def test_the_documented_preflight_recipe_is_runnable() -> None:
+    """The probe recipe must actually run: a prompt (and the account flag when an account is
+    named) on the launch line, an exit-status statement, and a read-back that selects only keys
+    the receipt can supply -- never the model, which is the request echoed back."""
+    skill = (
+        REPO / "plugins" / "agent-launcher" / "skills" / "agent-launcher" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    section = skill[skill.index("## The only real preflight") : skill.index("## Ordering")]
+    launch_lines = [line for line in section.splitlines() if "launch --vendor" in line]
+    assert launch_lines
+    probe = launch_lines[-1]
+    assert "--prompt <probe-task>" in probe
+    assert "--account <selection>" in probe
+    assert "exits 0" in section
+    jq_lines = [line for line in section.splitlines() if line.startswith("jq ")]
+    assert jq_lines
+    assert "model" not in jq_lines[-1]
+    assert "confirmed_against_herdr" in jq_lines[-1]

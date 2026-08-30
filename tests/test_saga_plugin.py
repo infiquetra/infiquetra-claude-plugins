@@ -45,10 +45,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.149.0"  # issue #918 Wave 1: backend: required on new plans,
-    # the plan-artifact conformance check, the structured pre-answer carrier, the finished-plan
-    # routing repair, the surfaced save failure, and the cc-workflows emitter extraction;
-    # successor to W10's (sdlc#91) Intake no-issue-creation boundary at 0.148.0
+    assert plugin_json["version"] == "0.150.0"  # issue #918 Wave 1: backend: required on new
+    # plans, the plan-artifact conformance check, the structured pre-answer carrier, the
+    # finished-plan routing repair, the surfaced save failure, and the cc-workflows emitter
+    # extraction; successor to issue #912's Brainstorm release at 0.149.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

@@ -97,10 +97,26 @@ python3 plugins/saga/scripts/saga.py scan
 
 `scan` returns one candidate per saga (latest tick each), newest-first by filename, each surfacing
 `lifecycle_phase` / `phase_status` / `status` / `destination` / `issue_ref` / `plan_path` / `branch` /
-the orchestration pointer. Classify the run:
+the orchestration pointer. Beside the saga scan, for capabilities that write no Saga state (notably
+Brainstorm), scan `docs/brainstorms/*-requirements.md` and read frontmatter for `capability`,
+`activity`, `topic`, and `maturity`. Apply the same three-tier order Phase 0.1 of
+`plugins/saga/skills/brainstorm/SKILL.md` uses, stated in the same sequence: exact producer-fact
+match first (on `topic` plus `capability`); then files lacking the producer facts, which route to the
+labelled inference path rather than counting as absent — a file missing `capability` is a legacy
+artifact, never a miss; and only a genuinely empty scan reports no candidate. One unambiguous match
+is a matched candidate that routes to `/brainstorm` — summarize the restored boundary and continue
+from it without re-presenting settled decisions, reusing the existing Phase 1 disambiguation shape
+(single-select over the candidate list); two or more plausible matches stop and ask the operator to
+choose, explicitly never by recency, filename, or broad content match; a `pending-confirmation` match
+is restored as a proposed boundary awaiting confirmation, never as finished work. This document scan
+is read-only — Brainstorm still writes no Saga state. Classify the run:
 
 - **matched-saga** — a candidate matches the thread (`issue_ref`, `plan_path`, `branch`, or operator
   confirmation) -> **Tier 1** (Phase 1 -> 2 -> 3a -> 4 -> 5).
+- **matched-brainstorm** — the document scan found exactly one unambiguous
+  `docs/brainstorms/*-requirements.md` candidate and no saga matches the thread. Route directly to
+  `/brainstorm`, bypassing Phases 1 through 5. State the restored boundary and its declared
+  `maturity`, and continue from it without re-presenting settled decisions.
 - **resolvable-issue** — no matching saga, but the input names a GitHub issue (or one resolves via
   `state.json.sagas[*].issue_ref` ending in `#N`) -> **Tier 1** via PR archaeology + the issue
   (Phase 2's `load_saga_context.py` / `saga.py context` path).
@@ -275,7 +291,9 @@ Route from the reconstructed `lifecycle_phase` / `phase_status` (Tier 1) or the 
 one source of truth keeps `/loop` and `/resume` routing identical.
 
 The common case is `/work` (resume the round-N loop on a `resume-ready` thread) or `/handoff` (when
-another team / later session should pick the recovered work up). Announce the chosen command with a
+another team / later session should pick the recovered work up). A `matched-brainstorm` run hands to `/brainstorm` and writes **no** re-entry tick,
+because Brainstorm holds no Saga state and `resume/SKILL.md:110` forbids minting one. The Phase 5 one-tick mandate applies to `matched-saga` and
+`resolvable-issue` only. Announce the chosen command with a
 one-line reason. **Never route back to `/loop`** — `/resume` is the forward path off `/loop`'s opt-in,
 not a return ticket.
 

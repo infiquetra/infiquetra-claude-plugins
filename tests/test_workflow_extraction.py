@@ -96,15 +96,18 @@ def test_no_counterfactual_preselect_branches_remain() -> None:
         "if the helper recommends it",
     )
     for path in (PLAN_SKILL, WORK_SKILL, OPERATOR_CHOICE, EXECUTION_STRATEGY):
-        lowered = path.read_text(encoding="utf-8").lower()
+        # Collapse whitespace runs before matching: the branch this guard hunts wraps
+        # across a line break in half these files, and a flat literal comparison passes
+        # vacuously against the wrapped form (review F02).
+        collapsed = " ".join(path.read_text(encoding="utf-8").lower().split())
         for phrase in counterfactuals:
-            assert phrase not in lowered, f"{path.name} still carries {phrase!r}"
+            assert phrase not in collapsed, f"{path.name} still carries {phrase!r}"
 
 
 def test_each_offer_file_keeps_an_unconditional_never_pre_select_sentence() -> None:
     for path in (PLAN_SKILL, WORK_SKILL, OPERATOR_CHOICE, EXECUTION_STRATEGY):
-        lowered = path.read_text(encoding="utf-8").lower()
-        assert "never pre-select" in lowered or "do not pre-select" in lowered, (
+        collapsed = " ".join(path.read_text(encoding="utf-8").lower().split())
+        assert "never pre-select" in collapsed or "do not pre-select" in collapsed, (
             f"{path.name} lost its unconditional never-pre-select sentence"
         )
 
@@ -160,19 +163,36 @@ def test_recommend_never_returns_ultracode_as_recommended() -> None:
 _ARTIFACT_IN_PLANS_RE = re.compile(r"docs/plans/[^\s`'\"]*(-spec\.json|\.workflow\.js)")
 
 
+def _plugin_markdown_guard_files() -> list[Path]:
+    # Review F18: scan every markdown file under plugins/ — the earlier six-path
+    # allowlist let saga-spec.md escape. Changelogs are history, never live
+    # conventions, so they are excluded.
+    return [p for p in sorted((ROOT / "plugins").rglob("*.md")) if p.name != "CHANGELOG.md"]
+
+
 def test_no_live_write_path_convention_targets_docs_plans_for_artifacts() -> None:
-    for path in (
-        PLAN_SKILL,
-        WORK_SKILL,
-        OPERATOR_CHOICE,
-        EXECUTION_STRATEGY,
-        EXECUTION_SPEC_DOC,
-        PLUGIN_SKILL,
-    ):
+    for path in _plugin_markdown_guard_files():
         text = path.read_text(encoding="utf-8")
         assert not _ARTIFACT_IN_PLANS_RE.search(text), (
-            f"{path.name} still points generated artifacts at docs/plans/"
+            f"{path.relative_to(ROOT)} still points generated artifacts at docs/plans/"
         )
+
+
+def test_no_docs_plans_pointer_resolves_to_a_moved_artifact() -> None:
+    # Review F17 (inverted): rather than spot-checking one of forty-one pointers, fail
+    # on ANY docs/plans artifact reference whose target moved to docs/workflows/ — a
+    # stale pointer is a reference migration the move owed. Relational, never a count.
+    name_re = re.compile(r"docs/plans/([A-Za-z0-9._-]+(?:-spec\.json|\.workflow\.js))")
+    scanned = [
+        *_plugin_markdown_guard_files(),
+        *sorted((ROOT / "plugins").rglob("*.py")),
+    ]
+    stale: list[tuple[Path, str]] = []
+    for path in scanned:
+        for name in name_re.findall(path.read_text(encoding="utf-8")):
+            if (ROOT / "docs" / "workflows" / name).is_file():
+                stale.append((path.relative_to(ROOT), name))
+    assert not stale, f"stale docs/plans pointers to moved artifacts: {stale}"
 
 
 def test_artifacts_moved_and_plans_directory_retained() -> None:
@@ -196,16 +216,16 @@ def test_artifacts_moved_and_plans_directory_retained() -> None:
 
 
 def test_live_references_to_moved_artifacts_resolve() -> None:
-    scanned = [
-        *sorted((ROOT / "plugins").rglob("*.md")),
-        *sorted(SAGA_SCRIPTS.glob("*.py")),
-        *sorted(CC_WORKFLOWS_SCRIPTS.glob("*.py")),
-    ]
+    # Code pointers are unambiguously live, so they must resolve on disk. Prose
+    # conventions are guarded by the write-path guard and the stale-pointer inversion
+    # above (the spec doc's worked envelope example is illustrative and may name an
+    # artifact that never shipped).
+    scanned = sorted((ROOT / "plugins").rglob("*.py"))
     full_re = re.compile(r"docs/workflows/[A-Za-z0-9._-]+(?:-spec\.json|\.workflow\.js)")
     references = {
         rel for path in scanned for rel in full_re.findall(path.read_text(encoding="utf-8"))
     }
-    assert references, "no live pointer to a moved artifact found — the scan drifted"
+    assert references, "no live code pointer to a moved artifact found — the scan drifted"
     for rel in references:
         assert (ROOT / rel).is_file(), f"dangling pointer to {rel}"
 

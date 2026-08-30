@@ -36,8 +36,10 @@
   `/doc-review`. Previously the omitted flag resolved to the `pending` default, which the dispatch
   table sends back to Plan to "finish the plan".
 - **A failed saga save is no longer silent.** A filesystem failure while writing the tick now exits
-  non-zero naming the plan document left on disk with no tick referencing it, instead of a bare
-  traceback, so an unreferenced plan cannot be produced unnoticed.
+  non-zero naming the write that failed — the tick envelope, or the `state.json` index rewrite
+  after the envelope landed (in that second case the tick stays tracked, because `restore` reads
+  the envelope directly) — instead of a bare traceback, so an unreferenced plan cannot be produced
+  unnoticed.
 - **Six counterfactual execution-backend recommendation branches removed** across four documents,
   without weakening the explicit-invocation pins that guard them.
 

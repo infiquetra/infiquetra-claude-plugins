@@ -21,6 +21,26 @@
 
 ## 2026-08-30
 
+### A guard that matches flat literals passes vacuously against wrapped prose  {#918-vacuous-guard-class}
+
+**Context.** Repair cycle 1 of issue #918's integrated review (revision `5ec8ea76`) found the `#808` counterfactual-branch guard in `tests/test_workflow_extraction.py` comparing three flat phrase literals against lowered file text.
+**Evidence.** Review finding F02; mutation run in the review: restoring the merge-base counterfactual branches into `operator-choice.md:55-57` and `execution-strategy.md:158-159` left the suite green (65 passed), while the same restore into `work/SKILL.md:53` failed — the guard worked only where the phrase did not wrap a line.
+**Mechanism.** Prose wraps; literals do not. A substring test over raw text silently accepts any phrase broken by a newline or double space, so the guard protected half the explicit-invocation boundary while reporting full coverage. The test's green state was evidence of its own literalness, not of the contract.
+**Fix.** Collapse whitespace runs (`" ".join(text.lower().split())`) before matching, for both the counterfactual-absence guard and the unconditional-sentence guard; mutation proof re-run (wrapped counterfactual restored → guard fails; restored tree → passes).
+**Validation.** `uv run pytest tests/test_workflow_extraction.py` green with the armed guard; mutant cycle red/green as above.
+**Generalizable rule.** Any guard that matches prose must normalize whitespace before comparing — and a guard's mutation proof must restore the defect in the shape the prose actually takes (wrapped), not the shape the test happens to write.
+**Refs.** Issue #918 repair cycle 1; finding F02; `{#918-extraction-seam-typed-spec-contract}`.
+
+### A non-zero save exit has two distinct truths — name the write that failed  {#918-save-failure-two-writes}
+
+**Context.** Saga's `save` writes the tick envelope first, then rewrites the `state.json` index; `restore` reads the envelope directly and never opens the index. The CLI's single OSError handler claimed every failure left the plan with NO tick.
+**Evidence.** Review findings F05/F05u/F05d at `5ec8ea76`; reproduction: pre-creating `state.json.tmp` as a directory exits 2 with the false no-tick message while `restore` returns the tick (`phase_status: complete`). The claim was repeated on four surfaces: the runtime message, its comment, `plan/SKILL.md` Phase 5.3, and the changelog entry.
+**Mechanism.** One handler over two ordered writes inherits only the first write's truth. The index-only path produced a false durable-state fact, and the prescribed remedy (re-run the save) would append a duplicate tick — a false halt plus a redundant write, not corruption, but exactly the kind of confident falsehood an agent acts on.
+**Fix.** Split the failure into `SagaTickEnvelopeWriteError` (no tick — stranded-document remedy correct) and `SagaTickIndexWriteError` (tick tracked — message says so, re-run rebuilds the index idempotently); generic OSError makes no tick claim. All four prose surfaces corrected in the same commit.
+**Validation.** New index-only regression test in `tests/test_saga_plan_save_and_routing.py` (the review's own repro); mutation flipping the index message back to the false claim fails it; envelope-phase test still green.
+**Generalizable rule.** When one handler covers an ordered multi-write transaction, split the error by which write failed before composing any operator-facing claim — a message that asserts state must be conditioned on the write that establishes it.
+**Refs.** Issue #918 repair cycle 1; findings F05/F05u/F05d.
+
 ### A volatile line count with no live target must be recorded, not manufactured  {#916-dispatch-line-count-no-target}
 
 **Context.** The design record described a volatile hand-maintained Brainstorm source-line count in a dispatch table. At Saga 0.148.0 the target does not exist: `plugins/saga/references/sandbox-spawn-sites.md` has no Brainstorm row and no `~line` Brainstorm surface exists, verified at `3b2b7083`.

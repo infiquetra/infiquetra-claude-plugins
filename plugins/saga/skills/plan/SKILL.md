@@ -135,21 +135,36 @@ no card to move; say nothing further.
 
 A caller that has already settled a decision may hand it to `/plan` in the invocation text — a
 fenced JSON block, schema `plan_pre_answers.v1` — instead of letting the conversation re-ask it.
-Contract: `references/saga-spec.md` §16; validator: `scripts/plan_pre_answers.py` (pure functions;
-reads the text it is given, writes nothing). This is intake, not a phase: evaluate it once, at
-entry, before the first question. Its only visible effects are narration plus the absence of a
-question that would otherwise have been asked. Four rules govern it:
+Contract: `references/saga-spec.md` §15. Evaluate it once, at entry, before the first question,
+with the runnable validator:
 
-- **Apply and narrate.** A valid value is applied to its decision — execution `backend` (Phase
-  5.2's enum), routing `destination` (Phase 5.1's enum) — and visibly narrated together with the
-  `caller` that supplied it. Do not ask the operator to repeat a settled decision.
+```bash
+python3 plugins/saga/scripts/plan_pre_answers.py --invocation-file <invocation-text-file>
+```
+
+It prints the outcome as JSON and exits 0 when there is no stop (a clean apply, or no carrier) and
+2 with `stop` set otherwise — on 2, surface the `stop` reason exactly; never continue silently.
+This is intake, not a phase: its only visible effects are narration of an applied value together
+with the `caller` that supplied it, and the absence of a question that would otherwise have been
+asked. Five rules govern it:
+
+- **Apply and narrate.** A valid `destination` (Phase 5.1's enum) and an `inline` backend are
+  applied to their decisions and visibly narrated together with the `caller` that supplied them. Do
+  not ask the operator to repeat a settled decision. `team-execution` and `cc-workflows-ultracode`
+  are legal plan values, but the carrier never applies them automatically — they require explicit
+  operator invocation, so the validator stops and surfaces them instead of applying.
 - **Absence falls through.** A missing carrier, or a carrier omitting a field, is not an error: the
   omitted decision follows the normal adaptive conversation exactly as it does today.
 - **Invalid or contradictory stops.** A value outside its enum, or one contradicting a value already
   established in this thread, stops and surfaces the conflict with the validator's reason — never a
   silent default, never preferring either side.
-- **Unknown schema refused whole.** A carrier declaring any other schema token is refused in its
-  entirety; no field from it is applied.
+- **Unknown schema refused whole, two cases.** A non-v1 token inside the `plan_pre_answers` family
+  is refused in its entirety — no field from that carrier is applied. A foreign schema family is
+  not a carrier at all and is ignored.
+- **A malformed carrier stops.** A `json` fenced block that fails to parse, carries duplicate JSON
+  keys, or appears alongside a second carrier stops the run — never resolved silently. A carrier
+  with an unadmitted key (anything but `backend`, `destination`, `caller`, `schema`) or a
+  non-string `caller` is refused the same way.
 
 Direct `/plan` — an issue, a prompt, or a Brainstorm document, no carrier — is unchanged: nothing
 applied, nothing narrated, nothing stopped. Exactly two decision fields are admitted, `backend` and
@@ -291,7 +306,9 @@ further.
 ### 5.1 Ask the destination
 
 Ask the routing intent (`AskUserQuestion`, or channel-inline): **plan-only / pr / merge /
-nonprod-deploy**. This becomes the saga `--destination`.
+nonprod-deploy**. This becomes the saga `--destination`. (If a Phase 0.7 pre-answer carrier
+already applied `destination`, skip this question — the applied value stands, narrated at
+intake.)
 
 **Deploy-autonomy follow-up (only when destination is `nonprod-deploy`).** When — and only when —
 the operator picks `nonprod-deploy`, ask one more question (`AskUserQuestion`, or channel-inline) to
@@ -315,7 +332,9 @@ the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-d
 tick. The tick is untracked local state: it does not survive a worktree boundary, another machine,
 or another vendor, so an executor that did not run in this directory cannot see it. The plan document
 is committed and travels with the work, which makes it the only place a decision made here can
-reliably be read later. `/work` honours that field and does not ask again.
+reliably be read later. `/work` honours that field and does not ask again. (If a Phase 0.7 pre-answer carrier
+applied `backend: inline`, skip the offer — the carrier never applies the other two backends;
+they remain explicit invocations.)
 
 The recorded enum still has three values — `inline` ("inline") | `team-execution` ("team execution") |
 `cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
@@ -520,18 +539,17 @@ Weights are ordinal/relative, not dollar prices — the cost-weighted spend-*del
   configurable home for the cheap-silent/expensive-asks rule.
 
 **Steps 2–5 — Author the spec into a runnable workflow (lives with the capability, #925/U4).**
-Thin per-unit prompts (KTD2), `depends_on` barriers and `verify` panels, `validate` (HARD BLOCK on
-failure), `emit` + the `spec_table.py` approval table, and concurrent-writer safety (#671) are the
-Claude Code Workflow authoring protocol and live in the cc-workflows plugin:
-`plugins/cc-workflows/skills/cc-workflows/SKILL.md`. Saga keeps this entry guard, the tier/spend
-authoring above, and the tick write below. The runnable commands are unchanged — `execution_spec.py
-validate` / `emit` still exist and delegate emission to the extracted emitter; artifacts land in
-`docs/workflows/` (P-D3). The operator must explicitly confirm the tier assignments and the
-control-flow structure before `/work` runs it (R8 "approved"); a rejection means revising the spec
-and re-running validate + emit + table.
+Follow the cc-workflows authoring protocol — `plugins/cc-workflows/skills/cc-workflows/SKILL.md` —
+for the thin per-unit prompts (KTD2), `depends_on` barriers and `verify` panels, `validate` (HARD
+BLOCK on failure), `emit` + the `spec_table.py` approval table, and concurrent-writer safety
+(#671). Saga keeps this entry guard, the tier/spend authoring above, and the tick write below. The
+runnable commands are unchanged — `execution_spec.py validate` / `emit` still exist and delegate
+emission to the extracted emitter; artifacts land in `docs/workflows/`. The operator must
+explicitly confirm the tier assignments and the control-flow structure before `/work` runs it (R8
+"approved"); a rejection means revising the spec and re-running validate + emit + table.
 
 **Spec naming convention:** `docs/workflows/<YYYY-MM-DD>-<topic>-spec.json` — the plan doc stays in
-`docs/plans/`; generated Workflow artifacts live in `docs/workflows/` (P-D3). The `.workflow.js`
+`docs/plans/`; generated Workflow artifacts live in `docs/workflows/`. The `.workflow.js`
 shares the same stem: `docs/workflows/<YYYY-MM-DD>-<topic>.workflow.js`.
 
 ### 5.3 Write the saga tick
@@ -591,9 +609,13 @@ tick at the `pending` default, which routes the already-finished plan right back
 When resuming (Phase 0.3 matched), this appends a tick to the existing saga directory rather than
 minting a new one.
 
-**Check the save's exit status.** A non-zero exit means the tick was NOT written: the plan document
-named in the error is on disk with no saga state referencing it, so `/work` and `/loop` cannot see
-it. STOP and surface the error to the operator — do not continue to Phase 5.4 on a failed save.
+**Check the save's exit status.** A non-zero exit means the save failed, and the error message
+names which write did. If the tick envelope was never written, the plan document named in the
+error is on disk with no saga state referencing it, so `/work` and `/loop` cannot see it. If the
+envelope landed but the `state.json` index rewrite failed, the tick IS tracked — `restore` reads
+the envelope directly — and re-running the same save rebuilds the index without duplicating the
+tick. Either way, STOP and surface the error to the operator — do not continue to Phase 5.4 on a
+failed save.
 
 ### 5.4 Route
 

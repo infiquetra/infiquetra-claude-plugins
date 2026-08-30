@@ -231,7 +231,7 @@ phase_status: in_progress
 status: active
 next_step: "wire /resume to call saga.restore"
 orchestration_mode: cc-workflows-ultracode
-orchestration_ref: "docs/plans/2026-06-02-saga-foundation-spec.json"
+orchestration_ref: "docs/workflows/2026-06-02-saga-foundation-spec.json"
 orchestration_run_id: "wf_7dbd5245-def"
 orchestration_recommended: cc-workflows-ultracode
 orchestration_operator_choice: cc-workflows-ultracode
@@ -629,20 +629,6 @@ scheduled, not the field itself.
 
 ---
 
-## 14. References
-
-- Engine: [`../scripts/saga.py`](../scripts/saga.py)
-- Wrappers (delegate to the engine): `../scripts/scaffold_checkpoint.py`,
-  `../scripts/find_inflight_work.py`, `../scripts/load_saga_context.py`
-- Handoff maturity/phase inference (the source this spec extends):
-  `../scripts/handoff_envelope.py` (`infer_maturity`, `infer_lifecycle_phase`)
-- Destination normalization: `../scripts/lifecycle_state.py` (`normalize_destination`)
-- Design rationale (rejected alternatives, revisit conditions):
-  `../../../docs/engineering-journal/DECISIONS.md` (saga-foundation ADR)
-- Provenance manifests: `../scripts/provenance_manifest.py`, `../scripts/manifest_store.py`,
-  `../scripts/manifest_reader.py`, `#285`,
-  `../../../docs/plans/2026-07-01-evidence-provenance-manifests-plan.md`
-
 ### 13.6 Proof-integrity bridge fields (#388)
 
 `Disposition.PROOF_INTEGRITY` is the manifest disposition for a schema-valid bridge receipt whose
@@ -657,18 +643,18 @@ it to join producer launch evidence to manifest consumption and to de-duplicate 
 
 ---
 
-## 15. Plan-document contract (distinct from the tick envelope)
+## 14. Plan-document contract (distinct from the tick envelope)
 
 The plan document under `docs/plans/` is a separate artifact from the saga tick envelope of section 3,
 with its own contract and its own consumers. Nothing in this section belongs in the envelope field
 table (§3.1), and no tick field is a plan-doc field — the two schemas never merge.
 
-**Frontmatter.** Every plan carries YAML frontmatter. `title`, `type`, `status`, `date`, and `backend`
-are required on every newly created plan; `backend` takes a value from `ORCHESTRATION_MODES` (section
-4), as narrowed by #808 — `inline` or `team-execution` are the defaults, `cc-workflows-ultracode` only
-after explicit invocation. `origin` MUST be emitted whenever an upstream artifact exists and may be
-omitted on a cold start; `deepened` is optional. The field-by-field contract lives in
-`../skills/plan/references/plan-sections.md` (Plan-doc frontmatter contract).
+**Frontmatter.** Every plan carries YAML frontmatter; the required-field set and the field-by-field
+contract live in `../skills/plan/references/plan-sections.md` (Plan-doc frontmatter contract), pinned
+by `tests/test_plan_artifact_conformance.py`. `backend` takes a value from `ORCHESTRATION_MODES`
+(section 4), as narrowed by #808 — `inline` or `team-execution` are the defaults,
+`cc-workflows-ultracode` only after explicit invocation. `origin` MUST be emitted whenever an
+upstream artifact exists and may be omitted on a cold start; `deepened` is optional.
 
 **Legacy rule.** Legacy is the absence of `backend`, and nothing else. A document without the field is
 legacy, reported, and non-failing; a document with it is new-contract and is held to the full
@@ -683,12 +669,13 @@ document as a plan. The definition is pinned by `tests/test_plan_artifact_confor
 triple; `/loop` routes on the saga tick, which stays in the envelope of section 3.
 
 **Conformance.** One recursive pass over `docs/plans/` evaluates the declared frontmatter fields and
-the marker triple together (`tests/test_plan_artifact_conformance.py`), so a document cannot satisfy
-one contract and silently fail the other. Legacy findings are reported without failing the run.
+the marker triple together — shipped as `../scripts/plan_artifact_conformance.py` (runnable; pinned
+by `tests/test_plan_artifact_conformance.py`) — so a document cannot satisfy one contract and
+silently fail the other. Legacy findings are reported without failing the run.
 
 ---
 
-## 16. Plan pre-answer carrier (`plan_pre_answers.v1`)
+## 15. Plan pre-answer carrier (`plan_pre_answers.v1`)
 
 A caller that has already settled a decision may hand it to `/plan` rather than letting the
 conversation re-ask it. The carrier is **intake, not a phase** (KTD4): it is evaluated once, before
@@ -709,11 +696,15 @@ already write prose into. No file, no CLI flag, no daemon, no state.
 }
 ```
 
-- `schema` — the version token `plan_pre_answers.v1`. An unrecognised token is refused whole: no
-  field from that carrier is applied.
+- `schema` — the version token `plan_pre_answers.v1`. Two cases, stated as the code performs them:
+  a non-v1 token INSIDE the `plan_pre_answers` family (case-insensitive, token boundary) is refused
+  whole — no field from that carrier is applied; a FOREIGN schema family is not a carrier at all and
+  is ignored.
 - `backend` — decision field, from `inline | team-execution | cc-workflows-ultracode`
-  (`ORCHESTRATION_MODES`, section 4, as narrowed by #808). Optional; applied as Phase 5.2's choice
-  and recorded in the plan-doc `backend:` field (section 15) without re-offering.
+  (`ORCHESTRATION_MODES`, section 4). Optional. Operator ruling (review F03, stricter than #808):
+  the carrier applies ONLY `inline` automatically, recorded in the plan-doc `backend:` field
+  without re-offering; `team-execution` and `cc-workflows-ultracode` are legal plan values but
+  require explicit operator invocation, so the carrier stops and surfaces instead of applying.
 - `destination` — decision field, from `plan-only | pr | merge | nonprod-deploy` (`DESTINATIONS`,
   section 4). Optional; applied as Phase 5.1's answer and the tick's `--destination` without
   re-asking.
@@ -721,16 +712,39 @@ already write prose into. No file, no CLI flag, no daemon, no state.
   field: exactly two decision fields are admitted (`backend`, `destination`), and anything beyond
   them is rejected rather than ignored. Both decision fields omitted is a valid empty carrier.
 
-**Evaluation rules** (validator: `../scripts/plan_pre_answers.py` — pure functions; reads the text
-it is given, writes nothing, reads no file):
+**Carrier discipline.** The fence info string must be exactly `json`; at most one carrier is
+admitted — a second carrier stops the run rather than letting the first win silently; duplicate JSON
+keys stop the run rather than applying the last value; and a `json` block that fails to parse is a
+malformed carrier and stops the run rather than passing as no carrier.
 
-1. A valid supplied value is applied and visibly narrated together with its `caller`.
+**Evaluation rules** (validator: `../scripts/plan_pre_answers.py` — runnable; reads the text it is
+given, writes nothing, reads no file):
+
+1. A valid supplied value — an `inline` backend, or any valid `destination` — is applied and
+   visibly narrated together with its `caller`.
 2. A missing carrier, or a carrier omitting a field, follows the normal adaptive conversation;
    absence is not an error.
 3. An invalid value, or one contradicting an already-established value, stops and surfaces the
    conflict; it never becomes a silent default and never prefers either side.
-4. A carrier declaring an unknown schema token is refused whole.
+4. A non-v1 token inside the family is refused whole; a foreign family is ignored (two cases, as
+   above).
+5. A malformed carrier — unparseable `json` block, duplicate keys, or a second carrier — stops the
+   run.
 
 Direct `/plan` — an issue, a prompt, or a Brainstorm document, no carrier — applies nothing,
 narrates nothing, and stops nothing. The carrier is never rendered as a questionnaire, checklist, or
 fixed sequence; Phase 0.7 of `../skills/plan/SKILL.md` carries the skill-side intake prose.
+
+## 16. References
+
+- Engine: [`../scripts/saga.py`](../scripts/saga.py)
+- Wrappers (delegate to the engine): `../scripts/scaffold_checkpoint.py`,
+  `../scripts/find_inflight_work.py`, `../scripts/load_saga_context.py`
+- Handoff maturity/phase inference (the source this spec extends):
+  `../scripts/handoff_envelope.py` (`infer_maturity`, `infer_lifecycle_phase`)
+- Destination normalization: `../scripts/lifecycle_state.py` (`normalize_destination`)
+- Design rationale (rejected alternatives, revisit conditions):
+  `../../../docs/engineering-journal/DECISIONS.md` (saga-foundation ADR)
+- Provenance manifests: `../scripts/provenance_manifest.py`, `../scripts/manifest_store.py`,
+  `../scripts/manifest_reader.py`, `#285`,
+  `../../../docs/plans/2026-07-01-evidence-provenance-manifests-plan.md`

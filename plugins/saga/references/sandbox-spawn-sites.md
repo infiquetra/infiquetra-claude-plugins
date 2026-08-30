@@ -33,7 +33,8 @@ spawn site.
 | `brainstorm` | `plugins/saga/skills/brainstorm/SKILL.md` | Phase 1.1 claim verifier | `judgment` |
 
 Also in-scope (already wired, U2, not this unit's edit): the three verifier-emitting sites inside
-`plugins/saga/scripts/execution_spec.py` — `_emit_verify_panel`, `_emit_verify_loop_singleton`, and
+`plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py` — `_emit_verify_panel`,
+`_emit_verify_loop_singleton`, and
 the parallel-layer thunk's inlined iterate-to-consensus loop — each emits `agentType:
 'saga:readonly-verifier'` and `isolation: 'worktree'` in every verifier `agent()` call
 unconditionally (KTD6). Resolver work-shape: `judgment` (verify/refute-class work — same shape as
@@ -127,7 +128,8 @@ index as `fallback_depth` into whatever verdict or tick it records: first-choice
 `general-purpose` rung is `fallback_depth: 2` — alongside the `verifier_identity` of the agent type
 actually spawned. The panel gate summary keys off exactly these two fields to render an explicit
 "fallback tier N" marker naming the degraded reporter (see
-`render_fallback_tier_marker` in `execution_spec.py`), so a run that quietly degraded its verifier
+`render_fallback_tier_marker` in `plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py`),
+so a run that quietly degraded its verifier
 cannot pass as a first-choice pass. Workflow `agent()` calls need no manual recording — the emitter
 stamps `fallback_depth: 0` because an unresolvable `agentType` fails the call outright rather than
 descending. This is attribution only; the ladder's order and contract are unchanged (binding

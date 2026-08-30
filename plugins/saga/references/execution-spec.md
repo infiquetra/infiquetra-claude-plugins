@@ -396,21 +396,13 @@ actual generated script, not a description of it:
    prompts (KTD2 — a thin pointer to the plan, not a prose transcription); wire `depends_on` barriers and
    optional `verify` panels. Surface the tier table for operator review.
 
-2. **Validate (HARD BLOCK)** — run the validator. A non-zero exit means the spec is malformed; do NOT
-   proceed until fixed. Common failures: `depends_on` cycle, fan-out with no `targets` (R10), pilot tier
-   mismatch (R3), `verify.n` above `VERIFY_N_CAP`, two unit_ids that sanitize to the same JS var.
+2. **Validate (HARD BLOCK)** — run the validator per the cc-workflows authoring protocol
+   (`plugins/cc-workflows/skills/cc-workflows/SKILL.md`, Step 4). A non-zero exit means the spec is
+   malformed; do NOT proceed until fixed (review F09: the commands live with the capability, single
+   source).
 
-   ```bash
-   python3 plugins/saga/scripts/execution_spec.py validate docs/workflows/<name>-spec.json
-   ```
-
-3. **Emit** — write the `.workflow.js` beside the spec (`emit` re-validates, so a malformed spec fails here
-   too):
-
-   ```bash
-   python3 plugins/saga/scripts/execution_spec.py emit docs/workflows/<name>-spec.json \
-     -o docs/workflows/<name>.workflow.js
-   ```
+3. **Emit** — write the `.workflow.js` beside the spec per the same protocol (Step 5); `emit`
+   re-validates, so a malformed spec fails here too.
 
 4. **Approve** — surface the now-emitted `.workflow.js` and the per-unit tier table for explicit operator
    confirmation. The operator must confirm the tier assignments and the control-flow structure; a rejection

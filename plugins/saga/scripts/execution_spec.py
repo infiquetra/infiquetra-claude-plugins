@@ -3079,6 +3079,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.out:
+        # Review F38: emit targets docs/workflows/, which need not exist in a fresh
+        # checkout — create the parent instead of raising an uncaught FileNotFoundError.
+        args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(script)
         print(f"wrote {args.out}")
     else:

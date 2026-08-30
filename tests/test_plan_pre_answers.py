@@ -101,7 +101,9 @@ def test_empty_carrier_is_valid_and_omits_both(pre_answers: ModuleType) -> None:
 
 
 def test_carrier_is_found_among_unrelated_fenced_blocks(pre_answers: ModuleType) -> None:
-    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "team-execution"}
+    # Inline: the only backend the carrier may apply automatically (operator ruling,
+    # review F03) — team-execution/ultracode now stop, covered by their own tests.
+    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "inline"}
     text = (
         "/plan resume issue #924\n\n"
         "Prior state for context:\n\n"
@@ -114,25 +116,31 @@ def test_carrier_is_found_among_unrelated_fenced_blocks(pre_answers: ModuleType)
     outcome = pre_answers.evaluate(text)
 
     assert outcome.stop is None
-    assert outcome.applied == {"backend": "team-execution"}
+    assert outcome.applied == {"backend": "inline"}
     assert outcome.caller == "orchestrate"
 
 
 # --- negative: absence is not an error (R17, R20) ------------------------------------
 
 
-def test_no_carrier_applies_nothing_omits_nothing_stops_nothing(pre_answers: ModuleType) -> None:
+def test_no_carrier_applies_nothing_and_leaves_everything_to_the_conversation(
+    pre_answers: ModuleType,
+) -> None:
     # Direct /plan: an issue reference with no carrier. Nothing applied, nothing
-    # narrated (no caller), nothing stopped — the conversation proceeds as today.
+    # narrated (no caller), nothing stopped — and no-carrier is NOT conflated with
+    # nothing-omitted: every decision field simply follows the normal adaptive
+    # conversation (review F36).
     outcome = pre_answers.evaluate("/plan work issue #924 — plan the carrier contract.")
 
     assert outcome.applied == {}
-    assert outcome.omitted == ()
+    assert tuple(outcome.omitted) == pre_answers.DECISION_FIELDS
     assert outcome.stop is None
     assert outcome.caller is None
 
 
 def test_other_schema_families_are_not_carriers(pre_answers: ModuleType) -> None:
+    # Two-case rule (reviews F07/F07a/F07u): a FOREIGN schema family is not a carrier
+    # and is ignored — no stop, and the decision fields stay with the conversation.
     text = (
         '/plan work issue #924\n\n```json\n{"schema": "intent.v1", "run_mode": "attended"}\n```\n'
     )
@@ -140,7 +148,7 @@ def test_other_schema_families_are_not_carriers(pre_answers: ModuleType) -> None
     outcome = pre_answers.evaluate(text)
 
     assert outcome.applied == {}
-    assert outcome.omitted == ()
+    assert tuple(outcome.omitted) == pre_answers.DECISION_FIELDS
     assert outcome.stop is None
     assert outcome.caller is None
 
@@ -166,15 +174,17 @@ def test_invalid_backend_stops_and_never_defaults(
 
 
 def test_contradiction_stops_and_prefers_neither_side(pre_answers: ModuleType) -> None:
-    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "team-execution"}
+    # Destination: the carrier-applied field (a backend contradiction is gated earlier
+    # by the explicit-invocation ruling, covered by its own tests).
+    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "destination": "merge"}
 
-    outcome = pre_answers.evaluate(_invocation(carrier), established={"backend": "inline"})
+    outcome = pre_answers.evaluate(_invocation(carrier), established={"destination": "pr"})
 
     assert outcome.stop is not None
     assert outcome.applied == {}
     # The reason names both values — neither side is silently preferred.
-    assert "team-execution" in outcome.stop
-    assert "inline" in outcome.stop
+    assert "merge" in outcome.stop
+    assert "pr" in outcome.stop
 
     # A supplied value agreeing with the established one is applied, not stopped.
     agreeing = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "inline"}
@@ -240,6 +250,186 @@ def test_caller_is_metadata_outside_the_admission_limit(pre_answers: ModuleType)
     assert outcome.applied == {"backend": "inline", "destination": "pr"}
     assert outcome.caller == "orchestrate"
     assert outcome.omitted == ()
+
+
+# --- operator ruling (review F03): only inline applies automatically -----------------
+
+
+@pytest.mark.parametrize("backend", ["team-execution", "cc-workflows-ultracode"])
+def test_invocation_only_backends_stop_and_are_never_applied(
+    pre_answers: ModuleType, backend: str
+) -> None:
+    # Operator ruling (stricter than #808): team-execution and cc-workflows-ultracode
+    # are legal plan-document values, but the carrier never applies them automatically.
+    # This test fails if either is silently applied.
+    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": backend}
+
+    outcome = pre_answers.evaluate(_invocation(carrier))
+
+    assert outcome.applied == {}
+    assert outcome.caller is None
+    assert outcome.stop is not None
+    assert "explicit operator invocation" in outcome.stop
+    # The stop reads as a gate, not as an invalid value: the value is legal in a plan.
+    assert backend in outcome.stop
+    assert "is not one of" not in outcome.stop
+
+
+def test_inline_backend_still_applies_from_the_carrier(pre_answers: ModuleType) -> None:
+    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "inline"}
+
+    outcome = pre_answers.evaluate(_invocation(carrier))
+
+    assert outcome.stop is None
+    assert outcome.applied == {"backend": "inline"}
+
+
+# --- carrier discipline (reviews F08/F08a/F15/F30) ------------------------------------
+
+
+def test_two_carriers_stop_rather_than_first_winning(pre_answers: ModuleType) -> None:
+    first = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "inline"}
+    second = {"schema": SCHEMA_TOKEN, "caller": "work", "destination": "pr"}
+    text = _invocation(first) + "\n" + _invocation(second)
+
+    outcome = pre_answers.evaluate(text)
+
+    assert outcome.applied == {}
+    assert outcome.stop is not None
+    assert "2" in outcome.stop
+
+
+def test_only_json_fenced_blocks_are_carrier_candidates(pre_answers: ModuleType) -> None:
+    # Same payload in a yaml fence is not a carrier (the info string must be exactly
+    # json); the json-fenced carrier beside it is admitted alone.
+    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "inline"}
+    text = (
+        "/plan work issue #924\n\n"
+        f"```yaml\n{json.dumps(carrier)}\n```\n\n"
+        f"```json\n{json.dumps(carrier, indent=2)}\n```\n"
+    )
+
+    outcome = pre_answers.evaluate(text)
+
+    assert outcome.stop is None
+    assert outcome.applied == {"backend": "inline"}
+
+
+def test_duplicate_json_keys_stop_rather_than_last_winning(pre_answers: ModuleType) -> None:
+    # Raw text: json.dumps would dedupe, so the duplicate must be hand-rolled.
+    text = (
+        "/plan work issue #924\n\n"
+        '```json\n{"schema": "plan_pre_answers.v1", "backend": "inline", '
+        '"backend": "team-execution"}\n```\n'
+    )
+
+    outcome = pre_answers.evaluate(text)
+
+    assert outcome.applied == {}
+    assert outcome.stop is not None
+    assert "duplicate" in outcome.stop
+
+
+def test_malformed_json_block_is_a_stop_not_an_absence(pre_answers: ModuleType) -> None:
+    text = '/plan work issue #924\n\n```json\n{"schema": plan_pre_answers.v1,\n```\n'
+
+    outcome = pre_answers.evaluate(text)
+
+    assert outcome.applied == {}
+    assert outcome.stop is not None
+    assert "parse" in outcome.stop
+
+
+def test_near_miss_schema_tokens_produce_the_documented_verdicts(
+    pre_answers: ModuleType,
+) -> None:
+    # Case variant inside the family: refused whole (a documented stop), not ignored.
+    upper = {"schema": "PLAN_PRE_ANSWERS.v1", "caller": "orchestrate", "backend": "inline"}
+    refused = pre_answers.evaluate(_invocation(upper))
+    assert refused.stop is not None
+    assert refused.applied == {}
+
+    # Token-boundary escape: "plan_pre_answersx" is a foreign name, not the family —
+    # ignored as a non-carrier, decision fields left to the conversation.
+    foreign = {"schema": "plan_pre_answersx.v1", "caller": "orchestrate", "backend": "inline"}
+    ignored = pre_answers.evaluate(_invocation(foreign))
+    assert ignored.stop is None
+    assert ignored.applied == {}
+    assert tuple(ignored.omitted) == pre_answers.DECISION_FIELDS
+
+
+def test_refusal_messages_echo_bounded_values_only(pre_answers: ModuleType) -> None:
+    # Review F24: the echoed caller-supplied value is truncated, so an unbounded input
+    # cannot inflate the surfaced message. The token is inside the family (refused
+    # whole), with an unbounded tail.
+    huge = "plan_pre_answers." + "x" * 5000
+    carrier = {"schema": huge, "caller": "orchestrate", "backend": "inline"}
+
+    outcome = pre_answers.evaluate(_invocation(carrier))
+
+    assert outcome.stop is not None
+    assert len(outcome.stop) < 500
+    assert "…" in outcome.stop
+
+
+# --- runnable entry point (review F02u): proven as a real subprocess ------------------
+
+
+def test_entry_point_runs_as_a_real_subprocess_and_prints_the_outcome(
+    pre_answers: ModuleType, tmp_path: Path
+) -> None:
+    import subprocess
+
+    script = SCRIPTS_DIR / "plan_pre_answers.py"
+    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "inline"}
+
+    # stdin path: a clean carrier exits 0 with the applied value and its caller.
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        input=_invocation(carrier),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["applied"] == {"backend": "inline"}
+    assert payload["caller"] == "orchestrate"
+    assert payload["stop"] is None
+
+    # --invocation-file path: a stop exits non-zero and surfaces the reason.
+    invocation_file = tmp_path / "invocation.md"
+    bad = {"schema": "plan_pre_answers.v9", "caller": "orchestrate", "backend": "inline"}
+    invocation_file.write_text(_invocation(bad), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(script), "--invocation-file", str(invocation_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["applied"] == {}
+    assert payload["stop"] is not None
+
+
+# --- drift pins (reviews F14/F14a): the enums equal their canonical sources -----------
+
+
+def test_decision_enums_match_their_canonical_sources(pre_answers: ModuleType) -> None:
+    saga = _load_module("saga.py")
+    assert pre_answers.BACKEND_ENUM == saga.ORCHESTRATION_MODES, (
+        "carrier backend enum drifted from saga.py's ORCHESTRATION_MODES"
+    )
+    assert pre_answers.DESTINATION_ENUM == saga.DESTINATIONS, (
+        "carrier destination enum drifted from saga.py's DESTINATIONS"
+    )
+    # The conformance check's copy — shipped as plugins/saga/scripts/
+    # plan_artifact_conformance.py since review F06t — is pinned to the same tuple.
+    shipped = (ROOT / "plugins" / "saga" / "scripts" / "plan_artifact_conformance.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'BACKEND_ENUM = ("inline", "team-execution", "cc-workflows-ultracode")' in shipped
 
 
 # --- contract pin: the intake subsection adds no rigidity (R8, R29) -------------------

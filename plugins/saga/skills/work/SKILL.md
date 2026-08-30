@@ -347,15 +347,18 @@ trusted `session_id`; HALT if it is absent. Never substitute the saga id.
 test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
 export WORKFLOW_INVOCATION_ID="${WORKFLOW_INVOCATION_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+# Resolve the cc-workflows scripts dir the same way the Python seam does: the env var
+# wins, the repo-relative default is the fallback (review F12 — never hardcode the path).
+CC_WORKFLOWS_SCRIPTS_DIR="${CC_WORKFLOWS_SCRIPTS_DIR:-plugins/cc-workflows/skills/cc-workflows/scripts}"
 mkdir -p .saga
 python3 plugins/saga/scripts/spec_table.py <orchestration_ref_spec.json> --backend <backend>
 python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json> \
   -o docs/workflows/<topic>.workflow.js
 python3 plugins/saga/scripts/execution_spec.py lease <orchestration_ref_spec.json> \
   --invocation-id "$WORKFLOW_INVOCATION_ID" > "$WORKFLOW_LEASE_METADATA"
-python3 plugins/cc-workflows/skills/cc-workflows/scripts/workflow_emitter.py reserve "$WORKFLOW_LEASE_METADATA" \
+python3 $CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py reserve "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID" > ".saga/workflow-lease-receipt-${WORKFLOW_INVOCATION_ID}.json"
-python3 plugins/cc-workflows/skills/cc-workflows/scripts/workflow_emitter.py attest "$WORKFLOW_LEASE_METADATA" \
+python3 $CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py attest "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
 
@@ -423,7 +426,7 @@ After the Workflow returns, or after the host authoritatively confirms cancellat
 protocol with the release command (semantics: cc-workflows plugin `references/protocol.md`):
 
 ```bash
-python3 plugins/cc-workflows/skills/cc-workflows/scripts/workflow_emitter.py release "$WORKFLOW_LEASE_METADATA" \
+python3 $CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py release "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
 
@@ -431,7 +434,7 @@ For a long driver-side collection step, the boundary renew call stays for protoc
 (semantics: cc-workflows plugin `references/protocol.md`):
 
 ```bash
-python3 plugins/cc-workflows/skills/cc-workflows/scripts/workflow_emitter.py renew "$WORKFLOW_LEASE_METADATA"
+python3 $CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py renew "$WORKFLOW_LEASE_METADATA"
 ```
 
 The Workflow tool owns execution from this point. `/work` records the returned workflow id in

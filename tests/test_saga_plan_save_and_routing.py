@@ -155,6 +155,63 @@ def test_failed_save_surfaces_error_naming_the_stranded_plan_document(
     assert saga.restore(tmp_path, saga_id) is None
 
 
+def test_index_only_save_failure_reports_the_tick_tracked_not_stranded(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Index-only failure: the envelope lands first, so the tick IS tracked (review F05).
+
+    ``_atomic_write`` fails because ``state.json.tmp`` is pre-created as a directory —
+    the review's own repro — after the envelope write already succeeded. The surfaced
+    error must name the index failure and must NOT claim the plan lost its tick:
+    ``restore`` reads the envelope directly and never opens ``state.json``, so the
+    lifecycle still sees the plan. Before the repair the message asserted a falsehood
+    and the prescribed remedy appended a duplicate tick.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    saga_id = saga.derive_saga_id("issue", "923")
+    plan_doc = "docs/plans/2026-08-30-index-failure-plan.md"
+    plan_file = tmp_path / plan_doc
+    plan_file.parent.mkdir(parents=True)
+    plan_file.write_text("# Plan\n", encoding="utf-8")
+    # Block ONLY the state.json index rewrite; the envelope write still succeeds.
+    blocker = tmp_path / saga.STATE_DIR / "state.json.tmp"
+    blocker.parent.mkdir(parents=True)
+    blocker.mkdir()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "script",
+            "save",
+            "--id",
+            "923",
+            "--lifecycle-phase",
+            "plan",
+            "--phase-status",
+            "complete",
+            "--plan-path",
+            plan_doc,
+        ],
+    )
+    rc = saga.main()
+    err = capsys.readouterr().err
+
+    assert rc == 2
+    assert "Traceback" not in err, "the failure must surface as a clean error, not a traceback"
+    assert "index" in err, "the error must name the write that actually failed"
+    assert "NO saga tick" not in err, (
+        "an index-only failure must not claim the tick is missing — the envelope is on disk"
+    )
+    # The tick IS tracked: restore resolves it from the envelope, index or no index.
+    restored = saga.restore(tmp_path, saga_id)
+    assert restored is not None, "restore reads the envelope directly; the tick exists"
+    assert restored.phase_status == "complete"
+
+
 def test_successful_plan_save_tick_resolves_to_the_written_document(
     saga: ModuleType,
     tmp_path: Path,

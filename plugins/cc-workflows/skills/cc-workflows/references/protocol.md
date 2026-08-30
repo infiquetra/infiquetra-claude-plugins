@@ -1,7 +1,9 @@
 # cc-workflows run protocol
 
 The Workflow run protocol, carried with the capability that owns it (#925, U4 — moved from
-Saga's `/work` Phase 1.5, which stays the driver-side seam).
+Saga's `/work` Phase 1.5, which stays the driver-side seam). For the authoring side, Step 1
+(tier/spend authoring) lives in Saga's `/plan` Phase 5.2a; this plugin's SKILL carries Steps
+2–5.
 
 ## Invocation identity
 

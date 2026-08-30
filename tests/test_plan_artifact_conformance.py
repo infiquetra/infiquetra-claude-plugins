@@ -1,46 +1,43 @@
-"""Plan-artifact conformance — issue #922, unit U1.
+"""Plan-artifact conformance — issue #922 (unit U1), repaired per review F06t.
 
-One recursive pass over a plans root evaluates the declared frontmatter fields and the
-marker triple together (R3), so a document cannot satisfy one contract and silently fail
-the other. Classification follows the plan's KTD3: legacy is the absence of ``backend:``,
-and nothing else — legacy documents are reported and never fail the run (R4); documents
-carrying the field are new-contract and held to the full frontmatter and marker contract.
-The check recurses into subdirectories so a document under ``docs/plans/`` that fails the
-marker triple is reported instead of being silently accepted by the doc-review path
-tie-breaker (R5).
+The conformance check itself ships as ``plugins/saga/scripts/plan_artifact_conformance.py``
+(review F06t: the shipped contract must be callable, not only enforced when pytest runs).
+This file IMPORTS that module and exercises it; it does not redefine any of it. The
+definition pins (marker triple, required-field set) parse the markdown declarations and
+bind the shipped constants to them.
 
-No state store, daemon, registry, or reconciliation pass: the check is a pure function
-over a directory tree, serving one operator.
+None of these tests asserts a Plan question, its wording, or the order of the conversation
+(R29): the rigidity guard is asserted as the absence of rigid prose shapes in the Phase 0
+intake subsection, and the corpus assertions stay relational — exit and non-empty report,
+never a count or a file name (R33), with the one launch-receipt nested instance named
+explicitly.
+
+Mutation wiring (issue 924's mutation proof, now against shipped code):
+
+* removing the required-field rule from the shipped check fails the incomplete-plan
+  assertions (the fixture is reported only by that rule);
+* deleting the marker half of the shipped check fails the single-pass test;
+* deleting the recursion fails the nested-report test;
+* re-defining any check function in this file fails the imported-not-duplicated pin.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import re
-from dataclasses import dataclass
+import subprocess
+import sys
 from pathlib import Path
+from types import ModuleType
 
-import yaml
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).parent.parent
 PLANS_ROOT = REPO_ROOT / "docs" / "plans"
 PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
-
-# The marker triple, exactly as declared in plan/SKILL.md ("The body MUST use the exact
-# section markers ..."). The definition-pin test asserts the declaration still carries
-# these exact tokens, so neither half of the contract can drift silently (R6).
-MARKER_IMPLEMENTATION_UNITS = "Implementation Units"
-MARKER_KEY_TECHNICAL_DECISIONS = "Key Technical Decisions"
-MARKER_U1_PREFIX_LABEL = "the `U1` U-ID prefix"
-# The `U1` U-ID prefix: a heading or line beginning with the unit id (`U1.` / `U1:` / `U1 `).
-U1_PREFIX_RE = re.compile(r"^#{0,6}\s*U1[.:\s]", re.MULTILINE)
-
-BACKEND_ENUM = ("inline", "team-execution", "cc-workflows-ultracode")
-REQUIRED_FIELDS = ("title", "type", "status", "date", "backend")
-
-KIND_LEGACY_NO_BACKEND = "legacy-no-backend"
-KIND_MISSING_REQUIRED_FIELD = "missing-required-field"
-KIND_BACKEND_NOT_IN_ENUM = "backend-not-in-enum"
-KIND_MARKER_MISSING = "marker-missing"
+PLAN_SECTIONS_MD = (
+    REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "references" / "plan-sections.md"
+)
+CONFORMANCE_SCRIPT = REPO_ROOT / "plugins" / "saga" / "scripts" / "plan_artifact_conformance.py"
 
 # The nested instance the launch receipt assigned to this unit: a non-plan document under
 # docs/plans/ that the check must report rather than let through on the path tie-breaker.
@@ -49,100 +46,72 @@ NESTED_VERIFICATION_REPORT = (
 )
 
 
-@dataclass(frozen=True)
-class Finding:
-    path: Path
-    kind: str
-    detail: str
-    legacy: bool
+def _load_conformance() -> ModuleType:
+    """Load the SHIPPED conformance module — the check under test (review F06t).
 
-    @property
-    def failing(self) -> bool:
-        # KTD3 / R4: legacy findings are reported, never failing.
-        return not self.legacy
-
-
-def split_frontmatter(text: str) -> tuple[dict[str, object], str]:
-    """Return (fields, body) for a YAML-frontmatter document.
-
-    Absent, unterminated, or unparseable frontmatter yields empty fields and the full
-    text as body — which classifies the document as legacy (no ``backend:``), never a
-    crash in the corpus pass.
+    Registered in ``sys.modules`` under its bare name: it defines a frozen
+    ``@dataclass`` and (on Python 3.12+) dataclass processing looks the class's
+    ``__module__`` up in ``sys.modules`` while building it.
     """
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return {}, text
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "---":
-            try:
-                data = yaml.safe_load("\n".join(lines[1:i])) or {}
-            except yaml.YAMLError:
-                data = {}
-            if not isinstance(data, dict):
-                data = {}
-            return data, "\n".join(lines[i + 1 :])
-    return {}, text
+    spec = importlib.util.spec_from_file_location("plan_artifact_conformance", CONFORMANCE_SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["plan_artifact_conformance"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def _missing_markers(body: str) -> list[str]:
-    missing: list[str] = []
-    if MARKER_IMPLEMENTATION_UNITS not in body:
-        missing.append(MARKER_IMPLEMENTATION_UNITS)
-    if MARKER_KEY_TECHNICAL_DECISIONS not in body:
-        missing.append(MARKER_KEY_TECHNICAL_DECISIONS)
-    if not U1_PREFIX_RE.search(body):
-        missing.append(MARKER_U1_PREFIX_LABEL)
-    return missing
+CONFORMANCE = _load_conformance()
+
+# The contract surface, bound from the shipped module — never redefined here (F06t).
+MARKER_IMPLEMENTATION_UNITS = CONFORMANCE.MARKER_IMPLEMENTATION_UNITS
+MARKER_KEY_TECHNICAL_DECISIONS = CONFORMANCE.MARKER_KEY_TECHNICAL_DECISIONS
+MARKER_U1_PREFIX_LABEL = CONFORMANCE.MARKER_U1_PREFIX_LABEL
+U1_PREFIX_RE = CONFORMANCE.U1_PREFIX_RE
+BACKEND_ENUM = CONFORMANCE.BACKEND_ENUM
+REQUIRED_FIELDS = CONFORMANCE.REQUIRED_FIELDS
+KIND_LEGACY_NO_BACKEND = CONFORMANCE.KIND_LEGACY_NO_BACKEND
+KIND_MISSING_REQUIRED_FIELD = CONFORMANCE.KIND_MISSING_REQUIRED_FIELD
+KIND_BACKEND_NOT_IN_ENUM = CONFORMANCE.KIND_BACKEND_NOT_IN_ENUM
+KIND_MARKER_MISSING = CONFORMANCE.KIND_MARKER_MISSING
+Finding = CONFORMANCE.Finding
+check_document = CONFORMANCE.check_document
+check_plan_corpus = CONFORMANCE.check_plan_corpus
+corpus_exit = CONFORMANCE.corpus_exit
 
 
-def check_document(path: Path) -> list[Finding]:
-    """Evaluate the frontmatter contract and the marker triple together for one document."""
-    text = path.read_text(encoding="utf-8")
-    fields, body = split_frontmatter(text)
-    legacy = "backend" not in fields
-    findings: list[Finding] = []
-    if legacy:
-        findings.append(
-            Finding(path, KIND_LEGACY_NO_BACKEND, "no `backend:` — legacy document", legacy=True)
-        )
-    else:
-        for name in REQUIRED_FIELDS:
-            if fields.get(name) in (None, ""):
-                findings.append(
-                    Finding(
-                        path,
-                        KIND_MISSING_REQUIRED_FIELD,
-                        f"missing required field `{name}`",
-                        legacy=False,
-                    )
-                )
-        value = str(fields.get("backend", "")).strip()
-        if value not in BACKEND_ENUM:
-            findings.append(
-                Finding(
-                    path,
-                    KIND_BACKEND_NOT_IN_ENUM,
-                    f"`backend: {value}` is not one of {' | '.join(BACKEND_ENUM)}",
-                    legacy=False,
-                )
-            )
-    for marker in _missing_markers(body):
-        findings.append(
-            Finding(path, KIND_MARKER_MISSING, f"missing plan marker: {marker}", legacy)
-        )
-    return findings
+# --- F06t: the check is imported, not duplicated, and runnable ------------------------
 
 
-def check_plan_corpus(root: Path) -> list[Finding]:
-    """One recursive pass over every markdown document under ``root`` (R3, R5)."""
-    findings: list[Finding] = []
-    for path in sorted(root.rglob("*.md")):
-        findings.extend(check_document(path))
-    return findings
+def test_the_conformance_check_is_imported_not_duplicated() -> None:
+    # Review F06t: the plan's three mutation proofs must mutate shipped code, not the
+    # test. Re-defining any check function here would let the test mutate itself again,
+    # so this pin fails on any local re-definition.
+    assert check_document.__module__ == "plan_artifact_conformance"
+    assert check_plan_corpus.__module__ == "plan_artifact_conformance"
+    assert corpus_exit.__module__ == "plan_artifact_conformance"
+    source = Path(__file__).read_text(encoding="utf-8")
+    # Probe strings assembled at runtime so the pin never matches its own literals.
+    for name in ("check_document", "check_plan_corpus", "corpus_exit", "split_frontmatter"):
+        probe = "def " + name
+        assert probe not in source, f"{probe!r} redefined in the test — import it instead"
 
 
-def corpus_exit(findings: list[Finding]) -> int:
-    return 1 if any(f.failing for f in findings) else 0
+def test_the_shipped_conformance_module_runs_as_a_real_subprocess() -> None:
+    # Review F06t: the operator can run the contract — a real subprocess, not an
+    # in-process fixture. Exit matches the reported corpus_exit.
+    proc = subprocess.run(
+        [sys.executable, str(CONFORMANCE_SCRIPT), str(PLANS_ROOT)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=REPO_ROOT,
+    )
+    payload = json.loads(proc.stdout)
+    assert payload["findings"], "the corpus report must not be empty"
+    assert proc.returncode == payload["exit"]
+    assert proc.returncode == 0, "no new-contract document fails the contract today"
 
 
 # --- fixture builders ---------------------------------------------------------------
@@ -202,7 +171,7 @@ def test_new_contract_plan_conforms_with_no_findings(tmp_path: Path) -> None:
     good = corpus / "good-plan.md"
     good.write_text(_frontmatter(**NEW_CONTRACT_FRONTMATTER) + MARKER_BODY, encoding="utf-8")
     # Mutation mate for the required-field rule: same corpus, one required field absent.
-    # Deleting the required-field rule from the check would leave this document
+    # Deleting the required-field rule from the SHIPPED check would leave this document
     # unreported, so this assertion — not the clean pass above — fails on that mutation.
     incomplete = corpus / "incomplete-plan.md"
     missing_status = {k: v for k, v in NEW_CONTRACT_FRONTMATTER.items() if k != "status"}
@@ -224,8 +193,8 @@ def test_single_pass_reports_frontmatter_and_markers_together(tmp_path: Path) ->
 
     # The same call that validates the frontmatter also evaluates the marker half: the
     # document satisfies the frontmatter contract and fails the marker triple, and both
-    # verdicts come out of one pass. Deleting the marker half of the check removes the
-    # finding this test asserts on.
+    # verdicts come out of one pass. Deleting the marker half of the SHIPPED check
+    # removes the finding this test asserts on.
     findings = check_plan_corpus(corpus)
 
     assert not any(f.kind == KIND_MISSING_REQUIRED_FIELD for f in findings)
@@ -261,11 +230,12 @@ def test_missing_backend_is_legacy_reported_and_never_fails(tmp_path: Path) -> N
 
 
 def test_stripped_backend_field_is_reported_without_failing(tmp_path: Path) -> None:
-    # The "new document, missing required field" case. KTD3 makes absence the legacy
-    # signal, so this fixture is authored as a new-contract document — carrying every
-    # other required field and the new-contract markers the check keys on — and then
-    # stripped of `backend:`. That class cannot exist in the real corpus by
-    # construction, so the test asserts the report, never corpus membership.
+    # The "new document, missing required field" case, distinct from the plain legacy
+    # fixture above (review F26): it is authored as a new-contract document — carrying
+    # every other required field and the new-contract markers — and then stripped of
+    # `backend:`. KTD3 makes absence the legacy signal, and that class cannot exist in
+    # the real corpus by construction, so the test asserts the report, never corpus
+    # membership.
     corpus = tmp_path / "plans"
     corpus.mkdir()
     doc = corpus / "stripped-plan.md"
@@ -290,8 +260,8 @@ def test_check_recurses_into_subdirectories(tmp_path: Path) -> None:
     nested = nested_dir / "nested-report.md"
     nested.write_text("# Nested report\n\nNo frontmatter, no plan markers.\n", encoding="utf-8")
 
-    # Deleting the recursion (rglob -> glob) removes the nested document from the pass,
-    # which is the mutation this test fails on.
+    # Deleting the recursion (rglob -> glob) from the SHIPPED check removes the nested
+    # document from the pass, which is the mutation this test fails on.
     findings = check_plan_corpus(corpus)
 
     assert any(f.path == nested and f.kind == KIND_MARKER_MISSING for f in findings)
@@ -330,7 +300,9 @@ def test_marker_triple_definition_is_pinned_unchanged() -> None:
     # prose lives in doc-review/SKILL.md, this unit does not own that file, and no
     # home-grown classifier stands in for it. Pin the tokens as declared in
     # plan/SKILL.md so a later edit cannot silently redefine what makes a document a
-    # plan — on either side (the declaration or the check's constants).
+    # plan — on either side. Since F06t the constants bind to the SHIPPED module, so
+    # these cross-checks are no longer tautologies (review F27): they fail if the
+    # shipped constants and the declaration drift apart.
     text = PLAN_SKILL_MD.read_text(encoding="utf-8")
     declaration = next(
         (para for para in text.split("\n\n") if "recognize the document as a plan" in para),
@@ -342,3 +314,36 @@ def test_marker_triple_definition_is_pinned_unchanged() -> None:
     assert "`U1` U-ID prefix" in declaration
     assert MARKER_IMPLEMENTATION_UNITS == "Implementation Units"
     assert MARKER_KEY_TECHNICAL_DECISIONS == "Key Technical Decisions"
+    assert MARKER_IMPLEMENTATION_UNITS in declaration
+    assert MARKER_KEY_TECHNICAL_DECISIONS in declaration
+
+
+# --- contract pin: the required-field set (U1's required-backend change) --------------
+
+
+def test_required_field_set_is_pinned_to_both_declarations() -> None:
+    # Definition pin (review F01/F06), matching the marker-triple pin above. The
+    # required-field contract is declared in two markdown surfaces; this pin parses
+    # both and binds the SHIPPED check's REQUIRED_FIELDS constant to them, so reverting
+    # the required-backend rule in either declaration fails here instead of passing
+    # vacuously against a test-local tuple.
+    sections_text = PLAN_SECTIONS_MD.read_text(encoding="utf-8")
+    bullet = next(
+        (
+            line
+            for line in sections_text.splitlines()
+            if "are required on every newly created plan" in line
+        ),
+        None,
+    )
+    assert bullet is not None, "required-field bullet disappeared from plan-sections.md"
+    declared = tuple(re.findall(r"`(\w+)`", bullet))
+    assert "backend" in declared, "plan-sections.md no longer names backend as required"
+    assert declared == REQUIRED_FIELDS, (
+        f"plan-sections.md declares {declared}, the check enforces {REQUIRED_FIELDS}"
+    )
+
+    skill_collapsed = " ".join(PLAN_SKILL_MD.read_text(encoding="utf-8").split())
+    assert "`backend:` is required on every newly created plan" in skill_collapsed, (
+        "plan/SKILL.md lost its required-backend sentence"
+    )

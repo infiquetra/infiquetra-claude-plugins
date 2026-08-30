@@ -11,7 +11,10 @@ here — the seam is the spec shape, so the two sides can never disagree about i
 
 The backend stays runnable and explicit-invocation-only (issue #808 NARROW, #840 C5):
 nothing here selects the backend — it only emits when the operator's explicit choice
-reaches it. Pure functions; no I/O at import (house pattern).
+reaches it. The emission functions themselves are pure, but the module is NOT I/O-free
+at import (review F19/F19d): importing it bootstraps ``sys.path`` and loads Saga's
+``execution_spec`` through ``saga_spec_shim`` — the one import-time side effect, and
+the seam this plugin is built on.
 """
 
 from __future__ import annotations
@@ -37,6 +40,43 @@ _ES = saga_spec_shim.load_execution_spec()
 
 import concurrency_governor  # noqa: E402  (saga sibling; on sys.path once the substrate loaded)
 
+# The permitted substrate surface (review F10a): every name this module may bind from
+# Saga's execution_spec, declared explicitly — the eleven underscore-prefixed names are
+# the private surface crossing the plugin boundary. ``_bind_substrate`` refuses a bind
+# when the substrate lacks a declared name, and the guard test refuses a bind outside
+# this list, so the boundary cannot grow silently in either direction.
+SUBSTRATE_SURFACE = (
+    "SpecError",
+    "Tier",
+    "Unit",
+    "ExecutionSpec",
+    "_js_var",
+    "_unit_script_symbols",
+    "escalate_tier",
+    "assert_no_wave_file_conflicts",
+    "dependency_layers",
+    "wave_file_conflicts",
+    "clamp_tier_to_ceiling",
+    "_effective_verify_tier",
+    "_verify_panel_admission_unit",
+    "_concurrency_policy",
+    "EmissionRoutingContext",
+    "UnitRouting",
+    "resolved_concurrency",
+    "concurrency_chunks",
+    "max_concurrent_agents",
+    "_build_emission_routing_context",
+    "_load_emission_registry",
+    "_ROUTING_SNAPSHOT_UNSET",
+    "_WORKFLOW_RESERVED_IDENTIFIERS",
+    "_WORKFLOW_ITERATE_LOCAL_IDENTIFIERS",
+    "VERIFY_N_CAP",
+    "VERIFY_N_WARN",
+    "BUDGET_RIDER",
+    "PRESENTATION_RIDER",
+    "_WORKFLOW_TIER",
+)
+
 # --- substrate bindings (single source of truth — never redefined here).
 # Assigned through ``_bind_substrate`` so the delegation on the Saga side can re-bind
 # this module to ITS OWN execution_spec instance: several instances coexist in one
@@ -55,7 +95,17 @@ VERIFY_N_CAP = VERIFY_N_WARN = BUDGET_RIDER = PRESENTATION_RIDER = _WORKFLOW_TIE
 
 
 def _bind_substrate(es: ModuleType) -> None:
-    """Bind (or re-bind) the substrate names to one execution_spec instance."""
+    """Bind (or re-bind) the substrate names to one execution_spec instance.
+
+    Fails loud if the substrate lacks any declared surface name — a silent None bind
+    would surface later as an attribute error at emit time (review F10a).
+    """
+    missing = [name for name in SUBSTRATE_SURFACE if not hasattr(es, name)]
+    if missing:
+        raise RuntimeError(
+            "cc-workflows emitter: execution_spec is missing declared substrate names: "
+            + ", ".join(missing)
+        )
     global _ES
     global SpecError, Tier, Unit, ExecutionSpec
     global _js_var, _unit_script_symbols, escalate_tier

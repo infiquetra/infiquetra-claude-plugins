@@ -6,6 +6,9 @@ description: |
   Workflow protocol. Enter only by explicit invocation (issue #808 NARROW) — never
   a default backend. The boundary is the typed execution spec: this plugin reads
   Saga's spec shape, and Saga's /plan and /work keep the integration contract.
+  Triggers when /work drives a plan whose `backend:` recorded cc-workflows-ultracode
+  (re-emit, launch, settle), or when the operator explicitly invokes a Workflow;
+  it never triggers on the inline or team-execution paths.
 ---
 
 # cc-workflows
@@ -40,7 +43,8 @@ at launch, HALT with a recovery line pointing at `team-execution` or `inline`.
 ## Authoring protocol (spec → script)
 
 The plan's tier/spend authoring stays in `/plan` (Saga). Once the spec exists, author it into
-a runnable workflow in four steps.
+a runnable workflow in four steps. **Step 1 — tier/spend authoring** (the tier table, posture
+seeding, spend guards) lives there, in `/plan` Phase 5.2a; this protocol starts at Step 2.
 
 **Step 2 — Author thin per-unit prompts (KTD2).** Each unit's prompt is a **thin pointer**, not a prose
 transcription of the plan:

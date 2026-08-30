@@ -25,6 +25,24 @@ spec schema, validation, tier resolution, and `team_emitter.py`, plus the typed 
 contract that recognises the backend, records the explicit selection, validates availability,
 invokes this emitter, and consumes its structured result.
 
+## Resolution and overrides
+
+This plugin reads Saga's spec shape at runtime; the **saga plugin (or a repo checkout
+containing `plugins/saga/`) is a prerequisite**. Resolution is a ladder, first rung that
+succeeds wins (mirrors `fleet-core`'s `fleet_commons_shim`):
+
+1. `SAGA_SPEC_ROOT` env override — explicit, so an invalid value raises rather than falls
+   through.
+2. Repo-checkout walk-up from the emitter: an ancestor holding both
+   `.claude-plugin/marketplace.json` and `plugins/saga/scripts/execution_spec.py`.
+3. `~/.claude/plugins/installed_plugins.json` — any `saga@` key's `installPath`.
+4. Cache-sibling scan: `$CLAUDE_PLUGIN_ROOT/../../saga/<highest semver>/`.
+
+All rung misses fail loud with an actionable message. Set `SAGA_SPEC_DEBUG=1` to print the
+rung and root the shim resolved. On the Saga side, the delegation that invokes this emitter
+honours `CC_WORKFLOWS_SCRIPTS_DIR` (default: this plugin's `skills/cc-workflows/scripts`),
+and `/work`'s command block resolves the same variable.
+
 ## Explicit invocation only
 
 `cc-workflows-ultracode` is never a default or automatic backend and never a generic

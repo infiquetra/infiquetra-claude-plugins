@@ -681,6 +681,23 @@ class SagaSaveError(ValueError):
     """A save was rejected for violating a saga invariant (non-zero exit)."""
 
 
+class SagaTickEnvelopeWriteError(OSError):
+    """The tick envelope never reached disk: NO tick exists for this save.
+
+    The stranded-document remedy applies: the plan document on disk has nothing
+    referencing it until the save is re-run.
+    """
+
+
+class SagaTickIndexWriteError(OSError):
+    """The tick envelope IS on disk; only the state.json index rewrite failed.
+
+    ``restore`` reads the envelope directly and never opens state.json, so the tick
+    is tracked. The message must not claim the plan lost its tick (review F05/F05u);
+    re-running the same save rebuilds the index and appends no duplicate tick.
+    """
+
+
 def _orchestration_rank(mode: str) -> int | None:
     """Tier rank of an orchestration mode (inline < team-execution < cc-workflows-ultracode).
 
@@ -823,11 +840,23 @@ def save(
     _assert_orchestration_provenance(saga, merged, prior)
 
     saga_dir = root / SAGAS_DIR / merged.saga_id
-    saga_dir.mkdir(parents=True, exist_ok=True)
-    envelope_path = _allocate_envelope_path(saga_dir, _timestamp(moment))
-    envelope_path.write_text(render_envelope(merged), encoding="utf-8")
+    # Two distinct writes, two distinct failures (review F05): the envelope goes down
+    # first, then the state.json index rewrite. Only an envelope-phase failure leaves
+    # the plan document with no tick; an index-only failure still leaves a tracked tick
+    # because ``restore`` reads the envelope directly and never opens state.json.
+    try:
+        saga_dir.mkdir(parents=True, exist_ok=True)
+        envelope_path = _allocate_envelope_path(saga_dir, _timestamp(moment))
+        envelope_path.write_text(render_envelope(merged), encoding="utf-8")
+    except OSError as exc:
+        raise SagaTickEnvelopeWriteError(str(exc)) from exc
 
-    state_path = update_index(root, merged, now=moment)
+    try:
+        state_path = update_index(root, merged, now=moment)
+    except OSError as exc:
+        raise SagaTickIndexWriteError(
+            f"tick envelope written to {envelope_path}, then: {exc}"
+        ) from exc
     return {
         "saga_id": merged.saga_id,
         "envelope_path": str(envelope_path),
@@ -1646,17 +1675,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         except SagaSaveError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-        except OSError as exc:
-            # A filesystem failure (the envelope write or the state.json index rewrite)
-            # already exits non-zero, but a bare traceback never names the plan document
-            # now left on disk with NO tick referencing it — invisible to /work and /loop.
-            # Name the stranded document so the operator sees exactly what the lifecycle
-            # lost sight of (issue #923, plan KTD2: a named failure, not a transaction).
+        except SagaTickIndexWriteError as exc:
+            # The envelope landed BEFORE the index rewrite failed, so the tick EXISTS:
+            # ``restore`` reads the envelope directly and never opens state.json. The
+            # message must name the failure that actually occurred — never claim the
+            # plan lost its tick (review F05/F05u/F05d).
+            message = f"error: failed to rewrite the saga state.json index: {exc}"
+            if args.plan_path:
+                message += (
+                    f" — the plan document {args.plan_path} IS still referenced by the"
+                    " tick envelope on disk (restore reads it directly). Re-run the same"
+                    " save to rebuild the index; the re-run is idempotent and appends no"
+                    " duplicate tick."
+                )
+            print(message, file=sys.stderr)
+            return 2
+        except SagaTickEnvelopeWriteError as exc:
+            # The envelope never reached disk, so the tick does NOT exist: name the
+            # stranded document so the operator sees exactly what the lifecycle lost
+            # sight of (issue #923, plan KTD2: a named failure, not a transaction).
             message = f"error: failed to write the saga tick: {exc}"
             if args.plan_path:
                 message += (
                     f" — the plan document {args.plan_path} now has NO saga tick referencing"
                     " it. Re-run the save before routing onward."
+                )
+            print(message, file=sys.stderr)
+            return 2
+        except OSError as exc:
+            # Any other filesystem failure: exit non-zero, but make no claim about
+            # whether a tick exists — only the two writes above can say that.
+            message = f"error: failed to write the saga tick: {exc}"
+            if args.plan_path:
+                message += (
+                    f" — check whether a tick envelope was written for the plan document"
+                    f" {args.plan_path} (saga.py restore) before treating it as stranded."
                 )
             print(message, file=sys.stderr)
             return 2

@@ -14,6 +14,7 @@ ROOT = Path(__file__).parent.parent
 INVENTORY_PATH = ROOT / "plugins/saga/references/sandbox-spawn-sites.md"
 
 IN_SCOPE_SKILLS = {
+    "brainstorm": ROOT / "plugins/saga/skills/brainstorm/SKILL.md",
     "code-review": ROOT / "plugins/saga/skills/code-review/SKILL.md",
     "qa": ROOT / "plugins/saga/skills/qa/SKILL.md",
     "investigate": ROOT / "plugins/saga/skills/investigate/SKILL.md",

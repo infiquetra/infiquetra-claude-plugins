@@ -14,9 +14,11 @@ product behavior, scope boundaries, or success criteria. This skill does not wri
 code. It explores, clarifies, and records product decisions.
 
 The engine is **orchestrator-side dialogue**: the steps below run sequentially, in this session, one
-question at a time. The only parallel work allowed is the Phase 1 context scan (`Explore` agents).
-Resolve product decisions here; defer schemas, endpoints, file layouts, and code-level design to
-`/plan` unless the brainstorm is itself about a technical or architectural decision.
+question at a time. The only parallel work allowed is the bounded Phase 1 helper set (at most one
+read-only repository-grounding scout and at most one independent claim verifier, each only with a
+distinct evidence question; Lightweight launches none) described in Phase 1.1. Resolve product
+decisions here; defer schemas, endpoints, file layouts, and code-level design to `/plan` unless the
+brainstorm is itself about a technical or architectural decision.
 
 Use repo-relative paths in every generated document. Absolute paths break portability across machines
 and worktrees.
@@ -149,12 +151,30 @@ establish product shape or inherit it:
 Product-tier triggers the extra Phase 1.2 probes and the extra requirements sections noted in the
 section contract. Feature-tier uses Deep behavior unchanged.
 
+### Consequence calibration (internal)
+
+Product size and assurance need are different signals. Calibrate rigor from the concrete
+consequence factors actually present in scope, separately from product size: data sensitivity,
+granted authority, exposure to untrusted input, reversibility and blast radius, safety, financial,
+legal or operational consequence, recovery expectations, and auditability or consent obligations.
+Rigor rises and falls as those factors enter or leave scope. The trigger is never a domain name
+alone. No named tiers are used — the factors themselves are named.
+
 ## Phase 1 — Understand the idea
 
 ### 1.1 Existing-context scan (verify before claiming)
 
-Scan the repo before substantive dialogue. Match depth to scope. This scan may run parallel `Explore`
-agents; the dialogue that follows is sequential.
+Scan the repo before substantive dialogue. Match depth to scope. The dialogue that follows is
+sequential. Helper policy: Lightweight work, and work whose repository context is already available,
+launches zero helpers. Standard and Deep work may launch at most one read-only
+repository-grounding scout and at most one independent claim verifier, and may launch either only
+when it has a distinct evidence question — two helpers on the same question is one helper too many.
+These are ceilings, not required launches. The grounding scout is `subagent_type: Explore`; the claim
+verifier is `subagent_type: saga:readonly-verifier` with `isolation: "worktree"`, degrading through
+the fallback ladder in `plugins/saga/references/sandbox-spawn-sites.md` when the agent type is absent
+from the session roster. Helpers are read-only by tool omission, not by instruction, and may not write
+files, may not choose requirements, and may not address the operator. The primary process retains
+synthesis, creativity, the private concern model, and every operator-facing exchange.
 
 **Lightweight** — search for the topic, check whether something similar already exists, move on.
 
@@ -222,6 +242,13 @@ wants to be?
 These force an explicit product thesis and feed the Scope Boundaries and Dependencies/Assumptions
 sections of the requirements doc.
 
+**Private concern model (internal).** For each concern material to the current idea, privately
+classify current understanding as Clear, Partial, Missing, or Not material. `Not material` is a
+legitimate outcome and needs no follow-up. The map is a changing heuristic for choosing the next
+valuable question, re-evaluated as the idea changes. It is never written to the artifact, never
+persisted, never rendered as a document section, never shown as a score, and never surfaced to the
+operator in any form.
+
 ### 1.3 Collaborative dialogue
 
 Follow the interaction rules above. Be a thinking partner — bring alternatives, challenge assumptions,
@@ -249,6 +276,17 @@ explore what-ifs; do not only extract requirements.
 - Make requirements concrete enough that planning will not need to invent behavior.
 - Surface dependencies or prerequisites only when they materially affect scope.
 - Resolve product decisions here; leave implementation choices for `/plan`.
+
+**Question selection (internal).** Ground repository-discoverable facts before asking the operator.
+Ask a question only when its answer could materially change scope, acceptance behaviour,
+consequence-based safeguards, or the downstream route. Among the candidates, prefer the greatest
+combination of consequence and uncertainty. One at a time, per interaction rule 1. The primary process
+retains synthesis, creativity, the private concern model, and every operator-facing exchange. The
+question-selection rule orders and filters idle questions only — it decides which of the questions
+Brainstorm might otherwise volunteer are worth the operator's turn, and in what order. A rigor gap
+Phase 1.2 actually found is still probed, one at a time, and is never filtered out by the
+consequence test; Phase 1 cannot end with an un-probed rigor gap that is present, and that exit
+condition is not narrowed by the selection rule.
 
 **Before exiting 1.3 — integration check.** Combine what the operator has said and surface any
 non-obvious consequence the dialogue has not probed. If stated-X plus stated-Y plus your-default-Z

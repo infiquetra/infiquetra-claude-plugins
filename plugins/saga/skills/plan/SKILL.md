@@ -218,10 +218,15 @@ type: <feat|fix|refactor|chore|docs|perf|test>
 status: active
 date: YYYY-MM-DD
 origin: <repo-relative path to the upstream brainstorm/requirements doc, when planning from one>
+backend: <inline|team-execution|cc-workflows-ultracode>
+deepened: <YYYY-MM-DD, optional; added when the confidence pass deepened the plan>
 ---
 ```
 
-`origin:` MUST be emitted so the review phase can trace the plan back to its source. The body MUST use
+`backend:` is required on every newly created plan; a legacy plan that lacks it stays compatible
+through `/work`'s attended offer — never rejected, never rewritten. `origin:` MUST be emitted
+whenever an upstream artifact exists so the review phase can trace the plan back to its source; when
+there is no upstream doc (cold-start ad-hoc), it may be omitted. The body MUST use
 the exact section markers `Implementation Units`, `Key Technical Decisions`, and the `U1` U-ID prefix —
 `/doc-review` parses these to recognize the document as a plan.
 

@@ -639,3 +639,34 @@ independent observer signal).
 `Manifest.bridge_run_key` is optional and additive in `saga.manifest.v1`. When present it carries the
 stable bridge run key from `bridge_receipt.run_id` or a canonical receipt hash fallback. Consumers use
 it to join producer launch evidence to manifest consumption and to de-duplicate run-ledger token facts.
+
+---
+
+## 15. Plan-document contract (distinct from the tick envelope)
+
+The plan document under `docs/plans/` is a separate artifact from the saga tick envelope of section 3,
+with its own contract and its own consumers. Nothing in this section belongs in the envelope field
+table (§3.1), and no tick field is a plan-doc field — the two schemas never merge.
+
+**Frontmatter.** Every plan carries YAML frontmatter. `title`, `type`, `status`, `date`, and `backend`
+are required on every newly created plan; `backend` takes a value from `ORCHESTRATION_MODES` (section
+4), as narrowed by #808 — `inline` or `team-execution` are the defaults, `cc-workflows-ultracode` only
+after explicit invocation. `origin` MUST be emitted whenever an upstream artifact exists and may be
+omitted on a cold start; `deepened` is optional. The field-by-field contract lives in
+`../skills/plan/references/plan-sections.md` (Plan-doc frontmatter contract).
+
+**Legacy rule.** Legacy is the absence of `backend`, and nothing else. A document without the field is
+legacy, reported, and non-failing; a document with it is new-contract and is held to the full
+frontmatter and marker contract. There is no bulk rewrite of the legacy corpus — `/work` honours the
+field when present and offers only when it is absent.
+
+**Marker triple.** The body MUST use the exact section markers `Implementation Units`,
+`Key Technical Decisions`, and the `U1` U-ID prefix; `/doc-review` parses these to recognize the
+document as a plan. The definition is pinned by `tests/test_plan_artifact_conformance.py`.
+
+**Consumers.** Saga Work reads `backend`; Document Review recognizes the document by the marker
+triple; `/loop` routes on the saga tick, which stays in the envelope of section 3.
+
+**Conformance.** One recursive pass over `docs/plans/` evaluates the declared frontmatter fields and
+the marker triple together (`tests/test_plan_artifact_conformance.py`), so a document cannot satisfy
+one contract and silently fail the other. Legacy findings are reported without failing the run.

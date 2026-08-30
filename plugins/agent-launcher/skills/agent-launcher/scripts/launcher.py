@@ -820,12 +820,22 @@ def drive_opencode_variant_selection(
     return selected, ready
 
 
-def close_run_session(unit: Any) -> None:
-    """Close only the tab this launch created, leaving every other session alone."""
+def close_run_session(unit: Any) -> subprocess.CompletedProcess[str] | None:
+    """Close only the tab this launch created, leaving every other session alone.
+
+    Returns the close result, or None when there was nothing owned to close. A failure is
+    recorded rather than raised: every internal caller is already unwinding a different stop,
+    and replacing that stop with this one loses the reason the session was being closed.
+    """
     if not session_owned(unit):
-        return
-    if unit.tab_id:
-        run(["herdr", "tab", "close", unit.tab_id], check=False)
+        return None
+    if not unit.tab_id:
+        return None
+    proc = run(["herdr", "tab", "close", unit.tab_id], check=False)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        append_unit_note(unit, f"tab close failed ({proc.returncode}) for {unit.tab_id}: {err}")
+    return proc
 
 
 def same_directory(reported: str, expected: str) -> bool:
@@ -1446,7 +1456,10 @@ def close_owned_session(unit: Any, *, receipt: dict[str, Any] | None = None) -> 
         unit.launch_receipt = dict(proof)
     else:
         unit.launch_receipt["owned"] = True
-    close_run_session(unit)
+    proc = close_run_session(unit)
+    if proc is not None and proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise SystemExit(f"tab close failed ({proc.returncode}) for {unit.tab_id}: {err}")
 
 
 def _request_from_args(args: argparse.Namespace) -> LaunchRequest:

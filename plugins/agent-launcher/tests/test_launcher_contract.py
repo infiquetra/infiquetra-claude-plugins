@@ -799,6 +799,64 @@ def test_close_owned_session_closes_only_receipt_tab(
     assert closed == [["herdr", "tab", "close", "tab-owned"]]
 
 
+def test_failing_tab_close_is_recorded_on_the_unit(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 1, "", "no such tab")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-owned", owned=True)
+    launcher.close_run_session(unit)
+    assert "tab close failed" in unit.note
+    assert "tab-owned" in unit.note
+    assert "no such tab" in unit.note
+
+
+def test_failing_tab_close_exits_nonzero_through_the_cli_variant(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 1, "", "no such tab")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-owned")
+    with pytest.raises(SystemExit, match="tab close failed"):
+        launcher.close_owned_session(unit, receipt={"tab_id": "tab-owned", "owned": True})
+
+
+def test_successful_close_adds_no_note(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        closed.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-owned", owned=True)
+    launcher.close_run_session(unit)
+    assert closed == [["herdr", "tab", "close", "tab-owned"]]
+    assert unit.note == ""
+
+
+def test_unowned_session_closes_nothing_and_reports_nothing(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        closed.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1, "", "no such tab")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-old", owned=False)
+    launcher.close_run_session(unit)
+    assert closed == []
+    assert unit.note == ""
+
+
 def test_confirm_preview_stops_on_cwd_mismatch(launcher: ModuleType) -> None:
     with pytest.raises(SystemExit, match="cwd"):
         launcher.confirm_preview(

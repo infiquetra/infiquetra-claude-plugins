@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.148.0"  # W10 (sdlc#91): office-hours + ideate state and
+    assert plugin_json["version"] == "0.149.0"  # W10 (sdlc#91): office-hours + ideate state and
     # test the Intake no-issue-creation boundary; successor to W8 c2's (sdlc#89) Verify-precondition 0.147.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"

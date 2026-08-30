@@ -21,6 +21,15 @@
 
 ## 2026-08-30
 
+### Authored cases are design input; mislabelled captured transcripts are the failure  {#915-evidence-authored-vs-captured}
+
+**Context.** B3's scenario harness must distinguish authored case data (idea seed, independent variables, expected per-dimension outcome) from captured transcripts (evidence of real behaviour). The checkpoint that could have produced captured transcripts is parked, so all six cases are `transcript: none` and the suite must be green that way.
+**Evidence.** `tests/data/brainstorm/scenarios.json` six cases, `rubric.json` five dimensions, `calibration.json` three cases at `e84be5f2`+`45ccfeda`; `plugins/saga/scripts/engine_benchmark.py` grader is never model-graded; `scripts/lint_test_shape.py` flags a fake-only module via AST.
+**Mechanism.** A synthesized transcript labelled `captured` is a harness-substitution failure: it presents a fabricated conversation as evidence. The correct shape is authored data as design input (permitted) plus an explicit `transcript: none|captured` label, with the offline suite proving grading/gating machinery rather than any given brainstorm's quality. `lint_test_shape` catches a fake grader without a production import, so every evidence module path-loads a real `plugins/saga/scripts/` target.
+**Fix.** Built three layers: deterministic AST check (no question-shaped assert), scenario data with independent `product_size`/`consequence`, per-dimension `grade()` with no aggregate, `is_blocking()` requiring reproducible + second-grader agreement or adjudication, calibration drift floor, eight mutation proofs. Reference `plugins/saga/references/brainstorm-evidence-model.md` records prior-art verdicts and what the suite does not prove.
+**Generalizable rule.** Separate design input (authored cases) from evidence (captured transcripts) with an explicit label, and prove the label's honesty mechanically — a suite that is green with `transcript: none` proves its machinery, not a conversation.
+**Refs.** Issue #915 (B3); R17/R19/R20/R22/R23; run plan §U3.
+
 ### A bounded helper ceiling needs a distinct-question guard, not just a count  {#914-judgment-helper-ceiling-distinct-question}
 
 **Context.** Brainstorm's Phase 1 context scan permitted parallel `Explore` agents with no count ceiling and no distinct-question requirement, so a Standard/Deep run could fan out arbitrarily and two helpers could chase the same evidence.

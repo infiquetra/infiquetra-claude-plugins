@@ -237,6 +237,8 @@ def test_prepare_records_explicit_handoff_maturity(tmp_path) -> None:
 
 
 def test_non_default_status_blocks_prepared_draft(tmp_path) -> None:
+    """R49 entry-option rule: a Status other than the declared Stage's entry
+    option blocks, naming the entry option — the retired team default is gone."""
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",
         issue_type="capability",
@@ -244,9 +246,10 @@ def test_non_default_status_blocks_prepared_draft(tmp_path) -> None:
         project="campps",
         source=OLYMPUS_BODY,
         title="Wrong status",
-        status="In Progress",
+        status="Implementing",
         risk="medium",
         mode=None,
+        stage="Intake",
         draft_dir=tmp_path,
     )
 
@@ -254,9 +257,140 @@ def test_non_default_status_blocks_prepared_draft(tmp_path) -> None:
 
     assert sidecar["state"] == "blocked"
     assert (
-        "Prepared campps issues must start in 'Idea', not 'In Progress'"
+        "Prepared campps issues must start in 'Capturing', not 'Implementing'"
         in sidecar["readiness"]["blocking_gaps"]
     )
+
+
+def test_entry_option_default_derived_per_stage(tmp_path) -> None:
+    """W10 repair (R49): with no author Status, the default is the entry option
+    of the DECLARED Stage — Intake -> Capturing, Planning -> Designing —
+    sourced from the schema's stage_flow, not a per-team literal."""
+    draft_intake = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Intake default",
+        status=None,
+        risk="medium",
+        mode=None,
+        stage="Intake",
+        draft_dir=tmp_path,
+    )
+    sidecar_intake = json.loads(draft_intake.with_suffix(".json").read_text())
+    assert sidecar_intake["status"] == "Capturing"
+    assert sidecar_intake["state"] == "ready_to_create"
+
+    draft_planning = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Planning default",
+        status=None,
+        risk="medium",
+        mode=None,
+        stage="Planning",
+        draft_dir=tmp_path,
+    )
+    sidecar_planning = json.loads(draft_planning.with_suffix(".json").read_text())
+    assert sidecar_planning["status"] == "Designing"
+    assert sidecar_planning["state"] == "ready_to_create"
+
+
+def test_author_supplied_status_is_honoured(tmp_path) -> None:
+    """An author Status equal to the stage's entry option passes as the author's
+    own value — `status or <default>` never substitutes the default for it."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Author status",
+        status="Designing",
+        risk="medium",
+        mode=None,
+        stage="Planning",
+        draft_dir=tmp_path,
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+
+    assert sidecar["status"] == "Designing"
+    assert sidecar["state"] == "ready_to_create"
+
+
+def test_retired_team_default_statuses_are_gone(tmp_path) -> None:
+    """W13 retired 'Idea'/'Shaping' as Status values: the old `_TEAM_SAFE_STATUSES`
+    table is gone from the module, a Shaping-Stage draft defaults to the Stage's
+    entry option (not the retired Per-team literal), and an author Status of
+    'Idea' is refused."""
+    assert not hasattr(sdlc_manager, "_TEAM_SAFE_STATUSES")
+
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="exploration",
+        team="asgard",
+        project="asgard",
+        source=ASGARD_BODY,
+        title="Shaping stage draft",
+        status=None,
+        risk="low",
+        mode="Rapid Action",
+        stage="Shaping",
+        draft_dir=tmp_path,
+    )
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["status"] == "Discovering"
+    assert sidecar["state"] == "ready_to_create"
+
+    draft_idea = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Retired Idea status",
+        status="Idea",
+        risk="medium",
+        mode=None,
+        stage="Intake",
+        draft_dir=tmp_path,
+    )
+    sidecar_idea = json.loads(draft_idea.with_suffix(".json").read_text())
+    assert sidecar_idea["state"] == "blocked"
+    assert (
+        "Prepared campps issues must start in 'Capturing', not 'Idea'"
+        in sidecar_idea["readiness"]["blocking_gaps"]
+    )
+
+
+def test_unknown_stage_blocks_entry_status_derivation(tmp_path) -> None:
+    """A declared Stage outside the schema's stage_flow cannot derive an entry
+    option — readiness blocks on the unknown Stage instead of silently skipping
+    the Status rule."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Unknown stage",
+        status="Capturing",
+        risk="medium",
+        mode=None,
+        stage="Limbo",
+        draft_dir=tmp_path,
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+
+    assert sidecar["state"] == "blocked"
+    assert any("Unknown Stage 'Limbo'" in gap for gap in sidecar["readiness"]["blocking_gaps"])
 
 
 def test_olympus_requires_actionable_labels_and_risk(tmp_path) -> None:

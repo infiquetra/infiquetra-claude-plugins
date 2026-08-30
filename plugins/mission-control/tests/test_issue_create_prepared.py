@@ -269,7 +269,7 @@ def test_create_prepared_creates_issue_and_marks_draft(tmp_path) -> None:
     # W10: the Intake exit writes BOTH lifecycle fields — Stage then Status.
     assert mock_status.call_args_list == [
         call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
-        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Capturing", fmt="text"),
     ]
 
     sidecar = json.loads(draft.with_suffix(".json").read_text())
@@ -338,7 +338,7 @@ def test_create_prepared_resumes_post_create_without_duplicate_issue(tmp_path) -
     # it happens before the Status write (KTD1a).
     assert mock_status.call_args_list == [
         call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
-        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Capturing", fmt="text"),
     ]
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
@@ -368,7 +368,7 @@ def test_create_prepared_resume_skips_existing_board_membership(tmp_path) -> Non
     # W10: the legacy sidecar still owes Stage, written before Status.
     assert mock_status.call_args_list == [
         call("campps", "hermes-claude-code-router", 42, "Stage", "Intake", fmt="text"),
-        call("campps", "hermes-claude-code-router", 42, "Status", "Idea", fmt="text"),
+        call("campps", "hermes-claude-code-router", 42, "Status", "Capturing", fmt="text"),
     ]
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
@@ -545,7 +545,7 @@ def test_intake_exit_sets_stage_and_status_at_creation(tmp_path) -> None:
     # Exactly two lifecycle writes, one per field — asserted on the recorded call
     # list, not a count, so writing the same field twice fails.
     assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
-    assert [c.args[4] for c in mock_flow.call_args_list] == ["Intake", "Idea"]
+    assert [c.args[4] for c in mock_flow.call_args_list] == ["Intake", "Capturing"]
     sidecar = json.loads(draft.with_suffix(".json").read_text())
     assert sidecar["state"] == "created"
     assert sidecar["remaining_steps"] == []
@@ -877,7 +877,13 @@ def test_intake_exit_fill_in_round_trips_through_approval_gate(tmp_path) -> None
     # The author fills Stage into the draft file — R3b's fill-in surface.
     draft_text = draft.read_text()
     assert "\nstage: " not in draft_text
-    draft.write_text(draft_text.replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1))
+    draft.write_text(
+        draft_text.replace(
+            "labels: capability, needs-plan\n",
+            "stage: Intake\nstatus: Capturing\nlabels: capability, needs-plan\n",
+            1,
+        )
+    )
 
     # The re-read draft now passes readiness — but create-prepared without
     # --skip-approval must still refuse, and the sidecar must be promoted.
@@ -944,7 +950,11 @@ def test_intake_exit_fill_in_skip_approval_is_explicit_override(tmp_path) -> Non
         draft_dir=tmp_path,
     )
     draft.write_text(
-        draft.read_text().replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1)
+        draft.read_text().replace(
+            "labels: capability, needs-plan\n",
+            "stage: Intake\nstatus: Capturing\nlabels: capability, needs-plan\n",
+            1,
+        )
     )
 
     with (
@@ -993,7 +1003,11 @@ def test_intake_exit_fill_in_skip_approval_mapping_resume_stamps_gate(tmp_path) 
     )
     # The R3b fill-in: the author edits `stage:` into the blocked draft.
     draft.write_text(
-        draft.read_text().replace("status: Idea\n", "status: Idea\nstage: Intake\n", 1)
+        draft.read_text().replace(
+            "labels: capability, needs-plan\n",
+            "stage: Intake\nstatus: Capturing\nlabels: capability, needs-plan\n",
+            1,
+        )
     )
     sidecar_path = draft.with_suffix(".json")
 

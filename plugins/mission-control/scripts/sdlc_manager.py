@@ -354,7 +354,11 @@ def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
 
             content = base64.b64decode(result.strip()).decode()
             return cast(dict[str, Any], json.loads(content))
-    except (GhApiError, RuntimeError):
+    except Exception:
+        # Broad by design (matching load_config's remote fallback): any gh
+        # failure OR undecodable/unparseable payload must degrade to the
+        # vendored copy, never crash the caller (W10 repair: a stubbed or
+        # malformed gh result previously escaped as UnicodeDecodeError).
         pass
 
     if _VENDORED_SDLC_SCHEMA_PATH.exists():
@@ -367,6 +371,22 @@ def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
             return cast(dict[str, Any], json.load(f))
 
     return {}
+
+
+def _stage_entry_options() -> dict[str, str]:
+    """Stage -> entry Status, sourced from the schema's stage_flow (R49, sdlc#91).
+
+    The schema's `workflows.stage_flow.entry_option_rule` makes the first name in
+    each `stage_statuses` list the entry option — defaulting there invents no
+    recorded progress. Resolving through `_resolve_sdlc_schema()` keeps GitHub
+    main as the live source and the vendored copy as the offline fallback, so the
+    vocabulary lives in one versioned place instead of a second hardcoded Python
+    copy (the W10 repair retired `_TEAM_SAFE_STATUSES`, whose team-keyed literal
+    "Shaping"/"Idea" no longer exist in the board Status vocabulary).
+    """
+    schema = _resolve_sdlc_schema(get_sdlc_path())
+    stage_statuses = schema.get("workflows", {}).get("stage_flow", {}).get("stage_statuses", {})
+    return {stage: options[0] for stage, options in stage_statuses.items() if options}
 
 
 def get_project_config(config: dict, project_name: str) -> dict:
@@ -4223,7 +4243,6 @@ _ISSUE_TYPES = (
 # CAMPPS (strict actionable dispatch profile on the initiative execution board).
 # Mount Olympus is retired historical context and is not an active prepare target.
 _TEAM_CHOICES = ("asgard", "campps")
-_TEAM_SAFE_STATUSES = {"asgard": "Shaping", "campps": "Idea"}
 _DISPATCH_ACTIONABLE_TYPES = frozenset({"capability", "enhancement", "defect"})
 _ISSUE_TYPE_LABELS = {
     "capability": ["capability", "needs-plan"],
@@ -4749,7 +4768,7 @@ def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = No
         f"type: {issue.issue_type}",
         f"team: {issue.team}",
         f"project: {issue.project}",
-        f"status: {issue.status}",
+        *([f"status: {issue.status}"] if issue.status else []),
         f"labels: {labels}",
     ]
     if issue.stage:
@@ -5225,13 +5244,27 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     if envelope_error:
         blocking.append(envelope_error)
 
-    expected_status = _TEAM_SAFE_STATUSES.get(issue.team)
+    # W10 repair (R49 entry-option rule, sdlc#91): the starting Status is derived
+    # from the DECLARED Stage — the schema's stage_flow entry option — not from
+    # the team. Readiness pins the entry option exactly: a prepared issue is new
+    # and carries no recorded progress, so the schema's terminal exceptions
+    # ("Ready for Active", "Ready to close") never apply at creation; any other
+    # Status invents progress the issue does not have.
+    entry_options = _stage_entry_options()
     if issue.status == "Ready":
         blocking.append("Prepared issues must not start in Ready")
-    elif expected_status and issue.status != expected_status:
-        blocking.append(
-            f"Prepared {issue.team} issues must start in {expected_status!r}, not {issue.status!r}"
-        )
+    elif issue.stage:
+        expected_status = entry_options.get(issue.stage)
+        if expected_status is None:
+            blocking.append(
+                f"Unknown Stage {issue.stage!r}; the entry Status cannot be derived "
+                "for a Stage outside the schema's stage_flow stage_statuses"
+            )
+        elif issue.status != expected_status:
+            blocking.append(
+                f"Prepared {issue.team} issues must start in {expected_status!r}, "
+                f"not {issue.status!r}"
+            )
 
     if issue.project not in PROJECT_CHOICES:
         blocking.append(f"Unknown project {issue.project!r}")
@@ -5359,7 +5392,11 @@ def issue_prepare(
             f"Unknown project {project!r}; expected one of {', '.join(PROJECT_CHOICES)}"
         )
 
-    safe_status = status or _TEAM_SAFE_STATUSES[team]
+    # W10 repair (R49): the default Status is the entry option of the DECLARED
+    # Stage — it exists only when the author supplied a Stage (Stage itself has
+    # no default per the OQ1 ruling), so a stage-less prepare leaves Status
+    # empty and readiness blocks on the missing Stage instead.
+    safe_status = status or _stage_entry_options().get(stage or "", "")
     draft_title = title or f"{issue_type}: {repo} {team} work"
     maturity = handoff_maturity or (
         source_artifact.inferred_maturity if source_artifact else "requirements-ready"

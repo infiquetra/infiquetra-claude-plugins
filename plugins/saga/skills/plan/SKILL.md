@@ -579,6 +579,7 @@ python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
   --id <issue-number-or-task-slug> \
   --lifecycle-phase plan \
+  --phase-status complete \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --deploy-autonomy <gate|auto>   # ONLY when --destination nonprod-deploy (Phase 5.1); else omit \
@@ -596,6 +597,7 @@ python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
   --id <issue-number-or-task-slug> \
   --lifecycle-phase plan \
+  --phase-status complete \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --adr-refs "ADR-NNNN|ADR-MMMM" \
@@ -614,12 +616,19 @@ recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestra
 auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.
 
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc work pass
-`--kind task --id <slug>`. `--lifecycle-phase plan`, `--plan-path`, `--destination`,
-`--deploy-autonomy` (only when `--destination nonprod-deploy` — Phase 5.1), `--adr-refs`,
-`--decisions` (the KTD mirror), `--orchestration-mode`, `--orchestration-recommended`, and (for
-ultracode) `--orchestration-ref` carry the `/plan` consumer row from `references/saga-spec.md` §11.
+`--kind task --id <slug>`. `--lifecycle-phase plan`, `--phase-status complete`, `--plan-path`,
+`--destination`, `--deploy-autonomy` (only when `--destination nonprod-deploy` — Phase 5.1),
+`--adr-refs`, `--decisions` (the KTD mirror), `--orchestration-mode`,
+`--orchestration-recommended`, and (for ultracode) `--orchestration-ref` carry the `/plan`
+consumer row from `references/saga-spec.md` §11. `--phase-status complete` is what the `/loop`
+dispatch table routes on: a finished plan goes onward to `/doc-review`, and omitting it leaves the
+tick at the `pending` default, which routes the already-finished plan right back into `/plan`.
 When resuming (Phase 0.3 matched), this appends a tick to the existing saga directory rather than
 minting a new one.
+
+**Check the save's exit status.** A non-zero exit means the tick was NOT written: the plan document
+named in the error is on disk with no saga state referencing it, so `/work` and `/loop` cannot see
+it. STOP and surface the error to the operator — do not continue to Phase 5.4 on a failed save.
 
 ### 5.4 Route
 

@@ -1646,6 +1646,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         except SagaSaveError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
+        except OSError as exc:
+            # A filesystem failure (the envelope write or the state.json index rewrite)
+            # already exits non-zero, but a bare traceback never names the plan document
+            # now left on disk with NO tick referencing it — invisible to /work and /loop.
+            # Name the stranded document so the operator sees exactly what the lifecycle
+            # lost sight of (issue #923, plan KTD2: a named failure, not a transaction).
+            message = f"error: failed to write the saga tick: {exc}"
+            if args.plan_path:
+                message += (
+                    f" — the plan document {args.plan_path} now has NO saga tick referencing"
+                    " it. Re-run the save before routing onward."
+                )
+            print(message, file=sys.stderr)
+            return 2
         print(json.dumps(result, indent=2))
         return 0
 

@@ -373,20 +373,27 @@ def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
     return {}
 
 
-def _stage_entry_options() -> dict[str, str]:
-    """Stage -> entry Status, sourced from the schema's stage_flow (R49, sdlc#91).
+def _stage_flow_rules() -> dict[str, Any]:
+    """The schema's `workflows.stage_flow` block, via one _resolve_sdlc_schema() call (R49, sdlc#91).
 
-    The schema's `workflows.stage_flow.entry_option_rule` makes the first name in
-    each `stage_statuses` list the entry option — defaulting there invents no
-    recorded progress. Resolving through `_resolve_sdlc_schema()` keeps GitHub
-    main as the live source and the vendored copy as the offline fallback, so the
-    vocabulary lives in one versioned place instead of a second hardcoded Python
-    copy (the W10 repair retired `_TEAM_SAFE_STATUSES`, whose team-keyed literal
-    "Shaping"/"Idea" no longer exist in the board Status vocabulary).
+    Resolving through `_resolve_sdlc_schema()` keeps GitHub main as the live
+    source and the vendored copy as the offline fallback, so the vocabulary lives
+    in one versioned place instead of a second hardcoded Python copy (the W10
+    repair retired `_TEAM_SAFE_STATUSES`, whose team-keyed literal "Shaping"/
+    "Idea" no longer exist in the board Status vocabulary).
     """
     schema = _resolve_sdlc_schema(get_sdlc_path())
-    stage_statuses = schema.get("workflows", {}).get("stage_flow", {}).get("stage_statuses", {})
-    return {stage: options[0] for stage, options in stage_statuses.items() if options}
+    stage_flow = schema.get("workflows", {}).get("stage_flow", {})
+    return stage_flow if isinstance(stage_flow, dict) else {}
+
+
+def _stage_entry_options() -> dict[str, str]:
+    """Stage -> entry Status (the FIRST configured option of the Stage's list)."""
+    return {
+        stage: options[0]
+        for stage, options in _stage_flow_rules().get("stage_statuses", {}).items()
+        if options
+    }
 
 
 def get_project_config(config: dict, project_name: str) -> dict:
@@ -5108,6 +5115,14 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         raise RuntimeError(f"Unknown issue type in prepared draft: {issue.issue_type}")
     if issue.team not in _TEAM_CHOICES:
         raise RuntimeError(f"Unknown team in prepared draft: {issue.team}")
+    if issue.stage and not issue.status:
+        # W10 cycle-5 (F-3, sdlc#91): the R3b fill-in path repairs a stage-less
+        # blocked draft by adding ONLY `stage:` — stage-less prepare legitimately
+        # emitted no `status:` line, because no default is derivable without a
+        # Stage. Apply the entry-option default on read, BEFORE readiness
+        # evaluates: the declared Stage makes the default resolvable, and the
+        # create path then writes a real Status instead of an empty one.
+        issue.status = _stage_entry_options().get(issue.stage, "")
     return issue
 
 
@@ -5244,26 +5259,29 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     if envelope_error:
         blocking.append(envelope_error)
 
-    # W10 repair (R49 entry-option rule, sdlc#91): the starting Status is derived
-    # from the DECLARED Stage — the schema's stage_flow entry option — not from
-    # the team. Readiness pins the entry option exactly: a prepared issue is new
-    # and carries no recorded progress, so the schema's terminal exceptions
-    # ("Ready for Active", "Ready to close") never apply at creation; any other
-    # Status invents progress the issue does not have.
-    entry_options = _stage_entry_options()
+    # W10 cycle-5 repair (operator ruling of 2026-08-30, sdlc#91): readiness
+    # accepts any Status configured WITHIN the declared Stage plus the
+    # cross-cutting statuses (Blocked); retired, unknown, and out-of-Stage values
+    # are still refused. The entry option (first configured name) is a DEFAULT,
+    # not a closed set — R49's entry_option_rule defines defaulting, and R42
+    # keeps Status consistency descriptive.
+    stage_flow = _stage_flow_rules()
+    stage_statuses = stage_flow.get("stage_statuses", {})
+    cross_cutting = set(stage_flow.get("cross_cutting_statuses", []))
     if issue.status == "Ready":
         blocking.append("Prepared issues must not start in Ready")
     elif issue.stage:
-        expected_status = entry_options.get(issue.stage)
-        if expected_status is None:
+        stage_configured = stage_statuses.get(issue.stage)
+        if stage_configured is None:
             blocking.append(
-                f"Unknown Stage {issue.stage!r}; the entry Status cannot be derived "
+                f"Unknown Stage {issue.stage!r}; its accepted Statuses cannot be derived "
                 "for a Stage outside the schema's stage_flow stage_statuses"
             )
-        elif issue.status != expected_status:
+        elif issue.status not in set(stage_configured) | cross_cutting:
             blocking.append(
-                f"Prepared {issue.team} issues must start in {expected_status!r}, "
-                f"not {issue.status!r}"
+                f"Prepared issues at Stage {issue.stage!r} must start in one of the "
+                f"Stage's configured Statuses {stage_configured!r} or the cross-cutting "
+                f"statuses {sorted(cross_cutting)!r}, not {issue.status!r}"
             )
 
     if issue.project not in PROJECT_CHOICES:

@@ -99,7 +99,12 @@ def test_operator_prompt_honors_the_card_contract_split() -> None:
     assert "hermes-not-actionable" not in operator
     assert "issue prepare" in operator
     assert "issue create-prepared" in operator
-    assert "Asgard `Shaping`, CAMPPS `Idea`" in operator
+    # W10 cycle-5: starting Status is Stage-derived (R49 entry-option default);
+    # readiness accepts any Stage-configured Status or Blocked.
+    assert "Status` defaulting to the declared `Stage`'s entry option" in operator
+    # The retired team-keyed starting statuses must not come back.
+    assert "Asgard `Shaping`, CAMPPS `Idea`" not in operator
+    assert "safe statuses: Asgard" not in operator
     # Olympus is retired; it must not be presented as an active safe-start board.
     assert "Olympus `Backlog`" not in operator
     assert "every new card has a parent by default" not in operator
@@ -209,6 +214,11 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
         "Asgard Seeds Olympus",
         "seed Olympus",
         "promote to Olympus",
+        # W10 cycle-5: the retired team-keyed starting statuses (F-1) must not
+        # come back on any active surface — readiness now derives from Stage.
+        "Asgard starts in `Shaping`",
+        "CAMPPS starts in `Idea`",
+        "safe statuses: Asgard `Shaping`",
     ]
 
     for path in active_surfaces:

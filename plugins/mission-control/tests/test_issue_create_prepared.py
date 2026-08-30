@@ -930,6 +930,46 @@ def test_intake_exit_fill_in_round_trips_through_approval_gate(tmp_path) -> None
     assert [c.args[3] for c in mock_flow.call_args_list] == ["Stage", "Status"]
 
 
+def test_intake_exit_fill_in_stage_only_defaults_status_on_read(tmp_path) -> None:
+    """F-3 / cycle-5 (sdlc#91): the R3b fill-in may add ONLY `stage:` — a
+    stage-less blocked prepare legitimately emitted no `status:` line, because
+    no default is derivable without a Stage. `_read_prepared_issue` applies the
+    entry-option default BEFORE readiness evaluates, so the repaired draft is
+    readable and readiness-passing without a hand-written Status."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Stage-only fill-in draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+    )
+    sidecar_path = draft.with_suffix(".json")
+    assert json.loads(sidecar_path.read_text())["state"] == "blocked"
+    assert "\nstatus: " not in draft.read_text()
+
+    # The author fills Stage into the draft file — R3b's fill-in surface —
+    # and nothing else.
+    draft.write_text(
+        draft.read_text().replace(
+            "labels: capability, needs-plan\n",
+            "stage: Intake\nlabels: capability, needs-plan\n",
+            1,
+        )
+    )
+
+    re_read = sdlc_manager._read_prepared_issue(draft)
+    assert re_read.stage == "Intake"
+    assert re_read.status == "Capturing"
+    readiness = sdlc_manager._readiness_for_prepared_issue(re_read)
+    assert readiness.passed is True
+    assert readiness.blocking_gaps == []
+
+
 def test_intake_exit_fill_in_skip_approval_is_explicit_override(tmp_path) -> None:
     """--skip-approval remains the operator's explicit per-invocation override on
     the repaired-blocked fill-in path — but the STAMP is NOT skipped (CR c2

@@ -10,14 +10,19 @@
   every author-supplied Status was refused and the default was unwritable.
 - Starting Status is now **author-supplied, with its default derived from the
   declared Stage**: the schema's `workflows.stage_flow` entry option (first name
-  of each per-stage list, R49 — Intake→Capturing, Shaping→Discovering,
+  of the stage's list, R49 — Intake→Capturing, Shaping→Discovering,
   Planning→Designing, Active→Implementing, Verify→Awaiting verification,
   Retro→Gathering evidence). The map resolves through `_resolve_sdlc_schema()`
   (GitHub main → vendored → local), so the vocabulary lives in one versioned
-  source. Readiness pins the entry option exactly: a prepared issue is new and
-  carries no recorded progress, so the schema's terminal exceptions do not apply
-  at creation, and a declared Stage outside `stage_statuses` blocks instead of
-  silently skipping the Status rule.
+  source. Readiness accepts any Status configured WITHIN the declared Stage plus
+  the cross-cutting `Blocked`, and refuses retired, unknown, and out-of-Stage
+  values (operator ruling of 2026-08-30 settling cycle-5 F-2; the entry option
+  is a default, not a closed set). A declared Stage outside `stage_statuses`
+  blocks instead of silently skipping the Status rule.
+- The `issue prepare`/`create-prepared` operator docs no longer teach the retired
+  team-keyed starting statuses (`Asgard Shaping` / `CAMPPS Idea`): the issues
+  skill, README, and sdlc-operator prompt now state the Stage-derived
+  entry-option default and the in-Stage acceptance rule (F-1).
 - The vendored `config/sdlc-schema.json` was refreshed to the authoritative
   2026-08-29 file from infiquetra-sdlc main — the previous vendored copy was
   2026-06-17 with no `stage_flow` block at all, which masked the defect online
@@ -27,8 +32,9 @@
   escaping as `UnicodeDecodeError`/`JSONDecodeError`.
 - A stage-less prepare no longer emits a `status:` front-matter line (the
   default is not derivable without a Stage); the draft stays blocked on the
-  missing `Stage`, and the R3b fill-in now completes both `stage:` and the
-  entry-option `status:` line.
+  missing `Stage`. The R3b fill-in may now add `stage:` alone: an empty Status
+  with a declared Stage is defaulted to the entry option on read, before
+  readiness evaluates.
 
 ## [2.15.0] - 2026-08-29
 

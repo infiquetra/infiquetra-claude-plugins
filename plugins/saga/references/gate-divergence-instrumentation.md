@@ -61,8 +61,8 @@ One `gate_id` per **distinct decision point**, not per file — a single `SKILL.
 than one gate (e.g. `founder-review/SKILL.md` fires both a mode-selection gate and a
 per-expansion opt-in gate). Use a stable, kebab-case name scoped to the skill and decision, e.g.
 `founder-review-mode-selection`, `founder-review-expansion-optin`,
-`investigate-fix-vs-diagnosis`, `loop-mode-destination`, `outcome-coordinator-decision`,
-`brainstorm-<decision>`. Verify each skill's actual gate sites before instrumenting — a citation
+`investigate-fix-vs-diagnosis`, `loop-mode-destination`, `outcome-coordinator-decision`.
+Verify each skill's actual gate sites before instrumenting — a citation
 pointing at one line range does not guarantee exactly one gate.
 
 ## What this does not do

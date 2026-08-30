@@ -180,8 +180,10 @@ historical `status`↔`phase_status` ambiguity.
   **MUST** be a member of `STATUSES`. **MUST NOT** ever take `pending` or `in_progress` — those values
   belong exclusively to `phase_status`. A saga can be `phase_status=complete` while `status=active` (phase
   done, thread still going) or `status=done` (thread finished).
-- **`maturity`** — **DERIVED, NEVER STORED.** Computed at `/handoff` time from `lifecycle_phase` via
-  `PHASE_TO_MATURITY`. No `maturity` key ever appears in frontmatter; any consumer that needs it derives it.
+- **`maturity`** — **DERIVED, NEVER STORED in saga-tick frontmatter.** Computed at `/handoff` time
+  from `lifecycle_phase` via `PHASE_TO_MATURITY`. No `maturity` key ever appears in saga-tick
+  frontmatter; any consumer that needs it derives it. Off-chain artifacts declare their own `maturity`
+  in their own frontmatter under their own contract (see §3.3 note).
 
 ### 3.3 `lifecycle_phase` -> `maturity` derivation (handoff only)
 
@@ -202,6 +204,15 @@ chain: `handoff_envelope.infer_lifecycle_phase` returns `"unknown"` for it (no `
 `LIFECYCLE_PHASES`), and `infer_maturity` maps `docs/specs/` → `requirements-ready` directly (a sharp
 WHAT — equals the unmapped fallback, set explicitly for consistency). A spec hands off as
 `requirements-ready` with `lifecycle_phase: unknown`.
+
+**Off-chain artifact maturity note.** The derived-never-stored rule above governs saga-tick
+frontmatter only. An off-chain artifact (e.g. a Brainstorm requirements doc under
+`docs/brainstorms/`) declares its own `maturity` in its own frontmatter under its own section
+contract (`plugins/saga/skills/brainstorm/references/requirements-sections.md`);
+`pending-confirmation` is a valid artifact maturity meaning the boundary is recorded, unconfirmed,
+and carries no durable route. The declared `brainstorm-scope-confirmation` gate (see
+`plugins/saga/skills/brainstorm/SKILL.md` Phase 2.5) is the gate that promotes that artifact
+maturity from `pending-confirmation` to `requirements-ready`.
 
 ### 3.4 Concrete example envelope
 
@@ -287,11 +298,11 @@ read-modify-write by an older reader — forward-compatible round-trip. Consumer
 ## 4. Enum domains (authoritative)
 
 ```python
-LIFECYCLE_PHASES   = ("ideation", "brainstorm", "plan", "review", "work", "qa", "retro")
-PHASE_STATUSES     = ("pending", "in_progress", "complete")
-STATUSES           = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
-DESTINATIONS       = ("plan-only", "pr", "merge", "nonprod-deploy")
-ORCHESTRATION_MODES= ("inline", "team-execution", "cc-workflows-ultracode")
+LIFECYCLE_PHASES = ("ideation", "brainstorm", "plan", "review", "work", "qa", "retro")
+PHASE_STATUSES = ("pending", "in_progress", "complete")
+STATUSES = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
+DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
+ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
 ```
 
 `destination` mirrors `lifecycle_state.normalize_destination`'s canonical set — use that helper to normalize

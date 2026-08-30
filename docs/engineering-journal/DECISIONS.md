@@ -2,6 +2,15 @@
 
 ## 2026-08-30
 
+### Brainstorm continuity contract: checkpoint, maturity, and resume are one ordered rule  {#913-continuity-checkpoint-maturity-resume}
+
+**Decision.** Brainstorm records the producing capability `brainstorm` and activity identity `brainstorm-<topic-slug>-<UTC YYYYMMDDTHHMMSSZ>` plus optional `.orchestrate/run.json` `run_id` on the artifact, writes a `pending-confirmation` checkpoint at Phase 2.5 Path B before any readiness claim, promotes it to `requirements-ready` only on fresh confirmation, and applies an explicitly ordered three-tier resume (exact producer-fact match → legacy labelled inference → empty scan) in both `brainstorm/SKILL.md` Phase 0.1 and `resume/SKILL.md` Phase 0. Legacy inference is labelled `inferred`, operator-confirmed, and never backfills the file. Routes 1–4 are gated on declared `maturity: requirements-ready`; artifact-free exploration writes nothing.
+**Date:** 2026-08-30 · **Issue:** #913 (B1) · **Origin:** Run plan `docs/plans/2026-08-30-issue-912-saga-brainstorm-improvement-run-plan.md` §U1; preflight F3/F4.
+**Why.** The four continuity facts did not hold — producer unrecorded, gate undeclared, artifact-free indistinguishable from handoff, telemetry unreachable — and the `maturity` path rule promoted an unconfirmed checkpoint. KTD1 makes the checkpoint the artifact file itself (no new store), KTD2 keeps the lint coverage by repointing the marker, and KTD7 makes `handoff_envelope.infer_maturity` frontmatter-aware.
+**Rejected.** A checkpoint under `.claude/saga/` (a Brainstorm state store, forbidden by R2); a sidecar file (second ambiguity source); deleting the interaction-rules marker (produces two lint violations); gating only in skill prose instead of in `infer_maturity`.
+**Revisit when.** Brainstorm gains a Saga-tick write path, or the section contract stabilizes additional frontmatter keys that must join the producer facts.
+**Refs.** Issue #913; KTD1/KTD2/KTD7; `plugins/saga/skills/brainstorm/SKILL.md` Phases 0.1/0.2/2.5/3/4, `plugins/saga/skills/brainstorm/references/requirements-sections.md` Metadata, `plugins/saga/references/saga-spec.md` §3.2/§3.3, `plugins/saga/scripts/handoff_envelope.py`.
+
 ### Prepared-issue readiness accepts any Stage-configured Status plus Blocked; the entry option is a default, not a closed set (sdlc#91)  {#w10-readiness-stage-scoped-r91}
 
 **Decision.** For the prepared-issue path (mission-control `issue prepare` / `issue create-prepared`), readiness accepts any Status configured within the declared Stage's `stage_statuses` list plus the cross-cutting statuses (`Blocked`). It continues to refuse retired (`Idea`, `Shaping`, `Done`), unknown, and out-of-Stage values, and refuses a declared Stage outside the schema's `stage_flow` block altogether. Preparation may default an omitted Status to the declared Stage's FIRST configured option (the R49 entry option); on a draft re-read, a declared Stage with an empty Status receives that default before readiness evaluates. Preparation itself never defaults the Stage — Stage stays author-supplied per the OQ1 ruling.

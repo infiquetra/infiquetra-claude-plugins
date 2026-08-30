@@ -67,9 +67,17 @@ adding new fields is fine.
 
 - **`date`** — ISO 8601 (`YYYY-MM-DD`), ASCII digits. Used in the filename.
 - **`topic`** — kebab-case slug identifying the subject (e.g. `surface-scope-earlier`). Used in the
-  filename and as the resume-detection key when Phase 0.1 scans `docs/brainstorms/`.
-- **`maturity`** — `requirements-ready`. The handoff maturity this artifact carries into `/handoff`
-  and `/plan`.
+  filename; resume matches on `topic` plus `capability` when Phase 0.1 scans `docs/brainstorms/`, and
+  a file carrying `topic` alone is a legacy artifact routed to tier 2 of the Phase 0.1 order, not a
+  match.
+- **`capability`** — the producing capability, fixed as `brainstorm`.
+- **`activity`** — the producing activity identity, formed as
+  `brainstorm-<topic-slug>-<UTC timestamp YYYYMMDDTHHMMSSZ>` at the moment the checkpoint is first
+  written.
+- **`run`** — optional run identity, the `.orchestrate/run.json` `run_id` when that file exists; a
+  missing run identity is recorded as absent, never invented.
+- **`maturity`** — `pending-confirmation` (boundary recorded, not confirmed, no durable route) or
+  `requirements-ready` (confirmed, routes available).
 - **`source`** — when the topic came from `/ideate`, the relative path of the ideation doc and the
   survivor reference (e.g. the survivor title or its `R#`), so provenance is traceable.
 
@@ -147,6 +155,12 @@ as a separate section or embed in each requirement, and how much depth each pres
 - **No implementation details by default.** Libraries, schemas, endpoints, file layouts, and code
   structure stay out unless the brainstorm is inherently about that technical or architectural change
   and those details are the subject of the decision.
+
+## Minimum artifact
+
+The minimum artifact carries exactly four parts — confirmed scope and material decisions, rationale,
+intended acceptance outcome, and unresolved planning questions — and no architecture or implementation
+plan.
 
 ## Summary vs Problem Frame
 

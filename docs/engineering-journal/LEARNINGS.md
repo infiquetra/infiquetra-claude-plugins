@@ -21,6 +21,15 @@
 
 ## 2026-08-30
 
+### A deferred telemetry write on a path that never writes is an unreachable promise  {#913-continuity-telemetry-unreachable}
+
+**Context.** Brainstorm instructed a `gate_id` record "on the next `saga.py save` call" while never performing that save, so the measurement vanished with no observable failure and no demonstrated consumer.
+**Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:46-50` at `5660c719`; `plugins/saga/references/gate-divergence-instrumentation.md:65` still listed `brainstorm-<decision>` as a gate example; production lint `lint_gate_absence_contract.py` failed with `VIOLATIONS: 2` when the marker was deleted in a scratch copy (F3).
+**Mechanism.** A telemetry consumer tied to a write boundary the producer never hits is not optional telemetry but a leaked promise — the section-scoped lint makes deleting the marker a second failure, so the telemetry paragraph and its id had to be separated.
+**Fix.** Removed the telemetry paragraph, kept and repointed the marker to `brainstorm-interrogation-gate` (KTD2), and removed the `brainstorm-<decision>` gate example. Added the durable `pending-confirmation` checkpoint and frontmatter-aware `infer_maturity` (KTD7) so an unconfirmed artifact no longer hands off as `requirements-ready`.
+**Generalizable rule.** When a measurement rides a write path its producer never exercises, delete the instruction rather than deferring it — and keep any lint coverage that was sharing the same marker.
+**Refs.** Issue #913 (B1); KTD1/KTD2/KTD7; run plan `docs/plans/2026-08-30-issue-912-saga-brainstorm-improvement-run-plan.md` §U1.
+
 ### Leaving a stale adjacent section does not license a "same as" claim against it  {#w19-no-sameness-claim-against-stale-rows}
 
 **Context.** W19 replaced the CAMPPS ladder in Mission Control's kanban reference with `stage_flow` and, per KTD3, left the Operations/Asgard `intent_flow` rows in the same file. The replacement sentence then said CAMPPS uses "the same six stages as Operations and Asgard."

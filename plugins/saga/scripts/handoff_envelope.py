@@ -21,8 +21,49 @@ SOURCE_DIRS = (
 )
 
 
+def _read_frontmatter_maturity(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None
+    frontmatter = text[3:end]
+    for line in frontmatter.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("maturity:"):
+            value = stripped[len("maturity:") :].strip().strip("\"'").strip()
+            if value:
+                return value
+    return None
+
+
 def infer_maturity(source: str) -> str:
     normalized = source.replace("\\", "/")
+    # Frontmatter-declared maturity wins when the source resolves to an existing file
+    # that declares one (KTD7) — so a pending-confirmation checkpoint under
+    # docs/brainstorms/ no longer hands off as requirements-ready.
+    source_path = Path(normalized)
+    if source_path.is_file():
+        declared = _read_frontmatter_maturity(source_path)
+        if declared is not None:
+            return declared
+    # Also try resolving relative to cwd-like roots for test tmp_path sources that
+    # still match the docs/brainstorms/ pattern.
+    else:
+        # Probe as repo-relative path from cwd for sources like docs/brainstorms/foo.md
+        # that do not exist at the literal path but may exist under cwd.
+        try:
+            candidate = Path.cwd() / normalized
+            if candidate.is_file():
+                declared = _read_frontmatter_maturity(candidate)
+                if declared is not None:
+                    return declared
+        except OSError:
+            pass
     if "docs/ideation/" in normalized:
         return "idea-ready"
     if "docs/brainstorms/" in normalized:

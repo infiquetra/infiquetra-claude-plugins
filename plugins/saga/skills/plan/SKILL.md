@@ -131,6 +131,30 @@ moves the card to Shaping from that derived state. Do not run a reconcile tick, 
 submission, or any other lifecycle-field write from here. When there is no issue, there is simply
 no card to move; say nothing further.
 
+### 0.7 Structured pre-answers — intake, evaluated once
+
+A caller that has already settled a decision may hand it to `/plan` in the invocation text — a
+fenced JSON block, schema `plan_pre_answers.v1` — instead of letting the conversation re-ask it.
+Contract: `references/saga-spec.md` §16; validator: `scripts/plan_pre_answers.py` (pure functions;
+reads the text it is given, writes nothing). This is intake, not a phase: evaluate it once, at
+entry, before the first question. Its only visible effects are narration plus the absence of a
+question that would otherwise have been asked. Four rules govern it:
+
+- **Apply and narrate.** A valid value is applied to its decision — execution `backend` (Phase
+  5.2's enum), routing `destination` (Phase 5.1's enum) — and visibly narrated together with the
+  `caller` that supplied it. Do not ask the operator to repeat a settled decision.
+- **Absence falls through.** A missing carrier, or a carrier omitting a field, is not an error: the
+  omitted decision follows the normal adaptive conversation exactly as it does today.
+- **Invalid or contradictory stops.** A value outside its enum, or one contradicting a value already
+  established in this thread, stops and surfaces the conflict with the validator's reason — never a
+  silent default, never preferring either side.
+- **Unknown schema refused whole.** A carrier declaring any other schema token is refused in its
+  entirety; no field from it is applied.
+
+Direct `/plan` — an issue, a prompt, or a Brainstorm document, no carrier — is unchanged: nothing
+applied, nothing narrated, nothing stopped. Exactly two decision fields are admitted, `backend` and
+`destination`; `caller` is envelope metadata for the narration, not a decision field.
+
 ## Phase 1 — Ground (HOW)
 
 Read code before asking. This is the moment the operator sees you grounded in their actual repo, not a

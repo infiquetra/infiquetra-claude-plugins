@@ -670,3 +670,52 @@ triple; `/loop` routes on the saga tick, which stays in the envelope of section 
 **Conformance.** One recursive pass over `docs/plans/` evaluates the declared frontmatter fields and
 the marker triple together (`tests/test_plan_artifact_conformance.py`), so a document cannot satisfy
 one contract and silently fail the other. Legacy findings are reported without failing the run.
+
+---
+
+## 16. Plan pre-answer carrier (`plan_pre_answers.v1`)
+
+A caller that has already settled a decision may hand it to `/plan` rather than letting the
+conversation re-ask it. The carrier is **intake, not a phase** (KTD4): it is evaluated once, before
+the conversation begins, and its only visible effects are the narration of an applied value together
+with its caller, and the absence of a question that would otherwise have been asked.
+
+**Transport.** A fenced JSON block inside the `/plan` invocation text — the same seam callers
+already write prose into. No file, no CLI flag, no daemon, no state.
+
+**Shape.**
+
+```json
+{
+  "schema": "plan_pre_answers.v1",
+  "caller": "orchestrate",
+  "backend": "inline",
+  "destination": "plan-only"
+}
+```
+
+- `schema` — the version token `plan_pre_answers.v1`. An unrecognised token is refused whole: no
+  field from that carrier is applied.
+- `backend` — decision field, from `inline | team-execution | cc-workflows-ultracode`
+  (`ORCHESTRATION_MODES`, section 4, as narrowed by #808). Optional; applied as Phase 5.2's choice
+  and recorded in the plan-doc `backend:` field (section 15) without re-offering.
+- `destination` — decision field, from `plan-only | pr | merge | nonprod-deploy` (`DESTINATIONS`,
+  section 4). Optional; applied as Phase 5.1's answer and the tick's `--destination` without
+  re-asking.
+- `caller` — envelope metadata naming the supplying capability for the narration. NOT a decision
+  field: exactly two decision fields are admitted (`backend`, `destination`), and anything beyond
+  them is rejected rather than ignored. Both decision fields omitted is a valid empty carrier.
+
+**Evaluation rules** (validator: `../scripts/plan_pre_answers.py` — pure functions; reads the text
+it is given, writes nothing, reads no file):
+
+1. A valid supplied value is applied and visibly narrated together with its `caller`.
+2. A missing carrier, or a carrier omitting a field, follows the normal adaptive conversation;
+   absence is not an error.
+3. An invalid value, or one contradicting an already-established value, stops and surfaces the
+   conflict; it never becomes a silent default and never prefers either side.
+4. A carrier declaring an unknown schema token is refused whole.
+
+Direct `/plan` — an issue, a prompt, or a Brainstorm document, no carrier — applies nothing,
+narrates nothing, and stops nothing. The carrier is never rendered as a questionnaire, checklist, or
+fixed sequence; Phase 0.7 of `../skills/plan/SKILL.md` carries the skill-side intake prose.

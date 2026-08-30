@@ -525,6 +525,12 @@ DELIVERY_WARNING = (
 # local socket round trip, so this is a bound on a wedged herdr rather than a wait for work.
 PANE_INPUT_READ_SECONDS = 5.0
 
+# A transcript written during the create is legitimate evidence; one left by an earlier run is
+# minutes or hours old. One second absorbs filesystem mtime granularity without admitting a
+# stale file, and a same-instant write is a real case: the cmd_go account test plants its
+# transcript inside the wrapper call itself.
+TRANSCRIPT_MTIME_SLACK_SECONDS = 1.0
+
 
 def append_unit_note(unit: Any, note: str) -> None:
     """Add one fact without erasing a note recorded by an earlier delivery step."""
@@ -891,19 +897,24 @@ def find_claude_transcripts(root: Path, worktree: str | None) -> list[Path]:
     return matches
 
 
-def transcript_account(unit: Any) -> str | None:
+def transcript_account(unit: Any, *, since: float | None = None) -> str | None:
     """Which account's transcript root holds this worker's session, when either one does.
 
     Both roots can hold a transcript for the same worktree -- a relaunch after a wrong-account
     launch leaves the earlier one in place -- so the newer file decides. Returns ``None`` while
     neither root has one, which is the ordinary state at preflight: Claude writes
     ``projects/<slug>/<id>.jsonl`` when the first prompt arrives, and preflight runs before the
-    task is sent.
+    task is sent. When ``since`` is given, a file older than that floor -- minus one second of
+    mtime granularity slack -- is ignored: a transcript that predates the launch cannot certify
+    it, and without the floor this fallback once certified exactly that.
     """
     personal_root, company_root = claude_transcript_roots()
     newest: list[tuple[float, str]] = []
     for label, root in (("personal", personal_root), ("company", company_root)):
         files = find_claude_transcripts(root, unit.worktree)
+        if since is not None:
+            floor = since - TRANSCRIPT_MTIME_SLACK_SECONDS
+            files = [f for f in files if f.stat().st_mtime >= floor]
         if files:
             newest.append((max(f.stat().st_mtime for f in files), label))
     if not newest:
@@ -938,28 +949,37 @@ def pane_account_label(pane_id: str | None) -> str | None:
     return (last.group(1) or "personal").lower()
 
 
-def observed_account(unit: Any, pane_id: str | None, seconds: float) -> str | None:
-    """The account the launched session is actually on, waiting briefly for it to say.
+def observed_account(
+    unit: Any, pane_id: str | None, seconds: float, *, since: float | None = None
+) -> tuple[str | None, str]:
+    """The account the launched session is actually on, and where the answer came from.
 
     The statusline answers first because it is painted at startup; the transcript root answers
     for a session whose statusline this machine does not print. Neither is instant, so the window
-    is spent before the question is given up on.
+    is spent before the question is given up on. The evidence is ``"statusline"``,
+    ``"transcript"`` or ``"none"`` -- the receipt records which, because the two proofs are not
+    equal: a transcript only certifies this launch when its recency is tied to it.
     """
     deadline = time.monotonic() + seconds
     while True:
         from_pane = pane_account_label(pane_id)
         if from_pane:
-            return from_pane
-        from_transcript = transcript_account(unit)
+            return from_pane, "statusline"
+        from_transcript = transcript_account(unit, since=since)
         if from_transcript:
-            return from_transcript
+            return from_transcript, "transcript"
         if time.monotonic() >= deadline:
-            return None
+            return None, "none"
         time.sleep(1.0)
 
 
 def check_unit_account(
-    unit: Any, pane_id: str | None = None, seconds: float = ACCOUNT_SETTLE_SECONDS
+    unit: Any,
+    pane_id: str | None = None,
+    seconds: float = ACCOUNT_SETTLE_SECONDS,
+    *,
+    since: float | None = None,
+    evidence_out: list[str] | None = None,
 ) -> tuple[bool | None, str | None]:
     """Check whether a launched Claude unit is on the account the plan asked for.
 
@@ -969,6 +989,9 @@ def check_unit_account(
         script does not know, or when no account could be read at all -- an unverified account is
         a stop, not a pass, because the failure being guarded against is invisible by nature.
         (None, None) when no account was requested, or the vendor has no account to check.
+
+    ``since`` bounds the transcript fallback to files written at or after the launch; ``evidence_out``
+    receives one string naming where the observed account came from, when anything was observed.
     """
     if unit.vendor != "claude" or not unit.account:
         return None, None
@@ -983,7 +1006,9 @@ def check_unit_account(
             f"unknown account selection {unit.account!r}; expected 'company' or 'personal'",
         )
 
-    observed = observed_account(unit, pane_id, seconds)
+    observed, evidence = observed_account(unit, pane_id, seconds, since=since)
+    if evidence_out is not None:
+        evidence_out.append(evidence)
     if observed is None:
         return (
             False,
@@ -998,19 +1023,32 @@ def check_unit_account(
     return True, None
 
 
-def verify_unit_account(unit: Any, pane_id: str | None = None) -> bool | None:
-    """Verify the account for a launched unit, closing the session and raising on mismatch."""
-    confirmed, error = check_unit_account(unit, pane_id)
+def verify_unit_account(
+    unit: Any, pane_id: str | None = None, *, since: float | None = None
+) -> tuple[bool | None, str]:
+    """Verify the account for a launched unit, closing the session and raising on mismatch.
+
+    Returns the confirmation together with the evidence it came from -- ``"statusline"``,
+    ``"transcript"`` or ``"none"`` -- so the receipt can record which proof was accepted.
+    """
+    evidence_out: list[str] = []
+    confirmed, error = check_unit_account(unit, pane_id, since=since, evidence_out=evidence_out)
     if error:
         close_run_session(unit)
         unit.status = ACCOUNT_MISMATCH
         append_unit_note(unit, error)
         raise AccountMismatchError(f"{unit.name}: {error}")
-    return confirmed
+    evidence = evidence_out[0] if evidence_out else "none"
+    return confirmed, evidence
 
 
 def verify_unit_preflight(
-    unit: Any, pane_id: str | None, *, ready: bool | None = None, argv: list[str] | None = None
+    unit: Any,
+    pane_id: str | None,
+    *,
+    ready: bool | None = None,
+    argv: list[str] | None = None,
+    since: float | None = None,
 ) -> dict[str, Any]:
     """Verify the session against herdr before the task is submitted, and record what was checked.
 
@@ -1090,7 +1128,7 @@ def verify_unit_preflight(
     # be read is the failure this check exists for, wearing the same face as one that was never
     # checked. Every other vendor has no account to read, so a unit that names one anyway is
     # recorded as having asked rather than as having been confirmed.
-    account_confirmed = verify_unit_account(unit, pane_id)
+    account_confirmed, account_evidence = verify_unit_account(unit, pane_id, since=since)
     if unit.account:
         if account_confirmed:
             confirmed.append("account")
@@ -1116,6 +1154,10 @@ def verify_unit_preflight(
         "model": unit.model,
         "variant": effective_variant,
         "account": unit.account,
+        # The requested-versus-resolved shape applied to the account: ``account`` above stays the
+        # requested selection, and this records which proof confirmed it -- "statusline",
+        # "transcript", or "none" when no account was asked for or nothing could be read.
+        "account_evidence": account_evidence,
         "permission": getattr(unit, "permission", None),
         # The requested-versus-resolved shape: ``permission`` above stays what was asked for,
         # and this records what the launch actually carried. Herdr publishes neither, so an
@@ -1148,6 +1190,9 @@ def verify_unit_preflight(
 
 def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
     preexisting = list_tab_ids()
+    # Wall clock, not time.monotonic: it is compared against transcript filesystem mtimes as the
+    # recency floor that keeps a stale transcript from certifying this launch.
+    created_at = time.time()
     argv = agent_argv(unit)
     proc = run(argv, check=False, timeout=LAUNCH_CREATE_SECONDS)
     if proc.returncode == 124:
@@ -1174,7 +1219,7 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
     ready = await_ready(unit)
     if unit.vendor == "opencode":
         _, ready = drive_opencode_variant_selection(unit, pane_id)
-    verify_unit_preflight(unit, pane_id, ready=ready, argv=argv)
+    verify_unit_preflight(unit, pane_id, ready=ready, argv=argv, since=created_at)
 
     if not session_owned(unit):
         guard_reused_pane(unit, pane_id)

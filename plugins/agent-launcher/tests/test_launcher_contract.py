@@ -440,7 +440,7 @@ def _preflight_stubs(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> l
         },
     )
     monkeypatch.setattr(launcher, "workspace_id_for_name", lambda name: None)
-    monkeypatch.setattr(launcher, "verify_unit_account", lambda *a, **k: None)
+    monkeypatch.setattr(launcher, "verify_unit_account", lambda *a, **k: (None, "none"))
     monkeypatch.setattr(
         launcher, "close_run_session", lambda unit: closed.append(unit.tab_id or "")
     )
@@ -518,6 +518,214 @@ def test_skill_no_longer_calls_permission_herdr_requested_only() -> None:
     ).read_text(encoding="utf-8")
     assert "model and permission stay `requested_only`" not in skill
     assert "permission_resolved" in skill
+
+
+def _plant_transcript(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    worktree: str,
+    *,
+    label: str,
+    mtime: float,
+) -> Path:
+    personal = tmp_path / "personal-projects"
+    company = tmp_path / "company-projects"
+    monkeypatch.setattr(launcher, "claude_transcript_roots", lambda: (personal, company))
+    root = company if label == "company" else personal
+    slug = str(launcher.claude_project_slug(worktree))
+    path = root / slug / "session.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"type":"session"}\n', encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def _account_preflight_stubs(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, worktree: str
+) -> None:
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda unit, agents=None: {
+            "pane_id": "pane-1",
+            "cwd": worktree,
+            "workspace_id": "w1",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+    monkeypatch.setattr(launcher, "workspace_id_for_name", lambda name: None)
+    monkeypatch.setattr(launcher, "close_run_session", lambda unit: None)
+
+
+def _account_unit(launcher: ModuleType, worktree: str) -> Any:
+    return launcher.LaunchRequest(
+        name="acct",
+        vendor="claude",
+        account="company",
+        worktree=worktree,
+        pane_id="pane-1",
+        tab_id="tab-1",
+    )
+
+
+def test_stale_transcript_does_not_confirm_a_silent_statusline(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    since = time.time()
+    _plant_transcript(
+        launcher, monkeypatch, tmp_path, str(worktree), label="company", mtime=since - 60
+    )
+    monkeypatch.setattr(launcher, "pane_account_label", lambda pane_id: None)
+    unit = _account_unit(launcher, str(worktree))
+    assert launcher.observed_account(unit, "pane-1", 0, since=since) == (None, "none")
+    confirmed, error = launcher.check_unit_account(unit, "pane-1", seconds=0, since=since)
+    assert confirmed is False
+    assert error is not None and "unverified" in error
+
+
+def test_fresh_transcript_confirms_when_recency_is_provable(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    since = time.time()
+    _plant_transcript(
+        launcher, monkeypatch, tmp_path, str(worktree), label="company", mtime=since + 5
+    )
+    monkeypatch.setattr(launcher, "pane_account_label", lambda pane_id: None)
+    _account_preflight_stubs(launcher, monkeypatch, str(worktree))
+    unit = _account_unit(launcher, str(worktree))
+    assert launcher.observed_account(unit, "pane-1", 0, since=since) == ("company", "transcript")
+    receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True, since=since)
+    assert receipt["account_evidence"] == "transcript"
+    assert "account" in receipt["confirmed_against_herdr"]
+
+
+def test_transcript_written_during_the_create_still_confirms(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    since = time.time()
+    # The same-instant write the cmd_go account test produces: the wrapper plants the transcript
+    # during the create, and filesystems quantise mtimes, so what lands can sit below the captured
+    # launch instant. This file sits exactly on the slack boundary, where both a dropped slack and
+    # a strict comparison fail while the shipped >= with one second of slack accepts it.
+    _plant_transcript(
+        launcher, monkeypatch, tmp_path, str(worktree), label="company", mtime=since - 1.0
+    )
+    monkeypatch.setattr(launcher, "pane_account_label", lambda pane_id: None)
+    unit = _account_unit(launcher, str(worktree))
+    assert launcher.observed_account(unit, "pane-1", 0, since=since) == ("company", "transcript")
+
+
+def test_statusline_evidence_still_confirms_exactly_as_today(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    # A contradicting transcript the statusline must outrank: a proof chain reordered to consult
+    # transcripts first would mismatch this launch instead of confirming it.
+    _plant_transcript(
+        launcher, monkeypatch, tmp_path, str(worktree), label="personal", mtime=time.time()
+    )
+    monkeypatch.setattr(launcher, "pane_account_label", lambda pane_id: "company")
+    _account_preflight_stubs(launcher, monkeypatch, str(worktree))
+    unit = _account_unit(launcher, str(worktree))
+    assert launcher.check_unit_account(unit, "pane-1", seconds=0) == (True, None)
+    receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True)
+    assert receipt["account_evidence"] == "statusline"
+
+
+def test_omitted_since_keeps_the_existing_fallback(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    # Deliberately old: with no floor the fallback behaves exactly as it did before the floor
+    # existed. That is the compatibility decision, recorded here so it cannot be tightened by
+    # accident.
+    _plant_transcript(
+        launcher, monkeypatch, tmp_path, str(worktree), label="company", mtime=time.time() - 500
+    )
+    monkeypatch.setattr(launcher, "pane_account_label", lambda pane_id: None)
+    _account_preflight_stubs(launcher, monkeypatch, str(worktree))
+    unit = _account_unit(launcher, str(worktree))
+    assert launcher.observed_account(unit, "pane-1", 0) == ("company", "transcript")
+    assert launcher.check_unit_account(unit, "pane-1", seconds=0) == (True, None)
+    receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True)
+    assert receipt["account_evidence"] == "transcript"
+
+
+def test_launch_passes_a_recency_floor(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _plant_transcript(
+        launcher, monkeypatch, tmp_path, str(worktree), label="company", mtime=time.time() - 3600
+    )
+    monkeypatch.setattr(launcher, "pane_account_label", lambda pane_id: None)
+    sends: list[tuple[Any, ...]] = []
+    receipt = {"tab_id": "w80:t9", "agent_name": "acct-2", "pane_id": "w80:p9", "reused": False}
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            tabs = {"result": {"tabs": [{"tab_id": "w80:t1", "label": "old"}]}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        if cmd[:3] == ["herdr", "pane", "current"]:
+            pane = {"result": {"pane": {"workspace_id": "w80"}}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda unit, agents=None: {
+            "pane_id": "w80:p9",
+            "cwd": str(worktree),
+            "workspace_id": "w80",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+    # Spend the account-settle window without wall-clock delay. time.time() stays real: the floor
+    # under test is a wall-clock instant compared against the planted file's mtime.
+    clock = [time.monotonic()]
+
+    def fast_monotonic() -> float:
+        clock[0] += 2.0
+        return clock[0]
+
+    monkeypatch.setattr(launcher.time, "monotonic", fast_monotonic)
+    monkeypatch.setattr(launcher.time, "sleep", lambda *_a, **_k: None)
+    unit = _account_unit(launcher, str(worktree))
+    with pytest.raises(launcher.AccountMismatchError, match="account unverified"):
+        launcher.launch(unit)
+    assert sends == []
+
+
+def test_account_mismatch_still_raises_unchanged(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(launcher, "pane_account_label", lambda pane_id: "personal")
+    monkeypatch.setattr(launcher, "close_run_session", lambda unit: None)
+    unit = _account_unit(launcher, str(worktree))
+    with pytest.raises(launcher.AccountMismatchError) as exc_info:
+        launcher.verify_unit_account(unit, "pane-1")
+    assert str(exc_info.value) == (
+        "acct: account mismatch: worker is on the personal account when company was required"
+    )
 
 
 def test_startup_timeout_is_a_result_not_a_crash(launcher: ModuleType) -> None:
@@ -624,7 +832,7 @@ def test_herdr_readback_receipt_separates_confirmed_from_requested(
         },
     )
     monkeypatch.setattr(launcher, "workspace_id_for_name", lambda name: "w1" if name else None)
-    monkeypatch.setattr(launcher, "verify_unit_account", lambda *a, **k: None)
+    monkeypatch.setattr(launcher, "verify_unit_account", lambda *a, **k: (None, "none"))
     unit = launcher.LaunchRequest(
         name="reviewer",
         vendor="codex",

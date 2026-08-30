@@ -1526,7 +1526,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _load_receipt(raw: str) -> dict[str, Any]:
     path = Path(raw)
-    text = path.read_text(encoding="utf-8") if path.is_file() else raw
+    if path.is_file():
+        text = path.read_text(encoding="utf-8")
+    elif raw.lstrip()[:1] in ("{", "["):
+        text = raw
+    else:
+        raise SystemExit(
+            f"receipt {raw!r} is neither an existing file nor JSON; redirect launch output to a "
+            "receipt file and pass that file: "
+            "python3 launcher.py launch ... > receipt.json, then close --receipt-json receipt.json"
+        )
     loaded = json.loads(text)
     if not isinstance(loaded, dict):
         raise SystemExit("receipt must be a JSON object")

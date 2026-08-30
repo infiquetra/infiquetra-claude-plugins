@@ -857,6 +857,49 @@ def test_unowned_session_closes_nothing_and_reports_nothing(
     assert unit.note == ""
 
 
+def test_missing_receipt_path_names_the_path_and_the_recovery(launcher: ModuleType) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        launcher._load_receipt("/no/such/receipt.json")
+    message = str(exc_info.value)
+    assert "/no/such/receipt.json" in message
+    assert "> receipt.json" in message
+
+
+def test_missing_receipt_path_through_the_cli_exits_without_a_traceback() -> None:
+    proc = subprocess.run(
+        [sys.executable, str(LAUNCHER), "close", "--receipt-json", "/no/such/receipt.json"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "Traceback" not in proc.stderr
+
+
+def test_inline_malformed_json_keeps_its_existing_stop_shape(launcher: ModuleType) -> None:
+    with pytest.raises(json.JSONDecodeError):
+        launcher._load_receipt('{"a":')
+
+
+def test_valid_receipt_file_is_unchanged(launcher: ModuleType, tmp_path: Path) -> None:
+    receipt = {"tab_id": "t1", "owned": True}
+    path = tmp_path / "receipt.json"
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    assert launcher._load_receipt(str(path)) == receipt
+
+
+def test_valid_inline_json_is_unchanged(launcher: ModuleType) -> None:
+    assert launcher._load_receipt('{"tab_id": "t1", "owned": true}') == {
+        "tab_id": "t1",
+        "owned": True,
+    }
+
+
+def test_non_object_json_keeps_its_message(launcher: ModuleType) -> None:
+    with pytest.raises(SystemExit, match="must be a JSON object"):
+        launcher._load_receipt("[1, 2]")
+
+
 def test_confirm_preview_stops_on_cwd_mismatch(launcher: ModuleType) -> None:
     with pytest.raises(SystemExit, match="cwd"):
         launcher.confirm_preview(

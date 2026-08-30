@@ -113,6 +113,10 @@ is read-only — Brainstorm still writes no Saga state. Classify the run:
 
 - **matched-saga** — a candidate matches the thread (`issue_ref`, `plan_path`, `branch`, or operator
   confirmation) -> **Tier 1** (Phase 1 -> 2 -> 3a -> 4 -> 5).
+- **matched-brainstorm** — the document scan found exactly one unambiguous
+  `docs/brainstorms/*-requirements.md` candidate and no saga matches the thread. Route directly to
+  `/brainstorm`, bypassing Phases 1 through 5. State the restored boundary and its declared
+  `maturity`, and continue from it without re-presenting settled decisions.
 - **resolvable-issue** — no matching saga, but the input names a GitHub issue (or one resolves via
   `state.json.sagas[*].issue_ref` ending in `#N`) -> **Tier 1** via PR archaeology + the issue
   (Phase 2's `load_saga_context.py` / `saga.py context` path).
@@ -287,7 +291,9 @@ Route from the reconstructed `lifecycle_phase` / `phase_status` (Tier 1) or the 
 one source of truth keeps `/loop` and `/resume` routing identical.
 
 The common case is `/work` (resume the round-N loop on a `resume-ready` thread) or `/handoff` (when
-another team / later session should pick the recovered work up). Announce the chosen command with a
+another team / later session should pick the recovered work up). A `matched-brainstorm` run hands to `/brainstorm` and writes **no** re-entry tick,
+because Brainstorm holds no Saga state and `resume/SKILL.md:110` forbids minting one. The Phase 5 one-tick mandate applies to `matched-saga` and
+`resolvable-issue` only. Announce the chosen command with a
 one-line reason. **Never route back to `/loop`** — `/resume` is the forward path off `/loop`'s opt-in,
 not a return ticket.
 

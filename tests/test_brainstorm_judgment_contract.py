@@ -79,6 +79,13 @@ def check_named_assurance_levels(text: str) -> list[str]:
     return violations
 
 
+def check_no_named_tiers_rule(text: str) -> list[str]:
+    violations: list[str] = []
+    if "No named tiers are used" not in text:
+        violations.append("missing No named tiers are used")
+    return violations
+
+
 def check_consequence_factors(text: str) -> list[str]:
     violations: list[str] = []
     factors = [
@@ -212,8 +219,8 @@ def check_must_probe_survives(text: str) -> list[str]:
         violations.append("missing Probe only the gaps Phase 1.2 actually found")
     if "Phase 1 cannot end with an un-probed rigor gap that is present" not in norm:
         violations.append("missing Phase 1 cannot end with un-probed gap")
-    if "orders and filters idle questions only" not in norm:
-        violations.append("missing orders and filters idle questions only")
+    if "A rigor gap Phase 1.2 actually found is still probed" not in norm:
+        violations.append("missing rigor gap still probed exemption")
     return violations
 
 
@@ -404,5 +411,5 @@ def test_grounding_before_asking_positive_and_mutation_fails() -> None:
 def test_must_probe_rule_survives_positive_and_mutation_fails() -> None:
     text = _read(BRAINSTORM_SKILL)
     assert check_must_probe_survives(text) == [], f"must-probe: {check_must_probe_survives(text)}"
-    mutated = _mutate(text, "orders and filters idle questions only")
+    mutated = _mutate(text, "actually found is still probed")
     assert check_must_probe_survives(mutated) != []

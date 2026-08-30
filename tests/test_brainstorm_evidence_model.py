@@ -3,32 +3,21 @@
 Proves mechanically that no deterministic test asserts a question, its
 wording, or the order of the creative dialogue, and that the six named
 areas each have coverage.
+
+Scope: the check catches a question-shaped string literal appearing inside an
+`assert` statement, and it does not see literals held in module constants,
+helper predicates, `parametrize` decorators, or JSON data files.
 """
 
 from __future__ import annotations
 
 import ast
 import importlib.util
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-# Production signal for scripts/lint_test_shape.py — this module genuinely
 # exercises real production code, not just fakes.
-_PROD = ROOT / "plugins/saga/scripts/handoff_envelope.py"
-
-
-def _load(name: str, path: Path):  # type: ignore[no-untyped-def]
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_HE = _load("handoff_envelope_evidence", _PROD)
 
 # ---------------------------------------------------------------------------
 # Deterministic coverage — six named areas
@@ -148,17 +137,9 @@ def test_deterministic_coverage_positive() -> None:
 
 
 def test_no_dialogue_assertions_negative_load_bearing() -> None:
-    combined_source = "\n".join(
-        (ROOT / f"tests/test_brainstorm_{suffix}.py").read_text(encoding="utf-8")
-        for suffix in (
-            "continuity_contract",
-            "judgment_contract",
-            "evidence_model",
-            "scenarios",
-            "mutation_proofs",
-        )
-        if (ROOT / f"tests/test_brainstorm_{suffix}.py").exists()
-    )
+    sources = sorted(ROOT.glob("tests/test_brainstorm_*.py"))
+    assert sources, "no Brainstorm test modules discovered"
+    combined_source = "\n".join(p.read_text(encoding="utf-8") for p in sources)
     # Also include the current file's own source to ensure it itself is clean
     violations = check_no_dialogue_assertions(
         combined_source, filename="tests/test_brainstorm_*.py"
@@ -185,9 +166,6 @@ def test_offline_and_side_effect_free_negative() -> None:
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    _ = mod.grade(
-        {"consequence_calibration": "pass"}, {"dimensions": {"consequence_calibration": {}}}
-    )
     after_brainstorms = set(brainstorms.rglob("*")) if brainstorms.exists() else set()
     after_saga = set(saga_state.rglob("*")) if saga_state.exists() else set()
     assert before_brainstorms == after_brainstorms, "harness wrote under docs/brainstorms"

@@ -1,4 +1,8 @@
-"""Layer 3 — mutation proof for eight declared-critical safeguards (R22)."""
+"""Layer 3 — safeguard-phrase drift guard for eight declared-critical safeguards (R22).
+
+Each case proves that the safeguard sentence is present in its contract file and that the
+predicate guarding it is wired to it — not that the safeguard's behaviour holds.
+"""
 
 from __future__ import annotations
 
@@ -8,21 +12,6 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).parent.parent
-
-# Production signal for scripts/lint_test_shape.py
-_PROD = ROOT / "plugins/saga/scripts/handoff_envelope.py"
-
-
-def _load(name: str, path: Path):  # type: ignore[no-untyped-def]
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_HE = _load("handoff_envelope_mutation", _PROD)
 
 
 # Import check predicates from the contract test modules via file load
@@ -55,7 +44,7 @@ DECLARED_CRITICAL = [
 ]
 
 
-def test_mutation_completeness_positive() -> None:
+def test_safeguard_drift_completeness_positive() -> None:
     assert len(DECLARED_CRITICAL) == 8
     # Meta-assertion: the case set below must cover every declared safeguard
     cases = _cases()
@@ -106,9 +95,9 @@ def _cases():  # type: ignore[no-untyped-def]
         ),
         (
             "no_named_assurance_level",
-            judg.check_named_assurance_levels,
+            judg.check_no_named_tiers_rule,
             BRAINSTORM_SKILL,
-            "data sensitivity",
+            "No named tiers are used",
         ),
         (
             "helper_read_only",
@@ -119,19 +108,19 @@ def _cases():  # type: ignore[no-untyped-def]
     ]
 
 
-def test_mutation_ambiguity_stop() -> None:
+def test_safeguard_drift_ambiguity_stop() -> None:
     _assert_mutation("ambiguity_stop")
 
 
-def test_mutation_fresh_confirmation() -> None:
+def test_safeguard_drift_fresh_confirmation() -> None:
     _assert_mutation("fresh_confirmation")
 
 
-def test_mutation_route_gating() -> None:
+def test_safeguard_drift_route_gating() -> None:
     _assert_mutation("route_gating")
 
 
-def test_mutation_no_deferred_save() -> None:
+def test_safeguard_drift_no_deferred_save() -> None:
     # no_deferred_save is a negative check (must be absent); mutation injects the forbidden string
     text = BRAINSTORM_SKILL.read_text(encoding="utf-8")
     # Unmutated must be clean
@@ -141,27 +130,26 @@ def test_mutation_no_deferred_save() -> None:
     assert cont.check_telemetry(mutated) != []
 
 
-def test_mutation_helper_ceiling() -> None:
+def test_safeguard_drift_helper_ceiling() -> None:
     _assert_mutation("helper_ceiling")
 
 
-def test_mutation_map_privacy() -> None:
+def test_safeguard_drift_map_privacy() -> None:
     _assert_mutation("map_privacy")
 
 
-def test_mutation_no_named_assurance_level() -> None:
+def test_safeguard_drift_no_named_assurance_level() -> None:
     # This check is negative: injecting a level must be caught
     text = BRAINSTORM_SKILL.read_text(encoding="utf-8")
     assert judg.check_named_assurance_levels(text) == []
     mutated = text + "\nlow assurance test\n"
     assert judg.check_named_assurance_levels(mutated) != []
-    # Also the positive factor check must fail when a factor is removed
-    assert judg.check_consequence_factors(text) == []
-    mutated2 = text.replace("data sensitivity", "")
-    assert judg.check_consequence_factors(mutated2) != []
+    assert judg.check_no_named_tiers_rule(text) == []
+    mutated2 = text.replace("No named tiers are used", "")
+    assert judg.check_no_named_tiers_rule(mutated2) != []
 
 
-def test_mutation_helper_read_only() -> None:
+def test_safeguard_drift_helper_read_only() -> None:
     _assert_mutation("helper_read_only")
 
 

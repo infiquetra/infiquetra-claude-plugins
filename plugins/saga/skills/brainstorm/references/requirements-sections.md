@@ -70,10 +70,10 @@ adding new fields is fine.
   filename; resume matches on `topic` plus `capability` when Phase 0.1 scans `docs/brainstorms/`, and
   a file carrying `topic` alone is a legacy artifact routed to tier 2 of the Phase 0.1 order, not a
   match.
-- **`capability`** — the producing capability, fixed as `brainstorm`.
+- **`capability`** — the producing capability, fixed as `brainstorm` (one of the two producer facts).
 - **`activity`** — the producing activity identity, formed as
-  `brainstorm-<topic-slug>-<UTC timestamp YYYYMMDDTHHMMSSZ>` at the moment the checkpoint is first
-  written.
+  `brainstorm-<topic-slug>-<UTC timestamp YYYYMMDDTHHMMSSZ>` at the moment the artifact is first
+  written, whether as a pending-confirmation artifact or a Path A document.
 - **`run`** — optional run identity, the `.orchestrate/run.json` `run_id` when that file exists; a
   missing run identity is recorded as absent, never invented.
 - **`maturity`** — `pending-confirmation` (boundary recorded, not confirmed, no durable route) or

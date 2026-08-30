@@ -5,27 +5,11 @@ No skill's lifecycle prose is edited; the check discovers the block by shape.
 
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-# Production signal for scripts/lint_test_shape.py
-_PROD = ROOT / "plugins/saga/scripts/handoff_envelope.py"
-
-
-def _load(name: str, path: Path):  # type: ignore[no-untyped-def]
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_HE = _load("handoff_envelope_lifecycle", _PROD)
 
 # Canonical Think-phase command ordering — the single source of truth for this check.
 # Subset of dispatch-table's 17, ordered as they appear in the most complete block (loop).
@@ -55,8 +39,7 @@ VERIFIED_BLOCK_SKILLS = (
 OUT_OF_SET = {
     ROOT
     / "plugins/saga/skills/founder-review/SKILL.md": "variant sentence, no /ideate line, differently worded",
-    ROOT
-    / "plugins/saga/skills/strategy/SKILL.md": "only inline ordering mentions (lines 3, 9, 117), not the block",
+    ROOT / "plugins/saga/skills/strategy/SKILL.md": "only inline ordering mentions, not the block",
 }
 
 SAGA_SPEC = ROOT / "plugins/saga/references/saga-spec.md"
@@ -73,16 +56,9 @@ def _extract_commands_in_order(text: str) -> list[str]:
 
 def _has_block_shape(text: str) -> bool:
     # The duplicated block's shape: three lines in order containing /ideate, /brainstorm, /plan answers
-    # Search for the three markers in sequence
     idx_ideate = text.find("`/ideate` answers:")
     idx_brain = text.find("`/brainstorm` answers:")
     idx_plan = text.find("`/plan` answers:")
-    # Also handle plan's bold variant: **`/plan` answers:**
-    if idx_plan == -1:
-        idx_plan = text.find("`/plan` answers:")
-        if idx_plan == -1:
-            # Try without backticks? but block always has backticks
-            return False
     return (
         idx_ideate != -1
         and idx_brain != -1
@@ -263,9 +239,9 @@ def test_shaping_pre_existing_mentions_positive() -> None:
     assert (
         "discovery/shaping" in office_text.lower() or "discovery / shaping" in office_text.lower()
     )
-    # Check three hits exist (lines 3, 19, 149) — count occurrences
+    # Check hits exist — count occurrences
     office_hits = len(re.findall(r"shaping", office_text, re.IGNORECASE))
-    assert office_hits >= 3, f"office-hours should have 3 shaping hits, found {office_hits}"
+    assert office_hits >= 3, f"office-hours should have shaping hits, found {office_hits}"
     frame_text = (
         ROOT / "plugins/saga/skills/office-hours/references/frame-diagnostic.md"
     ).read_text(encoding="utf-8")
@@ -284,20 +260,19 @@ def test_shaping_negative() -> None:
                 f"unexpected shaping in {path}"
             )
     # No Saga surface states an automatic Brainstorm-to-board transition
-    # (ignore the negative statement in saga-spec which says "not an automatic consequence")
     for path in list((ROOT / "plugins/saga/references").rglob("*.md")) + list(
         (ROOT / "plugins/saga/skills").rglob("*.md")
     ):
         text = path.read_text(encoding="utf-8")
         for line in text.splitlines():
-            lower = line.lower()
-            if "automatic" in lower and "shaping" in lower and "brainstorm" in lower:
-                if "not an automatic" in lower or "not a" in lower:
+            if "automatic" in line.lower() and re.search(r"\bShaping\b", line):
+                # Allowlist the one legitimate negation sentence in saga-spec
+                if "Shaping is an Operations board Status, not a Saga lifecycle phase" in line:
                     continue
                 raise AssertionError(
-                    f"automatic Brainstorm-to-board transition in {path}: {line.strip()[:120]}"
+                    f"automatic Brainstorm-to-board transition in {path}: {line.strip()[:120]} — Shaping is an Operations board Status stated once at saga-spec.md:311; a second authoritative statement would couple Saga's command vocabulary to a board column"
                 )
-    # No new Shaping mention beyond enumerated set
+    # No new Shaping mention beyond enumerated set — anchored to board-Status capitalization
     allowed_files = {
         ROOT / "plugins/saga/skills/plan/SKILL.md",
         ROOT / "plugins/saga/skills/office-hours/SKILL.md",
@@ -310,7 +285,7 @@ def test_shaping_negative() -> None:
         if path in allowed_files:
             continue
         text = path.read_text(encoding="utf-8")
-        if re.search(r"shaping", text, re.IGNORECASE):
+        if re.search(r"\bShaping\b", text):
             raise AssertionError(
-                f"unexpected shaping mention in {path.relative_to(ROOT)} beyond enumerated set"
+                f"unexpected Shaping mention in {path.relative_to(ROOT)} beyond enumerated set — Shaping is an Operations board Status stated authoritatively once at saga-spec.md:311; a second authoritative statement would couple Saga's command vocabulary to a board column"
             )

@@ -60,6 +60,8 @@ to another vendor session or runner. Its only permitted delegated work is the bo
 helper set defined in Phase 1.1. Any cross-vendor session transport is Orchestrate's, and a
 required session that is not in the Orchestrate run record is a HALT, never an invented review.
 
+The record of what the Brainstorm evidence suite proves and does not prove is in `plugins/saga/references/brainstorm-evidence-model.md`.
+
 ## Topic
 
 Take the topic from command arguments, a `/ideate` survivor reference (e.g. `dig deeper on #N` or a
@@ -76,12 +78,11 @@ is reachable only after both earlier tiers found nothing, so "no exact match" ne
 "start fresh." For the legacy-artifact description see the Legacy artifacts paragraph below, which
 is cross-referenced here as the second tier of this order.
 
-1. **Tier 1 — Exact match.** Among files that carry the producer facts (`capability`,
-   `activity`, `topic`, `maturity` per Phase 0.2 and the section contract), match on `topic` plus
+1. **Tier 1 — Exact match.** Among files that carry the producer facts (`capability`, `activity` per Phase 0.2 and the section contract) and `topic` and `maturity`, match on `topic` plus
    `capability`. Exactly one match restores directly: summarize the restored boundary and continue
    from it without re-presenting settled decisions. Two or more plausible matches stop and ask the
    operator to choose, explicitly never by recency, filename, or broad content match. A match at
-   `maturity: pending-confirmation` re-enters at the Phase 2.5 confirmation, not at Phase 1.
+   `maturity: pending-confirmation` re-enters at the Phase 2.5 confirmation, not at Phase 1. Re-entry at `pending-confirmation` carries the matched artifact's existing path forward.
 2. **Tier 2 — Legacy inference.** Only when tier 1 produced no match, consider the files that exist
    but lack the producer facts. These enter the labelled-inference path described in the Legacy
    artifacts paragraph below rather than being treated as absent. A file missing `capability` is a
@@ -107,15 +108,14 @@ confidence the survivor did not carry.
 `docs/ideation/YYYY-MM-DD-<topic>-ideation.md`) and the survivor reference — its title or its `R#` id —
 so Phase 3 can populate the `source` field in the requirements-doc metadata. If the handoff did not
 name the ideation doc path, ask for it once; if still unavailable, note provenance as unstated rather
-than inventing a path. Extend the capture to record three producer facts alongside the existing
+than inventing a path. Extend the capture to record three metadata fields alongside the existing
 `source`: the producing capability, fixed as `brainstorm`; the producing activity identity, formed as
-`brainstorm-<topic-slug>-<UTC timestamp, YYYYMMDDTHHMMSSZ>` at the moment the checkpoint is first
+`brainstorm-<topic-slug>-<UTC timestamp, YYYYMMDDTHHMMSSZ>` at the moment the artifact is first
 written; and, when `.orchestrate/run.json` exists in the working tree, that file's `run_id` as an
 optional run identity. A missing run identity is recorded as absent, never invented.
 
 If the topic is direct (no `/ideate` handoff), treat the operator's opening as the seed and leave
-`source` unset — there is no upstream ideation doc to reference. The three producer facts are still
-recorded: `capability: brainstorm` and the `activity` identity are always written, while `run` is
+`source` unset — there is no upstream ideation doc to reference. The producer facts `capability: brainstorm` and the `activity` identity are always written, while `run` is
 absent when no Orchestrate run exists.
 
 ### 0.3 Need check
@@ -173,9 +173,8 @@ when it has a distinct evidence question — two helpers on the same question is
 These are ceilings, not required launches. The grounding scout is `subagent_type: Explore`; the claim
 verifier is `subagent_type: saga:readonly-verifier` with `isolation: "worktree"`, degrading through
 the fallback ladder in `plugins/saga/references/sandbox-spawn-sites.md` when the agent type is absent
-from the session roster. Helpers are read-only by tool omission, not by instruction, and may not write
-files, may not choose requirements, and may not address the operator. The primary process retains
-synthesis, creativity, the private concern model, and every operator-facing exchange.
+from the session roster. Helpers may not choose requirements and may not address the operator. The claim verifier is read-only by tool omission, worktree-isolated, and may not write files; the grounding scout is read-only by omission of `Edit`/`Write`/`NotebookEdit` but retains `Bash` and is not worktree-isolated — a deliberate, recorded acceptance. At the ladder's terminal rung, read-only is a prose request rather than an enforced constraint. The primary process retains
+synthesis, creativity, the private concern model, and every operator-facing exchange. Before launching a grounding scout against a tree with uncommitted work, commit or stash first, because the scout retains `Bash` and is not worktree-isolated.
 
 **Lightweight** — search for the topic, check whether something similar already exists, move on.
 
@@ -281,13 +280,9 @@ explore what-ifs; do not only extract requirements.
 **Question selection (internal).** Ground repository-discoverable facts before asking the operator.
 Ask a question only when its answer could materially change scope, acceptance behaviour,
 consequence-based safeguards, or the downstream route. Among the candidates, prefer the greatest
-combination of consequence and uncertainty. One at a time, per interaction rule 1. The primary process
-retains synthesis, creativity, the private concern model, and every operator-facing exchange. The
-question-selection rule orders and filters idle questions only — it decides which of the questions
-Brainstorm might otherwise volunteer are worth the operator's turn, and in what order. A rigor gap
+combination of consequence and uncertainty. One at a time, per interaction rule 1. The question-selection rule decides which of the questions Brainstorm might otherwise volunteer are worth the operator's turn, and in what order. A rigor gap
 Phase 1.2 actually found is still probed, one at a time, and is never filtered out by the
-consequence test; Phase 1 cannot end with an un-probed rigor gap that is present, and that exit
-condition is not narrowed by the selection rule.
+consequence test.
 
 **Before exiting 1.3 — integration check.** Combine what the operator has said and surface any
 non-obvious consequence the dialogue has not probed. If stated-X plus stated-Y plus your-default-Z
@@ -354,22 +349,21 @@ Two paths, decided by whether any blocking question fired AND the Phase 0.4 tier
   full scoping synthesis with a confirmation gate. Surface what we're building, what's in scope,
   what's explicitly out, and the open questions; confirm before writing. Confirmation is
   unconditional even when zero call-outs survive — the operator invested answer-time (or pre-loaded
-  substantive scope), so the substance earns a real checkpoint.
+  substantive scope), so the substance earns a real pending-confirmation artifact.
 
 The tier guard distinguishes a tight one-liner (Lightweight → Path A) from a richly pre-loaded ask
 that needs no dialogue only because everything was pre-stated (Standard/Deep → Path B).
 
 <!-- gate-record: id=brainstorm-scope-confirmation absence=HALT transport=ask-user-question -->
-On Path B only, before posing the confirmation question, write the checkpoint to
+On Path B only, before posing the confirmation question, write the pending-confirmation artifact to
 `docs/brainstorms/YYYY-MM-DD-<topic>-requirements.md` with frontmatter `date`, `topic`,
 `capability: brainstorm`, `activity` (the `brainstorm-<topic-slug>-<UTC timestamp YYYYMMDDTHHMMSSZ>`
-identity formed at the moment the checkpoint is first written), optional `run` (the
-`.orchestrate/run.json` `run_id` when that file exists; a missing run identity is recorded as absent,
-never invented), optional `source`, and `maturity: pending-confirmation`, and a body carrying the
+identity formed at the moment the artifact is first written, whether as a pending-confirmation artifact or a Path A document), optional `run` (the
+`.orchestrate/run.json` `run_id` when that file exists), optional `source`, and `maturity: pending-confirmation`, and a body carrying the
 exact proposed boundary — what is being built, what is in scope, what is explicitly out, and the open
-questions. The checkpoint is written with `pending-confirmation` maturity and the exact proposed
+questions. The pending-confirmation artifact is written with `pending-confirmation` maturity and the exact proposed
 boundary before the confirmation question is posed, and no readiness-claiming artifact exists at that
-point. Then ask the confirmation question. Path A stays exactly as it is: it has no confirmation to
+point. Then ask the confirmation question. On an explicit operator rejection, say plainly that the pending-confirmation artifact remains on disk and will be restored as the proposal next time, and offer to revise the boundary rather than leaving it stale silently. Path A stays exactly as it is: it has no confirmation to
 declare, and no second approval step is added.
 
 ## Phase 3 — Capture the requirements
@@ -389,17 +383,15 @@ provenance captured in Phase 0.2 — the ideation doc's repo-relative path plus 
 (its title or `R#`). Leave `source` unset for a direct topic. This keeps the ideate → brainstorm
 provenance link traceable.
 
-Write to `docs/brainstorms/YYYY-MM-DD-<topic>-requirements.md` (today's date; `<topic>` kebab-case).
+Write a new artifact to `docs/brainstorms/YYYY-MM-DD-<topic>-requirements.md` (today's date; `<topic>` kebab-case).
 Use repo-relative paths inside the doc. Confirm completion with the absolute path so the reference is
 clickable.
 
-Promotion rewrites the same Path B checkpoint path in place with `maturity: requirements-ready` upon
-confirmation. The minimum artifact carries exactly four parts — confirmed scope and material decisions,
-rationale, intended acceptance outcome, and unresolved planning questions — and no architecture or
-implementation plan. Any change to the boundary after confirmation rewrites the file back to
+Promotion rewrites the same Path B pending-confirmation artifact path in place with `maturity: requirements-ready` upon
+confirmation, preserving the pending-confirmation artifact's original `date` frontmatter and its filename verbatim, and a resumed session restores the path from the matched artifact rather than recomputing it. A Path A run writes its document directly at `maturity: requirements-ready`, and the Phase 2.5 announce-mode summary is its confirmation. The minimum artifact is defined in `plugins/saga/skills/brainstorm/references/requirements-sections.md`. Any change to the boundary after a Path B confirmation rewrites the file back to
 `pending-confirmation` and requires a fresh Phase 2.5 confirmation before it can return to
 `requirements-ready`. Writing at `requirements-ready` without fresh confirmation is refused: maturity
-returns to `pending-confirmation` until the operator confirms again.
+returns to `pending-confirmation` until the operator confirms again (this governs a revision after a Path B confirmation, not a Path A first write).
 
 ## Legacy artifacts
 
@@ -414,11 +406,7 @@ the file on disk is left exactly as found.
 
 The brainstorm artifact carries handoff maturity **`requirements-ready`** when its frontmatter declares
 `maturity: requirements-ready`, which feeds `/handoff` → `mission-control` and is consumed by
-`/plan`. A `pending-confirmation` checkpoint declares no durable route. Show options 1 through 4
-(Plan, `/spec`, `/handoff`, `/doc-review`) only when the artifact on disk declares
-`maturity: requirements-ready`. A `pending-confirmation` checkpoint or no artifact at all leaves only
-options 5, 6, and 7 visible, and "Done for now" says plainly that no durable forward route exists
-yet. The route-gating is tied to declared maturity, not to file existence.
+`/plan`. A `pending-confirmation` artifact declares no durable route. The route-gating is tied to declared maturity, not to file existence.
 
 Present next-step options and execute the operator's selection. Hide options that do not apply and
 renumber so visible options stay contiguous. While any "Resolve before planning" question remains
@@ -429,20 +417,19 @@ if the operator proceeds anyway, convert each remaining item into an explicit de
 Options:
 
 1. **Plan it with `/plan` (recommended)** — move to `/plan` for structured implementation planning.
-   Pass the requirements doc path. Shown only when no "Resolve before planning" question remains.
+   Pass the requirements doc path. Shown only when the artifact on disk declares `maturity: requirements-ready` and no "Resolve before planning" question remains.
 2. **Sharpen with `/spec`** — hand the requirements doc to `/spec` for a relentless WHAT-rigor pass
    (five-Why, scope/MVP/out-of-scope/failure-mode lock, read-code-first grounding) before planning or
-   handoff. Pass the requirements doc path. Shown when a requirements doc exists and needs precision
-   before it can drive work. (Divergent `/brainstorm` → convergent `/spec`.)
+   handoff. Pass the requirements doc path. Shown only when the artifact on disk declares `maturity: requirements-ready`.
 3. **Hand off via `/handoff`** — route the `requirements-ready` artifact to `mission-control` as a
-   prepared issue draft for another team or a later session. Shown when a requirements doc exists.
+   prepared issue draft for another team or a later session. Shown only when the artifact on disk declares `maturity: requirements-ready`.
 4. **Review with `/doc-review`** — dispatch a readiness review of the requirements doc before
-   planning. Shown when a requirements doc exists.
+   planning. Shown only when the artifact on disk declares `maturity: requirements-ready`.
 5. **More clarifying questions** — return to Phase 1.3, keep refining scope, edge cases, and
    constraints one question at a time, then return here. Always shown.
 6. **Back to `/office-hours`** — when the topic turns out to be more open thought-partner work than a
    concrete requirements ask. Always available.
-7. **Done for now** — the requirements doc is saved and resumable later. Always shown.
+7. **Done for now** — the requirements doc is saved and resumable later, or, when no document was written, nothing durable was recorded. Always shown.
 
 Use `AskUserQuestion` when 4 or fewer options are visible; render a numbered list ("Pick a number or
 describe what you want.") when 5 or more are visible. Never silently skip the question.

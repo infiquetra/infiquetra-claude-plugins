@@ -117,8 +117,8 @@ def check_artifact_free(text: str) -> list[str]:
     norm = _norm(text)
     if "writes no file at all" not in norm:
         violations.append("missing writes no file at all")
-    if "no route from options 1 through 4 is shown" not in norm:
-        violations.append("missing no route from options 1 through 4")
+    if "Shown only when the artifact on disk declares `maturity: requirements-ready`" not in text:
+        violations.append("missing per-option route gating")
     if "nothing is labelled `requirements-ready`" not in norm:
         violations.append("missing nothing labelled requirements-ready")
     if "tied to declared maturity, not to file existence" not in norm:
@@ -253,7 +253,7 @@ def test_resume_restore_in_resume_skill_and_mutation_fails() -> None:
     assert check_resume_restore(text) == [], (
         f"resume restore violations: {check_resume_restore(text)}"
     )
-    mutated = _mutate(text, "without re-presenting settled decisions")
+    mutated = text.replace("without re-presenting settled decisions", "")
     assert check_resume_restore(mutated) != []
 
 
@@ -313,9 +313,9 @@ def test_minimum_artifact_positive_and_mutation_fails() -> None:
     mutated = _mutate(text, "exactly four parts")
     assert check_minimum_artifact(mutated) != []
 
-    # Also assert the same contract is stated in the skill Phase 3.
+    # Skill now points to the section contract for the four-part definition
     skill_text = _read(BRAINSTORM_SKILL)
-    assert check_minimum_artifact(skill_text) == []
+    assert "requirements-sections.md" in skill_text
 
 
 # ---------------------------------------------------------------------------
@@ -374,3 +374,62 @@ def test_gate_absence_lint_reports_zero_violations() -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "VIOLATIONS: 0" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Resume matched-brainstorm classification and dispatch routing (FIX-3)
+# ---------------------------------------------------------------------------
+
+DISPATCH_TABLE = ROOT / "plugins/saga/skills/loop/references/dispatch-table.md"
+
+
+def check_matched_brainstorm(text: str) -> list[str]:
+    violations: list[str] = []
+    norm = _norm(text)
+    if "matched-brainstorm" not in text:
+        violations.append("missing matched-brainstorm classification")
+    if "routes to `/brainstorm`" not in norm and "Route directly to `/brainstorm`" not in text:
+        violations.append("missing routes to /brainstorm")
+    return violations
+
+
+def check_no_tick(text: str) -> list[str]:
+    violations: list[str] = []
+    norm = _norm(text).lower()
+    if "writes no" not in norm or "re-entry tick" not in norm.lower():
+        violations.append("missing writes no re-entry tick")
+    return violations
+
+
+def check_dispatch_pending(text: str) -> list[str]:
+    violations: list[str] = []
+    if "pending-confirmation" not in text or "/brainstorm" not in text:
+        violations.append("missing pending-confirmation -> /brainstorm row")
+    # Check that requirements-ready still routes to /plan
+    if "requirements-ready" not in text or "`/plan` (settle HOW)" not in text:
+        violations.append("missing requirements-ready -> /plan row")
+    return violations
+
+
+def check_no_pending_to_plan(text: str) -> list[str]:
+    violations: list[str] = []
+    for line in text.splitlines():
+        if "pending-confirmation" in line and "/plan" in line:
+            violations.append(f"pending-confirmation must not route to /plan: {line.strip()[:80]}")
+    return violations
+
+
+def test_resume_matched_brainstorm_positive() -> None:
+    text = _read(RESUME_SKILL)
+    assert check_matched_brainstorm(text) == [], (
+        f"matched-brainstorm: {check_matched_brainstorm(text)}"
+    )
+    assert check_no_tick(text) == [], f"no tick: {check_no_tick(text)}"
+
+
+def test_dispatch_pending_routing_positive() -> None:
+    text = DISPATCH_TABLE.read_text(encoding="utf-8")
+    assert check_dispatch_pending(text) == [], f"dispatch pending: {check_dispatch_pending(text)}"
+    assert check_no_pending_to_plan(text) == [], (
+        f"no pending to plan: {check_no_pending_to_plan(text)}"
+    )

@@ -104,3 +104,74 @@ def test_missing_file_falls_back_to_path_rule_and_raises_nothing(tmp_path: Path)
     # Non-brainstorms missing path.
     assert HE.infer_maturity("docs/plans/missing.md") == "plan-ready"  # type: ignore[attr-defined]
     assert HE.infer_maturity("branch:foo") == "resume-ready"  # type: ignore[attr-defined]
+
+
+def test_out_of_domain_declared_value_falls_through(tmp_path: Path) -> None:
+    ideation = tmp_path / "docs" / "ideation"
+    ideation.mkdir(parents=True)
+    target = ideation / "2026-06-19-plugin-grooming-next-steps.md"
+    target.write_text("---\nmaturity: ready-to-execute\n---\n\nBody\n", encoding="utf-8")
+    assert HE.infer_maturity(str(target)) == "idea-ready"  # type: ignore[attr-defined]
+    # Also via root-relative
+    assert (
+        HE.infer_maturity("docs/ideation/2026-06-19-plugin-grooming-next-steps.md", root=tmp_path)
+        == "idea-ready"
+    )  # type: ignore[attr-defined]
+
+
+def test_inline_comment_stripped(tmp_path: Path) -> None:
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-topic-requirements.md"
+    target.write_text(
+        "---\nmaturity: requirements-ready   # some note\n---\n\nBody\n", encoding="utf-8"
+    )
+    assert HE.infer_maturity(str(target)) == "requirements-ready"  # type: ignore[attr-defined]
+
+
+def test_shell_shaped_value_rejected(tmp_path: Path) -> None:
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-topic-requirements.md"
+    target.write_text("---\nmaturity: ; rm -rf ~\n---\n\nBody\n", encoding="utf-8")
+    assert HE.infer_maturity(str(target)) == "requirements-ready"  # type: ignore[attr-defined]
+
+
+def test_non_utf8_file_does_not_raise(tmp_path: Path) -> None:
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-topic-requirements.md"
+    target.write_bytes(b"---\nmaturity: requirements-ready\n---\n\nBody \xe9\n")
+    # Must not raise UnicodeDecodeError; must fall through to path rule
+    assert HE.infer_maturity(str(target)) == "requirements-ready"  # type: ignore[attr-defined]
+
+
+def test_root_honoured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-topic-requirements.md"
+    _write_file(target, "pending-confirmation")
+    # Call from a different working directory — root must be honoured
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    assert (
+        HE.infer_maturity("docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path)
+        == "pending-confirmation"
+    )  # type: ignore[attr-defined]
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
+    )  # type: ignore[attr-defined]
+    assert envelope["handoff_maturity"] == "pending-confirmation"
+
+
+def test_non_routable_guard(tmp_path: Path) -> None:
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-topic-requirements.md"
+    _write_file(target, "pending-confirmation")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
+    )  # type: ignore[attr-defined]
+    assert envelope["handoff_maturity"] == "pending-confirmation"
+    assert "/issue --prepare" not in envelope["suggested_command"]  # type: ignore[index]

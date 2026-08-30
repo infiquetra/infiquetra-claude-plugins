@@ -25,9 +25,6 @@ def _load(name: str, path: Path):  # type: ignore[no-untyped-def]
     return mod
 
 
-_HE = _load("handoff_envelope_scenarios", _PROD)
-
-
 def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -38,21 +35,6 @@ def _load_json(path: Path) -> Any:
 
 Result = dict[str, Any]
 Rubric = dict[str, Any]
-
-
-def grade(transcript: str | dict[str, Any] | None, rubric: Rubric) -> dict[str, Result]:
-    """Pure function returning one result per material dimension.
-
-    Never computes an aggregate; never opens I/O or network.
-    """
-    # Live grading opt-in — in CI transcript is None or "none", grader is deterministic.
-    # Offline stub returns a fixed band per dimension so calibration drift is detectable.
-    if isinstance(transcript, dict) and "expected" in transcript:
-        expected = transcript["expected"]
-        # Return a fixed "pass" per material dimension — caller compares to expected
-        return {dim: {"band": "pass", "evidence": "offline stub"} for dim in expected}
-    dimensions = rubric.get("dimensions", {})
-    return {dim: {"band": "pass", "evidence": "offline stub"} for dim in dimensions}
 
 
 def is_blocking(
@@ -165,28 +147,22 @@ def test_transcript_labelling_negative() -> None:
 
 
 def test_offline_suite_complete_without_captured_transcripts() -> None:
-    # With every case set to none, shape, coverage, per-dimension, no-aggregate, gating, calibration must still pass.
+    # With every case set to none, shape, coverage, per-dimension, no-aggregate, gating, calibration shape must still pass.
     cases = _SCENARIOS["cases"]
     assert all(c["transcript"] == "none" for c in cases)
     # Shape + coverage
     assert len(cases) >= 4
-    # Per-dimension reporting
+    # Per-dimension reporting — data shape, no grader
     rubric_dims = set(_RUBRIC["dimensions"].keys())
     for case in cases:
         for dim in case["material_dimensions"]:
             assert dim in rubric_dims, f"case {case['id']} dimension {dim!r} not in rubric"
-        # grade returns one entry per material dimension
-        fake_scenario = {"expected": case["expected"]}
-        result = grade(fake_scenario, _RUBRIC)
-        assert set(result.keys()) == set(case["expected"].keys())
-    # No aggregate
+        assert set(case["material_dimensions"]) == set(case["expected"].keys())
+    # No aggregate in data
     for case in cases:
-        fake_scenario = {"expected": case["expected"]}
-        result = grade(fake_scenario, _RUBRIC)
         for key in ("score", "total", "aggregate", "overall", "quality"):
-            assert key not in result, f"aggregate key {key!r} leaked in grade result"
-            for dim_result in result.values():
-                assert key not in dim_result, f"aggregate key {key!r} leaked in dimension result"
+            assert key not in case["expected"]
+            assert key not in case
     # Gating
     assert (
         is_blocking(
@@ -206,9 +182,12 @@ def test_offline_suite_complete_without_captured_transcripts() -> None:
         )
         is True
     )
-    # Calibration
-    agree = _agreement(_CALIBRATION["cases"], _RUBRIC)
-    assert agree >= _CALIBRATION["drift_floor"]
+    # Calibration shape only — drift check deferred until real grader exists
+    assert len(_CALIBRATION["cases"]) == 3
+    for case in _CALIBRATION["cases"]:
+        assert "id" in case and "expected" in case
+        for dim in case["expected"]:
+            assert dim in rubric_dims
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +198,9 @@ def test_offline_suite_complete_without_captured_transcripts() -> None:
 def test_per_dimension_reporting_positive() -> None:
     cases = _SCENARIOS["cases"]
     for case in cases:
-        fake_scenario = {"expected": case["expected"]}
-        result = grade(fake_scenario, _RUBRIC)
-        assert set(result.keys()) == set(case["expected"].keys()), (
-            f"case {case['id']} grade dimensions mismatch"
+        assert set(case["expected"].keys()) == set(case["material_dimensions"]), (
+            f"case {case['id']} expected vs material_dimensions mismatch"
         )
-        assert set(result.keys()) == set(case["material_dimensions"])
 
 
 # ---------------------------------------------------------------------------
@@ -233,15 +209,12 @@ def test_per_dimension_reporting_positive() -> None:
 
 
 def test_no_aggregate_negative() -> None:
-    # Result object must not expose score/total/aggregate/overall/quality at any level
+    # Data must not expose aggregate keys
     cases = _SCENARIOS["cases"]
     for case in cases:
-        fake_scenario = {"expected": case["expected"]}
-        result = grade(fake_scenario, _RUBRIC)
         for banned in ("score", "total", "aggregate", "overall", "quality"):
-            assert banned not in result
-            for dim, dim_result in result.items():
-                assert banned not in dim_result, f"banned key {banned!r} in {dim}"
+            assert banned not in case["expected"]
+            assert banned not in case
     # No consumer computes an aggregate — scan this file for banned patterns
     src = Path(__file__).read_text(encoding="utf-8")
     for banned in ("aggregate", "overall", "quality"):
@@ -315,33 +288,15 @@ def test_gating_logic_negative_and_positive() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _agreement(cases: list[dict[str, Any]], rubric: dict[str, Any]) -> float:
-    agree = 0
-    for case in cases:
-        expected = case["expected"]
-        result = grade({"expected": expected}, rubric)
-        # Compare bands per dimension
-        if all(result[dim]["band"] == band for dim, band in expected.items()):
-            agree += 1
-    return agree / len(cases) if cases else 1.0
-
-
-def test_calibration_drift_positive() -> None:
+def test_calibration_shape_positive() -> None:
     cases = _CALIBRATION["cases"]
-    rubric = _RUBRIC
-    agree = _agreement(cases, rubric)
-    assert agree >= _CALIBRATION["drift_floor"], (
-        f"calibration agreement {agree} below floor {_CALIBRATION['drift_floor']}"
-    )
-    # Seeded disagreeing grade must drop agreement
-    mutated_cases = [dict(c) for c in cases]
-    mutated_cases[0] = dict(mutated_cases[0])
-    mutated_cases[0]["expected"] = {
-        k: ("fail" if v == "pass" else "pass") for k, v in mutated_cases[0]["expected"].items()
-    }
-    mutated_agree = _agreement(mutated_cases, rubric)
-    assert mutated_agree < agree, "seeded disagreement did not drop agreement"
+    assert len(cases) == 3
+    for case in cases:
+        assert "id" in case and "expected" in case
+        for dim in case["expected"]:
+            assert dim in _RUBRIC["dimensions"]
     # Calibration must not produce an aggregate target of its own
     assert "aggregate" not in _CALIBRATION
     assert "overall" not in _CALIBRATION
     assert "score" not in _CALIBRATION
+    # Drift check is deferred until a real grader exists — shape is what we prove now

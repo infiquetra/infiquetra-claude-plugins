@@ -66,6 +66,8 @@ retained — the same posture the `Explore` rung of the fallback ladder below do
 not by a worktree fence. Filing it in the in-scope table would wrongly claim the
 `read-only-verify` profile (`saga:readonly-verifier` plus `isolation: "worktree"`).
 
+The scout is a survey-class read spawn. Isolation was considered and not adopted, because filing it under the `read-only-verify` profile would wrongly claim a `saga:readonly-verifier`-plus-worktree posture it does not carry, and the run's settled decisions are not reopened by a maintenance unit. The residual is concrete: a Bash-capable agent in the live tree can run `git checkout` or `git restore`, which is the accidental-clobber class recorded at `docs/engineering-journal/DECISIONS.md` under the sandbox-spawn decision and at `docs/engineering-journal/LEARNINGS.md` under the verifier-clobber incident. Commit or stash before a Brainstorm that will launch a scout against uncommitted work. Note the asymmetry openly: rung 1 of this file's own fallback ladder pairs `Explore` with `isolation: "worktree"`, so the scout is deliberately less isolated than a degraded claim verifier.
+
 ## Ad-hoc spawn rule
 
 Any verify- or review-class Agent-tool spawn made **outside** a skill listed above (a one-off

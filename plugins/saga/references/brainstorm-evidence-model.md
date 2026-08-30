@@ -19,7 +19,9 @@ this model. Each verdict is a fit decision, not a reimplementation.
 ## Layer 1 — Deterministic contract boundary, mechanically enforced
 
 `tests/test_brainstorm_evidence_model.py` walks the AST of every
-`tests/test_brainstorm_*.py` module. It collects string literals that
+`tests/test_brainstorm_*.py` module. Scope: the check catches a question-shaped string literal appearing inside an
+`assert` statement, and it does not see literals held in module constants,
+helper predicates, `parametrize` decorators, or JSON data files. It collects string literals that
 appear inside `assert` statements and fails on:
 
 - any literal that ends with `?` or opens with an interrogative
@@ -32,11 +34,11 @@ This proves R17 over the test sources rather than by reviewer promise:
 no deterministic test asserts which question is asked, its wording, or
 the order of the creative dialogue.
 
-Deterministic coverage is also asserted: artifact metadata, resume
+Deterministic coverage is also asserted: a keyword-presence scan over the test sources against a
+hardcoded `_AREA_KEYWORDS` list checks that artifact metadata, resume
 lookup, the declared `brainstorm-scope-confirmation` gate,
-scope-confirmation state, terminal routing, and helper ceilings each have
-at least one passing `check_*` assertion, discovered by scanning the
-modules for those keywords rather than hardcoding a second list.
+scope-confirmation state, terminal routing, and helper ceilings are mentioned; it does not prove an
+assertion executed.
 
 ## Layer 2 — Scenario evaluations scored per dimension
 
@@ -51,11 +53,7 @@ failure-mode kinds: `premature-convergence`, `missed-material-gap`,
 `tests/data/brainstorm/rubric.json` holds dimensions and their band
 descriptions as data, never inlined in assertions.
 
-`grade(transcript, rubric) -> dict[dimension, Result]` is a pure
-function returning one result per material dimension named by the case.
-The runner is injectable exactly as `engine_benchmark.run_suite` takes
-one, so live grading is opt-in behind an environment variable and never
-runs in CI (R23).
+Scenario data stores `expected` per dimension as authored design input; no `grade()` function exists yet and no live runner is wired. Layer 2 proves the data shape and per-dimension structure, not that any transcript was graded.
 
 **Authored case data is expected and permitted.** `scenarios.json`,
 `rubric.json`, and `calibration.json` are authored by this unit: they
@@ -111,17 +109,14 @@ mutation case fails.
 
 ## What this suite does not prove
 
-The suite proves the grading and gating machinery, the deterministic
-boundary, and the per-dimension reporting. It does **not** prove that any
-given brainstorm was good. Formal completeness and contradiction review
+The suite proves the deterministic boundary, the data shape and per-dimension structure, and the gating machinery. It does **not** prove that any
+given brainstorm was good and it does not prove any transcript was graded — Layer 2 has no grader yet and the drift check is deferred. Formal completeness and contradiction review
 stay after the confirmed artifact, in Document Review or a narrow
 post-write validator, never in the live dialogue. A green scenario run
-without a captured transcript proves the case set's shape and the
-grader's determinism, not the quality of a conversation that was never
-captured.
+without a captured transcript proves the case set's shape, not the quality of a conversation that was never
+captured. The AST check's bounded scope is as described in Layer 1.
 
 ## Offline and side-effect-free (R23)
 
 The harness runs offline, writes nothing under `docs/brainstorms/`,
-mutates no path under `.claude/saga/`, and opens no socket. Live grading
-is opt-in (`BRAINSTORM_LIVE_GRADE=1`) and never runs in CI.
+mutates no path under `.claude/saga/`, and opens no socket.

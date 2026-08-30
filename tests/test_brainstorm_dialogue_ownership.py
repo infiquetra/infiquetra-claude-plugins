@@ -2,27 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 BRAINSTORM_SKILL = ROOT / "plugins/saga/skills/brainstorm/SKILL.md"
-
-# Production signal for scripts/lint_test_shape.py
-_PROD = ROOT / "plugins/saga/scripts/handoff_envelope.py"
-
-
-def _load(name: str, path: Path):  # type: ignore[no-untyped-def]
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_HE = _load("handoff_envelope_dialogue", _PROD)
 
 
 def _norm(text: str) -> str:
@@ -71,6 +55,18 @@ def check_no_growing_blacklist(text: str) -> list[str]:
     return violations
 
 
+def check_transport_ownership(text: str) -> list[str]:
+    violations: list[str] = []
+    norm = _norm(text)
+    if "a required session that is not in the Orchestrate run record is a HALT" not in norm:
+        violations.append("missing HALT rule for absent Orchestrate session")
+    if "Any cross-vendor session transport is Orchestrate" not in norm:
+        violations.append("missing Orchestrate owns cross-vendor session transport")
+    if "never delegated" not in norm.lower() or "another vendor session or runner" not in norm:
+        violations.append("missing Brainstorm does not delegate dialogue to another vendor session")
+    return violations
+
+
 def test_ownership_rule_positive() -> None:
     text = BRAINSTORM_SKILL.read_text(encoding="utf-8")
     assert check_ownership_rule(text) == [], f"ownership: {check_ownership_rule(text)}"
@@ -90,6 +86,15 @@ def test_no_growing_blacklist_negative() -> None:
     assert check_no_growing_blacklist(text) == [], f"blacklist: {check_no_growing_blacklist(text)}"
     mutated = text.replace("## Dialogue ownership", "## Dialogue ownership\nDo not run foo.py\n")
     assert check_no_growing_blacklist(mutated) != []
+
+
+def test_transport_ownership_survives_name_removal() -> None:
+    text = BRAINSTORM_SKILL.read_text(encoding="utf-8")
+    assert check_transport_ownership(text) == [], (
+        f"transport ownership: {check_transport_ownership(text)}"
+    )
+    mutated = text.replace("is a HALT, never an invented review", "")
+    assert check_transport_ownership(mutated) != []
 
 
 def test_routing_contract_intact_integration() -> None:

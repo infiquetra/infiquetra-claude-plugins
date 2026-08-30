@@ -20,11 +20,20 @@ SOURCE_DIRS = (
     Path("docs/work-sessions"),
 )
 
+HANDOFF_MATURITIES = (
+    "idea-ready",
+    "requirements-ready",
+    "plan-ready",
+    "resume-ready",
+    "deferred-context",
+    "pending-confirmation",
+)
+
 
 def _read_frontmatter_maturity(path: Path) -> str | None:
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     if not text.startswith("---"):
         return None
@@ -35,35 +44,29 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
     for line in frontmatter.splitlines():
         stripped = line.strip()
         if stripped.startswith("maturity:"):
-            value = stripped[len("maturity:") :].strip().strip("\"'").strip()
-            if value:
+            value = stripped[len("maturity:") :].strip()
+            # Strip inline YAML comment
+            if "#" in value:
+                value = value.split("#", 1)[0].strip()
+            value = value.strip("\"'").strip()
+            if value and value in HANDOFF_MATURITIES:
                 return value
     return None
 
 
-def infer_maturity(source: str) -> str:
+def infer_maturity(source: str, root: Path | None = None) -> str:
     normalized = source.replace("\\", "/")
     # Frontmatter-declared maturity wins when the source resolves to an existing file
     # that declares one (KTD7) — so a pending-confirmation checkpoint under
     # docs/brainstorms/ no longer hands off as requirements-ready.
-    source_path = Path(normalized)
-    if source_path.is_file():
-        declared = _read_frontmatter_maturity(source_path)
-        if declared is not None:
-            return declared
-    # Also try resolving relative to cwd-like roots for test tmp_path sources that
-    # still match the docs/brainstorms/ pattern.
-    else:
-        # Probe as repo-relative path from cwd for sources like docs/brainstorms/foo.md
-        # that do not exist at the literal path but may exist under cwd.
-        try:
-            candidate = Path.cwd() / normalized
-            if candidate.is_file():
-                declared = _read_frontmatter_maturity(candidate)
-                if declared is not None:
-                    return declared
-        except OSError:
-            pass
+    base = root or Path.cwd()
+    candidate = base / normalized if not Path(normalized).is_absolute() else Path(normalized)
+    # Also try the literal path for absolute tmp_path sources
+    for cand in (Path(normalized), candidate):
+        if cand.is_file():
+            declared = _read_frontmatter_maturity(cand)
+            if declared is not None:
+                return declared
     if "docs/ideation/" in normalized:
         return "idea-ready"
     if "docs/brainstorms/" in normalized:
@@ -154,12 +157,18 @@ def build_handoff_envelope(
     if not selected_source:
         raise RuntimeError("No handoff source found; provide --source or create a durable artifact")
 
-    maturity = infer_maturity(selected_source)
-    suggested_command = f"/issue --prepare --from {selected_source} --maturity {maturity}"
-    if target_team:
-        suggested_command += f" for {target_team}"
-    if target_repo:
-        suggested_command += f" in {target_repo}"
+    maturity = infer_maturity(selected_source, root)
+    if maturity == "pending-confirmation":
+        suggested_command = (
+            f"Boundary recorded but unconfirmed for {selected_source} — "
+            "no durable route exists until the operator confirms in Brainstorm Phase 2.5"
+        )
+    else:
+        suggested_command = f"/issue --prepare --from {selected_source} --maturity {maturity}"
+        if target_team:
+            suggested_command += f" for {target_team}"
+        if target_repo:
+            suggested_command += f" in {target_repo}"
 
     return {
         "schema_version": "1.0",

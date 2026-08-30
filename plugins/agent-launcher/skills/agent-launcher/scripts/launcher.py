@@ -503,6 +503,10 @@ DELIVERY_WARNING = (
     "trusting this unit -- it may have been prompted while still booting."
 )
 
+# How long to give one pane read before the input-box inspection gives up. A pane read is a
+# local socket round trip, so this is a bound on a wedged herdr rather than a wait for work.
+PANE_INPUT_READ_SECONDS = 5.0
+
 
 def append_unit_note(unit: Any, note: str) -> None:
     """Add one fact without erasing a note recorded by an earlier delivery step."""
@@ -643,6 +647,90 @@ def read_pane(pane_id: str, lines: int = 120) -> str:
         return proc.stdout
     proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
     return proc.stdout if proc.returncode == 0 else ""
+
+
+# The glyph each vendor's composer draws at the start of its input line. Verified live on
+# 2026-08-30: claude draws U+276F between two dim rules, codex draws U+203A. A plain ">" is
+# included for a vendor that draws no decorated marker.
+COMPOSER_MARKERS = ("❯", "›", ">")
+
+
+def composer_staged_text(ansi_text: str) -> str | None:
+    """Text a human staged in the input box, or None when no composer line was found.
+
+    A client's own placeholder is drawn inside a styled run -- codex's "Ask Codex to do
+    anything" arrives wrapped in a dim foreground SGR, and claude's hints the same way --
+    while text somebody typed carries no styling. Discarding a placeholder is harmless and
+    discarding staged operator text is not, so only unstyled runs count as staged.
+    """
+    composer: str | None = None
+    for line in ansi_text.splitlines():
+        # The marker itself can sit inside a styled run, so find it with styling stripped.
+        if strip_ansi(line).lstrip()[:1] in COMPOSER_MARKERS:
+            composer = line
+    if composer is None:
+        return None
+    unstyled: list[str] = []
+    styled = False
+    cursor = 0
+    for sgr in re.finditer(r"\x1b\[[0-9;]*m", composer):
+        if not styled:
+            unstyled.append(composer[cursor : sgr.start()])
+        styled = sgr.group(0)[2:-1] not in ("", "0")
+        cursor = sgr.end()
+    if not styled:
+        unstyled.append(composer[cursor:])
+    staged = "".join(unstyled).lstrip()
+    if staged[:1] in COMPOSER_MARKERS:
+        staged = staged[1:]
+    return staged.strip()
+
+
+def pane_input_text(pane_id: str) -> str | None:
+    """Staged text in a pane's input box, or None when the box cannot be read.
+
+    Reads the visible pane with its styling intact, because the staged-versus-placeholder
+    distinction lives in the styling. A failed or timed-out read is None -- unreadable -- rather
+    than an empty box, so the two cannot be confused downstream.
+    """
+    proc = run(
+        ["herdr", "pane", "read", pane_id, "--source", "visible", "--format", "ansi"],
+        check=False,
+        timeout=PANE_INPUT_READ_SECONDS,
+    )
+    if proc.returncode != 0:
+        return None
+    return composer_staged_text(proc.stdout)
+
+
+def guard_reused_pane(unit: Any, pane_id: str) -> None:
+    """Inspect a pane this launch did not create before anything is prompted into it.
+
+    A tab the launcher did not create may hold text somebody staged earlier, and a prompt sent
+    behind it concatenates onto that text and can submit it. Staged text is therefore a stop,
+    recorded first: nothing is cleared, which is the strongest reading of "never silently
+    discarded". A box that cannot be read is noted on the unit and in the receipt and prompted
+    as today -- visible, not silent.
+    """
+    staged = pane_input_text(pane_id)
+    receipt = unit.launch_receipt if isinstance(unit.launch_receipt, dict) else None
+    if staged is None:
+        append_unit_note(unit, "input box not readable; prompted without inspection")
+        if receipt is not None:
+            receipt["input_box"] = "unreadable"
+        return
+    if staged == "":
+        if receipt is not None:
+            receipt["input_box"] = "empty"
+        return
+    if receipt is not None:
+        receipt["input_box"] = "staged"
+        receipt["input_box_text"] = staged
+    append_unit_note(unit, f"staged input preserved, not cleared: {staged!r}")
+    raise SystemExit(
+        f"{unit.name}: pane {pane_id} already holds staged input {staged!r}; refusing to "
+        "prompt so the dispatched task cannot be concatenated onto it"
+    )
 
 
 def confirm_opencode_variant_selected(unit: Any, pane_id: str, selected: str) -> None:
@@ -1045,6 +1133,8 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
         _, ready = drive_opencode_variant_selection(unit, pane_id)
     verify_unit_preflight(unit, pane_id, ready=ready)
 
+    if not session_owned(unit):
+        guard_reused_pane(unit, pane_id)
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     accepted = took_the_task(unit)
     if not accepted:

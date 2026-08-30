@@ -31,6 +31,8 @@ python3 "$S" close --receipt-json receipt.json
 
 `launch` always dry-runs first. It writes one JSON receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr state (kind, pane, cwd, workspace, readiness; model and permission stay `requested_only` because `herdr agent list` does not publish them) before any prompt is sent. `close` reads `tab_id` and `owned` from that file. `owned` is true only when the receipt `tab_id` was **not** in the Herdr workspace tab set snapshotted immediately before the wrapper ran. The wrapper's `reused` bit means the *workspace* already existed, which is the common case inside Herdr, and is not tab ownership.
 
+A session whose tab the launcher did not create (`owned` false in the receipt) has its input box inspected before any prompt is sent, because a prompt typed behind staged text concatenates onto it and can submit it. Staged text is a stop, not a clear: the launch refuses to prompt, and the text is recorded in the receipt and the unit note — nothing is discarded. A client's own placeholder (the dim hint a vendor draws in an empty box) is not staged text and does not stop the launch, and a box that cannot be read is recorded as `unreadable` in the receipt and prompted as today.
+
 **Stop conditions (verbatim):**
 
 - Stop before launch if the wrapper dry run does not resolve the requested working directory and current Herdr workspace.

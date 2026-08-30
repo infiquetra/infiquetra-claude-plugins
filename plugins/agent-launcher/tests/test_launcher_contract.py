@@ -9,8 +9,10 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -279,6 +281,149 @@ def test_create_within_the_deadline_is_unaffected(
     with pytest.raises(SystemExit, match="stop after identity"):
         launcher.launch(unit)
     assert unit.tab_id == "tab-1"
+
+
+CODEX_PLACEHOLDER = "\x1b[38;2;153;153;153m› Ask Codex to do anything\x1b[0m"
+STAGED_SLASH_COMMAND = "/saga:doc-review docs/plans/x.md"
+
+
+def _claude_pane(composer_line: str) -> str:
+    rule = "\x1b[2m──────────────────────────────\x1b[0m"
+    return f"{rule}\n{composer_line}\n{rule}\n"
+
+
+def _make_fake_run(
+    recorded: list[list[str]],
+    *,
+    pane_dump: str,
+    existing_tabs: tuple[str, ...],
+    receipt: dict[str, object],
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            tabs = {"result": {"tabs": [{"tab_id": t, "label": t} for t in existing_tabs]}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        if cmd[:3] == ["herdr", "pane", "current"]:
+            pane = {"result": {"pane": {"workspace_id": "w80"}}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
+        if cmd[:3] == ["herdr", "pane", "read"]:
+            return subprocess.CompletedProcess(cmd, 0, pane_dump, "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+
+    return fake_run
+
+
+def _prepare_guard_launch(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    pane_dump: str,
+    receipt_tab: str,
+    existing_tabs: tuple[str, ...],
+) -> tuple[Any, list[list[str]], list[tuple[Any, ...]]]:
+    recorded: list[list[str]] = []
+    sends: list[tuple[Any, ...]] = []
+    receipt = {
+        "tab_id": receipt_tab,
+        "agent_name": "reviewer-2",
+        "pane_id": "w80:p9",
+        "reused": True,
+    }
+    monkeypatch.setattr(
+        launcher,
+        "run",
+        _make_fake_run(recorded, pane_dump=pane_dump, existing_tabs=existing_tabs, receipt=receipt),
+    )
+    # launch() resolves the wrapper in agent_argv before run(); stubbing run is not enough.
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
+    unit = launcher.LaunchRequest(name="reviewer", vendor="codex", worktree="/tmp/wt")
+    return unit, recorded, sends
+
+
+def test_composer_placeholder_is_not_staged_text(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text(CODEX_PLACEHOLDER) == ""
+
+
+def test_composer_typed_text_is_staged(launcher: ModuleType) -> None:
+    staged = launcher.composer_staged_text(f"❯ {STAGED_SLASH_COMMAND}")
+    assert staged == STAGED_SLASH_COMMAND
+
+
+def test_composer_absent_reads_as_unreadable(launcher: ModuleType) -> None:
+    dump = "some session output\na second line of plain output\n"
+    assert launcher.composer_staged_text(dump) is None
+
+
+def test_reused_pane_holding_a_slash_command_is_not_prompted(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    with pytest.raises(SystemExit, match="already holds staged input"):
+        launcher.launch(unit)
+    assert sends == []
+    assert unit.launch_receipt["input_box_text"] == STAGED_SLASH_COMMAND
+
+
+def test_staged_text_is_recorded_not_discarded(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    with pytest.raises(SystemExit, match="already holds staged input"):
+        launcher.launch(unit)
+    assert sends == []
+    assert unit.launch_receipt["input_box"] == "staged"
+    assert unit.launch_receipt["input_box_text"] == STAGED_SLASH_COMMAND
+    assert STAGED_SLASH_COMMAND in unit.note
+
+
+def test_empty_reused_box_is_prompted_exactly_as_today(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit, recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane("❯ "),
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    launcher.launch(unit)
+    assert len(sends) == 1
+    ansi_reads = [c for c in recorded if c[:3] == ["herdr", "pane", "read"] and "--format" in c]
+    assert len(ansi_reads) == 1
+    assert unit.launch_receipt["input_box"] == "empty"
+
+
+def test_freshly_created_pane_takes_no_inspection_path(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit, recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
+        receipt_tab="w80:t9",
+        existing_tabs=("w80:t1",),
+    )
+    launcher.launch(unit)
+    assert len(sends) == 1
+    ansi_reads = [c for c in recorded if c[:3] == ["herdr", "pane", "read"] and "--format" in c]
+    assert ansi_reads == []
 
 
 def test_startup_timeout_is_a_result_not_a_crash(launcher: ModuleType) -> None:

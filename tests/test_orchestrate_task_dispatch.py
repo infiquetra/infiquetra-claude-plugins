@@ -10,6 +10,7 @@ rather than a stand-in for it.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib.util
 import sys
 from pathlib import Path
@@ -499,3 +500,35 @@ class TestTheReusedPaneGuardIsInherited:
             == LAUNCHER.resolve()
         )
         assert Path(orchestrate.launch.__code__.co_filename).resolve() == LAUNCHER.resolve()
+
+
+class TestAPlanOmittingPermissionSaysSo:
+    """Inheriting the default because a plan row omitted the field is reported, not silent."""
+
+    def test_plan_omission_of_permission_is_reported(
+        self, orchestrate: ModuleType, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        plan = {
+            "units": [
+                {"name": "u0", "vendor": "claude", "task": "build it"},
+                {
+                    "name": "u1",
+                    "vendor": "claude",
+                    "task": "extend it",
+                    "permission": "bypass",
+                },
+            ]
+        }
+        units = orchestrate.plan_units(plan)
+        assert units[0].permission_declared is False
+        assert units[1].permission_declared is True
+        assert "permission not declared, inheriting auto: u0" in capsys.readouterr().out
+
+    def test_declared_permission_survives_a_run_record_round_trip(
+        self, orchestrate: ModuleType
+    ) -> None:
+        unit = orchestrate.Unit(name="u", vendor="claude", task="x")
+        unit.permission_declared = False
+        raw = dataclasses.asdict(unit)
+        assert "permission_declared" in raw
+        assert orchestrate.Unit(**raw).permission_declared is False

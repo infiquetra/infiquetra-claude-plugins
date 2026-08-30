@@ -426,6 +426,100 @@ def test_freshly_created_pane_takes_no_inspection_path(
     assert ansi_reads == []
 
 
+def _preflight_stubs(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    closed: list[str] = []
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda unit, agents=None: {
+            "pane_id": "pane-1",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w1",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+    monkeypatch.setattr(launcher, "workspace_id_for_name", lambda name: None)
+    monkeypatch.setattr(launcher, "verify_unit_account", lambda *a, **k: None)
+    monkeypatch.setattr(
+        launcher, "close_run_session", lambda unit: closed.append(unit.tab_id or "")
+    )
+    return closed
+
+
+def _bypass_unit(launcher: ModuleType) -> Any:
+    return launcher.LaunchRequest(
+        name="reviewer",
+        vendor="claude",
+        worktree="/tmp/wt",
+        permission="bypass",
+        pane_id="pane-1",
+        tab_id="tab-1",
+    )
+
+
+LAUNCH_ARGV_HEAD = [
+    "agents",
+    "--no-focus",
+    "--current",
+    "--task",
+    "reviewer",
+    "--cwd",
+    "/tmp/wt",
+]
+
+
+def test_declared_bypass_missing_from_argv_is_a_named_stop(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed = _preflight_stubs(launcher, monkeypatch)
+    unit = _bypass_unit(launcher)
+    argv = [*LAUNCH_ARGV_HEAD, "claude"]
+    with pytest.raises(SystemExit) as exc_info:
+        launcher.verify_unit_preflight(unit, "pane-1", ready=True, argv=argv)
+    message = str(exc_info.value)
+    assert "reviewer" in message
+    assert "'bypass'" in message
+    assert "'--permission-mode', 'bypassPermissions'" in message
+    assert closed == ["tab-1"]
+
+
+def test_receipt_records_resolved_posture_distinctly(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _preflight_stubs(launcher, monkeypatch)
+    unit = _bypass_unit(launcher)
+    argv = [*LAUNCH_ARGV_HEAD, "claude", "--permission-mode", "bypassPermissions"]
+    receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True, argv=argv)
+    assert receipt["permission"] == "bypass"
+    assert receipt["permission_resolved"]["mode"] == "bypass"
+    assert receipt["permission_resolved"]["tokens"] == [
+        "--permission-mode",
+        "bypassPermissions",
+    ]
+    assert receipt["permission_resolved"]["confirmed_from"] == "launch_argv"
+    assert "permission" in receipt["requested_only"]
+    assert "permission" not in receipt["confirmed_against_herdr"]
+
+
+def test_no_argv_leaves_permission_unconfirmed(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _preflight_stubs(launcher, monkeypatch)
+    unit = _bypass_unit(launcher)
+    receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True)
+    assert receipt["permission_resolved"]["confirmed_from"] is None
+    assert "permission" in receipt["requested_only"]
+
+
+def test_skill_no_longer_calls_permission_herdr_requested_only() -> None:
+    skill = (
+        REPO / "plugins" / "agent-launcher" / "skills" / "agent-launcher" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "model and permission stay `requested_only`" not in skill
+    assert "permission_resolved" in skill
+
+
 def test_startup_timeout_is_a_result_not_a_crash(launcher: ModuleType) -> None:
     result = launcher.run(["sleep", "2"], check=False, timeout=0.1)
     assert result.returncode == 124

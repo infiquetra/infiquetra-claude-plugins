@@ -248,6 +248,11 @@ class Unit:
     ``auto`` is the default because it is enough for a unit to do its own work in its own worktree.
     ``bypass`` is there because it is what the operator runs all day, and a unit that keeps stopping
     to ask in a tab nobody is watching has failed. The containment is the worktree either way."""
+    permission_declared: bool = True
+    """Whether the plan row that produced this unit named ``permission`` explicitly.
+
+    False means the unit inherited the default. Recorded because a run that declared a posture and
+    a plan that omitted the field produce a worker in ``auto`` with nothing on screen to say so."""
     setup: list[str] = field(default_factory=list)
     """Lines sent into the session before its task, for tier control the command line lacks.
 
@@ -931,6 +936,7 @@ def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
             unit = Unit(**raw)
         except TypeError as exc:
             raise SystemExit(f"invalid plan unit: {exc}") from None
+        unit.permission_declared = "permission" in raw
         if unit.role == REVIEW_CONTROLLER_ROLE:
             if not is_code_review_task(unit.task):
                 raise SystemExit(
@@ -949,6 +955,9 @@ def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
             ]
         units.append(unit)
     assert_review_transport(units)
+    omitted = [unit.name for unit in units if not unit.permission_declared]
+    if omitted:
+        print(f"permission not declared, inheriting {Unit.permission}: {', '.join(omitted)}")
     return units
 
 

@@ -257,6 +257,25 @@ VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
 }
 
 
+def resolve_permission(vendor: str, permission: str) -> list[str]:
+    """The flags this vendor takes for this posture, or a stop naming what was asked for.
+
+    A vendor absent from the table has no permission ladder and legitimately emits nothing.
+    A posture absent from a vendor that HAS a ladder is a typo or a spelling from another
+    vendor, and quietly handing it the auto flag set is how a run comes up in a posture it
+    did not declare.
+    """
+    modes = VENDOR_PERMISSION.get(vendor)
+    if modes is None:
+        return []
+    if permission not in modes:
+        raise SystemExit(
+            f"unknown permission {permission!r} for vendor {vendor!r}; "
+            f"expected one of {sorted(modes)}"
+        )
+    return list(modes[permission])
+
+
 class AccountMismatchError(SystemExit):
     """A worker launched under an account that does not match the requested plan account."""
 
@@ -453,8 +472,7 @@ def agent_argv(
     if workspace:
         argv.extend(["--workspace", workspace])
     argv.append(unit.vendor)
-    modes = VENDOR_PERMISSION.get(unit.vendor, {})
-    argv.extend(modes.get(unit.permission, modes.get("auto", [])))
+    argv.extend(resolve_permission(unit.vendor, unit.permission))
     flags = VENDOR_FLAGS.get(unit.vendor, {})
     for key, value in (("model", unit.model), ("effort", unit.effort)):
         template = flags.get(key)
@@ -992,7 +1010,7 @@ def verify_unit_account(unit: Any, pane_id: str | None = None) -> bool | None:
 
 
 def verify_unit_preflight(
-    unit: Any, pane_id: str | None, *, ready: bool | None = None
+    unit: Any, pane_id: str | None, *, ready: bool | None = None, argv: list[str] | None = None
 ) -> dict[str, Any]:
     """Verify the session against herdr before the task is submitted, and record what was checked.
 
@@ -1051,6 +1069,23 @@ def verify_unit_preflight(
     observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
     confirmed.append("readiness")
 
+    # Herdr publishes no permission, so the launch argv is the only outside witness that the
+    # session came up in the posture it declared: the declared mode's tokens must appear in it
+    # as a contiguous run. This stays out of ``confirmed`` -- that list is what Herdr published.
+    permission_tokens = resolve_permission(unit.vendor, unit.permission)
+    if argv is not None and permission_tokens:
+        width = len(permission_tokens)
+        carried = any(
+            argv[index : index + width] == permission_tokens
+            for index in range(len(argv) - width + 1)
+        )
+        if not carried:
+            close_run_session(unit)
+            raise SystemExit(
+                f"{unit.name}: declared permission {unit.permission!r} resolves to "
+                f"{permission_tokens} but the launch argv does not carry it"
+            )
+
     # A Claude unit that names an account either confirms it or raises: an account that could not
     # be read is the failure this check exists for, wearing the same face as one that was never
     # checked. Every other vendor has no account to read, so a unit that names one anyway is
@@ -1082,6 +1117,14 @@ def verify_unit_preflight(
         "variant": effective_variant,
         "account": unit.account,
         "permission": getattr(unit, "permission", None),
+        # The requested-versus-resolved shape: ``permission`` above stays what was asked for,
+        # and this records what the launch actually carried. Herdr publishes neither, so an
+        # argv-derived fact lives in its own channel, never inside ``confirmed_against_herdr``.
+        "permission_resolved": {
+            "mode": getattr(unit, "permission", None),
+            "tokens": permission_tokens,
+            "confirmed_from": "launch_argv" if argv is not None else None,
+        },
         "kind": str(reported_kind),
         "agent_name": getattr(unit, "agent_name", None),
         "reused": wrapper_reused(getattr(unit, "reused", False)),
@@ -1131,7 +1174,7 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
     ready = await_ready(unit)
     if unit.vendor == "opencode":
         _, ready = drive_opencode_variant_selection(unit, pane_id)
-    verify_unit_preflight(unit, pane_id, ready=ready)
+    verify_unit_preflight(unit, pane_id, ready=ready, argv=argv)
 
     if not session_owned(unit):
         guard_reused_pane(unit, pane_id)

@@ -194,3 +194,59 @@ class TestNoBarePermissionEnumCanBecomePromptText:
         }
         assert emitted
         assert emitted <= PERMISSION_ENUMS
+
+
+# Today's bypass tails, pinned literally: a test that re-derives its expectation from the table
+# would pass a mutation that changes the flags while keeping the guard green.
+BYPASS_TAILS = {
+    "agy": ["--dangerously-skip-permissions"],
+    "claude": ["--permission-mode", "bypassPermissions"],
+    "codex": ["--dangerously-bypass-approvals-and-sandbox"],
+    "grok": ["--permission-mode", "bypassPermissions"],
+    "muse": ["--yolo"],
+    "opencode": ["--auto"],
+    "qwen": ["--yolo"],
+}
+
+
+@pytest.mark.usefixtures("launcher_on_path")
+class TestADeclaredPermissionIsHonouredNotSilentlyDowngraded:
+    """A value outside the vendor's map is a named stop, never a silent auto (#896)."""
+
+    def test_unknown_permission_is_a_named_stop(self, orchestrate: ModuleType) -> None:
+        unit = orchestrate.Unit(name="u", vendor="claude", task="x", permission="bypasss")
+        with pytest.raises(SystemExit, match="unknown permission"):
+            orchestrate.agent_argv(unit)
+
+    def test_unknown_permission_does_not_receive_the_auto_flag_set(
+        self, orchestrate: ModuleType
+    ) -> None:
+        """A guard that warns and then falls back to auto anyway is still the silent fallback."""
+        unit = orchestrate.Unit(name="u", vendor="claude", task="x", permission="bypasss")
+        with pytest.raises(SystemExit, match="unknown permission"):
+            argv = orchestrate.agent_argv(unit)
+            assert ["--permission-mode", "auto"] not in [
+                argv[index : index + 2] for index in range(len(argv) - 1)
+            ], "the auto flag set was appended before the stop"
+        with pytest.raises(SystemExit, match="unknown permission"):
+            assert orchestrate.resolve_permission("claude", "bypasss") != [
+                "--permission-mode",
+                "auto",
+            ]
+
+    @pytest.mark.parametrize("vendor", sorted(BYPASS_TAILS))
+    def test_every_vendor_bypass_still_emits_its_documented_flag(
+        self, orchestrate: ModuleType, vendor: str
+    ) -> None:
+        assert set(orchestrate.VENDOR_PERMISSION) == set(BYPASS_TAILS)
+        unit = orchestrate.Unit(name="u", vendor=vendor, task="x", permission="bypass")
+        assert _vendor_tail(orchestrate, unit) == [vendor] + BYPASS_TAILS[vendor]
+
+    def test_auto_and_omitted_permission_are_unchanged(self, orchestrate: ModuleType) -> None:
+        declared = orchestrate.Unit(name="u", vendor="claude", task="x", permission="auto")
+        omitted = orchestrate.Unit(name="u", vendor="claude", task="x")
+        assert _vendor_tail(orchestrate, declared) == ["claude", "--permission-mode", "auto"]
+        assert _vendor_tail(orchestrate, omitted) == _vendor_tail(orchestrate, declared)
+
+    def test_a_vendor_absent_from_the_table_emits_nothing(self, orchestrate: ModuleType) -> None:
+        assert orchestrate.resolve_permission("nosuchvendor", "bypass") == []

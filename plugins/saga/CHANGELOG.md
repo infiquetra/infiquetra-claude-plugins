@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.149.0] - 2026-08-30
+
+### Added
+
+- **Structured pre-answer carrier for `/plan`.** A caller that has already settled the execution
+  backend or the routing destination may hand it to Plan as a fenced JSON block under schema
+  `plan_pre_answers.v1`. A supplied value is applied and visibly narrated with the caller that
+  supplied it; a missing value falls through to the normal adaptive conversation; an invalid or
+  contradictory value stops and surfaces rather than becoming a silent default; and a carrier
+  declaring an unknown schema token is refused whole. Validated by
+  `plugins/saga/scripts/plan_pre_answers.py`. Plan's conversation gains no question, checklist, or
+  fixed sequence — the carrier is intake evaluated once at entry, not a phase.
+- **One recursive plan-artifact conformance check**, covering the declared frontmatter fields and
+  the plan marker triple in a single pass and distinguishing legacy documents from newly created
+  ones.
+
+### Changed
+
+- **`backend:` is now required on every newly created plan document.** Legacy plans that lack it
+  stay compatible through `/work`'s attended offer — never rejected, never rewritten, and no bulk
+  corpus rewrite was performed.
+- **The plan-document contract has its own section in the saga spec**, kept clearly separate from
+  the saga tick envelope field table.
+- **The Claude Code Workflow emitter moved to the new `cc-workflows` plugin** at the typed
+  execution-spec boundary. Saga keeps the spec schema, validation, tier resolution, and
+  `team_emitter.py`; the Workflow backend remains runnable and explicit-invocation-only, exactly as
+  settled. Generated workflow artifacts now live under `docs/workflows/`, and `docs/plans/` is
+  reserved for plan documents.
+
+### Fixed
+
+- **`/plan` no longer produces a finished plan that routes back into `/plan`.** Phase 5.3 now emits
+  `--phase-status complete`, so the `/loop` dispatch table routes a completed plan onward to
+  `/doc-review`. Previously the omitted flag resolved to the `pending` default, which the dispatch
+  table sends back to Plan to "finish the plan".
+- **A failed saga save is no longer silent.** A filesystem failure while writing the tick now exits
+  non-zero naming the plan document left on disk with no tick referencing it, instead of a bare
+  traceback, so an unreferenced plan cannot be produced unnoticed.
+- **Six counterfactual execution-backend recommendation branches removed** across four documents,
+  without weakening the explicit-invocation pins that guard them.
+
 ## [0.148.0] - 2026-08-29
 
 ### Changed

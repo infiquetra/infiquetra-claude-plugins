@@ -1,7 +1,7 @@
 {
   "name": "cc-workflows",
   "version": "1.0.0",
-  "description": "Claude Code Workflow execution capability for Infiquetra plans: the workflow-script emitter, the driver-owned lease/settlement contracts, and the Workflow protocol, extracted from Saga at the typed execution-spec boundary (#925).",
+  "description": "Claude Code Workflow execution for Infiquetra plans: the workflow-script emitter, the driver-owned lease and settlement contracts, and the Workflow protocol, extracted from Saga (#925).",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

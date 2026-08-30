@@ -77,7 +77,7 @@ def test_agent_launcher_metadata_is_marketplace_registered() -> None:
     )
 
     assert plugin_json["name"] == "agent-launcher"
-    assert plugin_json["version"] == "1.0.0"
+    assert plugin_json["version"] == "1.1.0"
     assert "Herdr" in plugin_json["description"]
     assert {"agent-launcher", "agents", "herdr", "launch", "sessions"} <= set(
         plugin_json["keywords"]
@@ -100,7 +100,7 @@ def test_orchestrate_declares_agent_launcher_dependency_in_metadata() -> None:
         f"dependencies must be an array, got {type(declared).__name__}"
     )
     floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
-    assert floors.get("agent-launcher") == ">=1.0.0", declared
+    assert floors.get("agent-launcher") == ">=1.1.0", declared
 
     orch_entry = next(
         plugin for plugin in marketplace["plugins"] if plugin["name"] == "orchestrate"
@@ -109,7 +109,7 @@ def test_orchestrate_declares_agent_launcher_dependency_in_metadata() -> None:
         plugin for plugin in marketplace["plugins"] if plugin["name"] == "agent-launcher"
     )
     assert orch_entry["version"] == orch_json["version"]
-    assert launcher_entry["version"] == "1.0.0"
+    assert launcher_entry["version"] == "1.1.0"
 
 
 def test_agent_launcher_packaged_files() -> None:

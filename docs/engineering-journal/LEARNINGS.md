@@ -21,6 +21,16 @@
 
 ## 2026-08-30
 
+### The wrapper's `reused` bit names the workspace, not the pane — a guard keyed on it inspects the ordinary create path  {#907-reused-is-a-workspace-bit}
+
+**Context.** Run 907 closed seven session-contract defects in the Agent Launcher. Issue 897's literal acceptance said a pane "recorded `reused=true`" must be inspected before prompting, while the same issue's out-of-scope clause forbade reading the pane on the ordinary create path. Inside Herdr nearly every launch joins a workspace that already exists, so the two demands could not both be honoured.
+**Evidence.** `wrapper_reused` at `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py:54-63`: "Whether the wrapper said the *workspace* already existed. This is not tab ownership." Issue 897; the operator's amendment is quoted at https://github.com/infiquetra/infiquetra-claude-plugins/issues/897#issuecomment-5469528122.
+**Mechanism.** The receipt carries two facts that read alike: `reused` (the wrapper joined a pre-existing workspace — the common case) and `owned` (the receipt `tab_id` was absent from the workspace tab set snapshotted immediately before the wrapper ran). A guard keyed on `reused` fires on the ordinary create path — exactly the path the issue says must stay untouched — and a guard keyed on ownership is the only one that names "a session this launch did not create".
+**Fix (or queued).** The shipped guard keys on `session_owned(unit)` being false (unit L2 of 907, commit `b97a3226`). Mutation proof: keying the guard on `reused` fails `test_freshly_created_pane_takes_no_inspection_path`.
+**Second finding, same run.** The module named after the plugin — `tests/test_agent_launcher_plugin.py` — holds only its release surfaces (manifest version, marketplace registration, packaged files); every behaviour test lives in `plugins/agent-launcher/tests/test_launcher_contract.py` and the orchestrate test files. Reading only the plugin-named module says the plugin is untested; reading only the plugin directory misses the drift guards.
+**Generalizable rule.** When a receipt carries two booleans with adjacent meanings, read each one's docstring before keying a guard on either — the bit whose name matches your intuition is not always the bit that names your case; and a test file named for the thing it tests is a claim about location, not coverage.
+**Refs.** Issues #897, #907; run plan `docs/plans/2026-08-30-agent-launcher-907-run-plan.md`, Findings 1 and 3.
+
 ### Leaving a stale adjacent section does not license a "same as" claim against it  {#w19-no-sameness-claim-against-stale-rows}
 
 **Context.** W19 replaced the CAMPPS ladder in Mission Control's kanban reference with `stage_flow` and, per KTD3, left the Operations/Asgard `intent_flow` rows in the same file. The replacement sentence then said CAMPPS uses "the same six stages as Operations and Asgard."

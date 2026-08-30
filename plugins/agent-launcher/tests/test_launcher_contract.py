@@ -1253,7 +1253,7 @@ def test_orchestrate_declares_agent_launcher_dependency_and_breaking_version() -
         f"dependencies must be an array, got {type(declared).__name__}"
     )
     floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
-    assert floors.get("agent-launcher") == ">=1.0.0", declared
+    assert floors.get("agent-launcher") == ">=1.1.0", declared
 
 
 def test_skill_cleanup_example_redirects_receipt() -> None:

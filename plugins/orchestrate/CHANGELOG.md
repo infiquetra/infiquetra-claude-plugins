@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.1.0] - 2026-08-30
+
+### Added
+
+- **A declared permission is carried visibly, and an undeclared one says so (#896).** The unit
+  model records whether the plan row that produced it named `permission` explicitly
+  (`permission_declared`), and plan loading prints one line naming every unit that omitted the
+  field and inherited the `auto` default — a run that declared a posture and a plan that never
+  mentioned one are no longer indistinguishable on screen. The dependency floor rises to
+  `agent-launcher >=1.1.0` in the same release because Orchestrate's permission behaviour now
+  consumes the launcher's `resolve_permission`; installed beside launcher 1.0.0 it would silently
+  get the old fallback to auto, which is the defect itself.
+
 ## [3.0.8] - 2026-08-27
 
 ### Added

@@ -81,7 +81,7 @@ created, and must launch only through `go` via the shared `agent-launcher` plugi
 Never create worktrees manually or invoke `agents` directly for a run unit. Direct wrapper calls
 bypass the background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal
 operator UI focus. The launch contract lives in `plugins/agent-launcher/`; Orchestrate does not
-keep a private copy. Orchestrate declares `agent-launcher >=1.0.0` as a dependency; if the companion
+keep a private copy. Orchestrate declares `agent-launcher >=1.1.0` as a dependency; if the companion
 is unresolvable, `roster`, `start`, `expand`, and `go` fail fast before any session or worktree is
 created, reporting the exact supported remediation (`claude plugin install agent-launcher@infiquetra-plugins`).
 Unsupported post-launch setup (such as interactive OpenCode variant selection) is a

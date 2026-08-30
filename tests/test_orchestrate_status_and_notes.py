@@ -157,7 +157,9 @@ def test_delivery_warning_appends_to_the_file_handover_note(
 
     assert handover_note in unit.note
     assert orchestrate.DELIVERY_WARNING in unit.note
-    assert unit.note == f"{handover_note}; {orchestrate.DELIVERY_WARNING}"
+    # Issue 897's input-box guard may add a note between these two; pin intent, not exact text.
+    assert unit.note.startswith(handover_note)
+    assert unit.note.endswith(orchestrate.DELIVERY_WARNING)
 
 
 def test_long_task_handover_appends_after_the_setup_prompt_fallback_note(

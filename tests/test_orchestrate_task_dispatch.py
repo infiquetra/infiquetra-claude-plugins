@@ -496,8 +496,7 @@ class TestTheReusedPaneGuardIsInherited:
         assert hasattr(orchestrate, "guard_reused_pane")
         assert hasattr(orchestrate, "composer_staged_text")
         assert (
-            Path(orchestrate.guard_reused_pane.__code__.co_filename).resolve()
-            == LAUNCHER.resolve()
+            Path(orchestrate.guard_reused_pane.__code__.co_filename).resolve() == LAUNCHER.resolve()
         )
         assert Path(orchestrate.launch.__code__.co_filename).resolve() == LAUNCHER.resolve()
 

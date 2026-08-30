@@ -474,6 +474,11 @@ def agent_argv(
     return argv
 
 
+# How long to give the wrapper to create the session. Larger than every other deadline on
+# purpose: this one call may reach another machine over SSH and cold-start a vendor CLI, where
+# the dry run it follows (timeout=20 in cli_main) only echoes a command line.
+LAUNCH_CREATE_SECONDS = 120.0
+
 # How long to give a new session to become able to read a prompt, and how long to give it after
 # being sent to show that it took one.
 #
@@ -1012,7 +1017,16 @@ def verify_unit_preflight(
 
 def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
     preexisting = list_tab_ids()
-    proc = run(agent_argv(unit))
+    argv = agent_argv(unit)
+    proc = run(argv, check=False, timeout=LAUNCH_CREATE_SECONDS)
+    if proc.returncode == 124:
+        raise SystemExit(
+            f"{unit.name}: session create timed out after {LAUNCH_CREATE_SECONDS}s; "
+            "no session was confirmed created"
+        )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise SystemExit(f"command failed ({proc.returncode}): {' '.join(argv)}\n{err}")
     pane_id = None
     try:
         info = json.loads(proc.stdout.strip().splitlines()[-1])

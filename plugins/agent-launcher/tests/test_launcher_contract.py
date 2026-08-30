@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -216,6 +218,67 @@ def test_nonzero_wrapper_exit_stops_launch(
     unit = launcher.LaunchRequest(name="failing", vendor="codex", worktree=str(tmp_path))
     with pytest.raises(SystemExit, match="command failed"):
         launcher.launch(unit)
+
+
+def test_hanging_create_stops_at_the_deadline(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = {
+        "tab_id": "tab-1",
+        "agent_name": "hangs-2",
+        "pane_id": "pane-1",
+        "reused": False,
+    }
+    wrapper = tmp_path / "agents"
+    wrapper.write_text("#!/bin/sh\nsleep 5\ncat <<'EOF'\n" + json.dumps(receipt) + "\nEOF\n")
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setattr(launcher, "LAUNCH_CREATE_SECONDS", 0.5)
+    # Stub the post-create stages so that, with the timeout removed, the launch proceeds past the
+    # create into a differently-worded stop instead of blocking the test out on a real one.
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        launcher,
+        "verify_unit_preflight",
+        lambda *a, **k: (_ for _ in ()).throw(SystemExit("stop after identity")),
+    )
+    unit = launcher.LaunchRequest(name="hangs", vendor="codex", worktree=str(tmp_path))
+    start = time.monotonic()
+    with pytest.raises(SystemExit, match="timed out after"):
+        launcher.launch(unit)
+    elapsed = time.monotonic() - start
+    assert elapsed < 3.0, f"the create took {elapsed:.1f}s; the deadline did not stop it"
+
+
+def test_launch_create_deadline_is_a_named_constant(launcher: ModuleType) -> None:
+    assert "LAUNCH_CREATE_SECONDS" in inspect.getsource(launcher.launch)
+    assert isinstance(launcher.LAUNCH_CREATE_SECONDS, float)
+    assert 0 < launcher.LAUNCH_CREATE_SECONDS <= 300
+
+
+def test_create_within_the_deadline_is_unaffected(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = {
+        "tab_id": "tab-1",
+        "agent_name": "reviewer-2",
+        "pane_id": "pane-1",
+        "reused": False,
+    }
+    wrapper = tmp_path / "agents"
+    wrapper.write_text("#!/bin/sh\ncat <<'EOF'\n" + json.dumps(receipt) + "\nEOF\n")
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        launcher,
+        "verify_unit_preflight",
+        lambda *a, **k: (_ for _ in ()).throw(SystemExit("stop after identity")),
+    )
+    unit = launcher.LaunchRequest(name="reviewer", vendor="codex", worktree=str(tmp_path))
+    with pytest.raises(SystemExit, match="stop after identity"):
+        launcher.launch(unit)
+    assert unit.tab_id == "tab-1"
 
 
 def test_startup_timeout_is_a_result_not_a_crash(launcher: ModuleType) -> None:

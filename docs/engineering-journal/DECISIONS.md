@@ -2,6 +2,15 @@
 
 ## 2026-08-30
 
+### Retire stale Brainstorm contract data and pin lifecycle order mechanically  {#916-lifecycle-shaping-maintenance}
+
+**Decision.** Brainstorm's `engine_offer.py` / `engine_session_runner.py` / "retired runner" prose is replaced by the behavioural Dialogue ownership rule (synthesis, judgment, private model, operator exchange stay in this session; only bounded read-only helpers delegate; Orchestrate owns cross-vendor transport). Lifecycle ordering is pinned by a mechanical check over the duplicated block in four skills (ideate, loop, office-hours, plan), not by editing any skill's prose. Shaping is stated once in `saga-spec.md` §4 as an Operations board Status, not a Saga phase/command/automatic consequence, cross-referencing plan §0.6 and noting Office Hours' lowercase generic use. The dispatch line count described as volatile has no live target and nothing was removed.
+**Date:** 2026-08-30 · **Issue:** #916 (B4) · **Origin:** Run plan §U4; KTD6; amendment 2026-08-30 correcting duplication set to four; preflight F1/F2.
+**Why.** The retired names couple the contract to deleted history; the behavioural rule is what matters. The lifecycle block lives in four high-traffic skills, so single-sourcing would edit them inside a low-risk unit. Shaping and Saga lifecycle are different fields; stating once in the spec prevents accidental coupling. The volatile count's absence is a finding, not a removal.
+**Rejected.** Growing blacklist of implementation names; editing any of the six lifecycle skills' prose; adding a `/saga:shaping` command or automatic Brainstorm-to-board transition; broadening to dispatch-table redesign.
+**Revisit when.** A new lifecycle command enters the duplicated block, or a new board Status collides with a Saga phase name.
+**Refs.** Issue #916; amendment; `plugins/saga/skills/brainstorm/SKILL.md` Dialogue ownership; `tests/test_saga_lifecycle_consistency.py`; `plugins/saga/references/saga-spec.md` §4; `tests/test_orchestrate_review_transport.py` STAGE_SKILLS.
+
 ### Brainstorm evidence is three layers: deterministic, per-dimension scenarios, mutation proof  {#915-evidence-three-layers}
 
 **Decision.** Evidence is three layers, each matched to what it can honestly prove. Deterministic contract tests cover mechanics with exactly one correct result and are mechanically proven to assert no question, wording, or order. Scenario evaluations, stored as data with `product_size` and `consequence` independent, score judgment per material dimension via a pure `grade()` with no aggregate; live grading is opt-in behind `BRAINSTORM_LIVE_GRADE`. A model-judged finding cannot block alone: `is_blocking()` requires reproducible scenario plus second-grader agreement or operator adjudication. A fixed `calibration.json` set surfaces drift against a floor. Eight mutation proofs weaken each critical safeguard and prove the named check goes red.

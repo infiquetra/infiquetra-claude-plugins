@@ -308,6 +308,8 @@ ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
 `destination` mirrors `lifecycle_state.normalize_destination`'s canonical set — use that helper to normalize
 user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing.
 
+Shaping is an Operations board Status, not a Saga lifecycle phase, not a Saga command, and not an automatic consequence of any Saga capability completing. Mission Control is the only routine writer of that field. Cross-reference `plugins/saga/skills/plan/SKILL.md` §0.6, which already states the same derivation boundary, and note that Office Hours' lowercase "discovery / shaping" (lines 3, 19, and 149) is ordinary English for its own activity, unrelated to the board column.
+
 ---
 
 ## 5. Storage

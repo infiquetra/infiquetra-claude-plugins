@@ -21,6 +21,15 @@
 
 ## 2026-08-30
 
+### A volatile line count with no live target must be recorded, not manufactured  {#916-dispatch-line-count-no-target}
+
+**Context.** The design record described a volatile hand-maintained Brainstorm source-line count in a dispatch table. At Saga 0.148.0 the target does not exist: `plugins/saga/references/sandbox-spawn-sites.md` has no Brainstorm row and no `~line` Brainstorm surface exists, verified at `45ccfeda`.
+**Evidence.** Preflight F1 at `e26b5c69`; `grep -rn "~line" plugins/saga/references/sandbox-spawn-sites.md` shows four rows (code-review, qa, investigate, resume) and no brainstorm; `grep -rn "brainstorm" plugins/saga/skills/brainstorm/` shows no line reference. The duplicated lifecycle block F2 appears in four skills (ideate L15, loop L26, office-hours L27, plan L19), not three — Strategy has only inline mentions, founder-review a variant.
+**Mechanism.** A volatile count that never existed cannot be removed — manufacturing a removal would be a vacuous edit that hides the finding. The correct fix is to record the finding and retire the count concept, while pinning the lifecycle ordering mechanically rather than by prose edit (KTD6).
+**Fix.** Recorded F1 and F2 in `LEARNINGS.md` and commit message; left `sandbox-spawn-sites.md` Brainstorm surface untouched (one new verifier row added by B2 for different reason); added mechanical `tests/test_saga_lifecycle_consistency.py` discovering block by shape; added Shaping distinction once in `saga-spec.md`.
+**Generalizable rule.** When a design record names a volatile value, verify it against the live tree before acting — a count with no live target is a finding to record, not a line to delete.
+**Refs.** Issue #916 (B4); F1/F2; run plan §U4.
+
 ### Authored cases are design input; mislabelled captured transcripts are the failure  {#915-evidence-authored-vs-captured}
 
 **Context.** B3's scenario harness must distinguish authored case data (idea seed, independent variables, expected per-dimension outcome) from captured transcripts (evidence of real behaviour). The checkpoint that could have produced captured transcripts is parked, so all six cases are `transcript: none` and the suite must be green that way.

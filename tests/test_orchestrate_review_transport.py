@@ -27,7 +27,6 @@ STAGE_SKILLS = (
     ROOT / "plugins" / "saga" / "skills" / "doc-review" / "SKILL.md",
     ROOT / "plugins" / "saga" / "skills" / "work" / "SKILL.md",
     ROOT / "plugins" / "saga" / "skills" / "ideate" / "SKILL.md",
-    ROOT / "plugins" / "saga" / "skills" / "brainstorm" / "SKILL.md",
 )
 RETIRED_LAUNCH = (
     "engine_session_runner.py launch",

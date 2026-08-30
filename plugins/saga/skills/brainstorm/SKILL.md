@@ -52,12 +52,13 @@ error, or a dropped session is never consent — do not proceed on a default and
 answer. Ask one question at a time and read the decision from the operator's actual answer, never
 from a widget's raw return value.
 
-## Reviewer-session transport
+## Dialogue ownership
 
-Orchestrate owns cross-vendor session transport. Do not run `engine_offer.py` and do
-not launch `engine_session_runner.py`. `engine-registry.yaml` is capability metadata
-only. If a reviewer session is required and is not in the Orchestrate run record,
-HALT rather than inventing a custom review or falling back to the retired runner.
+Brainstorm owns the interactive creative dialogue: the synthesis, the judgment, the private
+concern model, and every operator-facing exchange stay in this session and are never delegated
+to another vendor session or runner. Its only permitted delegated work is the bounded read-only
+helper set defined in Phase 1.1. Any cross-vendor session transport is Orchestrate's, and a
+required session that is not in the Orchestrate run record is a HALT, never an invented review.
 
 ## Topic
 

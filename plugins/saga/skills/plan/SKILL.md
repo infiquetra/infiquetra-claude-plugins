@@ -139,11 +139,19 @@ Contract: `references/saga-spec.md` §15. Evaluate it once, at entry, before the
 with the runnable validator:
 
 ```bash
-python3 plugins/saga/scripts/plan_pre_answers.py --invocation-file <invocation-text-file>
+python3 plugins/saga/scripts/plan_pre_answers.py --invocation-file <invocation-text-file> \
+  --established backend=<already-settled-value> --established destination=<already-settled-value>
 ```
+
+Pass one `--established <field>=<value>` for each decision already established in this thread
+(repeatable), so the validator can detect a carrier that contradicts it; omit any flag whose
+decision is not yet settled — on a fresh thread, omit both.
 
 It prints the outcome as JSON and exits 0 when there is no stop (a clean apply, or no carrier) and
 2 with `stop` set otherwise — on 2, surface the `stop` reason exactly; never continue silently.
+Two other failures also exit 2: an unreadable `--invocation-file` prints the same JSON shape with a
+`stop` naming the unreadable path, and a malformed command line prints argparse's usage with no
+JSON at all — treat both as stops, never as a clean apply.
 This is intake, not a phase: its only visible effects are narration of an applied value together
 with the `caller` that supplied it, and the absence of a question that would otherwise have been
 asked. Five rules govern it:
@@ -156,14 +164,18 @@ asked. Five rules govern it:
 - **Absence falls through.** A missing carrier, or a carrier omitting a field, is not an error: the
   omitted decision follows the normal adaptive conversation exactly as it does today.
 - **Invalid or contradictory stops.** A value outside its enum, or one contradicting a value already
-  established in this thread, stops and surfaces the conflict with the validator's reason — never a
-  silent default, never preferring either side.
+  established in this thread (supplied to the validator as `--established <field>=<value>`), stops
+  and surfaces the conflict with the validator's reason — never a silent default, never preferring
+  either side.
 - **Unknown schema refused whole, two cases.** A non-v1 token inside the `plan_pre_answers` family
   is refused in its entirety — no field from that carrier is applied. A foreign schema family is
   not a carrier at all and is ignored.
-- **A malformed carrier stops.** A `json` fenced block that fails to parse, carries duplicate JSON
-  keys, or appears alongside a second carrier stops the run — never resolved silently. A carrier
-  with an unadmitted key (anything but `backend`, `destination`, `caller`, `schema`) or a
+- **A malformed carrier stops.** The carrier's fence info string must be exactly `json` — any other
+  info string is not a carrier and is silently ignored, so a carrier fenced any other way drops
+  without effect. A `json` fenced block whose raw text names the `plan_pre_answers` family and
+  fails to parse, carries duplicate JSON keys, or appears alongside a second carrier stops the run
+  — never resolved silently; an unrelated malformed JSON example (no family token) is ignored. A
+  carrier with an unadmitted key (anything but `backend`, `destination`, `caller`, `schema`) or a
   non-string `caller` is refused the same way.
 
 Direct `/plan` — an issue, a prompt, or a Brainstorm document, no carrier — is unchanged: nothing
@@ -332,9 +344,13 @@ the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-d
 tick. The tick is untracked local state: it does not survive a worktree boundary, another machine,
 or another vendor, so an executor that did not run in this directory cannot see it. The plan document
 is committed and travels with the work, which makes it the only place a decision made here can
-reliably be read later. `/work` honours that field and does not ask again. (If a Phase 0.7 pre-answer carrier
-applied `backend: inline`, skip the offer — the carrier never applies the other two backends;
-they remain explicit invocations.)
+reliably be read later. `/work` honours that field and does not ask again. (If a Phase 0.7
+pre-answer carrier applied `backend: inline`, skip only the operator-facing offer — still call
+`lifecycle_state.recommend_execution_backend`, still record `--orchestration-recommended` with its
+output and `--orchestration-mode inline`, and still write the plan document's `backend:` field;
+the carrier never applies the other two backends, they remain explicit invocations. Skipping the
+offer must never skip the recommend call: Phase 5.3's save demands its output, and passing an
+empty value aborts the save — cycle-2 U06.)
 
 The recorded enum still has three values — `inline` ("inline") | `team-execution` ("team execution") |
 `cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
@@ -610,11 +626,14 @@ When resuming (Phase 0.3 matched), this appends a tick to the existing saga dire
 minting a new one.
 
 **Check the save's exit status.** A non-zero exit means the save failed, and the error message
-names which write did. If the tick envelope was never written, the plan document named in the
-error is on disk with no saga state referencing it, so `/work` and `/loop` cannot see it. If the
-envelope landed but the `state.json` index rewrite failed, the tick IS tracked — `restore` reads
-the envelope directly — and re-running the same save rebuilds the index without duplicating the
-tick. Either way, STOP and surface the error to the operator — do not continue to Phase 5.4 on a
+names which write did. If the tick envelope was never written and no earlier tick references the
+plan, the plan document named in the error is on disk with no saga state referencing it, so
+`/work` and `/loop` cannot see it; when an earlier tick already records the plan path, the
+document is tracked and only this save's tick is missing. If the envelope landed but the
+`state.json` index rewrite failed, the tick IS tracked — `restore` reads the envelope directly —
+and re-running the same save once the write failure is cleared rebuilds the index and appends one
+additional tick carrying the same state (harmless to `restore`, visible to `saga.py ticks`).
+Either way, STOP and surface the error to the operator — do not continue to Phase 5.4 on a
 failed save.
 
 ### 5.4 Route

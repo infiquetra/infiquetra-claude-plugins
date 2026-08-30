@@ -413,6 +413,114 @@ def test_entry_point_runs_as_a_real_subprocess_and_prints_the_outcome(
     assert payload["stop"] is not None
 
 
+def test_unrelated_malformed_json_is_prose_not_a_stop(pre_answers: ModuleType) -> None:
+    # Cycle-2 C03/P02/S01: the malformed-carrier stop is gated on carrier shape. An
+    # illustrative or truncated JSON example with no family token is prose — it must
+    # not halt a run that carries no carrier (the over-fire stopped Plan against two
+    # of this repository's own committed documents).
+    blocks = (
+        '{"name": "x", // a comment\n "port": 8080}',  # JSON-with-comments config sample
+        '{"a": 1, "a": 2}',  # duplicate keys, but no family token anywhere
+        "[1, 2,",  # truncated array
+    )
+    for block in blocks:
+        text = f"/plan work issue #918\n\n```json\n{block}\n```\n"
+        outcome = pre_answers.evaluate(text)
+        assert outcome.stop is None, f"unrelated malformed fence over-fired: {block!r}"
+        assert outcome.applied == {}
+        assert tuple(outcome.omitted) == pre_answers.DECISION_FIELDS
+
+
+def test_unrelated_malformed_json_before_a_valid_carrier_does_not_suppress_it(
+    pre_answers: ModuleType,
+) -> None:
+    # The controller's reproduction: an unparseable non-carrier fence placed BEFORE a
+    # well-formed carrier must not override it.
+    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "inline"}
+    text = "/plan work issue #918\n\n```json\n{not json at all\n```\n\n" + _invocation(carrier)
+
+    outcome = pre_answers.evaluate(text)
+
+    assert outcome.stop is None
+    assert dict(outcome.applied) == {"backend": "inline"}
+    assert outcome.caller == "orchestrate"
+
+
+def test_contradiction_rule_is_reachable_through_the_entry_point(
+    pre_answers: ModuleType, tmp_path: Path
+) -> None:
+    # Cycle-2 C04/U04: the runnable validator performs the contradiction check itself —
+    # ``--established`` supplies the settled decision, a contradicting carrier stops.
+    import subprocess
+
+    script = SCRIPTS_DIR / "plan_pre_answers.py"
+    invocation_file = tmp_path / "invocation.md"
+    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "destination": "merge"}
+    invocation_file.write_text(_invocation(carrier), encoding="utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--invocation-file",
+            str(invocation_file),
+            "--established",
+            "destination=pr",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 2, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["applied"] == {}
+    assert payload["stop"] is not None
+    assert "contradicts" in payload["stop"]
+
+    # The same flag is harmless when the values agree: the carrier applies.
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--invocation-file",
+            str(invocation_file),
+            "--established",
+            "destination=merge",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["applied"] == {"destination": "merge"}
+    assert payload["stop"] is None
+
+
+def test_unreadable_invocation_file_stops_with_the_same_json_shape(
+    pre_answers: ModuleType, tmp_path: Path
+) -> None:
+    # Cycle-2 U03/C10: a missing --invocation-file exits 2 with the same JSON shape and
+    # a stop naming the unreadable path — never a bare traceback and exit 1.
+    import subprocess
+
+    script = SCRIPTS_DIR / "plan_pre_answers.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), "--invocation-file", str(tmp_path / "missing.md")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 2, proc.stderr
+    assert "Traceback" not in proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["applied"] == {}
+    assert payload["stop"] is not None
+    assert "unreadable" in payload["stop"]
+
+
 # --- drift pins (reviews F14/F14a): the enums equal their canonical sources -----------
 
 

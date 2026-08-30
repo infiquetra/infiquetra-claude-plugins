@@ -167,13 +167,17 @@ def test_index_only_save_failure_reports_the_tick_tracked_not_stranded(
     the review's own repro — after the envelope write already succeeded. The surfaced
     error must name the index failure and must NOT claim the plan lost its tick:
     ``restore`` reads the envelope directly and never opens ``state.json``, so the
-    lifecycle still sees the plan. Before the repair the message asserted a falsehood
-    and the prescribed remedy appended a duplicate tick.
+    lifecycle still sees the plan.
+
+    Harness discipline (review T01): the fixture plan path deliberately contains no
+    ``index`` substring, and the assertions match the index handler's OWN words — so
+    deleting the ``SagaTickIndexWriteError`` handler (the mutation T01 performed) turns
+    this test red instead of being satisfied by the fixture's own filename.
     """
     monkeypatch.chdir(tmp_path)
     _stub_no_git(saga, monkeypatch)
     saga_id = saga.derive_saga_id("issue", "923")
-    plan_doc = "docs/plans/2026-08-30-index-failure-plan.md"
+    plan_doc = "docs/plans/2026-08-30-envelope-landed-plan.md"
     plan_file = tmp_path / plan_doc
     plan_file.parent.mkdir(parents=True)
     plan_file.write_text("# Plan\n", encoding="utf-8")
@@ -202,7 +206,16 @@ def test_index_only_save_failure_reports_the_tick_tracked_not_stranded(
 
     assert rc == 2
     assert "Traceback" not in err, "the failure must surface as a clean error, not a traceback"
-    assert "index" in err, "the error must name the write that actually failed"
+    assert "rewrite the saga state.json index" in err, (
+        "the error must name the write that actually failed, in the index handler's own words"
+    )
+    assert "IS still referenced by the" in err, (
+        "the index handler must say the tick is tracked, in its own words"
+    )
+    assert "idempotent" not in err and "no duplicate tick" not in err, (
+        "a save always allocates a fresh envelope: the re-run appends one additional "
+        "tick, and the message must not claim otherwise (review C01/D03/P01/U09)"
+    )
     assert "NO saga tick" not in err, (
         "an index-only failure must not claim the tick is missing — the envelope is on disk"
     )
@@ -210,6 +223,67 @@ def test_index_only_save_failure_reports_the_tick_tracked_not_stranded(
     restored = saga.restore(tmp_path, saga_id)
     assert restored is not None, "restore reads the envelope directly; the tick exists"
     assert restored.phase_status == "complete"
+
+
+def test_envelope_failure_with_a_prior_tick_does_not_claim_the_plan_stranded(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Envelope failure AFTER an earlier tick recorded the plan: not stranded (C02/D04).
+
+    The first save succeeds and records the plan path. The saga directory is then made
+    read-only, so the second save's envelope write fails with a real PermissionError.
+    The surfaced error must NOT claim the plan has no tick: the earlier tick still
+    references it, ``restore`` still resolves it, and only this save's tick is missing.
+    Before the repair the message asserted a falsehood whenever ``--plan-path`` was set.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    saga_id = saga.derive_saga_id("issue", "923")
+    plan_doc = "docs/plans/2026-08-30-tracked-despite-failure-plan.md"
+    plan_file = tmp_path / plan_doc
+    plan_file.parent.mkdir(parents=True)
+    plan_file.write_text("# Plan\n", encoding="utf-8")
+    argv = [
+        "script",
+        "save",
+        "--id",
+        "923",
+        "--lifecycle-phase",
+        "plan",
+        "--phase-status",
+        "complete",
+        "--plan-path",
+        plan_doc,
+    ]
+
+    monkeypatch.setattr("sys.argv", argv)
+    assert saga.main() == 0  # the earlier tick lands and records the plan path
+    capsys.readouterr()
+
+    saga_dir = tmp_path / saga.SAGAS_DIR / saga_id
+    saga_dir.chmod(0o500)  # the next envelope write fails with PermissionError
+    try:
+        monkeypatch.setattr("sys.argv", argv)
+        rc = saga.main()
+        err = capsys.readouterr().err
+    finally:
+        saga_dir.chmod(0o755)  # let pytest's tmp cleanup remove the tree
+
+    assert rc == 2
+    assert plan_doc in err, "the surfaced error must name the plan document"
+    assert "Traceback" not in err
+    assert "NO saga tick" not in err, (
+        "an earlier tick still references the plan — the message must not claim it stranded"
+    )
+    assert "an earlier tick still references" in err, (
+        "the envelope handler's own words must say the plan is tracked by the prior tick"
+    )
+    # The document IS tracked: restore resolves it from the earlier envelope.
+    restored = saga.restore(tmp_path, saga_id)
+    assert restored is not None and restored.plan_path == plan_doc
 
 
 def test_successful_plan_save_tick_resolves_to_the_written_document(

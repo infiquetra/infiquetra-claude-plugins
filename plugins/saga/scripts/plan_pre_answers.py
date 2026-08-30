@@ -36,11 +36,14 @@ Contract shape (plan KTD5):
   NOT a decision field: exactly two decision fields are admitted, and ``caller`` sits
   outside that admission limit.
 
-Carrier discipline (reviews F08/F08a/F15/F30): the block's fence info string must be
-exactly ``json``; at most one carrier may be present — two carriers stop the run rather
-than letting the first win silently; duplicate JSON keys stop the run rather than
-applying the last value; and a ``json``-fenced block that fails to parse is a malformed
-carrier and stops the run rather than being indistinguishable from no carrier.
+Carrier discipline (reviews F08/F08a/F15/F30, cycle-2 C03/P02/S01): the block's fence
+info string must be exactly ``json``; at most one carrier may be present — two carriers
+stop the run rather than letting the first win silently; duplicate JSON keys stop the run
+rather than applying the last value; and a ``json``-fenced block that fails to parse or
+repeats a key is a malformed carrier — a stop — only when it is carrier-shaped (its raw
+text names the ``plan_pre_answers`` family). An unrelated malformed JSON example is
+prose, ignored exactly as a foreign schema already is: the stop must never over-fire on
+invocation text that carries no carrier.
 
 Pure functions: reads the text it is given, writes nothing, reads no file (KTD5).
 """
@@ -82,6 +85,18 @@ CARRIER_INVOCATION_ONLY_BACKENDS = tuple(
 ENVELOPE_KEYS = frozenset({"schema", "caller", *DECISION_FIELDS})
 
 _FENCE_RE = re.compile(r"```([^\n]*)\n(.*?)```", re.DOTALL)
+
+# A block is carrier-shaped when its raw text names the ``plan_pre_answers`` family on a
+# token boundary, case-insensitively — the same membership test ``_is_family_schema``
+# performs on a parsed token (cycle-2 C03/P02/S01). Malformed-carrier stops are gated on
+# this, so an unrelated malformed JSON example can never halt a run that carries no
+# carrier; it is ignored exactly as a foreign schema already is.
+_CARRIER_SHAPE_RE = re.compile(r"\bplan_pre_answers\b", re.IGNORECASE)
+
+
+def _is_carrier_shaped(block: str) -> bool:
+    return _CARRIER_SHAPE_RE.search(block) is not None
+
 
 # Echoed caller-supplied values are truncated to a fixed width so a refusal message can
 # never be inflated by unbounded input (review F24).
@@ -152,8 +167,11 @@ def scan_carriers(invocation_text: str) -> tuple[list[dict[str, Any]], str | Non
     schema. Stops are returned instead of raising, and each is a distinct verdict:
 
     * a ``json``-fenced block that fails to parse is a malformed carrier (review F30) —
-      indistinguishable from no carrier before this fix, a stop now;
-    * duplicate JSON keys stop rather than silently applying the last value (F15);
+      indistinguishable from no carrier before that fix, a stop now — but only when the
+      block is carrier-shaped; an unrelated malformed JSON example is prose, ignored
+      (cycle-2 C03/P02/S01);
+    * duplicate JSON keys stop rather than silently applying the last value (F15),
+      under the same carrier-shape gate;
     * more than one carrier stops rather than letting the first win silently (F08a).
     """
     candidates: list[dict[str, Any]] = []
@@ -163,11 +181,15 @@ def scan_carriers(invocation_text: str) -> tuple[list[dict[str, Any]], str | Non
         try:
             parsed = json.loads(block, object_pairs_hook=_reject_duplicate_keys)
         except _DuplicateKeyError as exc:
+            if not _is_carrier_shaped(block):
+                continue  # unrelated prose with a repeated key — not a carrier
             return [], (
-                f"pre-answer carrier refused: duplicate JSON keys ({exc}) — the last "
-                "value must not silently win"
+                f"pre-answer carrier refused: duplicate JSON keys ({_echo(str(exc))}) — "
+                "the last value must not silently win"
             )
         except json.JSONDecodeError:
+            if not _is_carrier_shaped(block):
+                continue  # an illustrative or truncated JSON example — not a carrier
             return [], (
                 "pre-answer carrier refused: a ```json block in the invocation text "
                 "failed to parse — a malformed carrier is a stop, not an absence"
@@ -311,7 +333,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Exit 0 — no stop (the carrier applied cleanly, or there was no carrier). Exit 2 —
     the outcome carries a ``stop`` and the caller must surface it, never continue
-    silently.
+    silently; an unreadable ``--invocation-file`` also exits 2 with the same JSON shape
+    and a ``stop`` naming the unreadable path (cycle-2 U03/C10). A malformed command
+    line exits 2 through argparse with a usage message and NO JSON — that, too, is a
+    stop, never a clean apply.
     """
     parser = argparse.ArgumentParser(
         prog="plan_pre_answers.py",
@@ -323,12 +348,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="read the invocation text from this file instead of stdin",
     )
+    parser.add_argument(
+        "--established",
+        action="append",
+        default=[],
+        metavar="FIELD=VALUE",
+        help=(
+            "repeatable; a decision already established in this thread "
+            "(backend=<value> or destination=<value>). A carrier value contradicting "
+            "it stops (cycle-2 C04/U04)."
+        ),
+    )
     args = parser.parse_args(argv)
-    if args.invocation_file is not None:
-        text = args.invocation_file.read_text(encoding="utf-8")
+    established: dict[str, str] = {}
+    for entry in args.established:
+        field, separator, value = entry.partition("=")
+        if not separator or not value or field not in DECISION_ENUMS:
+            parser.error(
+                "--established takes FIELD=VALUE with FIELD one of "
+                f"{' | '.join(DECISION_FIELDS)}; got {_echo(entry)}"
+            )
+        established[field] = value
+    try:
+        if args.invocation_file is not None:
+            text = args.invocation_file.read_text(encoding="utf-8")
+        else:
+            text = sys.stdin.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        # The run stops on the same JSON shape every other stop uses (cycle-2 U03/C10):
+        # an unreadable invocation file must surface, never escape as a bare traceback.
+        outcome = PreAnswerOutcome(
+            applied={},
+            omitted=(),
+            stop=(
+                "pre-answer validator stopped: the invocation text is unreadable "
+                f"({_echo(str(exc))}) — surface this, never continue silently"
+            ),
+            caller=None,
+        )
     else:
-        text = sys.stdin.read()
-    outcome = evaluate(text)
+        outcome = evaluate(text, established or None)
     print(
         json.dumps(
             {

@@ -356,9 +356,9 @@ python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json
   -o docs/workflows/<topic>.workflow.js
 python3 plugins/saga/scripts/execution_spec.py lease <orchestration_ref_spec.json> \
   --invocation-id "$WORKFLOW_INVOCATION_ID" > "$WORKFLOW_LEASE_METADATA"
-python3 $CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py reserve "$WORKFLOW_LEASE_METADATA" \
+python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" reserve "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID" > ".saga/workflow-lease-receipt-${WORKFLOW_INVOCATION_ID}.json"
-python3 $CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py attest "$WORKFLOW_LEASE_METADATA" \
+python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" attest "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
 
@@ -423,18 +423,29 @@ Workflow({ scriptPath: "docs/workflows/<topic>.workflow.js" })
 ```
 
 After the Workflow returns, or after the host authoritatively confirms cancellation, close the
-protocol with the release command (semantics: cc-workflows plugin `references/protocol.md`):
+protocol with the release command (semantics: cc-workflows plugin `references/protocol.md`).
+This block runs in a **fresh shell** after the Workflow tool returns, so it re-establishes the
+launch identity itself: take `WORKFLOW_INVOCATION_ID` from the saga tick that recorded it —
+never mint a new one here, or the release targets a lease that was never reserved (review
+A01/U01).
 
 ```bash
-python3 $CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py release "$WORKFLOW_LEASE_METADATA" \
+export WORKFLOW_INVOCATION_ID="<the invocation id recorded in the saga tick for this launch>"
+export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+CC_WORKFLOWS_SCRIPTS_DIR="${CC_WORKFLOWS_SCRIPTS_DIR:-plugins/cc-workflows/skills/cc-workflows/scripts}"
+python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" release "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
 
 For a long driver-side collection step, the boundary renew call stays for protocol continuity
-(semantics: cc-workflows plugin `references/protocol.md`):
+(semantics: cc-workflows plugin `references/protocol.md`). Fresh shell, same rule as the release
+block: re-establish the launch identity from the saga tick first.
 
 ```bash
-python3 $CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py renew "$WORKFLOW_LEASE_METADATA"
+export WORKFLOW_INVOCATION_ID="<the invocation id recorded in the saga tick for this launch>"
+export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+CC_WORKFLOWS_SCRIPTS_DIR="${CC_WORKFLOWS_SCRIPTS_DIR:-plugins/cc-workflows/skills/cc-workflows/scripts}"
+python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" renew "$WORKFLOW_LEASE_METADATA"
 ```
 
 The Workflow tool owns execution from this point. `/work` records the returned workflow id in

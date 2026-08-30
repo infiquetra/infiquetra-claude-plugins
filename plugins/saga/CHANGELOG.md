@@ -6,10 +6,13 @@
 
 - **Structured pre-answer carrier for `/plan`.** A caller that has already settled the execution
   backend or the routing destination may hand it to Plan as a fenced JSON block under schema
-  `plan_pre_answers.v1`. A supplied value is applied and visibly narrated with the caller that
-  supplied it; a missing value falls through to the normal adaptive conversation; an invalid or
-  contradictory value stops and surfaces rather than becoming a silent default; and a carrier
-  declaring an unknown schema token is refused whole. Validated by
+  `plan_pre_answers.v1`. A supplied `inline` backend and any valid `destination` are applied and
+  visibly narrated with the caller that supplied them — `team-execution` and
+  `cc-workflows-ultracode` are legal plan values but require explicit operator invocation, so the
+  carrier stops and surfaces them instead of applying; a missing value falls through to the normal
+  adaptive conversation; an invalid or contradictory value stops and surfaces rather than becoming
+  a silent default; and a non-v1 token inside the `plan_pre_answers` family is refused whole while
+  a foreign schema family is not a carrier and is ignored. Validated by
   `plugins/saga/scripts/plan_pre_answers.py`. Plan's conversation gains no question, checklist, or
   fixed sequence — the carrier is intake evaluated once at entry, not a phase.
 - **One recursive plan-artifact conformance check**, covering the declared frontmatter fields and

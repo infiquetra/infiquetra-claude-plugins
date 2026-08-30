@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import os
 import re
+import subprocess
 import sys
+import uuid
 from pathlib import Path
 from types import ModuleType
 
@@ -216,16 +219,17 @@ def test_artifacts_moved_and_plans_directory_retained() -> None:
 
 
 def test_live_references_to_moved_artifacts_resolve() -> None:
-    # Code pointers are unambiguously live, so they must resolve on disk. Prose
-    # conventions are guarded by the write-path guard and the stale-pointer inversion
-    # above (the spec doc's worked envelope example is illustrative and may name an
-    # artifact that never shipped).
-    scanned = sorted((ROOT / "plugins").rglob("*.py"))
+    # Live pointers — code AND prose — must resolve on disk. Cycle 2 narrowed this
+    # scan to Python because the spec doc's worked example named an artifact that
+    # never existed; the worked example now points at a real artifact (review
+    # D05/T03), so markdown is back in the scan with no exemption. Changelogs are
+    # history, never live conventions.
+    scanned = [*_plugin_markdown_guard_files(), *sorted((ROOT / "plugins").rglob("*.py"))]
     full_re = re.compile(r"docs/workflows/[A-Za-z0-9._-]+(?:-spec\.json|\.workflow\.js)")
     references = {
         rel for path in scanned for rel in full_re.findall(path.read_text(encoding="utf-8"))
     }
-    assert references, "no live code pointer to a moved artifact found — the scan drifted"
+    assert references, "no live pointer to a moved artifact found — the scan drifted"
     for rel in references:
         assert (ROOT / rel).is_file(), f"dangling pointer to {rel}"
 
@@ -296,3 +300,65 @@ def test_team_and_outcome_paths_still_resolve_the_spec_schema_from_saga() -> Non
     assert outcome_spec.MUTATION_POLICIES == ES.MUTATION_POLICIES
     assert outcome_spec.WORKSPACE_ISOLATIONS == ES.WORKSPACE_ISOLATIONS
     assert outcome_spec.SANDBOX_PROFILES == ES.SANDBOX_PROFILES
+
+
+# --- Sub-part D: the lease close-out blocks are fresh-shell self-contained (A01/U01) ---
+
+
+def _work_skill_bash_blocks() -> list[str]:
+    return re.findall(r"```bash\n(.*?)```", WORK_SKILL.read_text(encoding="utf-8"), re.DOTALL)
+
+
+def test_every_scripts_dir_consumer_block_assigns_the_scripts_dir() -> None:
+    # Review A01/U01: an agent runs each fenced block in a NEW shell, so a block that
+    # consumes $CC_WORKFLOWS_SCRIPTS_DIR must carry its own assignment before the first
+    # use — the pre-submit block's assignment is out of scope after the Workflow tool
+    # returns. Removing the repeated assignment from the release or renew block fails
+    # here, which is the regression the cycle-1 repair introduced.
+    consumers = [b for b in _work_skill_bash_blocks() if "$CC_WORKFLOWS_SCRIPTS_DIR" in b]
+    assert consumers, "scan drifted: no fenced block consumes the scripts-dir variable"
+    for block in consumers:
+        before_first_use, _, _ = block.partition("$CC_WORKFLOWS_SCRIPTS_DIR")
+        assert "CC_WORKFLOWS_SCRIPTS_DIR=" in before_first_use, (
+            "a fenced block consumes $CC_WORKFLOWS_SCRIPTS_DIR without assigning it — "
+            "in a fresh shell the expansion is empty and the lease protocol never closes"
+        )
+
+
+def test_release_and_renew_blocks_resolve_in_a_fresh_shell() -> None:
+    # Review A01/U01, proven the way the defect actually bites: run the release and
+    # renew blocks AS WRITTEN in a fresh bash that never ran the pre-submit block,
+    # substituting only the invocation-id placeholder and stripping every inherited
+    # variable. The scripts-dir variable must resolve to the real lease CLI — proven
+    # by the CLI's own loud HALT on the absent metadata file; an unresolved variable
+    # dies as python's "can't open file '/workflow_emitter.py'" instead.
+    placeholder = "<the invocation id recorded in the saga tick for this launch>"
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"CC_WORKFLOWS_SCRIPTS_DIR", "CLAUDE_CODE_SESSION_ID"}
+        and not key.startswith("WORKFLOW_")
+    }
+    for verb in ("release", "renew"):
+        block = next(b for b in _work_skill_bash_blocks() if f'workflow_emitter.py" {verb}' in b)
+        invocation_id = f"cp918-fresh-shell-{uuid.uuid4().hex}"
+        script = block.replace(placeholder, invocation_id)
+        proc = subprocess.run(  # nosec B603 - a literal block from the shipped skill
+            ["bash", "-c", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
+        assert "can't open file" not in proc.stderr, (
+            f"the {verb} block's scripts-dir variable expanded empty in a fresh shell"
+        )
+        assert proc.returncode == 2 and "workflow-lease: HALT" in proc.stderr, (
+            f"the {verb} block did not reach the real lease CLI in a fresh shell: "
+            f"rc={proc.returncode}, stderr={proc.stderr!r}"
+        )
+        assert invocation_id in proc.stderr, (
+            f"the {verb} block did not re-derive the lease-metadata path from the "
+            "invocation id it re-established"
+        )

@@ -21,6 +21,36 @@
 
 ## 2026-08-30
 
+### Fenced skill blocks run in fresh shells — every consumer block must self-assign its variables  {#918-fresh-shell-block-scope}
+
+**Context.** Repair cycle 1 of issue #918 replaced two working literal script paths in `plugins/saga/skills/work/SKILL.md` with `$CC_WORKFLOWS_SCRIPTS_DIR`, assigned once in the pre-submit block. Cycle 2 (revision `76533cbe`) found the release and renew blocks — separate fenced blocks an agent runs in a NEW shell after the Workflow tool returns — expanded it to empty, so the lease protocol never closed.
+**Evidence.** Cycle-2 findings A01/U01; the lens ran the release line verbatim in a fresh shell and it died `can't open file '/workflow_emitter.py'`, exit 2. `grep -rn CC_WORKFLOWS_SCRIPTS_DIR tests/` returned nothing, which is why the gate could not see the regression.
+**Mechanism.** A fenced block in a skill is a copy-and-run unit; nothing is inherited from any earlier block. A variable assigned in block N is out of scope in block N+1 the moment a tool call or a copy-paste boundary sits between them.
+**Fix.** The release and renew blocks re-establish the launch identity themselves: the scripts dir with its env-var-wins default, the lease-metadata path derived from the invocation id taken from the saga tick (never a fresh mint — a new id would release a lease that was never reserved), and every `$CC_WORKFLOWS_SCRIPTS_DIR` expansion is quoted. Two guards pin it in `tests/test_workflow_extraction.py` (sub-part D): a structural check that every consuming block assigns the variable before first use, and a fresh-shell subprocess proof that runs the blocks as written with inherited variables stripped.
+**Validation.** Both guards red when the repeated assignment is deleted from either block, green restored; the intact blocks run in a bare bash and surface the lease CLI's own loud HALT on the absent metadata file, never an empty-path error. The wiring pin (`tests/test_saga_plugin.py`) matches quote-tolerantly so quoting cannot break it again.
+**Generalizable rule.** In skills, treat every fenced block as a fresh shell: any variable a block consumes must be assigned inside that same block before first use, and quoted at the point of expansion.
+**Refs.** Issue #918 repair cycle 2; findings A01/U01/S05; `{#918-vacuous-guard-class}`.
+
+### A malformed-carrier stop must be gated on carrier shape  {#918-carrier-shape-gate}
+
+**Context.** Cycle 1 of issue #918 added a malformed-carrier stop to `plan_pre_answers.py` so an unparseable `json` fence could never pass as no carrier. Cycle 2 found the stop applied to EVERY `json` fence before checking whether the block declared the carrier family — halting `/plan` on two of this repository's own committed documents that carry illustrative or truncated JSON and no carrier at all.
+**Evidence.** Cycle-2 findings C03/P02/S01 at `76533cbe`; controller reproduction: `python3 plugins/saga/scripts/plan_pre_answers.py --invocation-file docs/brainstorms/2026-08-12-orchestrate-codex-phase-requirements.md` exited 2 on a document with no carrier.
+**Mechanism.** A stop added to police a carrier shape fired on the carrier's TRANSPORT instead: any fence using the same info string. The discipline the stop protected (malformed is never indistinguishable from absent) applies only to blocks that look like carriers; an unrelated malformed JSON example is prose, exactly as a foreign schema family is.
+**Fix.** Gate both malformed stops (parse failure and duplicate keys) on `_is_carrier_shaped` — the raw block text names the `plan_pre_answers` family on a token boundary, case-insensitively, the same membership test the parsed-token path uses. The multi-carrier stop was already correctly scoped and shows the intended shape.
+**Validation.** Two new tests in `tests/test_plan_pre_answers.py` (unrelated malformed fences — parse-failure, duplicate-keys, truncated array — apply nothing and stop nothing; a non-carrier malformed fence before a valid carrier no longer suppresses it); removing the gate turns them red, the existing carrier-shaped malformed tests stay green in both directions.
+**Generalizable rule.** A validator stop must be scoped to the entity it polices: gate on the shape of the thing being validated, never on the transport that merely carries it.
+**Refs.** Issue #918 repair cycle 2; findings C03/P02/S01; saga-spec §15.
+
+### An assertion's substring must not live in the test's own fixture  {#918-handler-own-words}
+
+**Context.** Cycle 1's F05 repair added an index-failure test asserting `"index" in err`. Cycle 2 (finding T01) showed the substring was satisfied by the fixture's own filename (`docs/plans/2026-08-30-index-failure-plan.md`), which the error interpolates — swapping the handler for an unrelated exception left all five tests passing.
+**Evidence.** Cycle-2 obligation-3 violation at `76533cbe`; the lens mutation: `except SagaTickIndexWriteError` → `except NotImplementedError` left the file green while coverage showed the index handler unexecuted.
+**Mechanism.** Error messages interpolate the caller's arguments, and fixture paths are caller arguments. Any asserted substring that also occurs in a fixture path, flag value, or other echoed input proves the input echoed, not that the intended branch ran.
+**Fix.** Renamed the fixture to a path containing no `index` and asserted the index handler's OWN words — `rewrite the saga state.json index` and `IS still referenced by the` — plus the absence of the false idempotency claim. The review's own mutation (handler swapped out) now fails the test, because the generic OSError branch cannot produce those phrases.
+**Validation.** Mutation red/green cycle in repair cycle 2; the same standard was re-applied to every assertion added that round before commit (obligation 3).
+**Generalizable rule.** Before asserting a substring of an error or log line, check that no fixture path, flag, or other echoed input contains it — assert the handler's own words, and keep the fixture name free of every asserted token.
+**Refs.** Issue #918 repair cycles 1–2; findings T01, F05; `{#918-save-failure-two-writes}`.
+
 ### A guard that matches flat literals passes vacuously against wrapped prose  {#918-vacuous-guard-class}
 
 **Context.** Repair cycle 1 of issue #918's integrated review (revision `5ec8ea76`) found the `#808` counterfactual-branch guard in `tests/test_workflow_extraction.py` comparing three flat phrase literals against lowered file text.

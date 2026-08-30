@@ -231,7 +231,7 @@ phase_status: in_progress
 status: active
 next_step: "wire /resume to call saga.restore"
 orchestration_mode: cc-workflows-ultracode
-orchestration_ref: "docs/workflows/2026-06-02-saga-foundation-spec.json"
+orchestration_ref: "docs/workflows/2026-07-01-evidence-provenance-manifests-spec.json"
 orchestration_run_id: "wf_7dbd5245-def"
 orchestration_recommended: cc-workflows-ultracode
 orchestration_operator_choice: cc-workflows-ultracode
@@ -714,11 +714,15 @@ already write prose into. No file, no CLI flag, no daemon, no state.
 
 **Carrier discipline.** The fence info string must be exactly `json`; at most one carrier is
 admitted — a second carrier stops the run rather than letting the first win silently; duplicate JSON
-keys stop the run rather than applying the last value; and a `json` block that fails to parse is a
-malformed carrier and stops the run rather than passing as no carrier.
+keys stop the run rather than applying the last value; and a `json` block that fails to parse or
+repeats a key is a malformed carrier — a stop — only when it is carrier-shaped (its raw text names
+the `plan_pre_answers` family). An unrelated malformed JSON example is ignored, exactly as a foreign
+schema is, so invocation text that carries no carrier stops nothing (cycle-2 C03/P02/S01).
 
 **Evaluation rules** (validator: `../scripts/plan_pre_answers.py` — runnable; reads the text it is
-given, writes nothing, reads no file):
+given, writes nothing, reads no file; pass `--established FIELD=VALUE`, repeatable, for each
+decision already established in the thread, so rule 3's contradiction check can run — cycle-2
+C04/U04):
 
 1. A valid supplied value — an `inline` backend, or any valid `destination` — is applied and
    visibly narrated together with its `caller`.
@@ -728,8 +732,9 @@ given, writes nothing, reads no file):
    conflict; it never becomes a silent default and never prefers either side.
 4. A non-v1 token inside the family is refused whole; a foreign family is ignored (two cases, as
    above).
-5. A malformed carrier — unparseable `json` block, duplicate keys, or a second carrier — stops the
-   run.
+5. A malformed carrier — a carrier-shaped `json` block that fails to parse or repeats a
+   key, or a second carrier — stops the run; an unrelated malformed JSON example is
+   ignored.
 
 Direct `/plan` — an issue, a prompt, or a Brainstorm document, no carrier — applies nothing,
 narrates nothing, and stops nothing. The carrier is never rendered as a questionnaire, checklist, or

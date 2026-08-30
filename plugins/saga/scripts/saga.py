@@ -684,8 +684,10 @@ class SagaSaveError(ValueError):
 class SagaTickEnvelopeWriteError(OSError):
     """The tick envelope never reached disk: NO tick exists for this save.
 
-    The stranded-document remedy applies: the plan document on disk has nothing
-    referencing it until the save is re-run.
+    Whether the stranded-document remedy applies depends on the prior chain: only when
+    no earlier tick references the plan document is it left on disk with nothing
+    referencing it; when an earlier tick already records the plan path, the document
+    stays tracked and only THIS save's tick is missing (cycle-2 C02/D04).
     """
 
 
@@ -693,8 +695,10 @@ class SagaTickIndexWriteError(OSError):
     """The tick envelope IS on disk; only the state.json index rewrite failed.
 
     ``restore`` reads the envelope directly and never opens state.json, so the tick
-    is tracked. The message must not claim the plan lost its tick (review F05/F05u);
-    re-running the same save rebuilds the index and appends no duplicate tick.
+    is tracked. The message must not claim the plan lost its tick (review F05/F05u).
+    Re-running the same save rebuilds the index but is NOT idempotent: each save
+    allocates a fresh envelope, so the re-run appends one additional tick carrying the
+    same state (cycle-2 C01/D03/P01/U09).
     """
 
 
@@ -1679,27 +1683,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             # The envelope landed BEFORE the index rewrite failed, so the tick EXISTS:
             # ``restore`` reads the envelope directly and never opens state.json. The
             # message must name the failure that actually occurred — never claim the
-            # plan lost its tick (review F05/F05u/F05d).
+            # plan lost its tick (review F05/F05u/F05d) and never claim the re-run is
+            # idempotent: a save always allocates a fresh envelope, so the re-run
+            # appends one additional tick carrying the same state (cycle-2
+            # C01/D03/P01/U09).
             message = f"error: failed to rewrite the saga state.json index: {exc}"
             if args.plan_path:
                 message += (
                     f" — the plan document {args.plan_path} IS still referenced by the"
-                    " tick envelope on disk (restore reads it directly). Re-run the same"
-                    " save to rebuild the index; the re-run is idempotent and appends no"
-                    " duplicate tick."
+                    " tick envelope on disk (restore reads it directly). Once the write"
+                    " failure is cleared, re-run the same save: it rebuilds the index"
+                    " and appends one additional tick carrying the same state — harmless"
+                    " to restore, but visible to saga.py ticks, which then report both."
                 )
             print(message, file=sys.stderr)
             return 2
         except SagaTickEnvelopeWriteError as exc:
-            # The envelope never reached disk, so the tick does NOT exist: name the
-            # stranded document so the operator sees exactly what the lifecycle lost
-            # sight of (issue #923, plan KTD2: a named failure, not a transaction).
+            # The envelope never reached disk, so THIS save's tick does NOT exist. Name
+            # the stranded document only when no earlier tick references it; when the
+            # chain already records the plan path the document is tracked and only this
+            # tick is missing (issue #923, plan KTD2; cycle-2 C02/D04).
             message = f"error: failed to write the saga tick: {exc}"
             if args.plan_path:
-                message += (
-                    f" — the plan document {args.plan_path} now has NO saga tick referencing"
-                    " it. Re-run the save before routing onward."
-                )
+                try:
+                    prior = restore(root, incoming.saga_id)
+                except (OSError, ValueError, TypeError, KeyError):
+                    prior = None  # an unreadable prior proves no reference
+                if prior is not None and prior.plan_path == args.plan_path:
+                    message += (
+                        " — this save's tick envelope was never written, but an earlier"
+                        f" tick still references the plan document {args.plan_path}; the"
+                        " document is tracked. Re-run the save to append this tick."
+                    )
+                else:
+                    message += (
+                        f" — the plan document {args.plan_path} now has NO saga tick"
+                        " referencing it. Re-run the save before routing onward."
+                    )
             print(message, file=sys.stderr)
             return 2
         except OSError as exc:

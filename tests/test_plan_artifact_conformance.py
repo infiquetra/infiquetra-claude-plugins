@@ -9,8 +9,8 @@ bind the shipped constants to them.
 None of these tests asserts a Plan question, its wording, or the order of the conversation
 (R29): the rigidity guard is asserted as the absence of rigid prose shapes in the Phase 0
 intake subsection, and the corpus assertions stay relational — exit and non-empty report,
-never a count or a file name (R33), with the one launch-receipt nested instance named
-explicitly.
+never a count or a file name (R33, obligation 7): the nested-corpus guard derives its
+instances from the corpus on disk instead of naming one.
 
 Mutation wiring (issue 924's mutation proof, now against shipped code):
 
@@ -38,12 +38,6 @@ PLAN_SECTIONS_MD = (
     REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "references" / "plan-sections.md"
 )
 CONFORMANCE_SCRIPT = REPO_ROOT / "plugins" / "saga" / "scripts" / "plan_artifact_conformance.py"
-
-# The nested instance the launch receipt assigned to this unit: a non-plan document under
-# docs/plans/ that the check must report rather than let through on the path tie-breaker.
-NESTED_VERIFICATION_REPORT = (
-    PLANS_ROOT / "plugin-fleet-ideation-2026-07-03" / "gate-g-verification-report.md"
-)
 
 
 def _load_conformance() -> ModuleType:
@@ -268,19 +262,24 @@ def test_check_recurses_into_subdirectories(tmp_path: Path) -> None:
     assert corpus_exit(findings) == 0  # no backend -> legacy -> reported, non-failing
 
 
-def test_real_corpus_reports_the_nested_verification_report() -> None:
-    assert NESTED_VERIFICATION_REPORT.is_file(), (
-        "the launch-receipt nested instance must exist at the base"
-    )
+def test_real_corpus_report_reaches_nested_documents() -> None:
+    # Obligation 7 / R33: no corpus file name and no count pinned — the corpus itself
+    # supplies the instances. The single pass must reach documents below the top level
+    # of docs/plans (recursion) and report the non-conforming ones there; deleting the
+    # recursion from the SHIPPED check empties the nested report and fails this test.
+    nested_in_corpus = [p for p in PLANS_ROOT.rglob("*.md") if p.parent != PLANS_ROOT]
+    assert nested_in_corpus, "corpus precondition lost: no nested markdown under docs/plans"
 
     findings = check_plan_corpus(PLANS_ROOT)
 
-    reported = [f for f in findings if f.path == NESTED_VERIFICATION_REPORT]
-    assert reported, (
-        "the nested verification report must be reported, not silently accepted by the "
-        "path tie-breaker"
+    nested_in_report = [f for f in findings if f.path.parent != PLANS_ROOT]
+    assert nested_in_report, (
+        "the corpus holds nested markdown, so the pass must reach it and report the "
+        "non-conforming documents there — never accept one silently for its path"
     )
-    assert any(f.kind == KIND_MARKER_MISSING for f in reported)
+    assert any(f.kind == KIND_MARKER_MISSING for f in nested_in_report), (
+        "the nested corpus documents are not plan artifacts; the pass must say so"
+    )
 
 
 def test_real_corpus_produces_a_report_and_zero_exit() -> None:

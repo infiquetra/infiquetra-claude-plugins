@@ -90,7 +90,9 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
         assert required in work_skill
     reserve = work_skill.index("workflow_emitter.py reserve")
     attest = work_skill.index("workflow_emitter.py attest", reserve)
-    launch = work_skill.index('Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })', attest)
+    launch = work_skill.index(
+        'Workflow({ scriptPath: "docs/workflows/<topic>.workflow.js" })', attest
+    )
     release = work_skill.index("workflow_emitter.py release", launch)
     assert reserve < attest < launch < release
 

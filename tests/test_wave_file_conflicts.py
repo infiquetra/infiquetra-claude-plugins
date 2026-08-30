@@ -177,13 +177,13 @@ def test_workflow_emit_succeeds_once_sequenced() -> None:
 
 
 def test_committed_specs_have_no_wave_conflicts() -> None:
-    """Regression sentinel over every spec in `docs/plans/`.
+    """Regression sentinel over every spec in `docs/workflows/`.
 
     This check ships as a HALT, so a false positive would block real work. The measured baseline
     is zero conflicts across all 18; if that ever changes, it should change because a genuinely
     conflicting spec was authored — not because the detector drifted.
     """
-    specs = sorted(ROOT.glob("docs/plans/*-spec.json"))
+    specs = sorted(ROOT.glob("docs/workflows/*-spec.json"))
     assert len(specs) >= 18, "corpus shrank — re-check the baseline before trusting this test"
     for path in specs:
         spec = ES.ExecutionSpec.from_dict(json.loads(path.read_text(encoding="utf-8")))

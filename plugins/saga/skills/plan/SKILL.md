@@ -330,9 +330,8 @@ ruling). Never pre-select `cc-workflows-ultracode`. Never launch a Workflow beca
 Offer the default Saga backends per `references/operator-choice.md` (the decision contract, as
 narrowed by #808). Read the work shape, **recommend the cheapest-correct Saga backend** (`inline` or
 `team-execution`) and pre-select it. Call `lifecycle_state.recommend_execution_backend` so the tick
-can record `--orchestration-recommended` (R12 telemetry). If `recommended` is `cc-workflows-ultracode`,
-**do not pre-select** it — pre-select `team-execution` when a gated size/risk/consensus trigger fired,
-otherwise `inline`. Confirm with the operator and record what they picked via `--orchestration-mode`.
+can record `--orchestration-recommended` (R12 telemetry). Confirm with the operator and record what
+they picked via `--orchestration-mode`.
 
 **Before an explicit Workflow invocation, probe Workflow-tool availability with `ToolSearch`** (not
 an assumption) and pass the result as `--workflow-availability-source probed`; only fall back to the
@@ -520,78 +519,20 @@ Weights are ordinal/relative, not dollar prices — the cost-weighted spend-*del
   (absent → `sonnet/high`) makes any premium tier `ask` and everything at/below `silent` — the
   configurable home for the cheap-silent/expensive-asks rule.
 
-**Step 2 — Author thin per-unit prompts (KTD2).** Each unit's prompt is a **thin pointer**, not a prose
-transcription of the plan:
+**Steps 2–5 — Author the spec into a runnable workflow (lives with the capability, #925/U4).**
+Thin per-unit prompts (KTD2), `depends_on` barriers and `verify` panels, `validate` (HARD BLOCK on
+failure), `emit` + the `spec_table.py` approval table, and concurrent-writer safety (#671) are the
+Claude Code Workflow authoring protocol and live in the cc-workflows plugin:
+`plugins/cc-workflows/skills/cc-workflows/SKILL.md`. Saga keeps this entry guard, the tier/spend
+authoring above, and the tick write below. The runnable commands are unchanged — `execution_spec.py
+validate` / `emit` still exist and delegate emission to the extracted emitter; artifacts land in
+`docs/workflows/` (P-D3). The operator must explicitly confirm the tier assignments and the
+control-flow structure before `/work` runs it (R8 "approved"); a rejection means revising the spec
+and re-running validate + emit + table.
 
-```
-<unit-id>: <one-line goal>. Read the plan at <repo-relative plan path> as your authoritative spec.
-```
-
-The emitter appends fan-out reconciliation, budget riders, and return contracts automatically — do not
-duplicate them in the prompt. Depth comes from the agent reading the plan; the prompt is control flow.
-
-**Step 3 — Wire depends_on barriers and optional verify panels.** Set `depends_on` from the plan's
-dependency order. For units with an **explicit** adversarial-confidence request, add a `verify` panel:
-default `n=3`, `pass_rule=majority` (KTD3 — a finding survives unless ≥⌈3/2⌉=2 of 3 verifiers refute
-it). Override N per-unit when the operator requests a different panel size; N is capped at 7
-(VERIFY_N_CAP) — above the cap, `validate` will hard-block.
-
-**Step 4 — Validate the spec (HARD BLOCK on failure).** Run the validator:
-
-```bash
-python3 plugins/saga/scripts/execution_spec.py validate docs/plans/<name>-spec.json
-```
-
-A non-zero exit means the spec is malformed. **Do NOT proceed to emit or persist an invalid spec** — fix
-the `SpecError` and re-validate. Common failures: `depends_on` cycle, fan-out unit with no `targets`,
-pilot tier mismatch (R3), N above VERIFY_N_CAP.
-
-**Step 5 — Emit the workflow script and surface for operator confirmation.** Once `validate` exits 0:
-
-```bash
-python3 plugins/saga/scripts/execution_spec.py emit docs/plans/<name>-spec.json \
-  -o docs/plans/<name>.workflow.js
-```
-
-**Then render the approval table — this is the artifact the operator approves, not the JSON:**
-
-```bash
-python3 plugins/saga/scripts/spec_table.py docs/plans/<name>-spec.json --backend <backend>
-```
-
-Paste that table into your reply verbatim. It reports every unit's tier, the dependency waves
-(what actually runs in parallel), spend against budget, and — the decision-relevant part — **what
-the chosen backend can and cannot enforce**. A spec declaring a restrictive sandbox axis the
-backend cannot enforce will HALT at emit rather than silently downgrade, and the table says so
-*before* the operator approves rather than after the run fails.
-
-Do **not** hand-build this table, and do **not** dump the spec JSON instead. Never ask an operator
-to approve a backend without showing its enforceability rows: `cc-workflows-ultracode` enforces
-read-only and disposable-worktree and reaches every model; `team-execution` enforces neither axis
-and cannot reach `fable`. That asymmetry is invisible in the spec itself.
-
-**Split the work so concurrent units never share a file (#671).** The table's
-*Concurrent-writer safety* section reports any two units that would run in the same wave while
-declaring the same path, and `emit` HALTs on one — no backend can enforce its way out of a
-collision, because concurrent agents share one working tree and Claude Code has no cross-agent file
-lock. Get this right while authoring the units, not at emit:
-
-- Different repositories, or disjoint files → safe to run in parallel.
-- Same file → **one unit**, not two. Merging beats sequencing: a single agent making both edits
-  keeps the file's context warm and reuses the prompt cache, where splitting pays to load the same
-  file into two agents and then risks losing one of their writes.
-- Only reach for `depends_on` when the two really are separate pieces of work that happen to touch
-  a shared path.
-
-Bias toward fewer, longer-lived units generally. Parallel width is not free — it costs cache
-reuse, and the fleet's own history is 88 of 92 waves running a single unit.
-
-The operator must explicitly confirm the tier assignments and the control-flow structure before
-`/work` runs it (R8 "approved"). A rejection means revising the spec and re-running validate +
-emit + table.
-
-**Spec naming convention:** `docs/plans/<YYYY-MM-DD>-<topic>-spec.json` beside the plan doc. The
-`.workflow.js` shares the same stem: `docs/plans/<YYYY-MM-DD>-<topic>.workflow.js`.
+**Spec naming convention:** `docs/workflows/<YYYY-MM-DD>-<topic>-spec.json` — the plan doc stays in
+`docs/plans/`; generated Workflow artifacts live in `docs/workflows/` (P-D3). The `.workflow.js`
+shares the same stem: `docs/workflows/<YYYY-MM-DD>-<topic>.workflow.js`.
 
 ### 5.3 Write the saga tick
 
@@ -628,7 +569,7 @@ python3 plugins/saga/scripts/saga.py save \
   --decisions "KTD1: rationale. KTD2: rationale." \
   --orchestration-mode cc-workflows-ultracode \
   --orchestration-recommended <recommend_execution_backend() output> \
-  --orchestration-ref docs/plans/YYYY-MM-DD-<topic>-spec.json
+  --orchestration-ref docs/workflows/YYYY-MM-DD-<topic>-spec.json
 ```
 
 The `.workflow.js` is regenerable at any time from the spec (`execution_spec.py emit`); the spec JSON is

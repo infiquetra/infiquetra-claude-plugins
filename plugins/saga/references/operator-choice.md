@@ -54,9 +54,8 @@ The operator decides; lifecycle makes the cheapest-correct path one keystroke aw
 
 - **inline by default.** Absent any escalation signal, work runs `inline`. No ceremony.
 - **Auto-recommend a Saga backend.** Lifecycle reads the work shape (§3) and pre-selects `inline` or
-  `team-execution`. This is a recommendation, not an imposition. If the helper's `recommended` value
-  is `cc-workflows-ultracode`, **do not pre-select** it — map the default offer to the cheapest Saga
-  backend instead. A Workflow is entered only when the operator explicitly invokes it.
+  `team-execution`. This is a recommendation, not an imposition. A Workflow is entered only when the
+  operator explicitly invokes it.
 - **ALWAYS surface the Saga choice.** Even when the recommendation is `inline`, the offer names
   `team-execution` so escalation is **one step**. Do not treat `cc-workflows-ultracode` as a third
   interchangeable alternative in that default offer.
@@ -271,7 +270,7 @@ but never reads `orchestration_mode`). A command that does not yet write a saga 
 | `cc-workflows-ultracode` | the **spec JSON path** (durable, set at `/plan` tick time); the workflow run handle rides in `orchestration_run_id` (#693), never here |
 
 **`cc-workflows-ultracode` ref lifecycle.** At `/plan` time, `orchestration_ref` is set to the **canonical
-spec JSON** (`docs/plans/<date>-<topic>-spec.json`). The `.workflow.js` is a derived artifact — regenerable
+spec JSON** (`docs/workflows/<date>-<topic>-spec.json`). The `.workflow.js` is a derived artifact — regenerable
 at any time via `execution_spec.py emit <spec.json>` — so the spec JSON is the durable pointer. When `/work`
 subsequently launches the Workflow tool and receives a workflow id, it records that id in a second saga tick
 as **`orchestration_run_id`** — never as `orchestration_ref` (#693: overwriting the ref destroyed the spec

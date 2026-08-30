@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.149.0] - 2026-08-30
+
+### Added
+
+- **Unified Brainstorm continuity contract (issue 913).** Brainstorm now records the producing capability `brainstorm` and activity `brainstorm-<topic-slug>-<UTC YYYYMMDDTHHMMSSZ>` (plus optional `.orchestrate/run.json` `run_id`) on its artifact, declares its `brainstorm-scope-confirmation` gate, writes a `pending-confirmation` artifact before any readiness claim and requires fresh Phase 2.5 confirmation after a revision, stops rather than guessing on ambiguous resume, and leaves legacy artifacts labelled `inferred` without backfill. Artifact-free exploration writes nothing and exposes no durable route. `handoff_envelope.infer_maturity` now honours declared frontmatter maturity and validates against the `HANDOFF_MATURITIES` vocabulary.
+- **Adaptive judgment model and bounded read-only helpers (issue 914).** Consequence-calibrated rigor from concrete trust-boundary and failure factors, separately from product size and never from a domain label; no named assurance levels. Private concern model `Clear`/`Partial`/`Missing`/`Not material` as a changing heuristic, never persisted. Question selection grounds repository facts first and prefers greatest consequence × uncertainty, one at a time, without filtering a found rigor gap. Phase 1 fan-out bounded: Lightweight 0, Standard/Deep at most one `Explore` grounding scout and one `saga:readonly-verifier` claim verifier, each requiring a distinct evidence question, read-only by tool omission.
+- **Layered behavioural evidence suite (issue 915).** Three layers: deterministic contract checks mechanically proven to assert no question, wording, or order; scenario evaluations stored as data with `product_size` and `consequence` independent, scored per material dimension with no aggregate; evaluator-trust rule (`is_blocking` requires reproducible + second-grader agreement or operator adjudication) and fixed `calibration.json`; eight safeguard-phrase drift guards proving each critical sentence is present and wired.
+- **Lifecycle consistency check (issue 916).** Mechanical check pins Think-phase ordering across the duplicated block in four skills (`ideate`, `loop`, `office-hours`, `plan`), discovered by block shape, not line numbers; `founder-review` variant and `strategy` inline mentions recorded as out-of-set. `Shaping` stated once in `saga-spec.md` §4 as an Operations board Status, not a Saga phase/command, cross-referencing `plan` §0.6.
+
+### Changed
+
+- **Brainstorm telemetry removal (issue 913).** Deleted the `gate-divergence` `brainstorm-interrogation-choice` paragraph that deferred to a `saga.py save` Brainstorm never performs; kept and repointed the interaction-rules marker to `brainstorm-interrogation-gate`; removed `brainstorm-<decision>` from the instrumentation examples. The sketch of helpers and the gate-absence lint now agree: three markers (`brainstorm-interrogation-gate`, `brainstorm-handoff-routing`, `brainstorm-scope-confirmation`).
+- **Maintenance cleanup (issue 916).** Replaced `Reviewer-session transport` (`engine_offer.py`/`engine_session_runner.py`) with `Dialogue ownership` (Brainstorm owns interactive creative dialogue, only bounded helpers delegate, Orchestrate owns cross-vendor transport, absent run-record is HALT). Removed Brainstorm from `tests/test_orchestrate_review_transport.py` `STAGE_SKILLS`; all other Orchestrate assertions unchanged. Documented the grounding scout's `Bash` residual and compensating commit-or-stash practice; the scout stays deliberately not worktree-isolated. No skill's lifecycle prose edited; no `orchestrate.py` change; no `mission-control/` change.
+
 ## [0.148.0] - 2026-08-29
 
 ### Changed

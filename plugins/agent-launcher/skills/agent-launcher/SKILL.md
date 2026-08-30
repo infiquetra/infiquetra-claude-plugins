@@ -33,7 +33,7 @@ python3 "$S" close --receipt-json receipt.json
 
 Permission is granted at launch and is not correctable in place: cycling a live session's permission control moves only through manual, accept-edits, plan and back to auto, so a session that came up in `auto` cannot be promoted to `bypass` afterwards and must be torn down and relaunched.
 
-A session whose tab the launcher did not create (`owned` false in the receipt) has its input box inspected before any prompt is sent, because a prompt typed behind staged text concatenates onto it and can submit it. Staged text is a stop, not a clear: the launch refuses to prompt, and the text is recorded in the receipt and the unit note — nothing is discarded. A client's own placeholder (the dim hint a vendor draws in an empty box) is not staged text and does not stop the launch, and a box that cannot be read is recorded as `unreadable` in the receipt and prompted as today.
+A session whose tab the launcher did not create (`owned` false in the receipt) has its input box inspected before any prompt is sent — and before any vendor picker types into the pane — because a prompt typed behind staged text concatenates onto it and can submit it. Staged text is a stop, not a clear: the launch refuses to prompt and records a redacted characterisation of the box — the staged text's length, never its content — in the receipt and the unit note, naming that the text itself was withheld; nothing typed by an operator is persisted, and nothing in the box is discarded. A client's own placeholder (the dim hint a vendor draws in an empty box) is not staged text and does not stop the launch, and a box that cannot be read is recorded as `unreadable` in the receipt and prompted as today.
 
 **Stop conditions (verbatim):**
 

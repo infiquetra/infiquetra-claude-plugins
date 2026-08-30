@@ -373,7 +373,8 @@ def test_reused_pane_holding_a_slash_command_is_not_prompted(
     with pytest.raises(SystemExit, match="already holds staged input"):
         launcher.launch(unit)
     assert sends == []
-    assert unit.launch_receipt["input_box_text"] == STAGED_SLASH_COMMAND
+    assert unit.launch_receipt["input_box"] == "staged"
+    assert STAGED_SLASH_COMMAND not in str(unit.launch_receipt)
 
 
 def test_staged_text_is_recorded_not_discarded(
@@ -390,8 +391,9 @@ def test_staged_text_is_recorded_not_discarded(
         launcher.launch(unit)
     assert sends == []
     assert unit.launch_receipt["input_box"] == "staged"
-    assert unit.launch_receipt["input_box_text"] == STAGED_SLASH_COMMAND
-    assert STAGED_SLASH_COMMAND in unit.note
+    assert unit.launch_receipt["input_box_text_chars"] == len(STAGED_SLASH_COMMAND)
+    assert STAGED_SLASH_COMMAND not in json.dumps(unit.launch_receipt)
+    assert STAGED_SLASH_COMMAND not in unit.note
 
 
 def test_empty_reused_box_is_prompted_exactly_as_today(
@@ -425,6 +427,147 @@ def test_freshly_created_pane_takes_no_inspection_path(
     assert len(sends) == 1
     ansi_reads = [c for c in recorded if c[:3] == ["herdr", "pane", "read"] and "--format" in c]
     assert ansi_reads == []
+
+
+@pytest.mark.parametrize("reset_code", ["00", "39", "22", "0;10"])
+def test_reset_codes_after_a_styled_marker_return_the_staged_text(
+    launcher: ModuleType, reset_code: str
+) -> None:
+    """Every style-off shape the terminal defines ends the styled span at the marker."""
+    line = f"\x1b[2m❯\x1b[{reset_code}m /deploy prod --force"
+    assert launcher.composer_staged_text(line) == "/deploy prod --force"
+
+
+def test_marker_styled_and_never_reset_counts_as_staged(launcher: ModuleType) -> None:
+    """Styling that spans the whole line and never ends cannot be a placeholder signal."""
+    assert launcher.composer_staged_text("\x1b[2m❯ /deploy prod --force") == "/deploy prod --force"
+
+
+def test_a_bare_marker_row_below_staged_text_is_a_decoy(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("❯ rm -rf /important\n> ") == "rm -rf /important"
+
+
+def test_a_quoted_row_below_staged_text_is_not_the_composer(launcher: ModuleType) -> None:
+    dump = "❯ rm -rf /important\n> quoted line"
+    assert launcher.composer_staged_text(dump) == "rm -rf /important"
+
+
+def test_menu_rows_below_staged_text_are_not_the_composer(launcher: ModuleType) -> None:
+    dump = "❯ deploy now\n> Option A\n> Option B"
+    assert launcher.composer_staged_text(dump) == "deploy now"
+
+
+def test_a_scrollback_echo_is_not_the_composer(launcher: ModuleType) -> None:
+    dump = "❯ earlier submitted prompt\npane output line\n❯ "
+    assert launcher.composer_staged_text(dump) == ""
+
+
+def test_escapes_inside_staged_text_are_stripped(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("❯ deploy the \x1b[Kfleet") == "deploy the fleet"
+
+
+def test_unreadable_box_is_marked_and_the_prompt_still_goes(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuine nonzero pane read drives the guard's failure branch: the box is marked
+    unreadable, noted, and the launch still prompts. The fake captures the timeout keyword
+    because the read it bounds must actually carry one."""
+    recorded: list[list[str]] = []
+    pane_read_timeouts: list[object] = []
+    sends: list[tuple[Any, ...]] = []
+    receipt = {
+        "tab_id": "w80:t1",
+        "agent_name": "reader-2",
+        "pane_id": "w80:p9",
+        "reused": False,
+    }
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        if cmd[:3] == ["herdr", "pane", "read"]:
+            pane_read_timeouts.append(kwargs.get("timeout"))
+            return subprocess.CompletedProcess(cmd, 1, "", "no such pane")
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            tabs = {"result": {"tabs": [{"tab_id": "w80:t1", "label": "t"}]}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        if cmd[:3] == ["herdr", "pane", "current"]:
+            pane = {"result": {"pane": {"workspace_id": "w80"}}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
+    unit = launcher.LaunchRequest(name="reader", vendor="codex", worktree="/tmp/wt")
+    launcher.launch(unit)
+    assert unit.launch_receipt["input_box"] == "unreadable"
+    assert "input box not readable" in unit.note
+    assert len(sends) == 1
+    assert pane_read_timeouts == [launcher.PANE_INPUT_READ_SECONDS]
+
+
+def test_staged_text_reaches_no_sink_verbatim(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The operator's draft reaches none of the durable sinks: not the receipt, not the unit
+    note, not the stop message -- and therefore not the run record the note and message feed.
+    The stop proves the box was not empty with a length and says the text was withheld."""
+    unit, _recorded, _sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        launcher.launch(unit)
+    message = str(exc_info.value)
+    assert STAGED_SLASH_COMMAND not in message
+    assert "withheld" in message
+    assert STAGED_SLASH_COMMAND not in unit.note
+    assert STAGED_SLASH_COMMAND not in json.dumps(unit.launch_receipt)
+    assert unit.launch_receipt["input_box_text_chars"] == len(STAGED_SLASH_COMMAND)
+
+
+def test_opencode_guard_reads_before_the_picker_types(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unowned OpenCode pane holding staged text: the guard must stop the launch before the
+    variant picker has typed anything into the pane through the same door prompts use."""
+    typed: list[list[str]] = []
+    dump = "Choose variant:\n> high\n> low\n" + _claude_pane(f"❯ {STAGED_SLASH_COMMAND}")
+    receipt = {
+        "tab_id": "w80:t1",
+        "agent_name": "oc-2",
+        "pane_id": "w80:p9",
+        "reused": False,
+    }
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "pane", "run"]:
+            typed.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["herdr", "pane", "read"]:
+            return subprocess.CompletedProcess(cmd, 0, dump, "")
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            tabs = {"result": {"tabs": [{"tab_id": "w80:t1", "label": "t"}]}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        if cmd[:3] == ["herdr", "pane", "current"]:
+            pane = {"result": {"pane": {"workspace_id": "w80"}}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt", effort="high")
+    with pytest.raises(SystemExit, match="already holds staged input"):
+        launcher.launch(unit)
+    assert typed == []
 
 
 def _preflight_stubs(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[str]:

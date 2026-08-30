@@ -678,6 +678,30 @@ def read_pane(pane_id: str, lines: int = 120) -> str:
 # included for a vendor that draws no decorated marker.
 COMPOSER_MARKERS = ("❯", "›", ">")
 
+# ">" doubles as scrollback quoting, diff hunks and picker rows, so a decorated glyph present in
+# the same pane outranks it. Within a glyph class the last line wins, because Claude echoes every
+# submitted prompt into scrollback under its own glyph and the live box sits below the echoes.
+_STRONG_COMPOSER_MARKERS = ("❯", "›")
+
+# Attribute-off codes per ECMA-48: intensity, italic, underline, blink, inverse, conceal,
+# strikethrough off, and default foreground/background. A parameter list ending in any of these
+# (and nothing else) ends a styled span; 0 resets outright.
+_STYLE_OFF_SGR_CODES = frozenset({21, 22, 23, 24, 27, 28, 29, 39, 49})
+
+
+def _sgr_ends_styled_span(params: str) -> bool:
+    """Whether an SGR parameter list ends a styled span under the terminal's own rules.
+
+    An empty list is a full reset, and a list containing 0 resets before any later code applies.
+    Otherwise the span ends only when every code is one of the attribute-off codes.
+    """
+    if params == "":
+        return True
+    codes = [int(code) for code in params.split(";") if code]
+    if not codes or 0 in codes:
+        return True
+    return all(code in _STYLE_OFF_SGR_CODES for code in codes)
+
 
 def composer_staged_text(ansi_text: str) -> str | None:
     """Text a human staged in the input box, or None when no composer line was found.
@@ -685,29 +709,48 @@ def composer_staged_text(ansi_text: str) -> str | None:
     A client's own placeholder is drawn inside a styled run -- codex's "Ask Codex to do
     anything" arrives wrapped in a dim foreground SGR, and claude's hints the same way --
     while text somebody typed carries no styling. Discarding a placeholder is harmless and
-    discarding staged operator text is not, so only unstyled runs count as staged.
+    discarding staged operator text is not, so only unstyled runs count as staged -- with one
+    exception: when styling spans the whole line and never ends, nothing distinguishes the
+    client's decoration from typed text, and the text counts as staged rather than being
+    discarded.
     """
-    composer: str | None = None
+    strong: str | None = None
+    weak: str | None = None
     for line in ansi_text.splitlines():
         # The marker itself can sit inside a styled run, so find it with styling stripped.
-        if strip_ansi(line).lstrip()[:1] in COMPOSER_MARKERS:
-            composer = line
+        first = strip_ansi(line).lstrip()[:1]
+        if first in _STRONG_COMPOSER_MARKERS:
+            strong = line
+        elif first == ">":
+            weak = line
+    composer = strong if strong is not None else weak
     if composer is None:
         return None
     unstyled: list[str] = []
     styled = False
+    saw_reset = False
     cursor = 0
     for sgr in re.finditer(r"\x1b\[[0-9;]*m", composer):
         if not styled:
             unstyled.append(composer[cursor : sgr.start()])
-        styled = sgr.group(0)[2:-1] not in ("", "0")
+        if _sgr_ends_styled_span(sgr.group(0)[2:-1]):
+            styled = False
+            saw_reset = True
+        else:
+            styled = True
         cursor = sgr.end()
     if not styled:
         unstyled.append(composer[cursor:])
-    staged = "".join(unstyled).lstrip()
+    staged = strip_ansi("".join(unstyled)).lstrip()
     if staged[:1] in COMPOSER_MARKERS:
         staged = staged[1:]
-    return staged.strip()
+    staged = staged.strip()
+    if not staged and not saw_reset and re.search(r"\x1b\[[0-9;]*m", composer):
+        whole = strip_ansi(composer).lstrip()
+        if whole[:1] in COMPOSER_MARKERS:
+            whole = whole[1:]
+        staged = whole.strip()
+    return staged
 
 
 def pane_input_text(pane_id: str) -> str | None:
@@ -731,10 +774,12 @@ def guard_reused_pane(unit: Any, pane_id: str) -> None:
     """Inspect a pane this launch did not create before anything is prompted into it.
 
     A tab the launcher did not create may hold text somebody staged earlier, and a prompt sent
-    behind it concatenates onto that text and can submit it. Staged text is therefore a stop,
-    recorded first: nothing is cleared, which is the strongest reading of "never silently
-    discarded". A box that cannot be read is noted on the unit and in the receipt and prompted
-    as today -- visible, not silent.
+    behind it concatenates onto that text and can submit it. Staged text is therefore a stop:
+    the box is proved non-empty by a characterisation -- its length -- never by its content. An
+    input box holds whatever a person last typed and did not submit, so the text itself reaches
+    no receipt, no note, no stop message, and no run record those feed; nothing is cleared,
+    which is the strongest reading of "never silently discarded". A box that cannot be read is
+    noted on the unit and in the receipt and prompted as today -- visible, not silent.
     """
     staged = pane_input_text(pane_id)
     receipt = unit.launch_receipt if isinstance(unit.launch_receipt, dict) else None
@@ -749,11 +794,12 @@ def guard_reused_pane(unit: Any, pane_id: str) -> None:
         return
     if receipt is not None:
         receipt["input_box"] = "staged"
-        receipt["input_box_text"] = staged
-    append_unit_note(unit, f"staged input preserved, not cleared: {staged!r}")
+        receipt["input_box_text_chars"] = len(staged)
+    append_unit_note(unit, f"staged input withheld: {len(staged)} chars, not cleared")
     raise SystemExit(
-        f"{unit.name}: pane {pane_id} already holds staged input {staged!r}; refusing to "
-        "prompt so the dispatched task cannot be concatenated onto it"
+        f"{unit.name}: pane {pane_id} already holds staged input ({len(staged)} chars, "
+        "withheld from the record); refusing to prompt so the dispatched task cannot be "
+        "concatenated onto it"
     )
 
 
@@ -1227,12 +1273,14 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
         raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
 
     ready = await_ready(unit)
+    # The guard reads before any vendor-specific path types into the pane: the OpenCode picker
+    # submits through the same door the prompt uses, so it must not run ahead of the inspection.
+    if not session_owned(unit):
+        guard_reused_pane(unit, pane_id)
     if unit.vendor == "opencode":
         _, ready = drive_opencode_variant_selection(unit, pane_id)
     verify_unit_preflight(unit, pane_id, ready=ready, argv=argv, since=created_at)
 
-    if not session_owned(unit):
-        guard_reused_pane(unit, pane_id)
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     accepted = took_the_task(unit)
     if not accepted:

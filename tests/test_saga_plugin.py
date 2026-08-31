@@ -45,8 +45,9 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.150.0"  # W10 (sdlc#91): office-hours + ideate state and
-    # test the Intake no-issue-creation boundary; successor to W8 c2's (sdlc#89) Verify-precondition 0.147.0
+    assert plugin_json["version"] == "0.151.0"  # issue 912: handoff envelope schema 1.1 and the
+    # fail-closed maturity vocabulary. Successor to W10's (sdlc#91) 0.150.0 — note 0.150.0 was taken
+    # by an unrelated run (Saga Plan Wave 1, 1c1c04a9) before this branch could ship it.
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

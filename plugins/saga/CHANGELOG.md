@@ -18,7 +18,11 @@
 - **An explicit build-unit tier is checked for RUNNABILITY, not just membership.** Every effort is
   a legal effort and every model a legal model, but not every pairing runs — `haiku` tops out below
   `xhigh` — so an explicit plan tier could name a combination no host can execute while its sibling
-  path, which resolves through the registry, could never produce one.
+  path, which resolves through the registry, could never produce one. The ceiling is read from
+  `fleet_commons.tier_palette` rather than restated, and the guard is driven across the palette's
+  whole product so both arms are exercised. (This one is recorded twice over: the first attempt at
+  it shipped the fix with no test, and its own mutation proof caught that — the check could be
+  deleted and the module stayed green.)
 - **`resolve-build-unit-tier` follows the fleet's CLI error contract.** A rejected argument printed
   a bare `SystemExit` string at exit 1, and a bad tier raised through to a traceback; both are read
   as JSON on stdout by an agent following the skill document. Both now print `{"error": ...}` on

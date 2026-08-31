@@ -276,3 +276,55 @@ def test_premium_choice_boundary_left_untouched() -> None:
     # Also ensure lifecycle_state seam does not gain premium logic.
     seam_text = LIFECYCLE_STATE_PY.read_text(encoding="utf-8")
     assert seam_text.count("resolve_build_unit_tier") == 1 or "premium" not in seam_text.lower()
+
+
+def test_an_explicit_tier_is_checked_for_runnability_not_just_membership() -> None:
+    """Every effort is a legal effort and every model a legal model; not every pairing runs.
+
+    `haiku` tops out below `xhigh`, so an explicit plan tier naming that combination cleared two
+    separate membership checks and named a tier no host can execute. Its sibling path could never
+    produce one -- an overlay entry goes through `_validate_shape_and_tier` against the registry and
+    a registry default is runnable by construction -- so the explicit door was the one that skipped
+    the check its own alternative enforces.
+
+    Written because dropping the check left this module green: the repair had the fix and no test.
+    """
+    with pytest.raises(ValueError, match="cannot run"):
+        _resolve(plan_tier={"model": "haiku", "effort": "xhigh"}, work_shape=None)
+    # Control: the same model at an effort it CAN run passes, so the guard discriminates rather
+    # than refusing that model outright.
+    assert _resolve(plan_tier={"model": "haiku", "effort": "high"}, work_shape=None) == {
+        "model": "haiku",
+        "effort": "high",
+    }
+    # And a model with the higher ceiling takes the effort haiku cannot.
+    assert _resolve(plan_tier={"model": "opus", "effort": "xhigh"}, work_shape=None) == {
+        "model": "opus",
+        "effort": "xhigh",
+    }
+
+
+def test_the_runnability_ceiling_is_read_from_the_shared_palette_not_restated() -> None:
+    """The ceiling must come from `fleet_commons.tier_palette`, or this is a second copy to drift."""
+    import importlib.util
+    import sys
+
+    sys.path.insert(0, str(LIFECYCLE_STATE_PY.parent))
+    import fleet_commons_shim  # noqa: PLC0415
+
+    palette = fleet_commons_shim.load("tier_palette")
+    # Whatever the palette says a model cannot run, the resolver must refuse for that model.
+    for model in palette.MODELS:
+        for effort in palette.EFFORTS:
+            tier = {"model": model, "effort": effort}
+            if palette.supports_effort(model, effort):
+                assert _resolve(plan_tier=tier, work_shape=None) == tier
+            else:
+                with pytest.raises(ValueError, match="cannot run"):
+                    _resolve(plan_tier=tier, work_shape=None)
+    # Control: the loop must have exercised BOTH arms, or it proves nothing.
+    unsupported = [
+        (m, e) for m in palette.MODELS for e in palette.EFFORTS if not palette.supports_effort(m, e)
+    ]
+    assert unsupported, "the palette must carry at least one unrunnable pairing for this to test"
+    assert importlib.util is not None

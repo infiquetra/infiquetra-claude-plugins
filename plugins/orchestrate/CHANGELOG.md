@@ -1,5 +1,40 @@
 # Changelog
 
+## [3.1.0] - 2026-08-31
+
+### Fixed
+
+- **`codereview` no longer maps to `Verify` (#927).** Closed `infiquetra/infiquetra-sdlc` #89 (W8),
+  requirement R69, puts pre-merge continuous integration, tests, code review and merge readiness all
+  in the `Active` stage; `Verify` begins only after merge plus the applicable non-production
+  deployment, or after installed or published artifact verification when nothing deploys. The Saga
+  half of that repair shipped and this half did not, because the guard test enforcing it scanned
+  `plugins/saga/` only. The key is remapped to `Active`/`Code review`, not deleted: deleting it
+  would silently stop announcing at a boundary that announces today.
+- **Every board write this plugin made was halting, and now lands.** `STATUS_LADDER` was a
+  hard-coded second copy of the board's Status vocabulary and had gone stale — not one of its six
+  values is a live `Status` option, so `_set_lifecycle_field_cross_board` halted before the first
+  write, every time. The ladder is replaced by the `workflows.stage_flow` block resolved from the
+  Mission Control schema document, so the vocabulary has exactly one source.
+- **An unresolvable rung fails loud instead of skipping.** An off-ladder value used to be dropped
+  with a `skipped` record, which is precisely how six stale rungs stayed invisible.
+
+### Changed
+
+- **`DEFAULT_STATUS_MAP` and `Run.status_map` carry a `(Stage, Status)` pair.** `mapped_status`
+  returns that pair, the announce discriminator renders it as `Stage/Status`, and the progress
+  comment names both halves. The six rungs are `plan` → `Planning`/`Designing`, `docreview` →
+  `Planning`/`Ready for Active`, `work` and `fix` → `Active`/`Implementing`, `codereview` →
+  `Active`/`Code review`, `landed` → `Verify`/`Awaiting verification`; all six are live and
+  stage-monotonic, and `landed` is deliberately `Verify` rather than `Retro` — it is the post-merge
+  unit announce, not close-out.
+- **A `status_map` override is a pair and is validated against the resolved vocabulary.** A run
+  file carrying the older single-string override fails loud rather than half-submitting. No
+  configuration that previously *worked* stops working: none of the retired ladder's values was
+  live, so every such write was already halting at Mission Control.
+- The announce path is otherwise unchanged: it still posts one progress comment, still dedups on
+  its own discriminator, and still degrades silently when saga's reconcile controller is absent.
+
 ## [3.0.8] - 2026-08-27
 
 ### Added

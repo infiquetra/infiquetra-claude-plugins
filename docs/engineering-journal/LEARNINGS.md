@@ -19,6 +19,28 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-31
+
+### A stale second copy of a vocabulary plus a skip-on-mismatch makes every write invisible  {#927-stale-vocabulary-silent-halt}
+
+**Context.** Orchestrate has written board rungs since the 75-unit run whose card never moved. The writeback was allowlisted, idempotency-keyed, tested, and called. It still never moved a card, and nobody noticed for months.
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` at `1c1c04a9` carried `STATUS_LADDER = ("Idea", "Shaping", "Ready", "Active", "Verify", "Done")` and submitted those values with `--field Status` (the default when `payload=None`, `reconcile_controller.py:232`). Zero of the six is a live `Status` option in `workflows.stage_flow.stage_statuses`; three of them (`Shaping`, `Active`, `Verify`) are live *Stage* options, which is coincidence, not design. `_set_lifecycle_field_cross_board` halts before the first write on an unresolvable option.
+**Mechanism.** Two independent decisions combined. First, the ladder was a **second copy** of a vocabulary whose authority lives in `config/sdlc-schema.json`, so it could drift without anything failing. Second, `announce_units` **skipped** any value not on its own ladder with a `skipped` record — and `_failed_writebacks` deliberately treats a skip as a designed no-op, so the run's exit code stayed clean. A stale copy that fails loud is a bug report; a stale copy that skips is silence.
+**Fix.** #927 U5: the ladder is deleted and the vocabulary resolved from the schema document Mission Control ships; an unresolvable rung is now a failure record, not a skip. `tests/test_orchestrate_status_map_contract.py` pins liveness against the schema rather than a list.
+**Validation.** `tests/test_orchestrate_board_writeback.py::TestStatusMapping::test_the_defaults_never_leave_the_live_vocabulary` fails on a stale rung where the old ladder-membership assertion passed on all six.
+**What surprised.** The old assertion `set(DEFAULT_STATUS_MAP.values()) <= set(STATUS_LADDER)` was green the whole time and could never have been anything else: it compared the copy against itself.
+**Generalizable rule.** A test that checks a value against a constant defined in the same file proves only internal consistency. Point membership assertions at the external authority, and make an unresolvable value fail rather than skip — a skip is how a dead code path survives review.
+**Refs.** DECISIONS [`{#927-pair-rides-the-payload}`](DECISIONS.md#927-pair-rides-the-payload); issue #927.
+
+### A bash-only code-fence pattern does not skip other fences, it mis-pairs them  {#927-fence-info-string-mispairing}
+
+**Context.** The zero-direct-write guard scans fenced blocks in skill files. Its fence pattern was `` ```(?:bash|sh|shell)?\n(.*?)``` ``. Adding submissions to `plan/SKILL.md` and `work/SKILL.md` made the guard report one submission in a file that had two, and zero in a file that had three.
+**Evidence.** `tests/test_saga_no_direct_write.py:_fenced_blocks` before the #927 repair. Both skill files carry ```` ```json ```` and ```` ```python ```` blocks between the submissions.
+**Mechanism.** On a ```` ```json ```` opener the optional group matches nothing, then the pattern demands `\n` and sees `j`, so the match fails **at that position**. The scan does not skip the block — it advances and pairs that block's *closing* fence with the *next* opening one, so everything between them is swallowed and everything after is offset. The failure mode is silent under-reporting, which in a guard reads as a clean tree.
+**Fix.** `r"```[A-Za-z0-9_+.-]*\n(.*?)```"` — match any info string, then filter on content.
+**Generalizable rule.** When a scanner walks paired delimiters, the opener pattern must match **every** opener, including the ones you do not care about. Narrowing the opener to the interesting subset silently re-pairs the delimiters rather than filtering them, and a scanner that under-reports is worse than one that over-reports.
+**Refs.** Issue #927 U1.
+
 ## 2026-08-30
 
 ### Fenced skill blocks run in fresh shells — every consumer block must self-assign its variables  {#918-fresh-shell-block-scope}

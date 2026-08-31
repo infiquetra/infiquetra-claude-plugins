@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.151.0] - 2026-08-31
+
+### Fixed
+
+- **Plan and Work submit their five lifecycle board moves again, as live `(Stage, Status)` pairs
+  (#927).** Since the 0.145.0 change Saga made none of the project-board moves: the submission
+  mechanism shipped and the caller never did, so a card sat exactly as it was picked up while
+  several units built against it. Each of the five boundaries — `plan` §0.6 `Planning`/`Designing`,
+  `plan` §5.0 `Planning`/`Ready for Active`, `work` §1.3b `Active`/`Implementing`, `work` §4.4
+  `Verify`/`Awaiting verification`, `work` §4.4 `Retro`/`Ready to close` — now names its actor, its
+  trigger, and a runnable submission through the reconcile controller. Deciding and submitting is
+  not writing: Mission Control remains the only executor of a `Stage` or `Status` write, and no
+  Saga path composes or executes one. `/loop` stays correction-only.
+- **The board move is a pair, and both halves are checked.** `Ready for Active` is a legal `Status`
+  on its own, so a `Status`-only submission writes a legal value, reports success, and leaves
+  `Stage` behind — a wrong card with a clean record. Every submission carries both assignments in
+  one `flow set-field` invocation, and every assertion in the suite reads both.
+- **A half-applied pair now names which half landed.** Mission Control writes one assignment at a
+  time and does not roll the first back, so a `Stage` write can land while `Status` fails.
+  Detection always worked — a non-empty `failed` raises, so the exit is non-zero — but
+  `default_board_writer` raised with `stderr` while the `updated`/`failed`/`identity` evidence sat
+  on discarded stdout, leaving the board half-written with no record of which field to repair. The
+  writer now parses that stdout and names the landed and the unlanded assignment.
+- **The replay identity names the whole submission, at both minting sites.** `authorize_and_write`
+  mints its own idempotency key as well as the reconcile controller, and widening only the
+  controller would let a `(Stage, Status)` pair and a `Status`-only write to the same option
+  collide on one key — so the second is recorded `skipped` as already-applied, a success-shaped
+  record for a move that never landed. Both sites now derive the identity from the same helper. A
+  single-assignment submission renders exactly as before, so no existing ledger key is orphaned and
+  every pre-#927 caller is byte-unchanged.
+
+### Changed
+
+- **The zero-direct-write guard asks a new question, fleet-wide (#927).** `tests/test_saga_no_direct_write.py`
+  asked whether a file *named* the lifecycle-field operation and treated any mention as an offense;
+  under the operator's 2026-08-30 ruling that assertion forbids the sanctioned submission. It now
+  asks whether a path reaches GitHub's project fields *without* Mission Control's executor, and it
+  scans the whole of `plugins/` rather than `plugins/saga/` alone — the one-plugin scope is why
+  Orchestrate's leftover writer never failed it. The constant-resolution false-green guard, the
+  nested-run-artifact exclusion and the submission-core allowlists are unchanged.
+
 ## [0.150.0] - 2026-08-30
 
 ### Added

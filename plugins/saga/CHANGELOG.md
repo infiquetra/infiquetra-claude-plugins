@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.152.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work merge-gate integrity: validate verdicts, record inputs, name the waived gate (#928).**
+  `plugins/saga/scripts/saga.py save` now validates every `--gate-verdict` through the existing
+  `parse_gate_verdict` parser and refuses the whole save with `error: <message>` at exit 2 on a
+  non-canonical state or malformed entry, writing neither the tick envelope nor the `state.json`
+  index — a malformed verdict is surfaced where the operator can see it rather than becoming a
+  stored fact a later gate trusts. `change_kinds` that decides the hard test gate is now recorded
+  verbatim in the Phase-4 work-session writeup, and that same list is the one passed to
+  `requires_hard_test_gate`. The dual-purpose `--doc-review-override` flag is split: the doc-review
+  gate keeps `--doc-review-override` and the review gate uses new `--review-gate-override`; both
+  route through a single `issue_progress.py:_override_line` helper that refuses a rationale without
+  a known gate, and the issue comment now renders `doc review override` vs `review gate override`
+  so the waived gate is unambiguous.
+
 ## [0.151.0] - 2026-08-31
 
 ### Fixed

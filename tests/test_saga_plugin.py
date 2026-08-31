@@ -45,11 +45,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.151.0"  # issue #927: Plan and Work submit their five
-    # lifecycle board moves again, as live (Stage, Status) pairs; the pair is carried end to end
-    # with both replay-key sites widened together; a half-applied pair names which half landed; and
-    # the zero-direct-write guard is re-aimed at the submit-versus-execute contract, fleet-wide.
-    # Successor to issue #918 Wave 1's release at 0.150.0
+    assert plugin_json["version"] == "0.152.0"  # issue #928: Saga Work merge-gate integrity
+    # — validate the verdict at save time, record change_kinds, and split the dual-purpose
+    # override flag so the waived gate is unambiguous.
+    # Successor to issue #927's board-submission path at 0.151.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

@@ -1524,7 +1524,9 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         blockers=args.blockers,
         open_questions=_split_list(args.open_questions),
         checks_run=_split_list(args.checks_run),
-        gate_verdicts=ABSENT if args.gate_verdict is None else list(args.gate_verdict),
+        gate_verdicts=ABSENT
+        if args.gate_verdict is None
+        else _validated_gate_verdicts(args.gate_verdict),
         gate_divergence=ABSENT if args.gate_divergence is None else list(args.gate_divergence),
         source=args.source,
         summary=args.summary,
@@ -1532,6 +1534,18 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         remaining=args.remaining,
         notes=args.notes,
     ), frozenset(explicit)
+
+
+def _validated_gate_verdicts(verdicts: list[str]) -> list[str]:
+    """Validate each ``gate:state:ref`` via ``parse_gate_verdict``; refuse on ValueError."""
+    validated: list[str] = []
+    for entry in verdicts:
+        try:
+            parse_gate_verdict(entry)
+        except ValueError as exc:
+            raise SagaSaveError(str(exc)) from exc
+        validated.append(entry)
+    return validated
 
 
 def _add_save_parser(sub: Any) -> None:

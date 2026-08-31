@@ -713,8 +713,12 @@ After each meaningful phase:
 ### 4.1 Work-session writeup
 
 Write a concise `docs/work-sessions/YYYY-MM-DD-<topic>.md` for the phase: what was built (by U-ID), the
-key decisions, files modified, checks run, and the single next step. This is the canonical, durable home
-(`handoff_envelope.py` classifies it resume-ready) — no new directory.
+key decisions, files modified, `change_kinds` (the derived list that decides which tests the hard gate
+demands), checks run, and the single next step. Record the derived `change_kinds` value verbatim in the
+writeup and pass that same recorded list to `requires_hard_test_gate` at
+`plugins/saga/scripts/lifecycle_state.py:111` to decide whether the hard test gate applies — the writeup
+field and the gate input are the same list, not two separate derivations. This is the canonical, durable
+home (`handoff_envelope.py` classifies it resume-ready) — no new directory.
 
 ### 4.2 Save a saga tick
 
@@ -735,9 +739,11 @@ python3 plugins/saga/scripts/saga.py save \
 
 The `--gate-verdict` state MUST be one of the six canonical gate states (`done` / `in-progress` /
 `blocked` / `failed` / `halted` / `not-reached`) — the same wire vocabulary `status_card.py` renders.
-A passing test gate is `tests:done:<ref>`, a failure is `tests:failed:<ref>`, still-running is
-`tests:in-progress:<ref>`; a non-canonical value (e.g. `pass`/`skip`) parses to *unknown* and the card
-renders the Tests cell as not-reached, silently dropping the verdict.
+`plugins/saga/scripts/saga.py save` validates every `--gate-verdict` value through `parse_gate_verdict`
+at save time and refuses the whole save with `error: <message>` at exit 2 when the parser rejects it,
+writing neither the tick envelope nor the `state.json` entry; the parser's message naming the six
+canonical states is surfaced verbatim. A passing test gate is `tests:done:<ref>`, a failure is
+`tests:failed:<ref>`, still-running is `tests:in-progress:<ref>`.
 
 List fields are full-snapshot (saga-spec §6) — pass the complete current set each tick, not a delta.
 
@@ -760,8 +766,14 @@ python3 plugins/saga/scripts/issue_progress.py \
   --checks-run "pytest|ruff|mypy" \
   --blockers "<none or text>" \
   --doc-review-artifact docs/reviews/<artifact>.md \
-  --doc-review-override "<rationale if overridden>"
+  --doc-review-override "<rationale if doc-review gate waived>" \
+  --review-gate-override "<rationale if review gate waived>"
 ```
+
+An override must name which gate it waives: `--doc-review-override` for the doc-review gate and
+`--review-gate-override` for the review gate. A rationale without a known gate is refused by
+`issue_progress.py:_override_line`, and the rendered issue comment labels the two waivers
+`doc review override` and `review gate override` so the audit trail is unambiguous.
 
 Then **post it**, through the same reconcile controller Phase 4.4 uses. Rendering is not posting, and
 "hand it to `mission-control`" was for a long time the only instruction here — so nothing ran, and no
@@ -928,7 +940,9 @@ A count `> 0` means commits landed since the review: keep PR-ready blocked and r
 capturing a fresh `REVIEWED_SHA`, before any PR/merge offer.
 
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
-via `--doc-review-override` / the work-session). Never a silent skip.
+via `--review-gate-override` for the review gate and `--doc-review-override` for the doc-review gate,
+each validated by `issue_progress.py:_override_line` to name its gate, plus the work-session). Never a
+silent skip.
 
 ### 5.4 Reach PR-ready and present continuation routing
 

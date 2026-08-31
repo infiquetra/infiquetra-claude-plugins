@@ -73,8 +73,9 @@ into? Name the feature, problem, or `/ideate` survivor." Do not proceed without 
 Scan `docs/brainstorms/*-requirements.md` and read each file's frontmatter, then apply an
 explicitly ordered three-tier rule. The tiers are ordered and must be evaluated in sequence — tier 3
 is reachable only after both earlier tiers found nothing, so "no exact match" never collapses into
-"start fresh." For the legacy-artifact description see the Legacy artifacts paragraph below, which
-is cross-referenced here as the second tier of this order.
+"start fresh." For the legacy-artifact description see the "Legacy artifacts" section (a top-level
+heading located after Phase 3, before Phase 4), which is cross-referenced here as the second tier of
+this order.
 
 1. **Tier 1 — Exact match.** Among files that carry the producer facts (`capability`, `activity` per Phase 0.2 and the section contract) and `topic` and `maturity`, match on `topic` plus
    `capability`. Exactly one match restores directly: summarize the restored boundary and continue
@@ -82,9 +83,9 @@ is cross-referenced here as the second tier of this order.
    operator to choose, explicitly never by recency, filename, or broad content match. A match at
    `maturity: pending-confirmation` re-enters at the Phase 2.5 confirmation, not at Phase 1. Re-entry at `pending-confirmation` carries the matched artifact's existing path forward.
 2. **Tier 2 — Legacy inference.** Only when tier 1 produced no match, consider the files that exist
-   but lack the producer facts. These enter the labelled-inference path described in the Legacy
-   artifacts paragraph below rather than being treated as absent. A file missing `capability` is a
-   legacy artifact, never a miss.
+   but lack the producer facts. These enter the labelled-inference path described in the "Legacy
+   artifacts" section (after Phase 3) rather than being treated as absent. A file missing `capability`
+   is a legacy artifact, never a miss.
 3. **Tier 3 — Empty scan.** Only a genuinely empty scan — no file matched in tier 1 and no file
    qualified for tier 2 — starts fresh.
 
@@ -108,7 +109,7 @@ so Phase 3 can populate the `source` field in the requirements-doc metadata. If 
 name the ideation doc path, ask for it once; if still unavailable, note provenance as unstated rather
 than inventing a path. Extend the capture to record three metadata fields alongside the existing
 `source`: the producing capability, fixed as `brainstorm`; the producing activity identity, formed as
-`brainstorm-<topic-slug>-<UTC timestamp, YYYYMMDDTHHMMSSZ>` at the moment the artifact is first
+`brainstorm-<topic-slug>-<UTC timestamp YYYYMMDDTHHMMSSZ>` at the moment the artifact is first
 written; and, when `.orchestrate/run.json` exists in the working tree, that file's `run_id` as an
 optional run identity. A missing run identity is recorded as absent, never invented.
 
@@ -171,7 +172,7 @@ when it has a distinct evidence question — two helpers on the same question is
 These are ceilings, not required launches. The grounding scout is `subagent_type: Explore`; the claim
 verifier is `subagent_type: saga:readonly-verifier` with `isolation: "worktree"`, degrading through
 the fallback ladder in `plugins/saga/references/sandbox-spawn-sites.md` when the agent type is absent
-from the session roster. Helpers may not choose requirements and may not address the operator. The claim verifier is worktree-isolated and read-only by omission of `Edit`/`Write`/`NotebookEdit` with `Bash` retained — the worktree fence is the sole protection — and may not choose requirements or address the operator; the grounding scout is read-only by omission of `Edit`/`Write`/`NotebookEdit` but retains `Bash` and is not worktree-isolated — a deliberate, recorded acceptance. At the ladder's terminal rung, read-only is a prose request rather than an enforced constraint. A state-free capability with no tick such as Brainstorm states the rung and the agent type spawned in its own turn text to the operator instead of persisting the fields. The primary process retains
+from the session roster. Helpers may not choose requirements and may not address the operator. The claim verifier is worktree-isolated and read-only by omission of `Edit`/`Write`/`NotebookEdit` with `Bash` retained — the worktree fence is the sole protection and `Bash` can still write through it, deliberately, so verify-class runs commit or stash first — and may not choose requirements or address the operator; the grounding scout is read-only by omission of `Edit`/`Write`/`NotebookEdit` but retains `Bash` and is not worktree-isolated — a deliberate, recorded acceptance. At the ladder's terminal rung, read-only is a prose request rather than an enforced constraint. A state-free capability with no tick such as Brainstorm states the rung and the agent type spawned in its own turn text to the operator instead of persisting the fields. The primary process retains
 synthesis, creativity, the private concern model, and every operator-facing exchange. Before launching a grounding scout against a tree with uncommitted work, commit or stash first, because the scout retains `Bash` and is not worktree-isolated.
 
 **Lightweight** — search for the topic, check whether something similar already exists, move on.
@@ -390,7 +391,7 @@ confirmation, preserving the pending-confirmation artifact's original `date` fro
 `requirements-ready`. Writing at `requirements-ready` without fresh confirmation is refused: maturity
 returns to `pending-confirmation` until the operator confirms again. This holds for any artifact declaring `requirements-ready`, regardless of the path that created it.
 
-## Legacy artifacts
+## Legacy artifacts (referenced from Phase 0.1 tier 2)
 
 For an artifact missing the producer facts (`capability`, `activity`), provenance may be inferred from
 durable document evidence; the inference is labelled inferred in what the operator is shown; the
@@ -423,7 +424,7 @@ Options:
 4. **Review with `/doc-review`** — dispatch a readiness review of the requirements doc before
    planning. Shown only when the artifact on disk declares `maturity: requirements-ready`.
 5. **More clarifying questions** — return to Phase 1.3, keep refining scope, edge cases, and
-   constraints one question at a time, then return here. If the refinement changed the boundary of an already-confirmed Path B artifact, rewrite the file to `maturity: pending-confirmation` and re-enter Phase 2.5 for fresh confirmation before any durable route is offered. Always shown.
+   constraints one question at a time, then return here. If the refinement changed the boundary of an already-confirmed artifact, rewrite the file to `maturity: pending-confirmation` and re-enter Phase 2.5 for fresh confirmation before any durable route is offered. Always shown.
 6. **Back to `/office-hours`** — when the topic turns out to be more open thought-partner work than a
    concrete requirements ask. Always available.
 7. **Done for now** — the requirements doc is saved and resumable later, or, when no document was written, nothing durable was recorded. Always shown.

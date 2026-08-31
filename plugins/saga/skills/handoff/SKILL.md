@@ -79,8 +79,9 @@ uses this ack contract.
 
 4. If the helper finds no source, ask for one.
 5. If multiple durable artifacts are plausible, ask the user to choose.
-6. Route with the envelope's `suggested_command` when `handoff_maturity` is not `pending-confirmation` — it is shaped like
-   `/issue --prepare --from <source> --maturity <maturity>` and is runnable. When `handoff_maturity` is `pending-confirmation` (declared frontmatter), `suggested_command` is a non-routable prose sentence with no durable route — stop rather than route.
+6. Route with the envelope's `suggested_command` ONLY when `handoff_maturity` is one of the routable vocabulary values —
+   `idea-ready`, `requirements-ready`, `plan-ready`, `resume-ready`, or `deferred-context`. For those values it is shaped like
+   `/issue --prepare --from <source> --maturity <maturity>` and is runnable. When `handoff_maturity` is `pending-confirmation`, empty, or starts with `unknown:` (unrecognized declared value or non-delimited frontmatter carrier), `suggested_command` is a non-routable prose diagnostic with no durable route and is NEVER a runnable command — stop, show the diagnostic, and have the declaring artifact's frontmatter fixed; do not route.
 7. Review the prepared issue draft before mutation.
 8. Use `issue create-prepared` only after confirmation.
 
@@ -95,6 +96,8 @@ A declared frontmatter `maturity` in an off-chain artifact's own frontmatter win
 - `docs/plans/` or `docs/reviews/` -> `plan-ready`
 - `docs/work-sessions/` or branch refs -> `resume-ready`
 - explicit preserve/defer language -> `deferred-context` when the user says execution should wait
+
+Beyond these, two fail-closed states carry no route: an empty declared value, and an `unknown:`-prefixed sentinel carrying an unrecognized value or a declaration in a non-delimited frontmatter carrier (see `saga-spec.md` §9 and `DECISIONS.md` `{#913-maturity-unknown-sentinel}`). All three non-vocabulary shapes (`pending-confirmation`, empty, `unknown:`-prefixed) mean stop — never route.
 
 ## Recipient Guidance
 

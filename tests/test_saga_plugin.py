@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.149.0"  # W10 (sdlc#91): office-hours + ideate state and
+    assert plugin_json["version"] == "0.150.0"  # W10 (sdlc#91): office-hours + ideate state and
     # test the Intake no-issue-creation boundary; successor to W8 c2's (sdlc#89) Verify-precondition 0.147.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
@@ -4008,6 +4008,44 @@ def test_loop_pending_confirmation_routes_to_brainstorm(tmp_path: Path) -> None:
     # Also verify parse_issue actually returns it via real path
     body = "### Handoff maturity\npending-confirmation\n"
     assert mod.extract(body)["handoff"]["maturity"] == "pending-confirmation"
+
+
+def test_handoff_and_loop_skills_use_positive_routable_vocabulary_gate() -> None:
+    """fix-4c/fix-b9 (API-10/AM-07/CORR-11/AM-08): both envelope consumers branch POSITIVELY.
+
+    The repair widened `handoff_maturity` to three non-vocabulary shapes (pending-confirmation,
+    empty, unknown:-prefixed), all non-routable. The agent-facing skills must state the positive
+    routable vocabulary and name all three stop states — a future edit reverting to a
+    "not pending-confirmation" unconditional route must go red here.
+    """
+    handoff_skill = _read(PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md")
+    loop_skill = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
+
+    # Handoff step 6: positive routing rule naming the routable vocabulary…
+    assert (
+        "ONLY when `handoff_maturity` is one of the routable vocabulary values" in handoff_skill
+    ), "handoff step 6 must gate on the positive routable vocabulary, not a single negation"
+    for value in (
+        "idea-ready",
+        "requirements-ready",
+        "plan-ready",
+        "resume-ready",
+        "deferred-context",
+    ):
+        assert value in handoff_skill, f"handoff skill must name routable value {value}"
+    # …and name all three non-routable shapes as a stop.
+    for shape in ("pending-confirmation", "unknown:", "empty"):
+        assert shape in handoff_skill, f"handoff skill must name the non-routable shape {shape}"
+    assert "NEVER a runnable command" in handoff_skill
+
+    # Loop 4.2: same positive form.
+    assert "ONLY when the maturity is one of the routable vocabulary values" in loop_skill
+    assert "`unknown:`-prefixed" in loop_skill and "never a runnable command" in loop_skill
+    # Loop 0.2 maturity routing table must carry the sentinel stop row.
+    assert "empty or `unknown:`-prefixed" in loop_skill
+
+    # The Maturity list in the handoff skill must document the two added states.
+    assert "two fail-closed states" in handoff_skill
 
 
 def test_unrecognized_maturity_fails_closed_and_vocabularies_synced(tmp_path: Path) -> None:

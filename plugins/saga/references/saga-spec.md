@@ -311,7 +311,11 @@ user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing. `HANDOFF
 implemented in `plugins/saga/scripts/handoff_envelope.py`. Frontmatter `maturity` must be an
 unindented top-level `maturity:` key inside YAML delimited by `---` lines; indented nested keys are
 ignored. An unrecognized non-empty or empty declared maturity fails closed with no durable route and a
-diagnostic, rather than falling through to the path rule.
+diagnostic, rather than falling through to the path rule. The field's runtime domain is consequently
+NOT closed at the six values: `infer_maturity` may also return the empty string or an
+`unknown:<raw>` sentinel carrying the unrecognized raw value (bounded to 120 characters), the two
+fail-closed shapes recorded in `DECISIONS.md` `{#913-maturity-unknown-sentinel}` and specified for
+consumers in §9. Consumers MUST route on the vocabulary values only and stop on the sentinel shapes.
 
 Shaping is an Operations board Status, not a Saga lifecycle phase, not a Saga command, and not an automatic consequence of any Saga capability completing. Mission Control is the only routine writer of that field. Cross-reference `plugins/saga/skills/plan/SKILL.md` §0.6, which already states the same derivation boundary, and note that Office Hours' lowercase "discovery / shaping" phrasing is ordinary English for its own activity, unrelated to the board column (the lifecycle-consistency check pins those exact phrases mechanically).
 
@@ -492,6 +496,14 @@ directory. (The cached `branch`/`head_sha` may be stale — that is fine, git is
   that always holds a runnable slash command to one that can hold a non-routable prose diagnostic when
   `handoff_maturity` is `pending-confirmation` or unrecognized — consumers must branch on
   `handoff_maturity` before trusting `suggested_command`.)
+- **Handoff-maturity field contract (part of the envelope surface).** `handoff_maturity` holds one of
+  the six `HANDOFF_MATURITIES` values (§4), the empty string (frontmatter declared the key but left it
+  blank), or an `unknown:` sentinel prefixed to the unrecognized raw value, bounded to 120 characters
+  (design record: `DECISIONS.md` `{#913-maturity-unknown-sentinel}`). For all three non-vocabulary
+  shapes `suggested_command` is non-routable prose; the process still exits zero, so a consumer typed
+  against the closed vocabulary MUST detect the sentinel shapes by prefix/value, not by exit code.
+  Routing `suggested_command` while the value is empty, `unknown:`-prefixed, or
+  `pending-confirmation` is an error — stop and fix the declaring artifact's frontmatter instead.
 
 ---
 

@@ -162,10 +162,12 @@ def test_readiness_is_derived_not_stored() -> None:
     }
     assert "docs/specs/" in maturity["values"]["requirements-ready"]["from"]
     assert "docs/brainstorms/" in str(maturity["values"]["pending-confirmation"]["from"])
-    assert set(maturity["values"]["pending-confirmation"]["consumed_by"]) == {
-        "/brainstorm",
-        "/resume",
-    }
+    # consumed_by is the single routing destination (matches the dispatch table row);
+    # /resume reads the value but routes onward, so it is recorded under read_by, not
+    # consumed_by — the assertion is a superset check so adding a consumer needs no
+    # test edit (AM-10).
+    assert set(maturity["values"]["pending-confirmation"]["consumed_by"]) >= {"/brainstorm"}
+    assert "/brainstorm" in set(maturity["values"]["pending-confirmation"]["consumed_by"])
 
 
 def test_required_scenarios_pairs_and_visual_inventory_are_present() -> None:
@@ -234,4 +236,25 @@ def test_generated_visual_assets_match_model() -> None:
             "uv run python plugins/saga/scripts/render_docs_visuals.py"
         )
         assert f'<title id="title">{visual["title"]}</title>' in svg
+
+
+def test_ladder_renderer_rows_equal_model_maturity_values() -> None:
+    """CORR-12: the state-readiness ladder's maturity rows must equal the model's vocabulary.
+
+    The renderer's row list is separate from the model's maturity map, so a new maturity
+    value added to the model without a renderer row produces a diagram that disagrees with
+    the very document embedding it. This guard compares the row labels against the model so
+    the next vocabulary change fails here instead of shipping a stale asset.
+    """
+    model = _load_model()
+    renderer = _load_renderer()
+    rendered = renderer.render_all(model)
+    svg = rendered["state-readiness-ladder"]
+
+    model_values = set(model["maturity"]["values"])
+    for value in model_values:
+        assert value in svg, (
+            f"ladder SVG is missing maturity row {value!r}; add it to "
+            "render_docs_visuals.py's maturity_rows and regenerate the asset"
+        )
         assert "Do not edit by hand" in svg

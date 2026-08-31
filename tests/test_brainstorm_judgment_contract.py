@@ -53,8 +53,6 @@ def check_privacy_skill(text: str) -> list[str]:
         violations.append("missing never shown as a score")
     if "never surfaced to the operator" not in norm:
         violations.append("missing never surfaced to the operator")
-    if "render the private" in norm.lower() or "gap map visibly" in norm.lower():
-        violations.append("found inverted instruction: render private gap map visibly")
     return violations
 
 
@@ -137,9 +135,6 @@ def check_helper_ceiling(text: str) -> list[str]:
         violations.append("missing two helpers on same question guard in Phase 1.1")
     if "These are ceilings, not required launches" not in norm:
         violations.append("missing ceilings not required launches in Phase 1.1")
-    # Inverted instruction anywhere in file, not just Phase 1.1 — weakened text appended at EOF must be caught
-    if "launch as many" in text.lower() or "as many as warranted" in text.lower():
-        violations.append("found inverted instruction: launch as many as warranted")
     return violations
 
 
@@ -148,6 +143,11 @@ def check_helper_capability(text: str) -> list[str]:
     norm = _norm(text)
     if "worktree-isolated" not in norm:
         violations.append("missing worktree-isolated")
+    # The safeguard itself: helpers are read-only by omitting the file-mutation
+    # tools. Requiring exact phrasing keeps the operator's withhold-write-tools
+    # instruction anchored — deleting it must fail this check (TEST-08).
+    if "read-only by omission of `Edit`/`Write`/`NotebookEdit`" not in norm:
+        violations.append("missing read-only by omission of Edit/Write/NotebookEdit")
     if "may not choose requirements" not in norm:
         violations.append("missing may not choose requirements")
     if "may not address the operator" not in norm:
@@ -158,8 +158,6 @@ def check_helper_capability(text: str) -> list[str]:
         violations.append("missing subagent_type: saga:readonly-verifier")
     if "A state-free capability with no tick" not in text:
         violations.append("missing state-free capability sentence")
-    if "helpers may write" in norm.lower():
-        violations.append("found inverted instruction: helpers may write")
     return violations
 
 

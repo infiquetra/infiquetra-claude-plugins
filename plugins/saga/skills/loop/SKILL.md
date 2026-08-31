@@ -112,6 +112,7 @@ stdin and emits the `handoff` object). Use `handoff.maturity` for maturity routi
 - `idea-ready` / `requirements-ready` -> the next command is `/plan` (no plan exists yet).
 - `plan-ready` / `resume-ready` -> the next command is `/work` (a plan already exists).
 - `pending-confirmation` -> the next command is `/brainstorm` (boundary recorded but unconfirmed, dispatch-table `pending-confirmation` row).
+- empty or `unknown:`-prefixed -> no route: the declaring artifact's frontmatter fails closed (unrecognized value, blank value, or non-delimited carrier). Stop and show the diagnostic; never route on a sentinel.
 
 The parsed `flags` (`has_security`, `has_infra`, `has_api`) feed the hard test-gate check (Phase 2)
 and the backend recommendation when `/loop` itself drives (Phase 3).
@@ -351,7 +352,7 @@ When routing to `/handoff`, set `--status handed-off` on the tick and build the 
 python3 plugins/saga/scripts/handoff_envelope.py --source <docs/...path> --reason "<why>"
 ```
 
-The envelope's `suggested_command` is `/issue --prepare --from <source> --maturity <maturity>` when the maturity is routable; when `handoff_maturity` is `pending-confirmation` it is a non-routable prose sentence with no durable route. `/loop` builds the envelope; `mission-control` owns the
+The envelope's `suggested_command` is `/issue --prepare --from <source> --maturity <maturity>` ONLY when the maturity is one of the routable vocabulary values (`idea-ready`, `requirements-ready`, `plan-ready`, `resume-ready`, `deferred-context`); when `handoff_maturity` is `pending-confirmation`, empty, or `unknown:`-prefixed it is a non-routable prose diagnostic with no durable route — never a runnable command; stop and fix the frontmatter. `/loop` builds the envelope; `mission-control` owns the
 issue artifact.
 
 ### 4.3 Dispatch

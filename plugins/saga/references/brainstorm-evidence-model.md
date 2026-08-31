@@ -19,14 +19,21 @@ this model. Each verdict is a fit decision, not a reimplementation.
 ## Layer 1 — Deterministic contract boundary, mechanically enforced
 
 `tests/test_brainstorm_evidence_model.py` walks the AST of every
-`tests/test_brainstorm_*.py` module. Scope: the check catches a question-shaped string literal appearing inside an
-`assert` statement, and it does not see literals held in module constants,
-helper predicates, `parametrize` decorators, or JSON data files. It collects string literals that
-appear inside `assert` statements and fails on:
+`tests/test_brainstorm_*.py` module. Scope: the check collects every question-shaped string
+constant **module-wide** — module-level `Assign` targets, helper-function return values,
+`parametrize` decorator arguments, literals inside `assert` statements, and any other string
+literal — so the earlier escape hatches (a question held in a module constant, returned by a
+helper predicate, or fed through `parametrize`) are detected, not missed. Docstrings are the
+one deliberate exclusion (the visitor proves a node is a docstring by parent shape before
+skipping it), plus the module's own definition of question-shapedness (the `_INTERROGATIVES`
+tuple and `_is_question_shaped`). The remaining blind spot is deliberate: JSON data files
+(such as `tests/data/brainstorm/`) are not Python source, so the walk does not see them —
+those cases are authored design data, not test assertions. The check fails on:
 
-- any literal that ends with `?` or opens with an interrogative
-  (`what`, `how`, `why`, `who`, `when`, `which`, `can you`, `could you`);
-- any `assert` that compares an ordered sequence (list/tuple literal) of
+- any question-shaped string constant outside a docstring — one that ends with `?` or opens
+  with an interrogative (`what`, `how`, `why`, `who`, `when`, `which`, `can you`, `could you`)
+  — wherever it appears in the module;
+- any `assert` whose comparison involves an ordered sequence (list/tuple literal) of
   two or more such question-shaped literals.
 
 The walk is `ast.NodeVisitor` only; no substring search over the file.
@@ -61,8 +68,9 @@ define the idea seed, the two independent variables, the material
 dimensions, and the expected outcome per dimension. That is design input,
 not evidence.
 
-**Captured transcripts are optional and additive.** Where a checkpoint
+**Captured transcripts are optional and additive.** Where a parked-checkpoint run
 transcript exists, a future `grade()` would run against it and the case would record
+`transcript: captured`. Where none exists, the case records
 `transcript: captured`. Where none exists, the case records
 `transcript: none` and the offline suite proves only what it can honestly prove today — shape, coverage, per-dimension reporting, no-aggregate, and gating. Calibration agreement will be proven when a grader exists; until then the offline suite proves the calibration data shape only. A missing failure-mode transcript never
 blocks U3.
@@ -109,7 +117,9 @@ given brainstorm was good and it does not prove any transcript was graded — La
 stay after the confirmed artifact, in Document Review or a narrow
 post-write validator, never in the live dialogue. A green scenario run
 without a captured transcript proves the case set's shape, not the quality of a conversation that was never
-captured. The AST check's bounded scope is as described in Layer 1.
+captured. The AST check's scope is as described in Layer 1: question-shaped string constants are
+detected module-wide across the brainstorm test modules; docstrings, the checker's own
+definitions, and non-Python data files stay outside it.
 
 ## Offline and side-effect-free (R23)
 

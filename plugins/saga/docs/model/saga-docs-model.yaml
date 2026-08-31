@@ -44,7 +44,8 @@ maturity:
       consumed_by: [/handoff]
     pending-confirmation:
       from: [docs/brainstorms/ frontmatter pending-confirmation]
-      consumed_by: [/brainstorm, /resume]
+      consumed_by: [/brainstorm]
+      read_by: [/resume]
   source_refs:
     - plugins/saga/references/saga-spec.md
     - plugins/saga/skills/handoff/SKILL.md

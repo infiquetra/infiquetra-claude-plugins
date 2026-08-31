@@ -21,13 +21,13 @@
 
 ## 2026-08-30
 
-### A volatile line count with no live target must be recorded, not manufactured  {#916-dispatch-line-count-no-target}
+### A hand-maintained count in a Markdown table drifts silently; delete it, do not refresh it  {#916-dispatch-line-count-no-target}
 
-**Context.** The design record described a volatile hand-maintained Brainstorm source-line count in a dispatch table. At Saga 0.148.0 the target does not exist: `plugins/saga/references/sandbox-spawn-sites.md` has no Brainstorm row and no `~line` Brainstorm surface exists, verified at `3b2b7083`.
+**Context.** The design record described a volatile hand-maintained Brainstorm source-line count in a dispatch table. The `342L` count in `plugins/saga/skills/loop/references/dispatch-table.md` was a live — and already stale — target, not a missing one: Brainstorm was 371 lines at `3b2b7083` and 452 at this HEAD, so the recorded count was wrong the whole time it was quoted.
 **Evidence.** Preflight F1 at `3b2b7083`; `plugins/saga/skills/loop/references/dispatch-table.md:25` carried a stale `342L` count (Brainstorm was 371 lines at `3b2b7083`, 452 at this HEAD); `grep -rn "~line" plugins/saga/references/sandbox-spawn-sites.md` shows four rows (code-review, qa, investigate, resume) and no brainstorm; `grep -rn "brainstorm" plugins/saga/skills/brainstorm/` shows no line reference. The duplicated lifecycle block F2 appears in four skills (ideate L15, loop L26, office-hours L27, plan L19), not three — Strategy has only inline mentions, founder-review a variant.
-**Mechanism.** A volatile count that never existed cannot be removed — manufacturing a removal would be a vacuous edit that hides the finding. The correct fix is to record the finding and retire the count concept, while pinning the lifecycle ordering mechanically rather than by prose edit (KTD6).
+**Mechanism.** A hand-maintained parenthetical count inside a Markdown table has no mechanism updating it when the counted file changes — nothing fails when it drifts, and a reader who trusts it lands on the wrong line. The preflight's mistake was checking the count against the wrong file (`sandbox-spawn-sites.md` instead of the dispatch table where the count actually lived), which let it report "no live target" and nearly manufacture a vacuous removal. The count did exist; it was merely already wrong.
 **Fix.** Recorded F1 and F2 in `LEARNINGS.md` and commit message; left `sandbox-spawn-sites.md` Brainstorm surface untouched (one new verifier row added by B2 for different reason); deleted the stale parenthetical line counts from the dispatch table's Target column; added mechanical `tests/test_saga_lifecycle_consistency.py` discovering block by shape; added Shaping distinction once in `saga-spec.md`.
-**Generalizable rule.** When a design record names a volatile value, verify it against the live tree before acting — a count with no live target is a finding to record, not a line to delete.
+**Generalizable rule.** A hand-maintained count in a Markdown table drifts silently — verify it against the live tree, and delete it rather than refresh it; before declaring a named value has "no live target", grep for the target under its actual name, because checking the wrong file converts a real stale target into a confident false negative.
 **Refs.** Issue #916 (B4); F1/F2; run plan §U4.
 
 ### Authored cases are design input; mislabelled captured transcripts are the failure  {#915-evidence-authored-vs-captured}
@@ -53,7 +53,7 @@
 **Context.** Brainstorm instructed a `gate_id` record "on the next `saga.py save` call" while never performing that save, so the measurement vanished with no observable failure and no demonstrated consumer.
 **Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:46-50` at `5660c719`; `plugins/saga/references/gate-divergence-instrumentation.md:65` still listed `brainstorm-<decision>` as a gate example; production lint `lint_gate_absence_contract.py` failed when the marker was deleted in a scratch copy (F3).
 **Mechanism.** A telemetry consumer tied to a write boundary the producer never hits is not optional telemetry but a leaked promise — the section-scoped lint makes deleting the marker a second failure, so the telemetry paragraph and its id had to be separated.
-**Fix.** Removed the telemetry paragraph, kept and repointed the marker to `brainstorm-interrogation-gate` (KTD2), and removed the `brainstorm-<decision>` gate example. Added the durable `pending-confirmation` checkpoint and frontmatter-aware `infer_maturity` (KTD7) so an unconfirmed artifact no longer hands off as `requirements-ready`.
+**Fix.** Removed the telemetry paragraph, kept and repointed the marker to `brainstorm-interrogation-gate` (KTD2), and removed the `brainstorm-<decision>` gate example. Added the durable `pending-confirmation` artifact and frontmatter-aware `infer_maturity` (KTD7) so an unconfirmed artifact no longer hands off as `requirements-ready`.
 **Generalizable rule.** When a measurement rides a write path its producer never exercises, delete the instruction rather than deferring it — and keep any lint coverage that was sharing the same marker.
 **Refs.** Issue #913 (B1); KTD1/KTD2/KTD7; run plan `docs/plans/2026-08-30-issue-912-saga-brainstorm-improvement-run-plan.md` §U1.
 
@@ -8604,6 +8604,8 @@ and harness proof `plugins/agy/docs/harness-proof.md`.
 **Refs.** DECISIONS [#outcome-decompose-worktree-stance](DECISIONS.md#outcome-decompose-worktree-stance); the same "the system that owns the resource is the guard, degrade-safe" lesson as [#outcome-merge-queue-stance](DECISIONS.md#outcome-merge-queue-stance) (U6). Sibling to the commit-before-verify discipline in [[verify-agent-git-checkout-clobber]].
 
 ### An adversarial-verify agent ran destructive git on the uncommitted working tree and clobbered live work  {#verify-agent-git-checkout-clobber}
+
+<!-- Anchored citation target: sandbox-spawn-sites.md links here for the verifier-clobber incident. -->
 
 **Context.** During the OutcomeOrchestrator U4 verify ([[outcome-dispatcher-seam-stance]]), the build vehicle was build-inline → adversarial-verify Workflow → fold findings → commit. The U4 changeset was still **uncommitted** when the verify ran.
 

@@ -24,12 +24,13 @@ Stored saga ticks live under git-ignored `.claude/saga/`. The append-only tick l
 |--------|------------------|-------------|
 | `docs/ideation/` | `idea-ready` | `/plan` |
 | `docs/brainstorms/` | `requirements-ready` | `/plan` |
-| `docs/brainstorms/` frontmatter `pending-confirmation` | `pending-confirmation` | `/brainstorm` (no durable route) |
+| `docs/brainstorms/` frontmatter `pending-confirmation` | `pending-confirmation` | `/brainstorm` (no durable route); `/resume` reads it and routes onward |
 | `docs/specs/` | `requirements-ready` | `/plan` or `/handoff` |
 | `docs/plans/` | `plan-ready` | `/work` |
 | `docs/reviews/` | `plan-ready` | `/work` |
 | `docs/work-sessions/` | `resume-ready` | `/work` |
 | branch refs | `resume-ready` | `/work` |
+| explicit preserve/defer language | `deferred-context` | `/handoff` (clarify intent before routing) |
 
 The `/spec` case is the most important trap: `docs/specs/` is `requirements-ready`, but `spec` is not a stored lifecycle phase.
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import os
 import sys
+import tempfile
 from pathlib import Path
 from types import ModuleType
 
@@ -184,6 +187,39 @@ def test_root_honoured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
     )
     assert envelope["handoff_maturity"] == "pending-confirmation"
+    # The decoy file lives inside the declared root (tmp_path/"other"), so by SEC-01
+    # resolution it IS a trusted root-subtree path and its own frontmatter wins.
+    assert (
+        HE.infer_maturity(str(decoy_dir / "2026-08-30-topic-requirements.md"), root=tmp_path)
+        == "requirements-ready"
+    )
+    # The true cwd-decoy case (SEC-01): cwd OUTSIDE the declared root, absolute path under
+    # that cwd, same relative subpath — the untrusted absolute must re-anchor to the ROOT's
+    # artifact, and the root-relative value ("pending-confirmation") must win with no route.
+    # The decoy cwd is created inside a SEPARATE TemporaryDirectory (deleted afterward), so
+    # cwd is never a subtree of the declared root — a cwd under tmp_path would be a trusted
+    # root-subtree path instead.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as outside_raw:
+        outside = Path(outside_raw).resolve() / "cwd-root"
+        (outside / "docs" / "brainstorms").mkdir(parents=True)
+        (outside / "docs" / "brainstorms" / "2026-08-30-topic-requirements.md").write_text(
+            "---\nmaturity: requirements-ready\n---\n\nBody\n", encoding="utf-8"
+        )
+        monkeypatch.chdir(outside)
+        assert (
+            HE.infer_maturity(
+                str(outside / "docs/brainstorms/2026-08-30-topic-requirements.md"), root=tmp_path
+            )
+            == "pending-confirmation"
+        )
+        envelope_outside = HE.build_handoff_envelope(
+            str(outside / "docs/brainstorms/2026-08-30-topic-requirements.md"), root=tmp_path
+        )
+        assert envelope_outside["handoff_maturity"] == "pending-confirmation"
+        assert "/issue --prepare" not in envelope_outside["suggested_command"]
+    monkeypatch.chdir(tmp_path)
+    # Sanity: an absolute path INSIDE the declared root still reads its frontmatter.
+    assert HE.infer_maturity(str(target), root=tmp_path) == "pending-confirmation"
     # Also direct check: infer with root vs without
     assert HE.infer_maturity(str(target)) == "pending-confirmation"
 
@@ -226,7 +262,9 @@ def test_unrecognized_maturity_fails_closed(tmp_path: Path) -> None:
 
 
 def test_maturity_vocabularies_in_sync() -> None:
-    # Drift guard: every code-level maturity vocabulary must be superset of HANDOFF_MATURITIES
+    # Drift guard: parse_issue vocabulary must EQUAL HANDOFF_MATURITIES, saga-spec prose must
+    # carry every value, and mission-control's consumer vocabulary is checked against an
+    # explicit exclusion map (API-07) — see the block below for the recorded exclusion.
     handoff_mats = set(HE.HANDOFF_MATURITIES)  # type: ignore[attr-defined]
     # parse_issue.py vocabulary
     import importlib.util
@@ -247,3 +285,84 @@ def test_maturity_vocabularies_in_sync() -> None:
     assert "pending-confirmation" in spec_text
     for val in handoff_mats:
         assert val in spec_text, f"saga-spec missing {val}"
+    # Third vocabulary (AM-08/API-07): mission-control's prepared-issue choices tuple,
+    # loaded here directly so a future value added to HANDOFF_MATURITIES without adding it
+    # here (or recording an exclusion) trips this guard. `pending-confirmation` is the one
+    # deliberate exclusion, with its reason recorded in handoff_maturity_exclusions.
+    mc_spec = importlib.util.spec_from_file_location(
+        "mc_sdlc_check", ROOT / "plugins/mission-control/scripts/sdlc_manager.py"
+    )
+    assert mc_spec is not None and mc_spec.loader is not None
+    mc = importlib.util.module_from_spec(mc_spec)
+    sys.modules[mc_spec.name] = mc
+    with pytest.MonkeyPatch.context() as mp, open(Path(os.devnull), "w") as devnull:
+        mp.setattr(sys, "argv", ["sdlc_manager.py", "--help"])
+        with contextlib.redirect_stdout(devnull), contextlib.suppress(SystemExit):
+            mc_spec.loader.exec_module(mc)
+    mc_values = set(mc._HANDOFF_MATURITY_CHOICES)  # type: ignore[attr-defined]
+    handoff_maturity_exclusions: dict[str, str] = {
+        "pending-confirmation": (
+            "mission-control issue prepare rejects the parked/unroutable maturity with a "
+            "runtime error instead of accepting it (safe direction; tracked for its own add) — "
+            "see plugins/mission-control/scripts/sdlc_manager.py _HANDOFF_MATURITY_CHOICES"
+        )
+    }
+    for val in handoff_mats - set(handoff_maturity_exclusions):
+        assert val in mc_values, (
+            f"mission-control handoff vocab missing {val!r}; update the exclusion map or "
+            "mission-control's _HANDOFF_MATURITY_CHOICES"
+        )
+    for excluded, reason in handoff_maturity_exclusions.items():
+        assert excluded in handoff_mats, (
+            f"exclusion {excluded!r} no longer exists in HANDOFF_MATURITIES: {reason}"
+        )
+
+
+def test_non_delimited_frontmatter_carrier_fails_closed(tmp_path: Path) -> None:
+    """AU-09: a maturity declared OUTSIDE a delimited YAML block must fail closed.
+
+    A bullet-carrier document under docs/brainstorms/ declaring pending-confirmation used to
+    fall through to the path rule and return requirements-ready with a live route — the more
+    dangerous input got the softer treatment than a mere typo.
+    """
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-topic-requirements.md"
+    target.write_text(
+        "# Some doc\n\n- date: 2026-08-30\n- maturity: pending-confirmation\n\nBody\n",
+        encoding="utf-8",
+    )
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
+    )
+    assert envelope["handoff_maturity"].startswith("unknown:")
+    assert "/issue --prepare" not in envelope["suggested_command"]
+    # A file with NO maturity mention anywhere keeps the legacy path-default behaviour.
+    plain = brainstorms / "2026-08-30-plain-requirements.md"
+    plain.write_text("# No maturity here\n\nJust prose.\n", encoding="utf-8")
+    assert HE.infer_maturity(str(plain)) == "requirements-ready"
+
+
+def test_bom_prefixed_frontmatter_still_fails_closed(tmp_path: Path) -> None:
+    """API-09/CORR-09: a byte-order mark must not make a declared maturity invisible."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-topic-requirements.md"
+    target.write_bytes(b"\xef\xbb\xbf---\nmaturity: pending-confirmation\n---\n\nBody\n")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
+    )
+    assert envelope["handoff_maturity"] == "pending-confirmation"
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_quoted_declared_maturity_resolves(tmp_path: Path) -> None:
+    """TEST-09: quote-stripping is load-bearing — a quoted valid value must still route."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    double = brainstorms / "2026-08-30-double-requirements.md"
+    double.write_text('---\nmaturity: "pending-confirmation"\n---\n\nBody\n', encoding="utf-8")
+    assert HE.infer_maturity(str(double)) == "pending-confirmation"
+    single = brainstorms / "2026-08-30-single-requirements.md"
+    single.write_text("---\nmaturity: 'pending-confirmation'\n---\n\nBody\n", encoding="utf-8")
+    assert HE.infer_maturity(str(single)) == "pending-confirmation"

@@ -227,16 +227,18 @@ def render_state_readiness_ladder(model: dict[str, Any]) -> str:
     maturity_rows = [
         ("docs/ideation/", "idea-ready", "/plan"),
         ("docs/brainstorms/ + docs/specs/", "requirements-ready", "/plan"),
+        ("frontmatter pending-confirmation", "pending-confirmation", "/brainstorm"),
+        ("preserve/defer language", "deferred-context", "/handoff"),
         ("docs/plans/ + docs/reviews/", "plan-ready", "/work"),
         ("docs/work-sessions/ + branch refs", "resume-ready", "/work"),
     ]
     y = 285
     for source, maturity, consumer in maturity_rows:
-        _box(parts, 800, y, 660, 82)
-        _text(parts, 830, y + 34, source, fill="muted")
-        _text(parts, 1115, y + 34, maturity, cls="label", fill="green")
-        _text(parts, 1370, y + 34, consumer, cls="label", fill="blue")
-        y += 105
+        _box(parts, 800, y, 660, 62)
+        _text(parts, 830, y + 25, source, fill="muted")
+        _text(parts, 1115, y + 25, maturity, cls="label", fill="green")
+        _text(parts, 1370, y + 25, consumer, cls="label", fill="blue")
+        y += 76
 
     _box(parts, 760, 760, 770, 70, fill="panel", stroke="amber")
     _text(

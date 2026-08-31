@@ -32,10 +32,21 @@ HANDOFF_MATURITIES = (
 
 def _read_frontmatter_maturity(path: Path) -> str | None:
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
         return None
     if not text.startswith("---"):
+        # Non-delimited carrier (AU-09): a `maturity:` mention in the first lines
+        # means the document declares a maturity the delimited-block reader cannot
+        # honour — fail closed with the unknown sentinel naming the carrier, rather
+        # than silently routing on the path default. No mention at all keeps the
+        # legacy path-default behaviour.
+        for line in text.splitlines()[:10]:
+            stripped = line.strip()
+            if stripped.lstrip("-*").strip().startswith("maturity:"):
+                raw = stripped.split(":", 1)[1].strip() if ":" in stripped else ""
+                raw = raw.strip("\"'").strip()
+                return f"unknown:{raw}" if raw else "unknown:"
         return None
     end = text.find("\n---", 3)
     if end == -1:
@@ -67,9 +78,27 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
     # Frontmatter-declared maturity wins when the source resolves to an existing file
     # that declares one (KTD7) — so a pending-confirmation checkpoint under
     # docs/brainstorms/ no longer hands off as requirements-ready.
-    # Single root-relative candidate: explicit root always wins over cwd (fix-28/0d).
+    # Candidate resolution (SEC-01, fix-c23): the caller-declared root wins over the
+    # process cwd in BOTH forms. A trusted candidate is resolved under `base`
+    # (root when declared, else cwd) and — for an absolute source under a DIFFERENT
+    # declared root — never read at all. pathlib's `/` silently keeps an absolute
+    # right-hand side, so `base / normalized` would resurrect the decoy path; the
+    # untrusted-absolute arm strips to the root-relative subpath first, so the
+    # declared root's artifact wins and the path rule judges the same subpath.
     base = root or Path.cwd()
-    candidate = Path(normalized) if Path(normalized).is_absolute() else base / normalized
+    absolute = Path(normalized).is_absolute()
+    if absolute and root is not None and not Path(normalized).is_relative_to(base.resolve()):
+        # Untrusted absolute input (root != cwd): re-anchor on the declared root,
+        # keeping only the path's subpath below its own SOURCE marker directory
+        # (docs/brainstorms/..., docs/plans/..., ...).
+        parts = Path(normalized).parts
+        for marker in ("ideation", "brainstorms", "specs", "plans", "reviews", "work-sessions"):
+            if marker in parts:
+                idx = parts.index(marker)
+                normalized = "/".join(parts[idx - 1 :])
+                break
+        absolute = False
+    candidate = Path(normalized) if absolute else base / normalized
     if candidate.is_file():
         declared = _read_frontmatter_maturity(candidate)
         if declared is not None:
@@ -165,6 +194,11 @@ def build_handoff_envelope(
         raise RuntimeError("No handoff source found; provide --source or create a durable artifact")
 
     maturity = infer_maturity(selected_source, root)
+    if maturity.startswith("unknown:"):
+        # Bound the raw author-controlled value so unbounded artifact text cannot
+        # enter the published JSON field (API-12); the diagnostic tail is redundant
+        # with suggested_command, so the bound only ever shortens machine input.
+        maturity = "unknown:" + maturity[len("unknown:") :][:120]
     # Fail-closed for unrecognized/empty maturity (API-03) and pending-confirmation
     if maturity == "pending-confirmation":
         suggested_command = (

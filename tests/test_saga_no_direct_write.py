@@ -36,7 +36,16 @@ a specific false result that was reproduced against the real tree:
 
 The scan root widened with the aim: from ``plugins/saga/`` to the whole of ``plugins/``, minus
 ``plugins/mission-control/``. W7's guard scanned one plugin, which is why Orchestrate's leftover
-writer never failed it (#927: "Orchestrate was missed, not exempted").
+writer never failed it (#927: "Orchestrate was missed, not exempted"). Within each plugin the walk
+is the whole directory and a broad set of suffixes, because a mutation body does not have to live
+in a ``.py`` file under one of six conventional directory names to be loaded and driven by one.
+
+**What this guard does not claim.** It is a text scan, so a mutation name assembled at runtime —
+``"update" + "ProjectV2ItemFieldValue"`` — evades it, and no lexical form can fix that. What it
+does is make an accidental reintroduction impossible to land and a deliberate evasion impossible
+to write innocently: the evading form has no reason to exist, so it reads as what it is in review.
+The seam patterns are invocations rather than mentions for the same reason — a file must not be
+able to excuse itself with a comment.
 
 Offline: pure filesystem + source scanning plus the REAL certificate/controller/board_progression
 modules loaded by path (the single-writer-guard's house pattern). No git, no GitHub, no gh.
@@ -100,12 +109,22 @@ DIRECT_WRITE_SIGNATURES: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
 )
 
-# The submission seams: a file that names one of these routes its move through Mission Control's
+# The submission seams: a file that USES one of these routes its move through Mission Control's
 # executor rather than composing its own write. ``reconcile_controller`` is the door orchestrate
 # drives as a subprocess; ``authorize_and_write`` / ``default_board_writer`` are the in-process
 # equivalents that /outcome and /work use.
+#
+# Every alternative below is an INVOCATION or an IMPORT, never a bare mention. A pattern that
+# matched the name anywhere in the text would let a module exempt itself with a comment — a line
+# reading "see reconcile_controller.py for the provenance of this" would satisfy it while the file
+# went on to compose its own write. Naming a door is not walking through it.
 SUBMISSION_SEAM_RE = re.compile(
-    r"reconcile_controller|board_progression|authorize_and_write|default_board_writer"
+    r"authorize_and_write\s*\("
+    r"|default_board_writer\s*\("
+    r"|_reconcile_call\s*\("
+    r"|reconcile_controller_path\s*\("
+    r"|\bimport\s+(?:board_progression|reconcile_controller)\b"
+    r"|\bfrom\s+(?:board_progression|reconcile_controller)\s+import\b"
 )
 
 # The fenced submission a skill is now REQUIRED to carry at a lifecycle boundary.
@@ -144,23 +163,33 @@ CERT = _load("reversibility_certificate")
 # Shipped sources only: any path under a nested checkout or run artifact is out of scope.
 _EXCLUDED_SEGMENTS = frozenset({".claude", "agy", "runs", "worktree", "__pycache__"})
 
-# The shipped source root names in a plugin (markdown included — skills are executable prose).
-_SOURCE_DIR_NAMES = ("scripts", "skills", "commands", "agents", "hooks", "references")
+# Every suffix a write could hide in. Markdown is included because skills are executable prose;
+# shell, JSON, GraphQL and plain text are included because a mutation body or a hand-built option
+# payload does not have to live in a ``.py`` file to be loaded and driven by one.
+_SOURCE_SUFFIXES = frozenset(
+    {".py", ".md", ".sh", ".bash", ".json", ".graphql", ".gql", ".txt", ".yaml", ".yml", ".toml"}
+)
 
 
 def _iter_plugin_sources(plugin_dir: Path) -> list[Path]:
-    """Every shipped source file in ONE plugin, vendored/nested artifacts excluded."""
+    """Every shipped source file in ONE plugin, vendored/nested artifacts excluded.
+
+    The walk is the WHOLE plugin directory, not a list of blessed subdirectory names. An earlier
+    form walked only ``scripts``/``skills``/``commands``/``agents``/``hooks``/``references``, which
+    quietly hid real shipped code: ``plugins/redis-channel/server/`` alone carries eleven production
+    modules, and every plugin's ``tests/``, ``docs/`` and ``config/`` were invisible too. A guard
+    that calls itself fleet-wide and then skips a directory because of its name is a guard with a
+    hole shaped exactly like the next plugin's layout.
+    """
     files: list[Path] = []
-    for name in _SOURCE_DIR_NAMES:
-        directory = plugin_dir / name
-        if not directory.is_dir():
+    if not plugin_dir.is_dir():
+        return files
+    for path in plugin_dir.rglob("*"):
+        if not path.is_file() or path.suffix not in _SOURCE_SUFFIXES:
             continue
-        for path in directory.rglob("*"):
-            if not path.is_file() or path.suffix not in (".py", ".md"):
-                continue
-            if _EXCLUDED_SEGMENTS & set(path.relative_to(plugin_dir).parts):
-                continue
-            files.append(path)
+        if _EXCLUDED_SEGMENTS & set(path.relative_to(plugin_dir).parts):
+            continue
+        files.append(path)
     return sorted(files)
 
 
@@ -289,6 +318,54 @@ def test_saga_no_direct_write_scan_covers_the_whole_fleet() -> None:
     walked = {Path(str(p.relative_to(PLUGINS_ROOT))).parts[0] for p in _iter_fleet_sources()}
     assert {"saga", "orchestrate"} <= walked, f"the fleet scan missed a plugin: {sorted(walked)}"
     assert EXECUTOR_PLUGIN_DIR not in walked, "Mission Control is the executor and is out of scope"
+
+
+def test_saga_no_direct_write_scan_reaches_beyond_the_conventional_directories() -> None:
+    """The walk is the whole plugin directory, not a blessed list of subdirectory names.
+
+    ``plugins/redis-channel/server/`` carries eleven production modules and every plugin's
+    ``tests/`` holds real code; an earlier form of this scan walked six directory names and saw
+    none of it. Pinned against the real tree so the hole cannot come back by convention.
+    """
+    walked = _iter_fleet_sources()
+    parents = {str(path.relative_to(PLUGINS_ROOT).parent) for path in walked}
+    assert any(part.startswith("redis-channel/server") for part in parents), (
+        "the scan skipped a plugin's non-conventional source directory"
+    )
+    assert any("/tests" in part for part in parents), "the scan skipped plugin-local tests"
+    assert any(path.suffix not in (".py", ".md") for path in walked), (
+        "a mutation body can live in a .sh or .json file the scan must still read"
+    )
+
+
+def test_saga_no_direct_write_a_mere_mention_of_the_seam_does_not_exempt(tmp_path: Path) -> None:
+    """Naming a door is not walking through it.
+
+    A seam pattern matching the module name anywhere in the text lets a file exempt itself with a
+    comment — "see reconcile_controller.py for the provenance of this" — while going on to compose
+    its own write. The seam must be an invocation or an import.
+    """
+    plugins = tmp_path / "plugins"
+    excused = plugins / "orchestrate" / "scripts" / "excused_by_a_comment.py"
+    excused.parent.mkdir(parents=True)
+    excused.write_text(
+        "# See reconcile_controller.py and board_progression.py for the provenance of this\n"
+        "# legacy fallback; unrelated in code.\n"
+        'OP = "set-field-status"\n',
+        encoding="utf-8",
+    )
+    routed = plugins / "orchestrate" / "scripts" / "genuinely_routed.py"
+    routed.write_text(
+        "# no mention of the module name at all, just the call\n"
+        'record = authorize_and_write("set-field-status", "o/r", 1, "Implementing")\n',
+        encoding="utf-8",
+    )
+    assert scan_direct_writes(plugins) == [
+        (
+            "orchestrate/scripts/excused_by_a_comment.py",
+            "names set-field-status with no submission seam",
+        )
+    ]
 
 
 def test_saga_no_direct_write_a_seeded_direct_write_outside_mission_control_is_reported(

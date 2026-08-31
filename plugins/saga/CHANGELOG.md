@@ -15,8 +15,11 @@
   Saga path composes or executes one. `/loop` stays correction-only.
 - **The board move is a pair, and both halves are checked.** `Ready for Active` is a legal `Status`
   on its own, so a `Status`-only submission writes a legal value, reports success, and leaves
-  `Stage` behind — a wrong card with a clean record. Every submission carries both assignments in
-  one `flow set-field` invocation, and every assertion in the suite reads both.
+  `Stage` behind — a wrong card with a clean record. All five lifecycle boundaries carry both
+  assignments in one `flow set-field` invocation, every assertion in the suite reads both, and the
+  mechanism refuses a submission that opts into the pair payload and then carries one assignment.
+  A genuine single-field write keeps the pre-existing `field`/`target_state` form, which is
+  unchanged and stays legal.
 - **A half-applied pair now names which half landed.** Mission Control writes one assignment at a
   time and does not roll the first back, so a `Stage` write can land while `Status` fails.
   Detection always worked — a non-empty `failed` raises, so the exit is non-zero — but

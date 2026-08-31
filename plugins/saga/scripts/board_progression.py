@@ -180,8 +180,17 @@ def normalize_assignments(
     ``payload["field"]`` (defaulting to ``Status``) set to ``target_state``. That fallback is what
     keeps every pre-#927 caller byte-identical, ledger key included.
 
-    A malformed entry raises ``ValueError`` rather than being coerced: a submission that cannot say
-    which field it writes must fail at the seam, never reach GitHub as a guess.
+    A malformed SHAPE raises ``ValueError`` rather than being coerced: a submission that cannot say
+    which field it writes must fail at the seam, never reach GitHub as a guess. (The field and
+    option values themselves are stringified — a run file round-trips them through JSON anyway.)
+
+    **A one-element ``assignments`` list is refused, deliberately, even though the equivalent
+    single-field submission through ``field``/``target_state`` is legal.** The asymmetry is the
+    point: ``assignments`` is the pair API a lifecycle boundary opts into, so one element there is a
+    boundary that dropped half its move — the "wrong card with a clean record" failure, since
+    ``Ready for Active`` is a legal ``Status`` on its own and a Status-only write reports success
+    while ``Stage`` stays put. A caller that genuinely wants a one-field write uses the legacy
+    keys, which is why refusing this costs no existing caller anything.
     """
     pay = payload or {}
     raw = pay.get("assignments")
@@ -189,6 +198,12 @@ def normalize_assignments(
         return [(str(pay.get("field") or "Status"), str(target_state))]
     if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
         raise ValueError(f"assignments must be a list of (field, option) pairs, got {raw!r}")
+    if len(raw) < 2:
+        raise ValueError(
+            f"assignments carries {len(raw)} assignment(s); a lifecycle submission that opts into "
+            "the pair API must carry both halves, or the board is left half-written with a "
+            "success-shaped record. Use the field/target_state keys for a single-field write."
+        )
     assignments: list[tuple[str, str]] = []
     for item in raw:
         if isinstance(item, str) or not isinstance(item, (list, tuple)) or len(item) != 2:

@@ -268,6 +268,82 @@ def test_a_half_applied_pair_fails_and_names_which_half_landed(tmp_path: Path) -
     assert list((tmp_path / "ledger-half-applied").iterdir()) == []
 
 
+def test_the_default_retry_re_submits_the_whole_pair_and_still_names_both_halves(
+    tmp_path: Path,
+) -> None:
+    """The half-applied path under the DEFAULT three attempts, not just the pinned single one.
+
+    ``authorize_and_write`` retries a raising writer, so a genuinely half-applied pair is
+    re-submitted whole: the landed half is rewritten to the value it already holds (a board no-op)
+    and the unlanded half is retried. What must hold is that every attempt carries BOTH assignments
+    — a retry that dropped the landed half would be the two-invocation path by another route — and
+    that the surfaced error still names which half landed.
+    """
+    stdout = _half_applied_stdout()
+    stderr = "RuntimeError: flow set-field failed for 1 of 2 field update(s); see results above"
+    record, runner = _drive(
+        tmp_path,
+        "Awaiting verification",
+        {"assignments": [["Stage", "Verify"], ["Status", "Awaiting verification"]]},
+        label="half-applied-retried",
+        results=[(1, stdout, stderr)] * 3,
+    )
+    assert record["status"] == "failed"
+    assert record["attempts"] == 3
+    assert len(runner.calls) == 3, "the default bounded retry must actually retry"
+    for argv in runner.calls:
+        assert assignments_in(argv) == [
+            ("Stage", "Verify"),
+            ("Status", "Awaiting verification"),
+        ], "a retry must re-submit the whole pair, never just the half that failed"
+    assert "landed: Stage=Verify" in record["error"]
+    assert "NOT landed: Status=Awaiting verification" in record["error"]
+    assert list((tmp_path / "ledger-half-applied-retried").iterdir()) == []
+
+
+def test_a_one_element_assignments_list_is_refused(tmp_path: Path) -> None:
+    """A boundary that opts into the pair API and then drops half its move submits nothing.
+
+    The asymmetry with the legacy ``field``/``target_state`` form is deliberate: that form is what a
+    genuine single-field write uses, and it stays legal so no pre-#927 caller changes. An
+    ``assignments`` list carrying one entry is a lifecycle boundary that lost a half — the exact
+    "wrong card with a clean record" failure, since the Status half alone is a legal write.
+    """
+    ledger = tmp_path / "half-submission"
+    ledger.mkdir()
+    runner = RecordingRunner()
+    writer = BP.default_board_writer(
+        mission_control_root=tmp_path / "mission-control", runner=runner
+    )
+    record = BP.authorize_and_write(
+        "set-field-status",
+        "o/r",
+        927,
+        "Implementing",
+        board_writer=writer,
+        ledger_dir=ledger,
+        payload={"assignments": [["Status", "Implementing"]]},
+    )
+    assert record["status"] == "gated", record
+    assert "must carry both halves" in record["error"]
+    assert runner.calls == [], "a refused submission reaches no writer at all"
+    assert list(ledger.iterdir()) == [], "and leaves no ledger key behind"
+
+    # The controller refuses it at its own seam too, not only downstream.
+    controller_record = RC.reconcile_op(
+        "set-field-status",
+        "o/r",
+        927,
+        "Implementing",
+        board_writer=writer,
+        ledger_dir=ledger,
+        payload={"assignments": [["Status", "Implementing"]]},
+    )
+    assert controller_record["status"] == "gated"
+    assert controller_record["halt"] is True
+    assert "malformed-assignments" in controller_record["halt_reason"]
+
+
 def test_a_failure_with_no_parseable_report_still_surfaces_stderr(tmp_path: Path) -> None:
     """Degrade to exactly what the error said before, never to an invented claim about the board."""
     record, _runner = _drive(

@@ -244,18 +244,32 @@ rationale (it flows into the Phase-4 issue comment via `--doc-review-override`).
 finding metadata to make that decision, and do not treat chat memory alone as durable evidence after a
 resume.
 
-### 1.3b The card moves to Active — through Mission Control, not through this skill
+### 1.3b Submit the card's move to `Active` / `Implementing` — Mission Control executes it
 
 Work is starting. Until the card moves, it reads exactly as it did before anyone picked it up,
 which on a wide run means a card sitting untouched while several units build against it.
 
-**Saga does not write the board.** Mission Control is the only routine writer of the board's
-`Stage` and `Status` fields; the `Status → Active` move belongs to it, derived from what this
-skill durably produced (the saga tick minted below, the work branch, the work-session path).
-Do not run a reconcile tick, a `flow set-field` submission, or any other lifecycle-field write
-from here. Say in the phase header that work is starting — the move itself is Mission Control's.
+**Actor:** this skill. **Trigger:** work is starting for a real issue — the saga tick minted below,
+the work branch, and the work-session path all exist. **Move:** the live pair `Stage` = `Active`,
+`Status` = `Implementing`.
 
-Skip silently when there is no issue -- a unit with no card has no Status to move.
+**Deciding and submitting is not writing.** Mission Control remains the only executor of a `Stage`
+or `Status` write; this skill submits the move through the reconcile controller and composes no
+write of its own:
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> \
+  --target-state "Implementing" \
+  --payload '{"assignments": [["Stage", "Active"], ["Status", "Implementing"]]}'
+```
+
+**Submit both halves, and check both.** The pair travels in one invocation but is not rolled back
+if the second assignment fails, so read the record: `written`/`skipped` is success, a `failed`
+record names the landed and the unlanded assignment, and `halt`/`gated` falls back to the
+operator-prompted Mission Control path. Say in the phase header that work is starting.
+
+Skip silently when there is no issue -- a unit with no card has no lifecycle field to move.
 
 ### 1.4 Offer the backend, then mint/advance the saga
 
@@ -775,33 +789,60 @@ comment and drives it through the controller; it does not mutate the issue by an
 
 ### 4.4 Post-merge board actions — the shared reconcile controller (#344/#450, bounded by W7)
 
-After a merge, the sub-issue close runs autonomously through the shared **level-triggered reconcile
-controller** — the same reversibility contract and idempotency ledger `/outcome` uses, with the
-outside-drift detection `/work` previously lacked (#450). The `Status → Done` move is **not** a
-`/work` action: Mission Control is the only routine writer of the board's `Stage` and `Status`
-fields, so the delivered-terminal field move routes through it (the operator, or the run
-coordinator's board flow), derived from this skill's durable state — the merged PR, the saga tick,
-and the work-session path. Do not run a reconcile tick or a `flow set-field` submission for the
-Status move. The close is the one post-merge move this skill drives:
+After a merge, three moves run through the shared **level-triggered reconcile controller** — the
+same reversibility contract and idempotency ledger `/outcome` uses, with the outside-drift detection
+`/work` previously lacked (#450). Two are lifecycle-field submissions, one is the sub-issue close.
+**Deciding and submitting is not writing:** Mission Control remains the only executor of a `Stage`
+or `Status` write, and this skill composes none — every submission below stops at the controller,
+which owns the certificate gate, the idempotency ledger and the replay key.
 
-**When the card may move to Verify (W8, SDLC R69/R71).** The `Status → Verify` move, like every
-lifecycle-field move, is Mission Control's — and it happens only after the change is **merged**
-**and** a non-production deployment has **succeeded**, in that order, ahead of the delivered-terminal
-`Done` move. PR-ready, green checks, code review, and merge readiness never move the card to Verify,
-and `/work` asserts no Verify move of its own at any point before merge. For work with **no
-deployable software**, the same merge precondition holds — the R71 no-deployable route relaxes the
-**deployment** requirement, never the **merge** requirement — so Verify is entered only after the
-change is merged **and** the delivered artifact exists in its real form and consumption context —
-the rendered published page for documentation, the installed version for a plugin — with the
-deployment non-applicability recorded **with a reason** and no environment or
+**When the card may move to Verify (W8, SDLC R69/R71).** The move to the `Verify` stage, like every
+lifecycle-field move, is executed by Mission Control — and it happens only after the change is
+**merged** **and** a non-production deployment has **succeeded**, in that order, ahead of the
+delivered-terminal move. PR-ready, green checks, code review, and merge readiness never move the
+card to Verify, and `/work` submits no Verify move of its own at any point before merge. For work
+with **no deployable software**, the same merge precondition holds — the R71 no-deployable route
+relaxes the **deployment** requirement, never the **merge** requirement — so Verify is entered only
+after the change is merged **and** the delivered artifact exists in its real form and consumption
+context — the rendered published page for documentation, the installed version for a plugin — with
+the deployment non-applicability recorded **with a reason** and no environment or
 deployment record fabricated to satisfy the transition. The single authority for this condition is
 the `verify_entry` block of `config/sdlc-schema.json` in `infiquetra-sdlc`, resolved by
-`tools/docs/verify_entry.py`; this skill only names when the move is permitted, never fires it.
+`tools/docs/verify_entry.py`; this skill names when the move is permitted and submits it only then.
+
+**Actor:** this skill. **Trigger:** merged, plus the applicable deployment or artifact verification
+above. **Move:** the live pair `Stage` = `Verify`, `Status` = `Awaiting verification`.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> \
+  --target-state "Awaiting verification" \
+  --payload '{"assignments": [["Stage", "Verify"], ["Status", "Awaiting verification"]]}'
+```
+
+Then the sub-issue close, which is an issue-state write rather than a lifecycle-field one:
 
 ```bash
 python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --op sub-issue-close --repo <owner/repo> --number <N>
 ```
+
+**The delivered-terminal move.** **Actor:** this skill. **Trigger:** the child is delivered and
+closed and its gate is green — the merged PR, the saga tick, and the work-session path are all
+durable. **Move:** the live pair `Stage` = `Retro`, `Status` = `Ready to close`.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> \
+  --target-state "Ready to close" \
+  --payload '{"assignments": [["Stage", "Retro"], ["Status", "Ready to close"]]}'
+```
+
+**Submit both halves of every pair, and check both.** One invocation carries two assignments, and
+Mission Control does **not** roll the pair back if the second fails — so a `failed` record names
+the landed and the unlanded assignment, and the unlanded half is what to repair. A `Status`-only
+submission is the trap worth naming: `Awaiting verification` is a legal `Status` on its own, so the
+half-write reads as success while `Stage` stays where it was.
 
 The controller composes the certificate-gated idempotency writer (`board_progression`, #344) with a
 **level-triggered drift check**: every tick it re-reads the live board, so a rapid double tick

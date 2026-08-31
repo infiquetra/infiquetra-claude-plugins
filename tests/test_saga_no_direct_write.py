@@ -1,23 +1,42 @@
-"""W7 (SDLC issue #88, AE2): the Saga plugin holds no direct lifecycle-field write initiation.
+"""W-D1 (#927 U1): no plugin composes or executes a board-field write; Mission Control alone does.
 
-What this guard proves, and the two ways a naive version of it fails (both reproduced against the
-real tree during W7 planning):
+**The discriminator changed on 2026-08-30, and this docstring is the record of why.** The W7 guard
+(SDLC issue #88) asked a lexical question — *does this file name the ``set-field-status``
+operation?* — and answered "any mention is an offense". The operator superseded that reading:
+deciding and submitting a lifecycle-field move is not writing one. Plan and Work now MUST submit
+their moves, so the old assertion would forbid the very thing the contract requires.
 
-1. **Zero ``set-field-status`` initiation survives in shipped Saga sources.** The write may only
-   *execute* through Mission Control (``board_progression.default_board_writer`` -> mission-control's
-   ``flow set-field --correction``); no Saga command may *decide and initiate* one. R30 (SDLC
-   requirements) removes the authority, not the shared mechanism (plan KTD1) — so the vocabulary in
-   the submission/gating core files is legal, and initiation elsewhere is not.
+The question this guard asks instead is **does this path reach GitHub without passing through
+Mission Control's executor?**
 
-2. **The scan resolves the op-kind CONSTANT, not its literal value** (plan KTD6, false-green guard).
-   ``/outcome`` used to compose its op through ``cert.OpKind.SET_FIELD_STATUS`` rather than the
-   ``"set-field-status"`` string, so a literal grep returned zero matches in ``outcome_board_sync.py``
-   while the write was fully intact. This scan therefore flags the constant symbol too.
+* **Legal — a submission.** A fenced ``reconcile_controller.py reconcile --op set-field-status``
+  block in a skill, or a Python call into ``board_progression.authorize_and_write`` /
+  ``default_board_writer``. Every one of those hops stops at Mission Control's ``flow set-field
+  --correction``, which owns the certificate gate, the idempotency ledger and the GitHub call.
+* **Illegal anywhere under ``plugins/`` except ``plugins/mission-control/``.** The projectV2
+  item-field mutation, ``gh project item-edit``, a hand-built single-select option payload, or a
+  ``gh api graphql`` invocation aimed at a projectV2 field mutation. Those reach GitHub directly.
+* **Illegal — an unrouted op.** Naming the lifecycle-field op kind (literal *or* through the
+  certificate constant) in a module that carries no submission seam at all. That is a module
+  composing a board write it has no door for.
 
-3. **Nested run artifacts are excluded from scope** (plan KTD6, false-red guard). A nested checkout
-   under ``.claude/agy/runs/**`` (a proof worktree with its own vendored copy of these files) must
-   never be reported — vendored copies would keep the gate permanently red on failures that do not
-   exist in shipped code.
+Three structural properties carry over from the W7 guard unchanged, because each one exists to stop
+a specific false result that was reproduced against the real tree:
+
+1. **The scan resolves the op-kind CONSTANT, not only its literal value** (false-green guard).
+   ``/outcome`` once composed its op through ``cert.OpKind.SET_FIELD_STATUS`` rather than the
+   ``"set-field-status"`` string, so a literal grep returned zero matches while the write was fully
+   intact. :data:`_PY_CONSTANT_COMPOSE_RE` flags the constant symbol too.
+2. **Nested run artifacts are out of scope** (false-red guard). A vendored checkout under
+   ``.claude/agy/runs/**`` carries its own copy of these files; reporting it would keep the gate
+   permanently red on code that does not ship.
+3. **The submission core is allowlisted.** ``board_progression``, ``reversibility_certificate`` and
+   ``reconcile_controller`` ARE the submission mechanism, and ``outcome_reconcile`` reads historical
+   op kinds out of the ledger. Listed explicitly so the exemption is a decision, not an accident.
+
+The scan root widened with the aim: from ``plugins/saga/`` to the whole of ``plugins/``, minus
+``plugins/mission-control/``. W7's guard scanned one plugin, which is why Orchestrate's leftover
+writer never failed it (#927: "Orchestrate was missed, not exempted").
 
 Offline: pure filesystem + source scanning plus the REAL certificate/controller/board_progression
 modules loaded by path (the single-writer-guard's house pattern). No git, no GitHub, no gh.
@@ -26,19 +45,24 @@ modules loaded by path (the single-writer-guard's house pattern). No git, no Git
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
 from types import ModuleType
 
 ROOT = Path(__file__).resolve().parent.parent
-SAGA_ROOT = ROOT / "plugins" / "saga"
+PLUGINS_ROOT = ROOT / "plugins"
+SAGA_ROOT = PLUGINS_ROOT / "saga"
 SCRIPTS = SAGA_ROOT / "scripts"
-SUBMISSION_PATH = (SCRIPTS / "board_progression.py").resolve()
 
-# The op-kind vocabulary is ALLOWED only in the submission/gating core: the certificate (definition
-# + field gating), the one legal writer (board_progression), and the reconcile controller (its
-# expected/drift vocabulary maps op kinds to readable live values — it composes none since W7).
+# Mission Control is the executor. The direct-write vocabulary is its job description, not an
+# offense, so its plugin directory is the one exclusion from the fleet-wide scan.
+EXECUTOR_PLUGIN_DIR = "mission-control"
+
+# The op-kind vocabulary is ALLOWED without further proof only in the submission/gating core: the
+# certificate (definition + field gating), the one legal writer (board_progression), and the
+# reconcile controller. Every other file must show a submission seam to name the op at all.
 OP_KIND_CORE_FILES = frozenset(
     {
         (SCRIPTS / "board_progression.py").resolve(),
@@ -48,21 +72,50 @@ OP_KIND_CORE_FILES = frozenset(
 )
 
 # /outcome's resume-time detector reads HISTORICAL status keys out of the board-sync ledger; its
-# family constant is a read-side vocabulary for ledger records, not an initiation. Pre-W7 campaigns
-# keep their drift detection (skills/outcome/SKILL.md). Listed explicitly so the scan is a decision,
-# not an accident.
+# family constant is a read-side vocabulary for ledger records, not an initiation.
 OP_KIND_READ_SIDE_FILES = frozenset(
     {
         (SCRIPTS / "outcome_reconcile.py").resolve(),
     }
 )
 
-# Fenced-block initiation: a bash block that invokes the WRITING reconcile subcommand for the
-# lifecycle-field op is an initiation; ``detect --op set-field-status`` is read-only and allowed.
-# Python composition signature (KTD6 false-green guard): the op kind composed through the certificate
-# CONSTANT — the exact shape ``outcome_board_sync.py`` had at the planning base — or the bare string
-# literal outside the whitelisted core/read-side modules. A docstring that only NAMES the constant
-# (documentation of absence) does not match either signature.
+# Reaching GitHub's project fields without Mission Control. Each pattern names a mechanism that
+# lands a value on a card by itself — no certificate, no ledger, no replay key.
+DIRECT_WRITE_SIGNATURES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?:update|clear)ProjectV2ItemFieldValue", re.IGNORECASE),
+        "composes the projectV2 item-field mutation directly",
+    ),
+    (
+        re.compile(r"\bgh\s+project\s+item-edit\b"),
+        "executes `gh project item-edit` directly",
+    ),
+    (
+        re.compile(r"singleSelectOptionId|[\"']optionId[\"']\s*:"),
+        "hand-builds a project single-select option payload",
+    ),
+    (
+        re.compile(r"gh\s+api\s+graphql[\s\S]{0,600}?projectV2[A-Za-z]*Field", re.IGNORECASE),
+        "drives `gh api graphql` at a projectV2 field mutation",
+    ),
+)
+
+# The submission seams: a file that names one of these routes its move through Mission Control's
+# executor rather than composing its own write. ``reconcile_controller`` is the door orchestrate
+# drives as a subprocess; ``authorize_and_write`` / ``default_board_writer`` are the in-process
+# equivalents that /outcome and /work use.
+SUBMISSION_SEAM_RE = re.compile(
+    r"reconcile_controller|board_progression|authorize_and_write|default_board_writer"
+)
+
+# The fenced submission a skill is now REQUIRED to carry at a lifecycle boundary.
+FENCED_SUBMISSION_RE = re.compile(
+    r"reconcile_controller\.py\s+reconcile\b(?:(?!```).)*--op\s+set-field-status",
+    re.DOTALL,
+)
+
+# Constant-resolution false-green guard: the op kind composed through the certificate CONSTANT —
+# the exact shape ``outcome_board_sync.py`` had at the W7 planning base — rather than the literal.
 _PY_CONSTANT_COMPOSE_RE = re.compile(
     r"str\s*\(\s*cert\.OpKind\.SET_FIELD_STATUS|OpKind\.SET_FIELD_STATUS\s*[,)\]]"
 )
@@ -88,119 +141,206 @@ def _load(name: str) -> ModuleType:
 RC = _load("reconcile_controller")
 CERT = _load("reversibility_certificate")
 
-# Shipped sources only: any path under a nested checkout or run artifact is out of scope (KTD6).
+# Shipped sources only: any path under a nested checkout or run artifact is out of scope.
 _EXCLUDED_SEGMENTS = frozenset({".claude", "agy", "runs", "worktree", "__pycache__"})
 
-# The shipped Saga source root names (markdown included — commands and skills are executable prose).
+# The shipped source root names in a plugin (markdown included — skills are executable prose).
 _SOURCE_DIR_NAMES = ("scripts", "skills", "commands", "agents", "hooks", "references")
 
 
-def _iter_saga_sources(root: Path = SAGA_ROOT) -> list[Path]:
-    """Every shipped Saga source file under ``root``, vendored/nested artifacts excluded (KTD6)."""
+def _iter_plugin_sources(plugin_dir: Path) -> list[Path]:
+    """Every shipped source file in ONE plugin, vendored/nested artifacts excluded."""
     files: list[Path] = []
     for name in _SOURCE_DIR_NAMES:
-        directory = root / name
+        directory = plugin_dir / name
         if not directory.is_dir():
             continue
         for path in directory.rglob("*"):
             if not path.is_file() or path.suffix not in (".py", ".md"):
                 continue
-            if _EXCLUDED_SEGMENTS & set(path.relative_to(root).parts):
+            if _EXCLUDED_SEGMENTS & set(path.relative_to(plugin_dir).parts):
                 continue
             files.append(path)
     return sorted(files)
 
 
+def _iter_fleet_sources(plugins_root: Path = PLUGINS_ROOT) -> list[Path]:
+    """Every shipped source file across the fleet, Mission Control's own plugin excluded."""
+    files: list[Path] = []
+    if not plugins_root.is_dir():
+        return files
+    for plugin_dir in sorted(p for p in plugins_root.iterdir() if p.is_dir()):
+        if plugin_dir.name == EXECUTOR_PLUGIN_DIR:
+            continue
+        files.extend(_iter_plugin_sources(plugin_dir))
+    return files
+
+
 def _fenced_blocks(text: str) -> list[str]:
-    return re.findall(r"```(?:bash|sh|shell)?\n(.*?)```", text, re.DOTALL)
+    """Every fenced block's body, whatever its info string.
 
-
-def scan_initiations(root: Path = SAGA_ROOT) -> list[tuple[str, str]]:
-    """Return (relative-path, reason) for every surviving lifecycle-field write initiation.
-
-    Two detection layers (plan KTD6):
-    * Markdown skills/commands, inside FENCED blocks only: invoking the WRITE reconcile subcommand
-      for ``set-field-status`` is an initiation — ``detect`` is the read-only tick /loop drives.
-    * Python sources outside the op-kind core: the constant-composed op signature OR the literal
-      value is an initiation — resolving the constant is the false-green guard.
+    The language tag is matched permissively on purpose. A pattern that only recognises
+    ``bash``/``sh``/``shell`` does not simply *skip* a ```` ```json ```` block — it fails to see the
+    opening fence, then pairs that block's CLOSING fence with the next opening one, so the blocks
+    after it are mis-paired and their contents silently drop out of the scan. Both skill files carry
+    non-shell fences, so the permissive form is what makes this scan complete.
     """
-    rel = lambda p: str(p.relative_to(root))  # noqa: E731
+    return re.findall(r"```[A-Za-z0-9_+.-]*\n(.*?)```", text, re.DOTALL)
+
+
+def scan_direct_writes(plugins_root: Path = PLUGINS_ROOT) -> list[tuple[str, str]]:
+    """Return (relative-path, reason) for every path that reaches GitHub's project fields directly.
+
+    Two offense classes, per W-D1:
+
+    * **Composes or executes a direct write** — any :data:`DIRECT_WRITE_SIGNATURES` match, in a
+      fenced block of a skill or anywhere in a Python source. Mission Control alone may do this,
+      and its plugin is out of scope.
+    * **Names the lifecycle-field op with no submission seam** — a module that carries the op-kind
+      vocabulary (literal or constant-resolved) while naming none of Mission Control's doors is
+      composing a board write it cannot legally deliver.
+
+    A submission is NOT an offense and is not returned here; :func:`scan_submissions` reports those.
+    """
     offenses: list[tuple[str, str]] = []
-    for path in _iter_saga_sources(root):
+    for path in _iter_fleet_sources(plugins_root):
+        rel = str(path.relative_to(plugins_root))
         text = path.read_text(encoding="utf-8")
-        if path.suffix == ".md":
-            for block in _fenced_blocks(text):
-                if re.search(
-                    r"reconcile_controller\.py\s+reconcile\b(?:(?!```).)*--op\s+set-field-status",
-                    block,
-                    re.DOTALL,
-                ):
-                    offenses.append(
-                        (rel(path), "fenced reconcile --op set-field-status initiation")
-                    )
-        if path.suffix == ".py":
-            resolved = path.resolve() if root == SAGA_ROOT else path
-            in_core = resolved in OP_KIND_CORE_FILES
-            in_read_side = resolved in OP_KIND_READ_SIDE_FILES
-            if in_core or in_read_side:
-                continue
-            if _PY_CONSTANT_COMPOSE_RE.search(text):
-                offenses.append(
-                    (rel(path), "composes a set-field-status op (constant-resolved, KTD6)")
-                )
-            elif _MARKER in text:
-                offenses.append((rel(path), "set-field-status literal outside the submission core"))
-    return offenses
+        haystacks = _fenced_blocks(text) if path.suffix == ".md" else [text]
+        for pattern, reason in DIRECT_WRITE_SIGNATURES:
+            if any(pattern.search(chunk) for chunk in haystacks):
+                offenses.append((rel, reason))
+                break
+        if path.suffix != ".py":
+            continue
+        resolved = path.resolve()
+        if resolved in OP_KIND_CORE_FILES or resolved in OP_KIND_READ_SIDE_FILES:
+            continue
+        if SUBMISSION_SEAM_RE.search(text):
+            continue
+        if _PY_CONSTANT_COMPOSE_RE.search(text):
+            offenses.append((rel, "composes a set-field-status op with no submission seam"))
+        elif _MARKER in text:
+            offenses.append((rel, "names set-field-status with no submission seam"))
+    return sorted(offenses)
+
+
+def scan_submissions(path: Path) -> list[str]:
+    """Every fenced Mission Control submission block in one markdown source, in file order."""
+    return [
+        block
+        for block in _fenced_blocks(path.read_text(encoding="utf-8"))
+        if FENCED_SUBMISSION_RE.search(block)
+    ]
+
+
+def assignments_of(block: str) -> list[tuple[str, str]]:
+    """The ``(field, option)`` assignments a fenced submission block carries, in argv order.
+
+    Reads the ``assignments`` array out of the block's ``--payload`` JSON. A block that submits one
+    assignment where the boundary owes a pair returns a one-element list, which is exactly the
+    half-write the contract tests must be able to see.
+    """
+    return [
+        (m.group(1), m.group(2)) for m in re.finditer(r'\[\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\]', block)
+    ]
+
+
+# The live (Stage, Status) pair each Saga skill boundary submits (#927 R1). Every pair below is a
+# member of ``workflows.stage_flow.stage_statuses`` in mission-control's sdlc-schema.json — the
+# board's own authority — and none of them is a retired token.
+PLAN_SKILL = SAGA_ROOT / "skills" / "plan" / "SKILL.md"
+WORK_SKILL = SAGA_ROOT / "skills" / "work" / "SKILL.md"
+
+BOUNDARY_PAIRS: dict[Path, list[tuple[str, str]]] = {
+    PLAN_SKILL: [("Planning", "Designing"), ("Planning", "Ready for Active")],
+    WORK_SKILL: [
+        ("Active", "Implementing"),
+        ("Verify", "Awaiting verification"),
+        ("Retro", "Ready to close"),
+    ],
+}
+
+# Tokens the 0.145.0-era prose still named as Status values. None is an option on either live field,
+# so any survivor submits a value Mission Control cannot resolve.
+RETIRED_TOKENS = ("Idea", "Ready", "Done")
+
+# The sentence the operator superseded on 2026-08-30. Its return would re-forbid the submission.
+SUPERSEDED_PROHIBITION = "Do not run a reconcile tick"
 
 
 # ---------------------------------------------------------------------------
-# AE2: zero direct set-field-status writes; the surviving paths resolve to Mission Control
+# U1: the guard asserts the submit-versus-execute contract, fleet-wide
 # ---------------------------------------------------------------------------
 
 
-def test_saga_no_direct_write_plan_initiates_no_lifecycle_write() -> None:
-    """AE2/U2: no ``set-field-status`` initiation survives in skills/plan/SKILL.md — /plan decides
-    no lifecycle-field move (SDLC R30)."""
-    plan_skill = (SAGA_ROOT / "skills" / "plan" / "SKILL.md").read_text(encoding="utf-8")
-    assert "set-field-status" not in plan_skill, (
-        "skills/plan/SKILL.md still names the lifecycle-field write op"
-    )
-    assert "--target-state" not in plan_skill, (
-        "skills/plan/SKILL.md still instructs a lifecycle-field target-state write"
+def test_saga_no_direct_write_fleet_composes_or_executes_nothing() -> None:
+    """R3/R4: no path under ``plugins/`` composes or executes a board-field write."""
+    offenses = scan_direct_writes()
+    assert offenses == [], (
+        "paths reach GitHub's project fields without Mission Control:\n"
+        + "\n".join(f"  {path}: {reason}" for path, reason in offenses)
     )
 
 
-def test_saga_no_direct_write_work_initiates_no_lifecycle_write() -> None:
-    """AE2/U2: no ``set-field-status`` initiation survives in skills/work/SKILL.md. The two nearby
-    non-field ops (``issue-progress-comment`` at 4.3, ``sub-issue-close`` at 4.4) MUST survive —
-    R30 governs Stage/Status only (plan U2's custody note)."""
-    work_skill = (SAGA_ROOT / "skills" / "work" / "SKILL.md").read_text(encoding="utf-8")
-    assert "set-field-status" not in work_skill
-    assert "--target-state" not in work_skill
-    assert "--op issue-progress-comment" in work_skill, (
-        "the non-field progress-comment op must survive (R30 governs fields only)"
-    )
-    assert "--op sub-issue-close" in work_skill, (
-        "the non-field sub-issue-close op must survive (an issue-state write, not a field write)"
-    )
+def test_saga_no_direct_write_scan_covers_the_whole_fleet() -> None:
+    """The scan root is the fleet, not one plugin — W7's one-plugin scan is why Orchestrate's
+    leftover writer never failed this guard (#927). Proven by the plugins actually walked."""
+    walked = {Path(str(p.relative_to(PLUGINS_ROOT))).parts[0] for p in _iter_fleet_sources()}
+    assert {"saga", "orchestrate"} <= walked, f"the fleet scan missed a plugin: {sorted(walked)}"
+    assert EXECUTOR_PLUGIN_DIR not in walked, "Mission Control is the executor and is out of scope"
 
 
-def test_saga_no_direct_write_shipped_initiations_are_zero() -> None:
-    """AE2: the repository-wide scan over shipped Saga sources reports ZERO write initiations."""
-    assert scan_initiations() == [], "direct lifecycle-field initiations survive:\n" + "\n".join(
-        f"  {path}: {reason}" for path, reason in scan_initiations()
+def test_saga_no_direct_write_a_seeded_direct_write_outside_mission_control_is_reported(
+    tmp_path: Path,
+) -> None:
+    """A module composing the projectV2 field mutation under ``plugins/orchestrate/`` IS reported —
+    and the identical composition under ``plugins/mission-control/`` is NOT."""
+    plugins = tmp_path / "plugins"
+    offender = plugins / "orchestrate" / "scripts" / "evil_direct_writer.py"
+    offender.parent.mkdir(parents=True)
+    offender.write_text(
+        'MUTATION = "mutation { updateProjectV2ItemFieldValue(input: $i) { clientMutationId } }"\n',
+        encoding="utf-8",
     )
+    executor = plugins / EXECUTOR_PLUGIN_DIR / "scripts" / "sdlc_manager.py"
+    executor.parent.mkdir(parents=True)
+    executor.write_text(offender.read_text(encoding="utf-8"), encoding="utf-8")
+
+    assert scan_direct_writes(plugins) == [
+        (
+            "orchestrate/scripts/evil_direct_writer.py",
+            "composes the projectV2 item-field mutation directly",
+        )
+    ]
+
+
+def test_saga_no_direct_write_a_fenced_submission_is_legal_not_an_offense(tmp_path: Path) -> None:
+    """The sanctioned submission — the thing W7's guard forbade — is reported as a submission."""
+    plugins = tmp_path / "plugins"
+    skill = plugins / "saga" / "skills" / "plan" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        "```bash\n"
+        "python3 plugins/saga/scripts/reconcile_controller.py reconcile \\\n"
+        "  --op set-field-status --repo owner/repo --number 1 \\\n"
+        '  --target-state Designing --payload \'{"assignments": '
+        '[["Stage", "Planning"], ["Status", "Designing"]]}\'\n'
+        "```\n",
+        encoding="utf-8",
+    )
+    assert scan_direct_writes(plugins) == []
+    blocks = scan_submissions(skill)
+    assert len(blocks) == 1
+    assert assignments_of(blocks[0]) == [("Stage", "Planning"), ("Status", "Designing")]
 
 
 def test_saga_no_direct_write_excludes_nested_run_artifacts(tmp_path: Path) -> None:
-    """KTD6 false-red guard: a vendored copy of the tree under ``.claude/agy/runs/**`` — carrying
-    its own ``reconcile_controller.py`` initiation-like text — is NOT reported. Seeded, not assumed:
-    the fixture reproduces the nested-checkout shape and the scanner stays silent about it while
-    still reporting the real (shipped copy) file.
-    """
+    """False-red guard: a vendored checkout under ``.claude/agy/runs/**`` — carrying its own
+    direct-write text — is NOT reported, while the genuine shipped offense still is."""
+    plugins = tmp_path / "plugins"
     nested = (
-        tmp_path
-        / "plugins"
+        plugins
         / "saga"
         / "scripts"
         / ".claude"
@@ -213,76 +353,161 @@ def test_saga_no_direct_write_excludes_nested_run_artifacts(tmp_path: Path) -> N
         / "scripts"
     )
     nested.mkdir(parents=True)
-    (nested / "reconcile_controller.py").write_text(
-        'AUTO_CORRECT_OP_KINDS = frozenset({"set-field-status"})\n'
-        '# init: str(cert.OpKind.SET_FIELD_STATUS), "Done"\n',
-        encoding="utf-8",
+    (nested / "vendored_writer.py").write_text(
+        'MUTATION = "updateProjectV2ItemFieldValue"\n', encoding="utf-8"
     )
-    shipped_violation = tmp_path / "plugins" / "saga" / "skills" / "evil" / "SKILL.md"
+    shipped_violation = plugins / "saga" / "skills" / "evil" / "SKILL.md"
     shipped_violation.parent.mkdir(parents=True)
     shipped_violation.write_text(
-        "```bash\npython3 reconcile_controller.py reconcile --op set-field-status\n```\n",
+        "```bash\ngh project item-edit --id X --field-id Y --single-select-option-id Z\n```\n",
         encoding="utf-8",
     )
-    hits = dict(scan_initiations(tmp_path / "plugins" / "saga"))
-    assert hits == {"skills/evil/SKILL.md": "fenced reconcile --op set-field-status initiation"}, (
+    hits = dict(scan_direct_writes(plugins))
+    assert hits == {"saga/skills/evil/SKILL.md": "executes `gh project item-edit` directly"}, (
         f"nested run artifacts leaked into the scan (or the genuine hit vanished): {hits}"
     )
 
 
 def test_saga_no_direct_write_resolves_op_kind_constant(tmp_path: Path) -> None:
-    """KTD6 false-green guard: the scan resolves the ``OpKind.SET_FIELD_STATUS`` CONSTANT, not just
-    its string value. A module that composes the constant-composed op (and never writes the literal)
-    IS reported — the exact shape ``outcome_board_sync.py`` had at the planning base.
+    """False-green guard, preserved through the re-aim: the scan resolves the
+    ``OpKind.SET_FIELD_STATUS`` CONSTANT, not just its string value. A module composing the op with
+    no submission seam IS reported — the exact shape ``outcome_board_sync.py`` had at the W7 base.
     """
-    composed = tmp_path / "plugins" / "saga" / "scripts" / "evil_constant_composer.py"
-    composed.parent.mkdir(parents=True, exist_ok=True)
+    plugins = tmp_path / "plugins"
+    composed = plugins / "saga" / "scripts" / "evil_constant_composer.py"
+    composed.parent.mkdir(parents=True)
     composed.write_text(
         "import reversibility_certificate as cert\n"
-        'ops = [(str(cert.OpKind.SET_FIELD_STATUS), "In Progress")]\n',
+        'ops = [(str(cert.OpKind.SET_FIELD_STATUS), "Implementing")]\n',
         encoding="utf-8",
     )
-    literal = tmp_path / "plugins" / "saga" / "skills" / "evil-literal" / "SKILL.md"
-    literal.parent.mkdir(parents=True, exist_ok=True)
-    literal.write_text(
-        "```bash\npython3 reconcile_controller.py reconcile --op set-field-status\n```\n",
+    literal = plugins / "saga" / "scripts" / "evil_literal_composer.py"
+    literal.write_text('ops = [("set-field-status", "Implementing")]\n', encoding="utf-8")
+    # Control, first: the SAME constant WITH a submission seam is legal — proving the offense is
+    # the missing door, not the vocabulary.
+    routed = plugins / "saga" / "scripts" / "routed_module.py"
+    routed.write_text(
+        "import board_progression as bp\n"
+        "import reversibility_certificate as cert\n"
+        'bp.authorize_and_write(str(cert.OpKind.SET_FIELD_STATUS), "o/r", 1, "Implementing")\n',
         encoding="utf-8",
     )
-    # Control, first: the SAME file WITHOUT the constant and WITHOUT the literal is clean — proving
-    # the fixture's failure comes from the constant symbol, not from its filename.
-    clean = tmp_path / "plugins" / "saga" / "scripts" / "clean_module.py"
-    clean.write_text("ops: list[tuple[str, str]] = []\n", encoding="utf-8")
-    assert scan_initiations(tmp_path / "plugins" / "saga") == [
+    assert scan_direct_writes(plugins) == [
         (
-            str(composed.relative_to(tmp_path / "plugins" / "saga")),
-            "composes a set-field-status op (constant-resolved, KTD6)",
+            "saga/scripts/evil_constant_composer.py",
+            "composes a set-field-status op with no submission seam",
         ),
         (
-            str(literal.relative_to(tmp_path / "plugins" / "saga")),
-            "fenced reconcile --op set-field-status initiation",
+            "saga/scripts/evil_literal_composer.py",
+            "names set-field-status with no submission seam",
         ),
     ]
 
 
+# ---------------------------------------------------------------------------
+# U2: the five Saga submission boundaries — present, provable, and paired
+# ---------------------------------------------------------------------------
+
+
+def test_saga_submits_at_every_plan_boundary() -> None:
+    """R1: /plan submits its two lifecycle moves through Mission Control."""
+    blocks = scan_submissions(PLAN_SKILL)
+    assert len(blocks) == 2, f"skills/plan/SKILL.md must submit at 0.6 and 5.0; found {len(blocks)}"
+
+
+def test_saga_submits_at_every_work_boundary() -> None:
+    """R1: /work submits its three lifecycle moves through Mission Control."""
+    blocks = scan_submissions(WORK_SKILL)
+    assert len(blocks) == 3, (
+        f"skills/work/SKILL.md must submit at 1.3b, 4.4-Verify and 4.4-delivered; found {len(blocks)}"
+    )
+
+
+def test_saga_every_submission_carries_the_live_pair() -> None:
+    """R1/Decision A: each fenced block carries BOTH assignments, and the pair is the live one.
+
+    A single-assignment block is the false green this test exists for: ``Ready for Active`` is a
+    legal ``Status`` on its own, so a Status-only submission looks like success while ``Stage``
+    stays where it was.
+    """
+    for skill, expected in BOUNDARY_PAIRS.items():
+        found = [assignments_of(block) for block in scan_submissions(skill)]
+        for assignments in found:
+            assert len(assignments) == 2, (
+                f"{skill.name}: a submission carries {len(assignments)} assignment(s), not the pair: "
+                f"{assignments}"
+            )
+            assert [f for f, _ in assignments] == ["Stage", "Status"], (
+                f"{skill.name}: a submission names the wrong fields: {assignments}"
+            )
+        assert [(a[0][1], a[1][1]) for a in found] == expected, (
+            f"{skill.name}: submitted pairs {[(a[0][1], a[1][1]) for a in found]} != R1's {expected}"
+        )
+
+
+def test_saga_every_submitted_pair_is_live_on_the_board() -> None:
+    """R1: every submitted pair is a member of the schema's own ``stage_statuses``."""
+    schema = json.loads(
+        (PLUGINS_ROOT / EXECUTOR_PLUGIN_DIR / "config" / "sdlc-schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    stage_statuses = schema["workflows"]["stage_flow"]["stage_statuses"]
+    live = {(stage, status) for stage, options in stage_statuses.items() for status in options}
+    for skill, expected in BOUNDARY_PAIRS.items():
+        for pair in expected:
+            assert pair in live, f"{skill.name}: {pair} is not an option combination on the board"
+
+
+def test_saga_no_boundary_reintroduces_the_superseded_prohibition() -> None:
+    """W-D1: the sentence the operator superseded must not come back in either skill."""
+    for skill in (PLAN_SKILL, WORK_SKILL):
+        text = skill.read_text(encoding="utf-8")
+        assert SUPERSEDED_PROHIBITION not in text, (
+            f"{skill.name} still carries the superseded prohibition sentence"
+        )
+
+
+def test_saga_no_boundary_names_a_retired_token() -> None:
+    """R1: no ``Status -> <retired token>`` prose survives in either skill's board-move sections."""
+    arrow = re.compile(
+        r"`?Status`?\s*(?:->|→)\s*`?(" + "|".join(RETIRED_TOKENS + ("Active", "Verify")) + r")`?"
+    )
+    for skill in (PLAN_SKILL, WORK_SKILL):
+        hits = arrow.findall(skill.read_text(encoding="utf-8"))
+        assert hits == [], f"{skill.name} still names retired Status tokens: {hits}"
+
+
+def test_saga_the_non_field_operations_survive() -> None:
+    """R30 governed Stage/Status only: /work's two non-field ops must be untouched."""
+    work = WORK_SKILL.read_text(encoding="utf-8")
+    assert "--op issue-progress-comment" in work, (
+        "the non-field progress-comment op must survive (R30 governs fields only)"
+    )
+    assert "--op sub-issue-close" in work, (
+        "the non-field sub-issue-close op must survive (an issue-state write, not a field write)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Unchanged since W7: /loop stays correction-only and /outcome keeps no field authority
+# ---------------------------------------------------------------------------
+
+
 def test_saga_no_direct_write_loop_reconcile_path_is_read_only_detect() -> None:
-    """AE2: /loop's reconcile path resolves to the READ-ONLY ``detect`` tick — the drift vocabulary
-    and idempotency writer sit underneath, but the skill's driven command can never write (R33)."""
+    """W-D1 keeps /loop correction-only: its driven command is the READ-ONLY ``detect`` tick."""
     loop_skill = (SAGA_ROOT / "skills" / "loop" / "SKILL.md").read_text(encoding="utf-8")
     assert "reconcile_controller.py detect" in loop_skill, "/loop drives the read-only detect tick"
-    fenced = "\n".join(
-        block for block in re.findall(r"```(?:bash|sh|shell)?\n(.*?)```", loop_skill, re.DOTALL)
-    )
+    fenced = "\n".join(_fenced_blocks(loop_skill))
     assert "set-field-status" in fenced, "the detect block names its op explicitly"
     assert not re.search(r"reconcile_controller\.py\s+reconcile", fenced), (
-        "no fenced WRITING reconcile invocation survives in /loop's skill (R30/R33)"
+        "no fenced WRITING reconcile invocation survives in /loop's skill (R33)"
     )
 
 
 def test_saga_no_direct_write_outcome_issue_writes_resolve_to_mission_control() -> None:
-    """AE2/U4: /outcome's surviving issue writes resolve to Mission Control — the tick delegates
-    every candidate op to ``board_progression.authorize_and_write`` with the writer built by
-    ``default_board_writer`` (whose ``set-field-status`` arm is the ``flow set-field --correction``
-    submission), and since W7 composes NO lifecycle-field op at all."""
+    """/outcome's surviving issue writes resolve to Mission Control — the tick delegates every
+    candidate op to ``board_progression.authorize_and_write`` and composes NO lifecycle-field op."""
     sync_text = (SCRIPTS / "outcome_board_sync.py").read_text(encoding="utf-8")
     assert "_bp.authorize_and_write(" in sync_text, (
         "every /outcome board op routes through the shared authorize/write mechanism"
@@ -303,9 +528,7 @@ def test_saga_no_direct_write_outcome_issue_writes_resolve_to_mission_control() 
 
 
 def test_saga_no_direct_write_outcome_retains_no_autonomous_board_authority() -> None:
-    """AE2/U4: no code path lets /outcome write Status except by operator-resolved submission
-    through the Mission Control mutation — the reconcile-controller controller auto-correct
-    allowlist is EMPTY (W7/R32), and /outcome's writer composition carries no field op."""
+    """R7: the controller auto-correct allowlist stays EMPTY — no autonomous field writes."""
     controller = _load("reconcile_controller")
     assert frozenset() == controller.AUTO_CORRECT_OP_KINDS, (
         "the controller auto-correct allowlist must be empty — no autonomous field writes (R32)"

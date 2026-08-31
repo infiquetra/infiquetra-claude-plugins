@@ -125,12 +125,31 @@ def test_phase44_gated_and_allowlist_are_not_conflated() -> None:
     sec_end = text.find("## Phase 5", sec_start)
     assert sec_start >= 0 and sec_end >= 0
     sec = text[sec_start:sec_end]
-    # The allowlist outside must be halt, not gated.
-    assert '"halt"' in sec or "'halt'" in sec or "halt" in sec.lower()
-    # Gated must be described as certificate verdict, not allowlist.
-    assert "certificate" in sec.lower() or "reversibility_certificate" in sec
+    # Each of these had a dead disjunct: `"halt" in sec.lower()` subsumes both quoted forms and is
+    # true of almost any prose about this controller, and `"certificate" in sec.lower()` subsumes
+    # the module name beside it. A disjunction is only as strong as its weakest operand, so both
+    # assertions were passing on the loosest possible reading of the section.
+    assert '"halt"' in sec, 'the halt status must appear as the literal record value "halt"'
+    assert "certificate" in sec.lower(), "gated must be described as a certificate verdict"
     # The old conflated sentence "gated.*allowlist returns" with gated for allowlist must be gone.
     assert not re.search(r'"gated".*allowlist returns', sec, flags=re.DOTALL | re.IGNORECASE)
+
+
+def test_the_gated_and_halt_distinction_is_stated_not_merely_mentioned() -> None:
+    """Both words appearing is not the contract; saying they are different decisions is.
+
+    A caller that treats them alike offers a retry for a certificate refusal, which reproduces the
+    identical answer."""
+    text = _read(WORK_SKILL)
+    sec_start = text.find("### 4.4")
+    sec = text[sec_start : text.find("## Phase 5", sec_start)]
+    collapsed = " ".join(sec.split())
+    assert re.search(
+        r"`gated`\s+and\s+`halt`\s+are\s+the\s+two\s+withholding\s+outcomes\s+and\s+they\s+"
+        r"are\s+\*\*not\s+the\s+same\s+decision\*\*",
+        collapsed,
+    ), "section 4.4 must state that gated and halt are different decisions"
+    assert "neither is cleared by re-running the same call" in collapsed
 
 
 def test_skip_silently_line_is_not_orphaned() -> None:

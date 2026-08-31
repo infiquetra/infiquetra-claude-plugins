@@ -233,14 +233,36 @@ def test_resolved_tier_in_execution_evidence_prose() -> None:
 
 
 def test_no_new_operator_question_on_dispatch() -> None:
+    """Issue #929 forbids a new operator question in the tier dispatch. Assert that, unconditionally.
+
+    The disjunct `or "Build-unit tier" in phase2` made this guard unfailable: the repair itself
+    added that heading to Phase 2, so the second operand is always true and an `AskUserQuestion`
+    seeded into the dispatch passed. That is the same defect class the tier repair was written to
+    fix, recurring inside the file that fixed it -- and what it let through is exactly the thing
+    the issue names.
+    """
     text = _read_skill()
     phase2_start = text.find("## Phase 2")
     phase2_end = text.find("## Phase 3", phase2_start)
+    assert phase2_start >= 0 and phase2_end > phase2_start, "Phase 2 must be findable"
     phase2 = text[phase2_start:phase2_end]
-    # No AskUserQuestion or questionnaire in Phase 2 tier dispatch.
-    assert "AskUserQuestion" not in phase2 or "Build-unit tier" in phase2
-    # Ensure no new routine questionnaire phrase added.
+    assert "AskUserQuestion" not in phase2
     assert "questionnaire" not in phase2.lower()
+
+
+def test_the_dispatch_question_guard_can_actually_fail() -> None:
+    """Control: the assertions above must reject a Phase 2 that DOES carry a questionnaire.
+
+    Without this, a guard that reads the wrong slice of the document -- or an empty one -- reports
+    the same green as a guard that is working."""
+    seeded = "## Phase 2\nAsk the operator with AskUserQuestion which tier to use.\n## Phase 3"
+    phase2 = seeded[seeded.find("## Phase 2") : seeded.find("## Phase 3")]
+    assert "AskUserQuestion" in phase2, "the control fixture must contain what the guard forbids"
+    # The real slice must not be empty, or the guard passes vacuously on any document.
+    text = _read_skill()
+    real = text[text.find("## Phase 2") : text.find("## Phase 3", text.find("## Phase 2"))]
+    assert len(real) > 500, "Phase 2 must be a substantial slice, not an empty or truncated one"
+    assert "Build-unit tier" in real, "and it must be the slice that carries the tier dispatch"
 
 
 def test_premium_choice_boundary_left_untouched() -> None:

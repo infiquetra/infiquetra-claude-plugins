@@ -4,6 +4,35 @@
 
 ### Fixed
 
+- **Two more guard tests could not fail, and now can.** The tier-dispatch question guard read
+  `assert "AskUserQuestion" not in phase2 or "Build-unit tier" in phase2` — and the repair itself
+  added that heading to Phase 2, so the second operand was unconditionally true and a
+  questionnaire seeded into the dispatch passed. That is the same defect class the tier repair
+  fixed, recurring inside the file that fixed it, and what it let through is exactly what issue
+  #929 forbids. Two Phase-4.4 prose assertions carried dead disjuncts that subsumed their own
+  stricter operands. Each is now paired with a control proving it discriminates.
+- **The change-kinds gate has a behavioural test.** The single-sourcing clause was pinned by prose
+  grep alone and the derivation behind it was never called, so emptying its risky set left the
+  suite green. `requires_hard_test_gate` is now driven per kind, with controls for the empty list
+  and for safe-only kinds.
+- **An explicit build-unit tier is checked for RUNNABILITY, not just membership.** Every effort is
+  a legal effort and every model a legal model, but not every pairing runs — `haiku` tops out below
+  `xhigh` — so an explicit plan tier could name a combination no host can execute while its sibling
+  path, which resolves through the registry, could never produce one.
+- **`resolve-build-unit-tier` follows the fleet's CLI error contract.** A rejected argument printed
+  a bare `SystemExit` string at exit 1, and a bad tier raised through to a traceback; both are read
+  as JSON on stdout by an agent following the skill document. Both now print `{"error": ...}` on
+  stderr and exit 2.
+- **`/loop` no longer equates a `skipped` detect record with convergence.** A `skipped` carrying a
+  `note` means `detect` could not judge — it could not read the live board, or the submission had
+  no readable field — and says nothing about where the card is.
+- **Four false claims in shipped prose are corrected.** The changelog's "264 of 267 modules" is
+  210, measured; its `gated`/`halt` attribution was reversed (`gated` is the certificate declining
+  the op, which is what the empty allowlist produces; `halt` is the drift check); it credited an
+  `_override_line` refusal the source itself calls unreachable from that path; and Work §5.5 still
+  said the `qa` advance "is deferred to the `/qa` rebuild" while the same document's preamble — and
+  `plugins/saga/skills/qa/` — say it is `/qa`'s to make on a PASS.
+
 - **`/work`'s `/qa` preamble said the opposite of what `/qa` does (#930).** It read "`/qa` does not
   yet advance the phase". `/qa` advances `lifecycle_phase` from `work` to `qa` on a PASS and keeps
   it at `work` on a FAIL — its own skill says so and the saga specification's consumer table agrees.
@@ -48,7 +77,7 @@
   proved from the signature and from a hostile environment, and the dead parameter is gone. The
   change-kinds single-sourcing test was `assert "same" in collapsed.lower()`, which ordinary prose
   satisfies; it now matches the clause itself, with a control proving the pattern discriminates.
-- **Two test modules import their subject by path**, like 264 of this suite's 267 modules. The
+- **Two test modules import their subject by path**, like 210 of this suite's 267 modules. The
   package form resolves against whichever `plugins` package is found first, which is the primary
   checkout when the worktree under test is nested beneath it — so the module under test was not
   necessarily the module in the tree under test.
@@ -61,9 +90,12 @@
   including `teardown` as the terminal reclamation gate; the expected five are derived as the
   post-merge slice of `ship_ceremony.TRANSITIONS`. `/loop` no longer claims the first-time board
   move belongs to `/work` and describes the submission path Work submits through Mission Control
-  (built in 0.151.0). The Phase-4.4 gated/allowlist conflation is separated — `gated` is the
-  certificate verdict, `halt` is the empty allowlist — and the orphaned `skip silently` line is
-  made explicit. Every bare `artifact_pointer.py` under `plugins/saga/skills` now uses its full
+  (built in 0.151.0). The Phase-4.4 gated/allowlist conflation is separated: **`gated` is the
+  certificate declining the op** — which is what the empty auto-correct allowlist produces, along
+  with merge, deploy and any unauthorized field — and **`halt` is the drift check finding the live
+  board somewhere else** and declining to overwrite it. An earlier form of this entry attributed
+  the allowlist to `halt`, which reverses the two. The orphaned `skip silently` line is made
+  explicit. Every bare `artifact_pointer.py` under `plugins/saga/skills` now uses its full
   repository-relative path `plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py`.
 
 ## [0.153.0] - 2026-08-31
@@ -92,9 +124,11 @@
   verbatim in the Phase-4 work-session writeup, and that same list is the one passed to
   `requires_hard_test_gate`. The dual-purpose `--doc-review-override` flag is split: the doc-review
   gate keeps `--doc-review-override` and the review gate uses new `--review-gate-override`; both
-  route through a single `issue_progress.py:_override_line` helper that refuses a rationale without
-  a known gate, and the issue comment now renders `doc review override` vs `review gate override`
-  so the waived gate is unambiguous.
+  route through a single `issue_progress.py:_override_line` helper, and the issue comment now
+  renders `doc review override` vs `review gate override` so the waived gate is unambiguous. The
+  helper does carry a refusal for a rationale naming an unknown gate, but it is a guard for a
+  direct caller and **unreachable from the flag path** — the split itself is what makes the waived
+  gate unambiguous, and crediting the refusal reads as a runtime check that never runs.
 
 ## [0.151.0] - 2026-08-31
 

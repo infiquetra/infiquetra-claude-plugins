@@ -1068,8 +1068,12 @@ At thread completion set `status=done`.
 GitHub (PR-open, review-request, and merge are each explicitly confirmed; merge is a git op `/work` owns
 only under confirmation). It does **NOT** own deploy or canary (`deploy` owns deployment
 mutation and production-health revert). It does **NOT** file SDLC issues (`mission-control` owns issue
-creation). It does **NOT** advance `lifecycle_phase` past `work` — the `qa` advance is deferred to the
-`/qa` rebuild, so the saga legitimately sits at `work` post-merge and `/qa` routing is advisory. Build,
+creation). It does **NOT** advance `lifecycle_phase` past `work` — the advance to `qa` is **`/qa`'s
+to make, and only on a PASS**; on a FAIL `/qa` keeps the phase at `work` and records the evidence.
+So the saga legitimately sits at `work` from merge until `/qa` runs and passes, and `/work`'s
+post-merge routing to `/qa` is advisory. (This is not a deferral awaiting a rebuild: the `/qa` skill
+exists at `plugins/saga/skills/qa/`. The advance is withheld because it is another skill's to make,
+which is a different claim and the one the preamble at the top of this document states.) Build,
 gate, record, coordinate the PR loop under confirmation — then stop.
 
 ---

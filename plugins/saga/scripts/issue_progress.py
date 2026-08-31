@@ -99,8 +99,8 @@ def render_issue_comment(
             override_candidates.append(_override_line("doc-review", doc_review_override))
         if review_gate_override is not None:
             override_candidates.append(_override_line("review-gate", review_gate_override))
-    # For callers that already validated via helper, still support the legacy
-    # direct values; the helper above is the canonical path.
+    # The legacy direct values, still supported for a caller that validated them itself. The
+    # helper above is the canonical path for everything it covers.
     for candidate in (
         _line("summary", summary),
         _line("plan", plan_path),

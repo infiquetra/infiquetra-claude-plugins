@@ -27,7 +27,7 @@ _SINGLE_SOURCE_CLAUSE = re.compile(
 
 
 def _issue_progress():
-    """Load `issue_progress` BY PATH, the way 264 of this suite's 267 modules load a plugin script.
+    """Load `issue_progress` BY PATH, the way almost every module in this suite loads a plugin script.
 
     The package form `from plugins.saga.scripts import ...` resolves against whatever `plugins`
     package `find_spec` reaches first, which is the primary checkout when the worktree under test is
@@ -202,6 +202,40 @@ def test_work_writeup_records_change_kinds_and_single_sources_gate() -> None:
         "same list, not two derivations"
     )
     assert "verbatim" in collapsed, "the recorded value must be required to be verbatim"
+
+
+def _lifecycle_state():
+    """Load `lifecycle_state` BY PATH, for the same reason `_issue_progress` does."""
+    import importlib.util
+
+    path = ROOT / "plugins" / "saga" / "scripts" / "lifecycle_state.py"
+    spec = importlib.util.spec_from_file_location("_lifecycle_state_for_gate_integrity", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    if str(path.parent) not in sys.path:
+        sys.path.insert(0, str(path.parent))
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_change_kinds_gate_is_driven_not_merely_described() -> None:
+    """The clause was pinned by prose grep alone; the derivation it describes was never called.
+
+    A prose test proves the section SAYS the writeup value and the gate input are one list. It
+    cannot prove the function behind that claim behaves as described -- setting the risky set to
+    empty left 1608 tests green, because nothing in the suite asked the derivation a question."""
+    lifecycle = _lifecycle_state()
+    # Every risky kind the section names must actually demand the hard gate, one at a time.
+    for kind in ("behavior", "security", "infra", "api", "deployment", "data"):
+        assert lifecycle.requires_hard_test_gate([kind]) is True, kind
+        assert lifecycle.requires_hard_test_gate([kind.upper()]) is True, kind
+    # Control: the gate must DISCRIMINATE, or "always True" would pass the loop above.
+    assert lifecycle.requires_hard_test_gate([]) is False
+    assert lifecycle.requires_hard_test_gate(["docs"]) is False
+    assert lifecycle.requires_hard_test_gate(["docs", "chore"]) is False
+    # One risky kind among safe ones still demands the gate -- the list is a union, not a vote.
+    assert lifecycle.requires_hard_test_gate(["docs", "security"]) is True
 
 
 def test_the_single_source_clause_pattern_discriminates() -> None:

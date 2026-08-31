@@ -431,10 +431,18 @@ def recheck_orchestration_capability(
 
 
 def _assert_known_tier(model: str, effort: str, *, source: str) -> None:
-    """Refuse a model or effort the shared tier vocabulary does not carry.
+    """Refuse a model, an effort, or a COMBINATION the shared tier vocabulary does not carry.
 
     The vocabulary is ``fleet_commons.tier_palette``'s ``MODELS`` / ``EFFORTS``, reached through the
     same shim :mod:`tier_defaults` uses, so there is one authority rather than a second copy here.
+
+    Membership in each list separately is not enough, and checking only that was the gap: every
+    effort is a legal effort and every model a legal model, but not every pairing runs. ``haiku``
+    tops out below ``xhigh``, so a plan naming that model at that effort passed two membership
+    checks and named a tier no host can execute. The sibling path could never produce it -- an
+    overlay entry goes through ``_validate_shape_and_tier`` against the registry, and a registry
+    default is runnable by construction -- so an explicit tier was the one door into this function
+    that skipped the check its own alternative enforces.
     """
     from pathlib import Path as _Path  # noqa: PLC0415
 
@@ -448,6 +456,11 @@ def _assert_known_tier(model: str, effort: str, *, source: str) -> None:
         raise ValueError(f"{source} model {model!r} is not one of {list(palette.MODELS)}")
     if effort not in palette.EFFORTS:
         raise ValueError(f"{source} effort {effort!r} is not one of {list(palette.EFFORTS)}")
+    if not palette.supports_effort(model, effort):
+        raise ValueError(
+            f"{source} names {model!r} at {effort!r}, which that model cannot run; its ceiling is "
+            f"{palette.effort_ceiling(model)!r}"
+        )
 
 
 def resolve_build_unit_tier(
@@ -616,12 +629,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result))
         return 0
     if args.command == "resolve-build-unit-tier":
+        # The fleet's CLI contract for a bad input is a JSON `error` on stderr and exit 2, not a
+        # traceback and not a bare SystemExit string. This subcommand is called from a skill
+        # document by an agent that reads stdout as JSON: a traceback there is a parse failure with
+        # no diagnosis in it, and `raise SystemExit(...)` exits 1, which the fleet uses for a
+        # genuine failure rather than a rejected argument.
         if bool(args.plan_model) != bool(args.plan_effort):
-            raise SystemExit("--plan-model and --plan-effort must be given together")
+            print(
+                json.dumps({"error": "--plan-model and --plan-effort must be given together"}),
+                file=sys.stderr,
+            )
+            return 2
         plan_tier = (
             {"model": args.plan_model, "effort": args.plan_effort} if args.plan_model else None
         )
-        print(json.dumps(resolve_build_unit_tier(plan_tier=plan_tier, work_shape=args.work_shape)))
+        try:
+            resolved = resolve_build_unit_tier(plan_tier=plan_tier, work_shape=args.work_shape)
+        except (ValueError, KeyError) as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 2
+        print(json.dumps(resolved))
         return 0
     if args.command == "recheck-capability":
         result = recheck_orchestration_capability(

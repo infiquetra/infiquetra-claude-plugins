@@ -169,7 +169,13 @@ python3 plugins/saga/scripts/reconcile_controller.py detect \
 drive a write. It does not widen `/loop`'s autonomy or make it execute phase work (#450 non-goal).
 It emits one record:
 
-- `{"status":"skipped"}` — converged: the board already holds the asserted value.
+- `{"status":"skipped"}` — **converged, or unjudged; the two are told apart by the `note`.** With
+  no `note`, the board already holds the asserted value and this is genuine convergence. With a
+  `note`, `detect` could not judge — it could not read the live board, or the submission carried no
+  field this controller can read back — and the record says nothing at all about where the card is.
+  Treating a noted `skipped` as convergence reports a card as settled that nobody looked at, which
+  is the same success-shaped silence the drift check exists to end. Surface the `note` and check
+  the card by hand.
 - `{"status":"drift", ...}` — a reversible outside edit to the Status field. **Submit the
   correction through the Mission Control mutation contract, with the operator's confirmation**:
   surface the drift record (`drift_kind`, `drift_id`, `board_value`, prepared `saga_value`), and

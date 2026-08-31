@@ -40,6 +40,36 @@
 **Generalizable rule.** When a caller cannot version its callee, it must verify from something the callee *emitted*, not from what it sent. In-process tests cannot see this class at all, so look for it wherever a plugin shells out to another plugin.
 **Refs.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`; DECISIONS [`{#927-verify-the-executor-not-the-intent}`](DECISIONS.md#927-verify-the-executor-not-the-intent); issue #927.
 
+### A guard whose assertion is a disjunction is only as strong as its weakest operand  {#927-disjunction-weakest-operand}
+
+**Evidence.** Four guards in run cp919 survived the mutation of the very thing they were written to
+pin, and three of the four failed the same way. `tests/test_work_build_unit_tier.py`:
+`assert "AskUserQuestion" not in phase2 or "Build-unit tier" in phase2` — the repair that added the
+guard also added that heading, so the second operand was unconditionally true and a questionnaire
+seeded into the tier dispatch passed. `tests/test_work_prose_contracts.py`:
+`assert '"halt"' in sec or "'halt'" in sec or "halt" in sec.lower()`, where the third operand
+subsumes the first two and is true of almost any prose on the subject. And, from cycle 1,
+`or "resolve_build_unit_tier" in text` — the name of the function the file under test defines.
+
+**Mechanism.** A disjunction passes when *any* operand holds, so adding an operand can only ever
+weaken it. The dangerous shape is a disjunct whose truth is guaranteed by the surrounding artifact:
+a heading the same change introduced, a function name the module under test necessarily defines, a
+lowercase substring of the concept being asserted. That is not a loose assertion, it is a
+tautology — and it reports the same green as a working guard, which is worse than no guard, because
+it claims a safety that does not exist.
+
+**A fourth failed differently and is worth naming separately.**
+`tests/test_orchestrate_board_writeback.py` pinned a version-ordering repair by re-deriving it:
+`sorted(paths, key=lambda p: (_version_rank(p), str(p)), reverse=True)` — the resolver's own sort
+key, copied into the assertion. Reverting the resolver to a lexicographic sort left it green,
+because the test never called the resolver. A test that restates an implementation asserts that the
+implementation equals itself.
+
+**Generalizable rule.** An assertion pinning a property must (a) call the real thing rather than
+restate it, and (b) be paired with a control that proves it can fail — a fixture carrying exactly
+what the guard forbids, or a slice-length check proving the guard is not reading an empty region.
+If the assertion needs a disjunction to pass, one operand is probably doing no work; delete it and
+see whether the test still passes.
 
 
 ### A stale second copy of a vocabulary plus a skip-on-mismatch makes every write invisible  {#927-stale-vocabulary-silent-halt}

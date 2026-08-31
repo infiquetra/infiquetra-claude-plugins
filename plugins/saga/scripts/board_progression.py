@@ -166,6 +166,11 @@ def _append_comment_marker(body: str, key: str) -> str:
 # stable and distinct from a single-field key.
 ASSIGNMENT_IDENTITY_SEPARATOR = "+"
 
+# Per-assignment budget for one ``flow set-field`` invocation. Each assignment is its own
+# cross-board discovery-and-write pass inside mission-control, so the whole-call budget scales with
+# the count rather than staying at the single-field figure it was set for.
+_TIMEOUT_SECONDS_PER_ASSIGNMENT = 60
+
 
 def normalize_assignments(
     payload: dict[str, Any] | None, target_state: str
@@ -198,18 +203,34 @@ def normalize_assignments(
         return [(str(pay.get("field") or "Status"), str(target_state))]
     if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
         raise ValueError(f"assignments must be a list of (field, option) pairs, got {raw!r}")
-    if len(raw) < 2:
-        raise ValueError(
-            f"assignments carries {len(raw)} assignment(s); a lifecycle submission that opts into "
-            "the pair API must carry both halves, or the board is left half-written with a "
-            "success-shaped record. Use the field/target_state keys for a single-field write."
-        )
     assignments: list[tuple[str, str]] = []
     for item in raw:
         if isinstance(item, str) or not isinstance(item, (list, tuple)) or len(item) != 2:
             raise ValueError(f"assignment {item!r} is not a (field, option) pair")
         field_name, option_name = item
+        if ASSIGNMENT_IDENTITY_SEPARATOR in str(field_name) or (
+            ASSIGNMENT_IDENTITY_SEPARATOR in str(option_name)
+        ):
+            # The replay identity joins the halves with this separator, so a value containing it
+            # could make two different submissions mint one key -- the exact collision the composite
+            # identity exists to prevent. Unreachable against today's board (no live Stage or Status
+            # option contains it), and refused rather than left to become reachable quietly.
+            raise ValueError(
+                f"assignment {item!r} contains {ASSIGNMENT_IDENTITY_SEPARATOR!r}, which the replay "
+                "identity uses as its separator"
+            )
         assignments.append((str(field_name), str(option_name)))
+    # DISTINCT fields, not element count. Counting elements accepts
+    # ``[["Status", "A"], ["Status", "B"]]`` -- two assignments to one field, which is a half-move
+    # wearing a pair's shape and leaves the other field exactly where the single-field write would
+    # have.
+    if len({field_name for field_name, _ in assignments}) < 2:
+        raise ValueError(
+            f"assignments names {len({f for f, _ in assignments})} distinct field(s); a lifecycle "
+            "submission that opts into the pair API must carry both halves, or the board is left "
+            "half-written with a success-shaped record. Use the field/target_state keys for a "
+            "single-field write."
+        )
     return assignments
 
 
@@ -232,9 +253,14 @@ def assignment_identity(assignments: list[tuple[str, str]]) -> tuple[str, str]:
     """
     if len(assignments) == 1:
         return assignments[0]
+    # SORTED by field name, so the identity names the move rather than the order it was typed in.
+    # Submission order is preserved in the argv and is a real property of the write; it is NOT a
+    # property of the logical move, and leaving it in the key would let the same move re-drive
+    # itself under a second identity simply because a caller listed Status before Stage.
+    ordered = sorted(assignments, key=lambda pair: pair[0])
     return (
-        ASSIGNMENT_IDENTITY_SEPARATOR.join(field_name for field_name, _ in assignments),
-        ASSIGNMENT_IDENTITY_SEPARATOR.join(option_name for _, option_name in assignments),
+        ASSIGNMENT_IDENTITY_SEPARATOR.join(field_name for field_name, _ in ordered),
+        ASSIGNMENT_IDENTITY_SEPARATOR.join(option_name for _, option_name in ordered),
     )
 
 
@@ -494,7 +520,7 @@ def _describe_rows(rows: Any) -> str:
     return ", ".join(described)
 
 
-def _set_field_landed_detail(stdout: str) -> str:
+def _set_field_landed_detail(stdout: str, assignments: list[tuple[str, str]]) -> str:
     """Name which assignments landed and which did not, from Mission Control's own report (#927).
 
     ``flow_set_fields_bulk`` prints its ``updated`` / ``failed`` / ``identity`` result to STDOUT and
@@ -528,7 +554,17 @@ def _set_field_landed_detail(stdout: str) -> str:
         if isinstance(parsed, dict) and ("updated" in parsed or "failed" in parsed):
             report = parsed
     if report is None:
-        return ""
+        # No report at all, which is NOT the same as nothing having landed. ``_out`` runs before the
+        # ``failed`` raise, so an absent report means the run died before it -- a
+        # ``LifecycleMutationHaltError`` propagating out of the SECOND assignment is exactly that
+        # shape, and it leaves the FIRST one written. Returning "" here reported a total failure for
+        # a board that may be half-moved. Say what was submitted and that the outcome is unknown, so
+        # the operator checks both fields instead of assuming neither landed.
+        submitted = ", ".join(f"{field}={option}" for field, option in assignments)
+        return (
+            f"no outcome report on stdout, so which halves landed is UNKNOWN; submitted: "
+            f"{submitted or 'none'} — check every field on the board before retrying"
+        )
     landed = _describe_rows(report.get("updated"))
     unlanded = _describe_rows(report.get("failed"))
     parts = [f"landed: {landed or 'none'}", f"NOT landed: {unlanded or 'none'}"]
@@ -600,6 +636,9 @@ def default_board_writer(
         # idempotency-key namespace; strip the owner here so the REST path is not doubled.
         repo = repo.rsplit("/", 1)[-1]
         owner_repo = f"infiquetra/{repo}"
+        # Empty for every op but the lifecycle write; the timeout and the failure detail below both
+        # read it, and both must behave exactly as they did for the other verbs.
+        assignments: list[tuple[str, str]] = []
         if op_kind == "set-field-status":
             cert = _cert()
             # One invocation, N assignments (#927). ``flow set-field`` declares --field/--option
@@ -669,11 +708,18 @@ def default_board_writer(
             ]
         else:
             raise ValueError(f"no mission-control verb mapping for op_kind {op_kind!r}")
-        result = run(cmd, capture_output=True, text=True, timeout=60)
+        # One assignment is one cross-board discovery-and-write pass inside mission-control, so a
+        # pair does roughly twice the work of the single-field write this budget was set for.
+        # Scaling by the assignment count keeps the per-assignment budget the same rather than
+        # halving it silently the moment the pair shipped.
+        timeout = _TIMEOUT_SECONDS_PER_ASSIGNMENT * max(1, len(assignments)) if assignments else 60
+        result = run(cmd, capture_output=True, text=True, timeout=timeout)
         if getattr(result, "returncode", 0) != 0:
             detail = ""
             if op_kind == "set-field-status":
-                landed = _set_field_landed_detail(str(getattr(result, "stdout", "") or ""))
+                landed = _set_field_landed_detail(
+                    str(getattr(result, "stdout", "") or ""), assignments
+                )
                 if landed:
                     detail = f"; {landed}"
             raise RuntimeError(

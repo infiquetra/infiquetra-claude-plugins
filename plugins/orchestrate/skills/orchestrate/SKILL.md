@@ -460,6 +460,41 @@ Shared files re-dirty every still-open pull request on each merge; in this repos
 `plugin.json`, `CHANGELOG.md` and `.claude-plugin/marketplace.json`. Immediate reintegration is the
 standing response.
 
+## Board writeback — what `land` and `announce` do to a card
+
+A run file may carry an `issues` mapping (unit name to `owner/repo#N`) and an optional `status_map`.
+With it, `land` and `announce` write each landed unit's phase boundary back to its issue's card.
+Without it, this whole feature is a no-op and nothing about the run changes.
+
+**Orchestrate never writes GitHub.** Every write is a *submission* through saga's
+`reconcile_controller`, which owns the certificate gate, the idempotency ledger and the replay key,
+and which stops at Mission Control's `flow set-field --correction`. Mission Control alone executes.
+
+**A move is a `(Stage, Status)` pair**, submitted as one two-assignment call. A unit's name prefix
+picks the rung: `plan` and `docreview` land in `Planning`, `work`, `fix` and `codereview` in
+`Active`, `landed` in `Verify`. Every rung is validated against the board's own vocabulary, resolved
+from the Mission Control schema the installed plugin ships — Orchestrate keeps no copy of its own.
+
+**Three failures are loud on purpose**, because each one used to be silent:
+
+| What happens | What you see |
+| --- | --- |
+| The rung is not a live option combination on the board | a failure record naming the rung; `land` exits 2 |
+| Mission Control's schema does not resolve here | a line on stderr and a failure record; `land` exits 2 |
+| The installed saga is older than the pair contract and wrote one field | a failure record naming the identity it recorded; no progress comment is posted |
+
+That last one is worth knowing about before it happens. Orchestrate shells out to whichever saga
+`reconcile_controller.py` resolves on the machine, which is not necessarily the saga in the checkout
+you are working in. **Install saga 0.151.0 or later before relying on board writeback** — an older
+one accepts the call, ignores the `Stage` half, and reports success. Orchestrate now catches that by
+reading the record's own `field` identity, but catching it is not the same as it not happening: the
+card is left with its `Status` moved and its `Stage` where it was.
+
+`announce <unit>` is the retry door for a *transient* failure and is safe to re-run — the
+idempotency keys collapse a repeat into a skip, so announcing twice posts one comment. It is not a
+remedy for a stale install, an unresolvable schema, or a run file whose override is not a pair;
+those report the cause instead, and `announce` exits 2 rather than 0.
+
 ## What this deliberately does not do
 
 Evidence-based settlement checks completion evidence on the branch (`produced_anything`), but

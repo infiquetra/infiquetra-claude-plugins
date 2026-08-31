@@ -2,6 +2,64 @@
 
 ## 2026-08-31
 
+### Orchestrate reads Mission Control's shipped schema document rather than importing its resolver  {#927-orchestrate-reads-the-shipped-schema}
+
+**Decision.** `orchestrate.stage_statuses()` resolves the board vocabulary by reading the
+`workflows.stage_flow.stage_statuses` block out of the `config/sdlc-schema.json` that the installed
+mission-control plugin ships, rather than importing `sdlc_manager` and calling `_stage_flow_rules()`.
+Installs are searched newest-version-first across both plugin roots, and an unresolvable schema is a
+loud failure rather than a skip.
+**Date:** 2026-08-31 · **Issue:** #927 (U5) · **Origin:** disclosed as a judgment call at
+pull-request-open; adjudicated "half-holds" by the cycle-1 integrated review and corrected here.
+**Why.** `_resolve_sdlc_schema` reaches GitHub through a `gh` child before falling back to the
+vendored copy. Board writeback is a guest of the run: it must never make a `land` wait on the
+network, and it must work offline. Reading the document keeps Orchestrate free of a vocabulary of
+its **own**, which is the property that actually failed before — the hard-coded `STATUS_LADDER` went
+stale on both fields and every write halted silently.
+**What this does NOT buy, corrected.** The first version of this decision claimed "the vocabulary
+still has exactly one source". That is false: the shipped document is mission-control's *offline*
+source, not its only one, and the two have already diverged once (live `schema_version` 2026-08-30.6
+against a vendored 2026-08-29, `stage_statuses` byte-identical at the time). A rung that is
+live-but-newer than the installed plugin therefore fails loud here rather than being submitted
+blind, which is the safe direction but is not the same as agreement.
+**Rejected.** Importing `sdlc_manager` (a network call in a path that must degrade silently, plus
+the import weight of a very large module); vendoring `fleet_commons.plugin_resolution` into
+Orchestrate, which is the repository's real resolution ladder and is what saga's own board path uses
+— rejected for THIS change only, as a dependency-direction change wider than the repair, and it is
+the right long-term answer.
+**Revisit when.** Orchestrate vendors the fleet-core shim for any other reason, or a live-versus-
+vendored schema divergence actually bites a run.
+**Refs.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`; issue #927;
+[`{#927-pair-rides-the-payload}`](#927-pair-rides-the-payload).
+
+### A cross-plugin submission is verified from the executor's own record, not from the caller's intent  {#927-verify-the-executor-not-the-intent}
+
+**Decision.** Orchestrate checks the `field` identity in the record its submission comes back with,
+and treats a converged-looking record that does not name the whole pair as a failure. Its
+`plugin.json` declares `saga >= 0.151.0` and `mission-control >= 2.15.1`, and the changelog states
+the install order.
+**Date:** 2026-08-31 · **Issue:** #927 · **Origin:** the cycle-1 integrated review's only P0.
+**Why.** Orchestrate does not execute board writes — it shells out to whichever saga
+`reconcile_controller.py` resolves on the machine, which is not the saga in the checkout under
+review. A saga older than the pair contract has no `normalize_assignments`: it drops
+`payload["assignments"]`, writes `--field Status` alone, mints the pre-pair key and returns
+`written`. Every downstream signal then agreed the move landed, the progress comment asserted a
+`board stage:` line for a Stage that never moved, and `land` exited 0. The record already carried
+the discriminator and nothing read it. **A version declaration alone would not have been enough** —
+it is advisory, and the resolver was selecting 0.136.0 out of sixty installed copies because its
+glob sorted lexicographically. Declaration, version-ordered resolution and record verification are
+three answers to one question and all three are needed.
+**Generalizable.** When a caller hands work to a runtime-resolved executor it does not version, the
+caller must verify from something the executor *emitted*, not from what the caller sent.
+**Rejected.** Trusting the declared dependency (advisory, and unenforced at runtime); importing
+saga's helper to compare (Orchestrate cannot import a plugin that may be absent); probing the saga's
+version before each call (an extra process spawn per unit, and a version string is a weaker witness
+than the record the operation itself produced).
+**Revisit when.** The plugin host enforces declared dependency versions at load time.
+**Refs.** `announce_units`, `_pair_was_executed`, `pair_identity` in
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`;
+`tests/test_orchestrate_board_writeback.py`.
+
 ### The (Stage, Status) pair rides the existing payload, and both replay-key sites widen together  {#927-pair-rides-the-payload}
 
 **Decision.** A lifecycle-field submission may carry N assignments as `payload["assignments"]`, a list of `[field, option]` pairs. `board_progression.normalize_assignments` reads it, `assignment_identity` renders the whole submission's replay identity, and both key-minting sites — `authorize_and_write` and `reconcile_controller.reconcile_op` — call the same helper. An absent `assignments` key falls back to today's exact single-field behaviour, argv and ledger key included. `default_board_writer` emits one `--field`/`--option` per assignment in **one** `flow set-field --correction` invocation, and on a non-zero exit parses Mission Control's stdout report to name the landed and the unlanded assignment.

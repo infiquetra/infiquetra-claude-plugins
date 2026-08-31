@@ -265,9 +265,11 @@ python3 plugins/saga/scripts/reconcile_controller.py reconcile \
 ```
 
 **Submit both halves, and check both.** The pair travels in one invocation but is not rolled back
-if the second assignment fails, so read the record: `written`/`skipped` is success, a `failed`
-record names the landed and the unlanded assignment, and `halt`/`gated` falls back to the
-operator-prompted Mission Control path. Say in the phase header that work is starting.
+if the second assignment fails. Read the record by the contract in "Reading a lifecycle record"
+under Phase 4.4 — in particular, `field` must be `Stage+Status`, because `skipped` alone is not
+proof the move happened and an installed saga older than the pair contract reports `written` after
+writing the `Status` half only. `halt`/`gated` falls back to the operator-prompted Mission Control
+path. Say in the phase header that work is starting.
 
 Skip silently when there is no issue -- a unit with no card has no lifecycle field to move.
 
@@ -781,8 +783,10 @@ verb is a plain POST — its own docstring says the *caller* owns idempotency �
 retried or resumed would otherwise post the same phase comment twice. The controller's ledger
 collapses a repeat tick to `{"status":"skipped"}`, and orchestrate retries units by design.
 
-Read the record JSON the same way Phase 4.4 does: `written`/`skipped` is success, and `halt`/`gated`
-means fall back to the operator-prompted path rather than forcing the write.
+Read the record JSON by the contract in "Reading a lifecycle record" under Phase 4.4. This op is a
+comment rather than a lifecycle field, so it carries no `field` identity and no pair to check:
+`written`/`skipped` is success for it, and `halt`/`gated` means fall back to the operator-prompted
+path rather than forcing the write.
 
 Record durable learnings/decisions in the engineering journal as they surface. `/work` renders the
 comment and drives it through the controller; it does not mutate the issue by any other route.
@@ -827,9 +831,19 @@ python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --op sub-issue-close --repo <owner/repo> --number <N>
 ```
 
-**The delivered-terminal move.** **Actor:** this skill. **Trigger:** the child is delivered and
-closed and its gate is green — the merged PR, the saga tick, and the work-session path are all
-durable. **Move:** the live pair `Stage` = `Retro`, `Status` = `Ready to close`.
+**The delivered-terminal move.** **Actor:** this skill. **Trigger:** stated to the same standard
+as the Verify trigger above, because it follows it and a weaker gate here would let a card reach the
+terminal rung having skipped the one before it. **All four must hold**, in this order:
+
+1. the Verify move above was **submitted and its record read as landed** — `Retro` follows `Verify`
+   in the stage flow, so entering it without having entered `Verify` skips the merge-plus-deployment
+   condition rather than satisfying it;
+2. the sub-issue close below fired, so the child is actually **closed**;
+3. the repository gate is **green at the merged commit**, not at some earlier revision; and
+4. the merged pull request, the saga tick and the work-session path are all durable.
+
+If any one of the four is unknown, say which and stop — do not submit the move. **Move:** the live
+pair `Stage` = `Retro`, `Status` = `Ready to close`.
 
 ```bash
 python3 plugins/saga/scripts/reconcile_controller.py reconcile \
@@ -838,19 +852,37 @@ python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --payload '{"assignments": [["Stage", "Retro"], ["Status", "Ready to close"]]}'
 ```
 
-**Submit both halves of every pair, and check both.** One invocation carries two assignments, and
-Mission Control does **not** roll the pair back if the second fails — so a `failed` record names
-the landed and the unlanded assignment, and the unlanded half is what to repair. A `Status`-only
-submission is the trap worth naming: `Awaiting verification` is a legal `Status` on its own, so the
-half-write reads as success while `Stage` stays where it was.
+**Submit both halves of every pair, and check both** by the contract in "Reading a lifecycle
+record" below. One invocation carries two assignments, and Mission Control does **not** roll the
+pair back if the second fails — so a `failed` record names the landed and the unlanded assignment,
+and the unlanded half is what to repair. A `Status`-only submission is the trap worth naming:
+`Awaiting verification` is a legal `Status` on its own, so the half-write reads as success while
+`Stage` stays where it was — and it reaches the board by two different routes, a mid-pair failure
+inside Mission Control and an installed saga too old to send the second assignment at all.
 
 The controller composes the certificate-gated idempotency writer (`board_progression`, #344) with a
 **level-triggered drift check**: every tick it re-reads the live board, so a rapid double tick
 collapses to one write and an outside edit made while `/work` was at rest is re-detected. The CLI
 prints a record JSON:
 
-- `{"status":"written"}` / `{"status":"skipped"}` — the move fired (or was already applied) with
-  **no operator prompt**.
+- `{"status":"written"}` — the move fired with **no operator prompt**. For a lifecycle pair, read
+  `field` before believing it: see "Reading a lifecycle record" below.
+- `{"status":"skipped"}` — **not a synonym for `written`.** It means only that this exact
+  submission's replay key was already on disk, or that the live board already reads the way the
+  lifecycle asserted. It is also what the controller returns when it *cannot judge* — a submission
+  with no readable half, or a live board it could not read — and in both of those it carries a
+  `note` saying so. A `skipped` whose `note` names an unreadable field or an unreadable board is a
+  move nobody verified.
+- `{"status":"error", "may_reapply":true}` — the rarest and the most dangerous to misread: **the
+  board write committed and the replay key did not get recorded.** The move happened; the ledger
+  does not know it. A later tick therefore re-applies it, which is harmless on a field write
+  (setting an option to the value it already holds is a no-op) and is why this surfaces rather than
+  raising. Do not treat it as a failure to retry by hand, and do not treat it as clean: say so in
+  the phase note, because the ledger and the board disagree until the next tick reconciles them.
+- `{"status":"failed"}` — no ledger key was written, so the next tick retries. For a lifecycle
+  pair the message names which assignments landed and which did not; when Mission Control died
+  before printing its report it says so instead of claiming nothing landed, and **both fields need
+  checking by hand**.
 - `{"status":"halt", ...}` with a named `halt_reason` — the outside board changed away from what
   the lifecycle asserted while `/work` was at rest. Since W7 the controller holds **no autonomous
   write authority over `Stage` or `Status`**: every outside drift — including a reversible
@@ -861,6 +893,27 @@ prints a record JSON:
   auto-correct allowlist returns, because the certificate lives in `reversibility_certificate` —
   fall back to the operator-prompted `mission-control` path unchanged. A `gated`/`halt` result is
   the controller correctly withholding an action that needs a human, never a failure.
+
+**Reading a lifecycle record — what proves a pair moved, and what does not.**
+
+A `(Stage, Status)` submission is one invocation carrying two assignments, and the record's `field`
+is the whole submission's identity: `Stage+Status` when both halves were executed, and a bare
+`Status` when they were not. That single field is the only proof available that the saga which
+*executed* the call was new enough to carry the pair at all — an older installed saga ignores the
+second assignment, writes `Status` alone, and still reports `written`. **A record whose `field` is
+not `Stage+Status` did not move the Stage half, whatever its `status` says.**
+
+Mission Control exposes **no read-back for the `Stage` field**: `board view` groups cards by
+`Status` only, and the reconcile controller's own drift check reads `Status` for the same reason.
+So "check both halves" is not a board read — it is these three, in order:
+
+1. the record's `field` names both halves;
+2. its `status` is `written` (or a `skipped` with no `note`);
+3. on a `failed`, the message's *landed / NOT landed* detail names which assignment to repair.
+
+When all three cannot be satisfied — an `error`, or a `failed` with no report — say so and open the
+card in a browser rather than asserting the move. Do not report a lifecycle move as complete on the
+strength of a `status` word alone.
 
 `/work` still does **not** merge or deploy autonomously (permanently gated), and the controller
 never widens the autonomously-writable set beyond what `board_progression`/`reversibility_certificate`

@@ -497,3 +497,194 @@ def test_no_new_op_kind_was_invented_for_the_pair() -> None:
     assert not [
         name for name in names if name.startswith("set-field-") and name != "set-field-status"
     ]
+
+
+# ----------------------------------------------------------------- cycle-2 review repairs
+
+
+def _seed_ledger(tmp_path: Path, payload: dict[str, Any], target_state: str) -> Path:
+    """Drive one successful submission so its ledger key is present for the next tick."""
+    ledger = tmp_path / "drift-ledger"
+    ledger.mkdir(exist_ok=True)
+    runner = RecordingRunner()
+    writer = BP.default_board_writer(
+        mission_control_root=tmp_path / "mission-control", runner=runner
+    )
+    record = BP.authorize_and_write(
+        "set-field-status",
+        "o/r",
+        927,
+        target_state,
+        board_writer=writer,
+        ledger_dir=ledger,
+        payload=payload,
+    )
+    assert record["status"] == "written"
+    return ledger
+
+
+def test_a_pair_keeps_its_live_drift_check(tmp_path: Path) -> None:
+    """The level-triggered convergence loop must stay ON for a pair submission.
+
+    The guard that skips a field this controller cannot read back compared the submission's LEDGER
+    IDENTITY against the one readable field. A pair mints the composite `Stage+Status`, which can
+    never equal `Status`, so from the second tick every pair returned `skipped` without calling
+    `live_reader` at all -- the single property this module exists to provide, off for every
+    lifecycle write Plan, Work and Orchestrate make. The question is whether the submission
+    CONTAINS the readable field, not whether its identity equals it.
+    """
+    payload = {"assignments": [["Stage", "Active"], ["Status", "Implementing"]]}
+    ledger = _seed_ledger(tmp_path, payload, "Implementing")
+    reads: list[tuple[str, str, int]] = []
+
+    def drifted(op_kind: str, repo: str, number: int) -> str:
+        reads.append((op_kind, repo, number))
+        return "Repairing"
+
+    record = RC.reconcile_op(
+        "set-field-status",
+        "o/r",
+        927,
+        "Implementing",
+        board_writer=lambda **_kwargs: None,
+        ledger_dir=ledger,
+        live_reader=drifted,
+        payload=payload,
+    )
+    assert reads, "the drift check must actually read the live board for a pair"
+    assert record["status"] == "halt", record
+    assert record["halt_reason"] == "status-drift:Repairing"
+    assert record["board_value"] == "Repairing"
+
+
+def test_a_converged_pair_is_a_skip_not_a_halt(tmp_path: Path) -> None:
+    """And the same read, when the board agrees, converges rather than manufacturing drift."""
+    payload = {"assignments": [["Stage", "Active"], ["Status", "Implementing"]]}
+    ledger = _seed_ledger(tmp_path, payload, "Implementing")
+    record = RC.reconcile_op(
+        "set-field-status",
+        "o/r",
+        927,
+        "Implementing",
+        board_writer=lambda **_kwargs: None,
+        ledger_dir=ledger,
+        live_reader=lambda *_a: "Implementing",
+        payload=payload,
+    )
+    assert record["status"] == "skipped"
+    assert "note" not in record, "a converged read is not an unreadable-field skip"
+
+
+def test_a_stage_only_submission_still_refuses_to_judge(tmp_path: Path) -> None:
+    """The guard's real purpose survives: no readable half means no verdict, as before."""
+    payload = {"assignments": [["Stage", "Active"], ["Stage", "Verify"]]}
+    ledger = tmp_path / "stage-only"
+    ledger.mkdir()
+    record = RC.reconcile_op(
+        "set-field-status",
+        "o/r",
+        927,
+        "Active",
+        board_writer=lambda **_kwargs: None,
+        ledger_dir=ledger,
+        live_reader=lambda *_a: "Implementing",
+        payload=payload,
+    )
+    # Refused before it can even mint a key: two assignments to one field is not a pair.
+    assert record["status"] == "gated"
+    assert "distinct field" in record["halt_reason"]
+
+
+def test_two_assignments_to_one_field_are_not_a_pair(tmp_path: Path) -> None:
+    """Counting ELEMENTS accepts a half-move wearing a pair's shape."""
+    ledger = tmp_path / "same-field"
+    ledger.mkdir()
+    record = BP.authorize_and_write(
+        "set-field-status",
+        "o/r",
+        927,
+        "Implementing",
+        board_writer=lambda **_kwargs: None,
+        ledger_dir=ledger,
+        payload={"assignments": [["Status", "Implementing"], ["Status", "Integrating"]]},
+    )
+    assert record["status"] == "gated"
+    assert "distinct field" in record["error"]
+
+
+def test_the_identity_separator_is_refused_inside_a_value(tmp_path: Path) -> None:
+    """Unreachable against today's board, and refused rather than left to become reachable."""
+    ledger = tmp_path / "separator"
+    ledger.mkdir()
+    record = BP.authorize_and_write(
+        "set-field-status",
+        "o/r",
+        927,
+        "x",
+        board_writer=lambda **_kwargs: None,
+        ledger_dir=ledger,
+        payload={"assignments": [["Stage", "Ac+tive"], ["Status", "Implementing"]]},
+    )
+    assert record["status"] == "gated"
+    assert "separator" in record["error"]
+
+
+def test_the_replay_identity_does_not_depend_on_assignment_order() -> None:
+    """Submission order is a property of the write, not of the logical move."""
+    forward = BP.assignment_identity([("Stage", "Active"), ("Status", "Implementing")])
+    reverse = BP.assignment_identity([("Status", "Implementing"), ("Stage", "Active")])
+    assert forward == reverse == ("Stage+Status", "Active+Implementing")
+
+
+def test_a_failure_with_no_report_names_what_was_submitted(tmp_path: Path) -> None:
+    """An absent report is NOT proof that nothing landed.
+
+    `_out` runs before the `failed` raise, so no report means the run died before it -- a
+    `LifecycleMutationHaltError` out of the SECOND assignment is exactly that shape, and it leaves
+    the FIRST one written. Reporting a bare stderr there described a total failure for a board that
+    may be half-moved.
+    """
+    record, _runner = _drive(
+        tmp_path,
+        "Awaiting verification",
+        {"assignments": [["Stage", "Verify"], ["Status", "Awaiting verification"]]},
+        label="halted",
+        results=[(1, "", "LifecycleMutationHaltError: board 'Asgard' disagrees")],
+        max_attempts=1,
+    )
+    assert record["status"] == "failed"
+    assert "UNKNOWN" in record["error"]
+    assert "Stage=Verify" in record["error"]
+    assert "Status=Awaiting verification" in record["error"]
+    assert "check every field" in record["error"]
+
+
+def test_the_call_budget_scales_with_the_assignment_count(tmp_path: Path) -> None:
+    """A pair is two cross-board passes inside mission-control, not one."""
+    timeouts: list[int] = []
+
+    def _recording(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        timeouts.append(int(kwargs.get("timeout", 0)))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    writer = BP.default_board_writer(
+        mission_control_root=tmp_path / "mission-control", runner=_recording
+    )
+    writer(
+        op_kind="set-field-status",
+        repo="o/r",
+        number=927,
+        payload={
+            "assignments": [["Stage", "Verify"], ["Status", "Awaiting verification"]],
+            "target_state": "Awaiting verification",
+        },
+    )
+    writer(
+        op_kind="set-field-status",
+        repo="o/r",
+        number=927,
+        payload={"field": "Status", "target_state": "Implementing"},
+    )
+    assert timeouts[0] == 2 * timeouts[1], (
+        f"the pair must not silently halve its budget: {timeouts}"
+    )

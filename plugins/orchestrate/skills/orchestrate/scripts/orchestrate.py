@@ -1854,22 +1854,62 @@ def discover_unrecorded(r: Run) -> list[tuple[str, str]]:
 # Name of the environment variable that points straight at mission-control's sdlc-schema.json.
 SDLC_SCHEMA_ENV = "ORCHESTRATE_SDLC_SCHEMA"
 
+_VERSION_SEGMENT_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
+
+
+def _version_rank(path: Path) -> tuple[int, ...]:
+    """The highest dotted-numeric path segment, parsed, so installs sort by VERSION not by string.
+
+    An install cache keeps one directory per version, and `sorted()` over the raw glob hits is
+    lexicographic: it puts `0.10.0` before `0.9.0` and `0.136.0` before every later release. With
+    sixty saga copies installed across two plugin roots on this machine, that made the resolver
+    select 0.136.0 -- a saga that predates every contract this file depends on. A path carrying no
+    version segment ranks lowest, so a hand-placed checkout never outranks a real install."""
+    best: tuple[int, ...] = ()
+    for part in path.parts:
+        match = _VERSION_SEGMENT_RE.match(part)
+        if match:
+            parsed = tuple(int(number) for number in match.group(1).split("."))
+            best = max(best, parsed)
+    return best
+
+
+def _newest_first(pattern: str) -> list[Path]:
+    """Every install matching ``pattern``, newest version first, ties broken by path."""
+    hits = [Path(hit) for hit in glob.glob(str(Path(pattern).expanduser()))]
+    return sorted(hits, key=lambda path: (_version_rank(path), str(path)), reverse=True)
+
+
+# The vendor install roots, as `{plugin}` templates. `~/.claude-company` is a SECOND, separate
+# plugin tree beside `~/.claude` -- not a symlink to it -- and omitting it made every company-account
+# install invisible to this resolver.
+_INSTALL_PATTERNS = (
+    "~/.claude/plugins/cache/*/{plugin}/*/{tail}",
+    "~/.claude-company/plugins/cache/*/{plugin}/*/{tail}",
+    "~/.codex/plugins/cache/*/{plugin}/*/{tail}",
+    "~/.grok/marketplace-cache/*/plugins/{plugin}/{tail}",
+    "~/.qwen/extensions/{plugin}/{tail}",
+    "~/.gemini/config/plugins/{plugin}/{tail}",
+)
+
+
+def _install_candidates(plugin: str, tail: str) -> list[Path]:
+    """Installed copies of ``plugin``'s ``tail`` file, each vendor's newest first."""
+    found: list[Path] = []
+    for pattern in _INSTALL_PATTERNS:
+        found.extend(_newest_first(pattern.format(plugin=plugin, tail=tail)))
+    return found
+
 
 def _schema_candidates() -> list[Path]:
     """Where mission-control's ``sdlc-schema.json`` can live, in order of trust.
 
     The same shape as ``_controller_candidates``: the repo layout first -- this file ships beside
-    the mission-control plugin in the same checkout -- then each vendor's install cache."""
+    the mission-control plugin in the same checkout -- then each vendor's install cache, newest
+    version first."""
     here = Path(__file__).resolve()
     paths = [here.parents[4] / "mission-control" / "config" / "sdlc-schema.json"]
-    for pattern in (
-        "~/.claude/plugins/cache/*/mission-control/*/config/sdlc-schema.json",
-        "~/.codex/plugins/cache/*/mission-control/*/config/sdlc-schema.json",
-        "~/.grok/marketplace-cache/*/plugins/mission-control/config/sdlc-schema.json",
-        "~/.qwen/extensions/mission-control/config/sdlc-schema.json",
-        "~/.gemini/config/plugins/mission-control/config/sdlc-schema.json",
-    ):
-        paths.extend(Path(hit) for hit in sorted(glob.glob(str(Path(pattern).expanduser()))))
+    paths.extend(_install_candidates("mission-control", "config/sdlc-schema.json"))
     return paths
 
 
@@ -1886,8 +1926,17 @@ def stage_statuses() -> dict[str, tuple[str, ...]]:
     own ``_stage_flow_rules()`` resolves, out of the schema document mission-control ships.
     Deliberately the document rather than an import of ``sdlc_manager``: that module's resolver
     tries GitHub first through a ``gh`` child, and board writeback is a guest of the run -- it must
-    never make a land wait on a network call, and it must work offline. The shipped document is
-    mission-control's own offline rung, so the vocabulary still has exactly one source.
+    never make a land wait on a network call, and it must work offline.
+
+    **This is mission-control's OFFLINE source, not its only one, and the two can differ.**
+    ``_resolve_sdlc_schema`` prefers the copy on GitHub `main` and falls back to the vendored
+    document, so a live schema newer than the installed plugin is invisible here -- measured once
+    already, at live ``schema_version`` 2026-08-30.6 against a vendored 2026-08-29 whose
+    ``stage_statuses`` block happened to be byte-identical. What this buys is that Orchestrate keeps
+    no vocabulary of its OWN: a value that stops being live stops validating here as soon as the
+    plugin is updated, which is what the retired ladder never did. What it does not buy is
+    same-instant agreement with the live board, and a rung that is live-but-newer than the installed
+    schema fails loud here rather than being submitted blind.
 
     Returns ``{}`` when no schema resolves, which the caller reports rather than guessing around.
     """
@@ -1984,17 +2033,16 @@ def _controller_candidates() -> list[Path]:
 
     First the repo layout -- this file shipped beside the saga plugin in the same checkout. Then
     the installed-plugin layouts, mirroring ``SAGA_INSTALL``: each vendor keeps its own cache, so
-    each gets its own glob. ``glob`` resolves symlinks, which is what agy's install is."""
+    each gets its own glob, NEWEST VERSION FIRST. ``glob`` resolves symlinks, which is what agy's
+    install is.
+
+    The version ordering is load-bearing rather than tidy. This resolver decides which saga executes
+    every board submission Orchestrate makes, and a saga older than the pair contract drops the
+    ``assignments`` payload silently. Lexicographic ordering selected 0.136.0 out of sixty installed
+    copies on the machine this was measured on."""
     here = Path(__file__).resolve()
     paths = [here.parents[4] / "saga" / "scripts" / "reconcile_controller.py"]
-    for pattern in (
-        "~/.claude/plugins/cache/*/saga/*/scripts/reconcile_controller.py",
-        "~/.codex/plugins/cache/*/saga/*/scripts/reconcile_controller.py",
-        "~/.grok/marketplace-cache/*/plugins/saga/scripts/reconcile_controller.py",
-        "~/.qwen/extensions/saga/scripts/reconcile_controller.py",
-        "~/.gemini/config/plugins/saga/scripts/reconcile_controller.py",
-    ):
-        paths.extend(Path(hit) for hit in sorted(glob.glob(str(Path(pattern).expanduser()))))
+    paths.extend(_install_candidates("saga", "scripts/reconcile_controller.py"))
     return paths
 
 
@@ -2114,6 +2162,49 @@ def _reconcile_call(
     return {str(key): value for key, value in parsed.items()}
 
 
+def pair_identity(rung: tuple[str, str]) -> str:
+    """The composite ``field`` identity a pair-aware saga records for this rung's submission.
+
+    Mirrors ``board_progression.assignment_identity``, which joins the submission's field names,
+    sorted, with ``+``. Orchestrate cannot import that module -- saga is a separate plugin resolved
+    at runtime, and may be absent entirely -- so the shape is restated here and pinned by a test
+    that drives the real function."""
+    return "+".join(sorted(("Stage", "Status")))
+
+
+def _pair_was_executed(write: dict[str, Any], rung: tuple[str, str]) -> bool:
+    """True when the controller's own record proves BOTH halves of the pair were submitted.
+
+    Orchestrate shells out to whichever saga ``reconcile_controller.py`` resolves on this machine,
+    which is not necessarily the saga in this checkout. A saga older than the pair contract has no
+    ``normalize_assignments``: it ignores ``payload["assignments"]`` entirely, builds
+    ``--field Status --option <status>`` alone, mints the pre-pair single-field key, and returns
+    ``written``. Every downstream signal then agrees that the move landed -- ``_write_converged``
+    reads only ``status`` -- so the progress comment asserts a ``board stage:`` line for a Stage
+    that never moved and ``land`` exits 0. That is the "wrong card with a clean record" failure the
+    pair exists to prevent, arriving through the one door the pair could not close.
+
+    The record already carries the discriminator and nothing was reading it: ``field`` is the
+    composite identity from a pair-aware saga and the bare readable field from an older one."""
+    return str(write.get("field", "")) == pair_identity(rung)
+
+
+def _stale_saga_failure(write: dict[str, Any], rung: tuple[str, str]) -> dict[str, Any]:
+    """Rewrite a converged-looking record whose saga did not execute the pair into a failure."""
+    return {
+        **write,
+        "status": "failed",
+        "retryable": False,
+        "error": (
+            f"the saga that executed this submission recorded field "
+            f"{str(write.get('field', '')) or '<none>'!r}, not {pair_identity(rung)!r}: it predates "
+            f"the (Stage, Status) pair contract and wrote only the {rung[1]!r} half, leaving Stage "
+            f"at whatever it was. Update the installed saga plugin to 0.151.0 or later, then re-run "
+            f"`announce` -- the board was half-written, so check both fields on the card"
+        ),
+    }
+
+
 def _writeback_failure(
     unit_name: str, issue: str, rung: tuple[str, str] | None, reason: str
 ) -> dict[str, Any]:
@@ -2127,7 +2218,16 @@ def _writeback_failure(
         "unit": unit_name,
         "issue": issue,
         "status": render_rung(rung) if rung is not None else "unresolved",
-        "writes": [{"status": "failed", "op_kind": "set-field-status", "error": reason}],
+        # `retryable: False` -- re-running `announce` cannot help until the install or the run file
+        # is fixed, so the operator must not be pointed at the retry door for these.
+        "writes": [
+            {
+                "status": "failed",
+                "op_kind": "set-field-status",
+                "retryable": False,
+                "error": reason,
+            }
+        ],
     }
 
 
@@ -2136,13 +2236,15 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
 
     Two writes per unit, both through ``reconcile_controller``: submit the unit's mapped
     ``(Stage, Status)`` pair as one two-assignment ``set-field-status`` op, then post one progress
-    comment naming what happened. The comment is
-    attempted only when the status write converged: it says ``board status: {status}``, and a
-    comment describing a write that did not happen is worse than one not attempted -- the retry
-    door is ``announce``, whose idempotency keys make a repeat safe. The comment's idempotency
-    discriminator is stable across calls -- ``orchestrate:{run}:{unit}:{status}`` -- so a second
-    ``land`` re-driving the same boundary meets the key the first one wrote and skips, rather than
-    posting a duplicate comment.
+    comment naming what happened. The comment is attempted only when the status write converged
+    **and the record proves the pair was actually executed**: it names both halves of the move, and
+    a comment describing a write that did not happen is worse than one not attempted. ``announce``
+    is the retry door for a TRANSIENT failure and its idempotency keys make a repeat safe -- it is
+    not a remedy for a broken install or a bad run file, which is why those failures carry
+    ``retryable: False`` and are reported with their cause instead. The comment's idempotency
+    discriminator is stable across calls -- ``orchestrate:{run}:{unit}:{Stage}/{Status}`` -- so a
+    second ``land`` re-driving the same boundary meets the key the first one wrote and skips,
+    rather than posting a duplicate comment.
 
     Returns one record per name. ``skipped`` records carry a reason and cost no writes: the run
     maps no issue for that unit, the ref is malformed, or no status applies. A run with no
@@ -2175,13 +2277,31 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
             records.append({"unit": name, "skipped": "no status mapped for this unit's prefix"})
             continue
         if not live:
-            # No schema, so no way to tell a live rung from an invented one. This is the same class
-            # of no-op as a machine without saga -- report it and carry on, never guess.
+            # FAIL LOUD, and say so on stderr. An earlier form recorded a `skipped` here, which
+            # `report_announcements` prints only under `verbose` (both `cmd_land` call sites pass
+            # the default False) and `_failed_writebacks` excludes by design -- so on a machine
+            # where the schema does not resolve, `land` wrote nothing to any board, printed nothing
+            # about it, and exited 0. That is the same silence this whole change exists to end, one
+            # layer up: "a stale copy that skips is silence."
+            #
+            # It is also not the same class as a machine without saga. An absent saga means the
+            # write could never be attempted; an unresolvable mission-control schema on a machine
+            # that HAS saga is a broken install, and the layer below already fails loud on it --
+            # `default_board_writer` cannot resolve its mission-control root either.
+            print(
+                f"orchestrate: mission-control's sdlc-schema.json is not resolvable here, so "
+                f"{name}'s rung cannot be validated and no board write is attempted; install or "
+                f"repair the mission-control plugin, or point {SDLC_SCHEMA_ENV} at the schema",
+                file=sys.stderr,
+            )
             records.append(
-                {
-                    "unit": name,
-                    "skipped": "mission-control's sdlc-schema.json is not resolvable here",
-                }
+                _writeback_failure(
+                    name,
+                    f"{repo}#{number}",
+                    rung,
+                    "mission-control's sdlc-schema.json is not resolvable here, so the rung could "
+                    "not be validated against the board's own vocabulary",
+                )
             )
             continue
         if rung not in live:
@@ -2232,6 +2352,11 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
             payload={"assignments": [["Stage", stage], ["Status", status]]},
             root=root,
         )
+        # Verify the pair was actually EXECUTED, not merely submitted: the saga that ran it is
+        # resolved at runtime and may predate the pair contract. Done before `_write_converged` so
+        # a half-write can never gate the comment open.
+        if _write_converged(status_write) and not _pair_was_executed(status_write, rung):
+            status_write = _stale_saga_failure(status_write, rung)
         writes = [status_write]
         # One failure is a failure; two writes half-done is worse than one not attempted. A
         # failed write leaves no ledger key, so the retry door -- `announce` -- re-drives both
@@ -2270,11 +2395,19 @@ def report_announcements(records: list[dict[str, Any]], *, verbose: bool = False
                 print(f"  {name}: not announced -- {record['skipped']}")
             continue
         parts = []
+        reasons = []
         for write in record.get("writes", []):
             status = str(write.get("status", "unknown"))
             kind = "status" if write.get("op_kind") == "set-field-status" else "comment"
             parts.append(f"{kind} {status}")
+            # The reason was always built and never printed, so a failure read as a bare word --
+            # "status failed" -- with the diagnosis discarded at the one place the operator looks.
+            reason = str(write.get("error") or write.get("halt_reason") or write.get("note") or "")
+            if reason and not _write_converged(write):
+                reasons.append(f"{kind}: {reason}")
         print(f"  board writeback {name} -> {record.get('status', '?')}: {', '.join(parts)}")
+        for reason in reasons:
+            print(f"      {reason}")
 
 
 # Controller record statuses that mean the board converged: the write happened (``written``), had
@@ -2306,15 +2439,31 @@ def _report_failed_writebacks(failures: Sequence[dict[str, Any]]) -> None:
     """Name every unit whose merge landed but whose board writeback did not converge.
 
     A failed writeback never undoes or blocks a merge -- the code on the run branch is right;
-    only the claim that the board was updated is wrong. The retry door is named with the unit:
-    ``announce`` is idempotency-keyed, so a repeat is safe."""
+    only the claim that the board was updated is wrong.
+
+    The retry door is named only for a failure a retry can actually clear. ``announce`` is
+    idempotency-keyed, so a repeat is safe -- but it is not a *remedy* for a rung the board does not
+    carry, a run file whose override is not a pair, an unresolvable schema, or a saga too old to
+    execute the pair. Re-running it on those produces the identical failure, and naming it as the
+    door sends the operator round a loop instead of at the cause. Those carry ``retryable: False``
+    and get their reason instead."""
     for record in failures:
         name = str(record.get("unit", "?"))
         issue = str(record.get("issue", "?"))
+        writes = record.get("writes", [])
+        blocking = [write for write in writes if not _write_converged(write)]
+        retryable = all(write.get("retryable", True) for write in blocking)
         print(
-            f"BOARD WRITEBACK FAILED: {name} ({issue}) -- the merge landed, but its card was "
-            f"not updated; retry with `orchestrate.py announce {name}`"
+            f"BOARD WRITEBACK FAILED: {name} ({issue}) -- the merge landed, but its card was not updated"
         )
+        for write in blocking:
+            reason = str(write.get("error") or write.get("halt_reason") or write.get("note") or "")
+            if reason:
+                print(f"  reason: {reason}")
+        if retryable:
+            print(f"  retry with `orchestrate.py announce {name}`")
+        else:
+            print("  a retry cannot clear this on its own -- fix the cause named above first")
 
 
 def _report_landing_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> None:
@@ -3860,6 +4009,14 @@ def cmd_announce(args: argparse.Namespace) -> int:
         return 0
     records = announce_units(r, args.units)
     report_announcements(records, verbose=True)
+    failures = _failed_writebacks(records)
+    if failures:
+        # `land` has always exited 2 on this; `announce` exited 0, which is worse here than there.
+        # This IS the retry door, so a green exit from it is a direct claim that the card is now
+        # right -- and an operator who ran it precisely because the board was wrong reads that
+        # exit code as the answer.
+        _report_failed_writebacks(failures)
+        return 2
     return 0
 
 

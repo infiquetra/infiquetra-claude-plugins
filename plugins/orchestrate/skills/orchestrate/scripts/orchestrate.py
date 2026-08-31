@@ -2009,18 +2009,37 @@ def render_rung(rung: tuple[str, str]) -> str:
 # silently stop announcing at a boundary that announces today, and ``mapped_status`` would report
 # that as "no status mapped for this unit's prefix" rather than as the regression it is.
 #
-# Every value is a live ``(Stage, Status)`` pair present in the schema's own ``stage_statuses``,
-# and the stage indices are non-decreasing across this order (2, 2, 3, 3, 3, 4) so no rung moves a
-# card backwards. ``landed`` is Verify, never Retro: it is a unit-landed announce -- the post-merge
-# side of the rule -- not close-out, and mapping it to Retro would move Stage past Verify and skip
-# the merge-plus-deploy-or-artifact condition this file is being corrected to respect.
+# ``landed`` is RETIRED and has no rung at all. It used to carry the post-merge announce, and the
+# rule W-D2 states for that boundary is "merged, PLUS the applicable non-production deployment or
+# artifact verification". Orchestrate can check NEITHER conjunct:
+#
+#   * `cmd_land` merges unit branches onto the RUN branch, `orch/<run-id>` -- never the default
+#     branch -- so a `landed` boundary is not a merge in W-D2's sense at all; and
+#   * the whole module contains exactly one occurrence of `deployment` / `deployed` /
+#     `non-production` / `nonprod`, and it is the sentence above. There is no deployment or
+#     artifact-verification signal here to gate on.
+#
+# So a gate would be permanently false: a dead key with extra code around it rather than a
+# safeguard. Remapping to `Active`/`Integrating` would be better behaviour, and it is not this
+# change's to make -- issue #919's approved board transition contract carries no `Integrating` row,
+# and adding one EXTENDS a contract the operator approved. Retiring only REMOVES a rule violation
+# and adds nothing, which keeps this inside the approved contract.
+#
+# Nothing that ever worked is lost: before this run `landed` mapped to `Done`, which is not a live
+# `Status` option, so every write it made halted before reaching a card. No unit in the repository
+# is named `landed-*` today, so a `landed` unit now takes the ordinary "no status mapped for this
+# unit's prefix" skip. **The operator may reverse this to a remap at any time before merge.**
+#
+# Every remaining value is a live ``(Stage, Status)`` pair present in the schema's own
+# ``stage_statuses``, and the stage indices are non-decreasing across this order (2, 2, 3, 3, 3) so
+# no rung moves a card backwards. No rung reaches the ``Verify`` stage: that is the whole of the
+# W-D2 repair, and it is pinned so the violation cannot return by either door.
 DEFAULT_STATUS_MAP: dict[str, tuple[str, str]] = {
     "plan": ("Planning", "Designing"),
     "docreview": ("Planning", "Ready for Active"),
     "work": ("Active", "Implementing"),
     "fix": ("Active", "Implementing"),
     "codereview": ("Active", "Code review"),
-    "landed": ("Verify", "Awaiting verification"),
 }
 
 # Name of the environment variable that points straight at saga's reconcile_controller, for a

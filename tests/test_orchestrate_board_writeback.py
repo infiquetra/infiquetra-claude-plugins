@@ -266,7 +266,8 @@ class TestStatusMapping:
         assert orchestrate.mapped_status("work-52-build") == ("Active", "Implementing")
         assert orchestrate.mapped_status("fix-52-claude") == ("Active", "Implementing")
         assert orchestrate.mapped_status("codereview-52") == ("Active", "Code review")
-        assert orchestrate.mapped_status("landed-52") == ("Verify", "Awaiting verification")
+        # `landed` is retired, so it takes the ordinary unmapped path rather than a rung.
+        assert orchestrate.mapped_status("landed-52") is None
 
     def test_the_bare_prefix_is_a_unit_name_too(self, orchestrate: ModuleType) -> None:
         assert orchestrate.mapped_status("plan") == ("Planning", "Designing")
@@ -311,16 +312,26 @@ class TestStatusMapping:
         """Ladder order plan -> docreview -> work -> fix -> codereview -> landed must be
         non-decreasing in the schema's own stage order, or a boundary un-advances the card."""
         stages = list(orchestrate.stage_statuses())
-        order = ["plan", "docreview", "work", "fix", "codereview", "landed"]
+        order = ["plan", "docreview", "work", "fix", "codereview"]
         indices = [stages.index(orchestrate.DEFAULT_STATUS_MAP[key][0]) for key in order]
         assert indices == sorted(indices), (
             f"a rung moves the card backwards: {dict(zip(order, indices, strict=True))}"
         )
 
-    def test_landed_never_resolves_to_retro(self, orchestrate: ModuleType) -> None:
-        """``landed`` is the post-merge unit announce, not close-out. Retro would move Stage past
-        Verify and skip the merge-plus-deploy-or-artifact rule this file exists to respect."""
-        assert orchestrate.DEFAULT_STATUS_MAP["landed"][0] == "Verify"
+    def test_no_rung_reaches_verify_or_retro(self, orchestrate: ModuleType) -> None:
+        """Neither stage is reachable, because Orchestrate can check neither W-D2 conjunct.
+
+        `cmd_land` merges onto the run branch rather than the default branch, and the module carries
+        no deployment or artifact-verification signal, so a gate on the rule would be permanently
+        false. `landed` is retired for that reason; `codereview` was remapped for the same one.
+        """
+        offenders = {
+            key: rung
+            for key, rung in orchestrate.DEFAULT_STATUS_MAP.items()
+            if rung[0] in ("Verify", "Retro")
+        }
+        assert offenders == {}, f"rungs reaching a post-merge stage: {offenders}"
+        assert "landed" not in orchestrate.DEFAULT_STATUS_MAP
 
     def test_no_retired_token_survives_in_the_module(self, orchestrate: ModuleType) -> None:
         """``Idea``, ``Ready`` and ``Done`` are options on neither live field."""

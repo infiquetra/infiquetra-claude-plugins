@@ -47,6 +47,21 @@ any of this existed. `~/.claude-company` is searched too — it is a second plug
 - **The retry door is named only when a retry can clear the failure.** `announce` is
   idempotency-keyed and safe to repeat, but repeating it cannot fix a stale install, an unresolvable
   schema, or a run file whose override is not a pair. Those now report their cause instead.
+- **The `landed` rung is RETIRED, and no rung reaches the `Verify` stage by any door.** `Verify` is
+  entered only after merge plus the applicable non-production deployment — or, when nothing deploys,
+  after installed or published artifact verification. Orchestrate can check **neither** conjunct:
+  `land` merges unit branches onto the run branch `orch/<run-id>` rather than the default branch, so
+  a `landed` boundary is not a merge in that rule's sense at all; and the whole module carries
+  exactly one occurrence of `deployment` / `deployed` / `non-production` / `nonprod`, in a comment.
+  A gate would therefore be permanently false — a dead key with extra code around it rather than a
+  safeguard — so the key is removed instead. Remapping it to `Active`/`Integrating` would be better
+  behaviour and was considered: it is not made here because issue #919's approved board transition
+  contract carries no `Integrating` row, and adding one extends a contract the operator approved,
+  whereas retiring only removes a violation. **Nothing that ever worked is lost:** before this
+  change `landed` mapped to `Done`, which is not a live `Status` option, so every write it made
+  halted before reaching a card, and no unit in the repository is named `landed-*`. A `landed` unit
+  now takes the ordinary "no status mapped for this unit's prefix" skip. **Reversible: the operator
+  may restore it as a remap at any time before merge.**
 
 ### Changed
 

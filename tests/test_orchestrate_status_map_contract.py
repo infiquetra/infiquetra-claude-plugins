@@ -30,8 +30,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "plugins" / "orchestrate" / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
 SCHEMA = ROOT / "plugins" / "mission-control" / "config" / "sdlc-schema.json"
 
-# The prefixes whose boundaries announce, in the order a run crosses them.
-LADDER_ORDER = ("plan", "docreview", "work", "fix", "codereview", "landed")
+# The prefixes whose boundaries announce, in the order a run crosses them. `landed` is absent by
+# decision, not by omission -- see `test_the_landed_rung_is_retired`.
+LADDER_ORDER = ("plan", "docreview", "work", "fix", "codereview")
 
 
 def _orchestrate() -> ModuleType:
@@ -61,12 +62,38 @@ def test_codereview_does_not_map_to_verify() -> None:
     assert rung == ("Active", "Code review")
 
 
-def test_no_unit_name_resolves_to_a_verify_stage_before_landing() -> None:
-    """Every pre-merge prefix stays out of Verify, not just the one that carried it."""
+def test_no_rung_reaches_the_verify_stage_by_any_door() -> None:
+    """The whole of the W-D2 repair, in one assertion.
+
+    Verify is entered only after merge PLUS the applicable non-production deployment, or after
+    installed or published artifact verification when nothing deploys. Orchestrate can check neither
+    conjunct: `cmd_land` merges onto the run branch rather than the default branch, and the module
+    carries no deployment or artifact-verification signal at all. So NO rung may reach that stage --
+    not through `codereview`, which carried it before this change, and not through `landed`, which
+    carried it briefly during it. Pinning the stage rather than a key closes both doors and any
+    third one a later edit might open.
+    """
     orchestrate = _orchestrate()
-    for prefix in ("plan", "docreview", "work", "fix", "codereview"):
+    offenders = [key for key, rung in orchestrate.DEFAULT_STATUS_MAP.items() if rung[0] == "Verify"]
+    assert offenders == [], f"rungs reaching the Verify stage: {offenders}"
+    for prefix in orchestrate.DEFAULT_STATUS_MAP:
         stage, _status = orchestrate.mapped_status(f"{prefix}-52-build")
-        assert stage != "Verify", f"{prefix!r} submits Verify before the unit has landed"
+        assert stage != "Verify", f"{prefix!r} submits Verify with neither conjunct checked"
+
+
+def test_the_landed_rung_is_retired() -> None:
+    """`landed` carries no rung, and a `landed-*` unit takes the ordinary unmapped skip.
+
+    Retired rather than gated: a gate on W-D2 would be permanently false here, which is a dead key
+    with extra code rather than a safeguard. Retired rather than remapped to `Active`/`Integrating`:
+    issue #919's approved board transition contract has no `Integrating` row, so adding one extends
+    a contract the operator approved, while retiring only removes a violation. Reversible -- restore
+    the key with whatever rung the operator approves.
+    """
+    orchestrate = _orchestrate()
+    assert "landed" not in orchestrate.DEFAULT_STATUS_MAP
+    assert orchestrate.mapped_status("landed-52") is None
+    assert orchestrate.mapped_status("landed") is None
 
 
 def test_the_source_carries_no_codereview_to_verify_mapping() -> None:
@@ -127,14 +154,14 @@ def test_the_rungs_are_stage_monotonic() -> None:
     assert indices == sorted(indices), dict(zip(LADDER_ORDER, indices, strict=True))
 
 
-def test_landed_is_verify_and_never_retro() -> None:
-    """``landed`` is the post-merge unit announce, not close-out.
+def test_no_rung_reaches_the_retro_stage_either() -> None:
+    """`Retro`/`Ready to close` is the coordinator's row for a child closed with its gate green.
 
-    Retro/Ready to close is the coordinator's row for a child closed with its gate green. Mapping
-    ``landed`` there would move Stage past Verify and skip the merge-plus-deploy-or-artifact rule
-    this very change is enforcing on Orchestrate."""
+    It sits past `Verify` in the stage flow, so a rung reaching it would skip the same rule from the
+    other side."""
     orchestrate = _orchestrate()
-    assert orchestrate.DEFAULT_STATUS_MAP["landed"] == ("Verify", "Awaiting verification")
+    offenders = [key for key, rung in orchestrate.DEFAULT_STATUS_MAP.items() if rung[0] == "Retro"]
+    assert offenders == [], f"rungs reaching the Retro stage: {offenders}"
 
 
 def test_the_hard_coded_ladder_is_gone() -> None:

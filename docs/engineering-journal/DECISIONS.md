@@ -2,6 +2,37 @@
 
 ## 2026-08-31
 
+### Orchestrate's `landed` rung is retired rather than gated or remapped  {#927-landed-rung-retired}
+
+**Decision.** `landed` is removed from `DEFAULT_STATUS_MAP`. It is not gated on the W-D2 condition
+and it is not remapped to another rung. A test pins that **no** rung reaches the `Verify` stage, so
+the violation cannot return through the `codereview` door that carried it before or the `landed`
+door that carried it during.
+**Date:** 2026-08-31 · **Issue:** #927 (F-04, cycle-1 integrated review) · **Origin:** routed to
+human by the review; the operator returned it to this cycle with a derived, reversible ruling.
+**Why gating is infeasible, measured rather than argued.** W-D2 admits `Verify` only after merge
+**plus** the applicable non-production deployment — or, when nothing deploys, after installed or
+published artifact verification. Orchestrate can check neither conjunct. `cmd_land` merges unit
+branches onto the **run** branch `orch/<run-id>`, never the default branch, so a `landed` boundary is
+not a merge in W-D2's sense at all. And `deployment`, `deployed`, `non-production` and `nonprod`
+appear **once combined** across the module — in a comment quoting the rule — so there is no
+deployment or artifact signal to gate on. A gate would be permanently false: a dead key with extra
+code around it, which reads like a safeguard and is not one.
+**Why not remap.** `Active`/`Integrating` would be better behaviour and was considered. Issue #919's
+approved board transition contract carries no `Integrating` row, so adding one **extends** a contract
+the operator approved — that is his call. Retiring only **removes** a violation and adds nothing, so
+it stays inside the approved contract. This is the whole difference between repair and extension.
+**Safety.** Before this change `landed` mapped to `Done`, which is not a live `Status` option, so
+every write the rung ever made halted before reaching a card — it has never once worked, and
+retiring it loses nothing that functioned. No unit in the repository is named `landed-*`, so live
+impact is zero; such a unit now takes the ordinary unmapped skip.
+**Revisit when.** The operator approves an `Integrating` row on the board transition contract, or
+Orchestrate gains a real merge-plus-deployment signal. **Reversible at any time before merge** by
+restoring the key with the approved rung.
+**Refs.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`;
+`tests/test_orchestrate_status_map_contract.py::test_no_rung_reaches_the_verify_stage_by_any_door`;
+issue #919's board transition table; `infiquetra-sdlc` #89 (W8) requirement R69.
+
 ### Orchestrate reads Mission Control's shipped schema document rather than importing its resolver  {#927-orchestrate-reads-the-shipped-schema}
 
 **Decision.** `orchestrate.stage_statuses()` resolves the board vocabulary by reading the

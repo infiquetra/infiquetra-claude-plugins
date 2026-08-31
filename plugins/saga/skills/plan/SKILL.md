@@ -140,11 +140,15 @@ python3 plugins/saga/scripts/reconcile_controller.py reconcile \
 
 **Submit both halves, and check both.** The move is one invocation carrying two assignments, and
 Mission Control does **not** roll the pair back: a `Stage` write can land while `Status` fails.
-Read the record the same way Phase 5.0 does — `written`/`skipped` is success; a `failed` record
-names which half landed and which did not, and `halt`/`gated` means fall back to the
-operator-prompted Mission Control path rather than forcing the write. Submitting the `Status` half
-alone is the failure worth naming: `Designing` is a legal `Status` on its own, so a half-write
-looks like success while `Stage` stays where it was.
+Read the record the same way Phase 5.0 does, and read it by more than its `status` word. The
+record's `field` is the whole submission's identity: `Stage+Status` when both halves were executed,
+a bare `Status` when they were not — which is what an installed saga older than the pair contract
+reports after writing the `Status` half alone, `written` and all. `skipped` is not a synonym for
+success either: it also means "already keyed" or "could not judge", and carries a `note` in the
+second case. A `failed` record names which half landed and which did not; `halt`/`gated` falls back
+to the operator-prompted Mission Control path rather than forcing the write. Submitting the
+`Status` half alone is the failure worth naming: `Designing` is a legal `Status` on its own, so a
+half-write looks like success while `Stage` stays where it was.
 
 When there is no issue, there is simply no card to move; say nothing further.
 
@@ -342,8 +346,10 @@ python3 plugins/saga/scripts/reconcile_controller.py reconcile \
 
 **Submit both halves, and check both** — the pair is not rolled back if one half fails, so a
 `failed` record naming the landed and the unlanded assignment is the signal to repair the half that
-did not land. `written`/`skipped` is success; `halt`/`gated` falls back to the operator-prompted
-Mission Control path. When there is no issue, there is no card to move; say nothing further.
+did not land. Check the record's `field` reads `Stage+Status` before reporting the move: a
+`written` from a saga too old to carry the pair names a bare `Status` and moved one field.
+`halt`/`gated` falls back to the operator-prompted Mission Control path. When there is no issue,
+there is no card to move; say nothing further.
 
 ### 5.1 Ask the destination
 

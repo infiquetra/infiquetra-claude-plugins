@@ -59,22 +59,40 @@
   on its own, so a `Status`-only submission writes a legal value, reports success, and leaves
   `Stage` behind — a wrong card with a clean record. All five lifecycle boundaries carry both
   assignments in one `flow set-field` invocation, every assertion in the suite reads both, and the
-  mechanism refuses a submission that opts into the pair payload and then carries one assignment.
-  A genuine single-field write keeps the pre-existing `field`/`target_state` form, which is
-  unchanged and stays legal.
+  mechanism refuses a submission that opts into the pair payload and then carries fewer than two
+  **distinct** fields — counting elements would accept two assignments to one field, which is a
+  half-move wearing a pair's shape. A genuine single-field write keeps the pre-existing
+  `field`/`target_state` form, which is unchanged and stays legal.
+
+  One invocation is one process spawn, one CLI parse and one authorization pass — **not** one
+  discovery pass. `flow_set_fields_bulk` calls `_set_lifecycle_field_cross_board` once per
+  assignment and each does its own cross-board discovery, which is why the pair also doubles the
+  call's time budget rather than sharing the single-field one.
 - **A half-applied pair now names which half landed.** Mission Control writes one assignment at a
   time and does not roll the first back, so a `Stage` write can land while `Status` fails.
   Detection always worked — a non-empty `failed` raises, so the exit is non-zero — but
   `default_board_writer` raised with `stderr` while the `updated`/`failed`/`identity` evidence sat
   on discarded stdout, leaving the board half-written with no record of which field to repair. The
-  writer now parses that stdout and names the landed and the unlanded assignment.
+  writer now parses that stdout and names the landed and the unlanded assignment. When there is no
+  report at all — a halt propagating out of the second assignment kills the run before the report is
+  printed, and leaves the first assignment written — it says the outcome is UNKNOWN and names what
+  was submitted, rather than reporting a total failure for a board that may be half-moved.
 - **The replay identity names the whole submission, at both minting sites.** `authorize_and_write`
   mints its own idempotency key as well as the reconcile controller, and widening only the
   controller would let a `(Stage, Status)` pair and a `Status`-only write to the same option
   collide on one key — so the second is recorded `skipped` as already-applied, a success-shaped
   record for a move that never landed. Both sites now derive the identity from the same helper. A
   single-assignment submission renders exactly as before, so no existing ledger key is orphaned and
-  every pre-#927 caller is byte-unchanged.
+  every pre-#927 caller is byte-unchanged. The pair's identity is order-independent — it names the
+  move, not the order a caller happened to list the halves in — and a field or option containing the
+  identity separator is refused rather than allowed to collide two different moves onto one key.
+- **A pair keeps its live drift check.** The guard that skips a field this controller cannot read
+  back compared the submission's ledger *identity* against the one readable field. A pair mints the
+  composite `Stage+Status`, which can never equal `Status`, so from the second tick every pair
+  returned `skipped` without reading the live board at all — the level-triggered convergence loop,
+  the single property that module exists to provide, off for every lifecycle write Plan, Work and
+  Orchestrate make. The question is whether the submission *contains* the readable field, not
+  whether its identity equals it; a `Stage`-only submission still refuses to judge.
 
 ### Changed
 
@@ -85,6 +103,17 @@
   scans the whole of `plugins/` rather than `plugins/saga/` alone — the one-plugin scope is why
   Orchestrate's leftover writer never failed it. The constant-resolution false-green guard, the
   nested-run-artifact exclusion and the submission-core allowlists are unchanged.
+- **The Work and Plan skills state what a record actually proves.** Five submission blocks told an
+  agent that `written`/`skipped` is success. `skipped` is not a synonym for `written` — it also
+  means "already keyed" and "could not judge", carrying a `note` in the second case — and neither
+  word proves a *pair* moved, because an installed saga older than this release reports `written`
+  after writing one field. Phase 4.4 now carries the record contract once: check the `field`
+  identity, then the status, then the landed/NOT-landed detail on a failure. It also documents the
+  `error` status, which means the board write committed and the replay key did not, and states
+  plainly that Mission Control exposes **no read-back for `Stage`**, so "check both halves" is a
+  record check rather than a board read. The delivered-terminal trigger is stated to the same
+  standard as the Verify trigger it follows, since a weaker gate there would let a card reach the
+  terminal rung having skipped the one before it.
 
 ## [0.150.0] - 2026-08-30
 

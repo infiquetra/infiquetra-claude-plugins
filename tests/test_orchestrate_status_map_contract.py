@@ -70,11 +70,32 @@ def test_no_unit_name_resolves_to_a_verify_stage_before_landing() -> None:
 
 
 def test_the_source_carries_no_codereview_to_verify_mapping() -> None:
-    """A textual backstop: the entry must not reappear anywhere in the module, map or not."""
+    """A textual backstop: the entry must not reappear anywhere in the module, map or not.
+
+    The pattern must match the CURRENT shape, not the one the change retired. A rung is now a
+    two-element tuple, so a reintroduction reads `"codereview": ("Verify", ...)` -- and a backstop
+    that only matched the old bare-string form `"codereview": "Verify"` could never fire again on
+    anything a reintroduction would actually look like.
+    """
     source = SCRIPT.read_text(encoding="utf-8")
-    assert not re.search(r'"codereview"\s*:\s*"?Verify', source), (
-        "the codereview -> Verify mapping was reintroduced"
+    reintroduced = re.search(
+        r'"codereview"\s*:\s*(?:"Verify"|[(\[]\s*"Verify")',
+        source,
     )
+    assert not reintroduced, "the codereview -> Verify mapping was reintroduced"
+
+
+def test_the_backstop_fires_on_both_shapes() -> None:
+    """Control: prove the pattern above catches a reintroduction in either shape.
+
+    A backstop asserting an absence is green on a tree where it could never match anything, which
+    is precisely how the retired-shape version passed while the map had been retyped underneath it.
+    """
+    pattern = re.compile(r'"codereview"\s*:\s*(?:"Verify"|[(\[]\s*"Verify")')
+    assert pattern.search('    "codereview": ("Verify", "Awaiting verification"),')
+    assert pattern.search('    "codereview": ["Verify", "Awaiting verification"],')
+    assert pattern.search('    "codereview": "Verify",')
+    assert not pattern.search('    "codereview": ("Active", "Code review"),')
 
 
 def test_the_map_carries_exactly_the_announcing_prefixes() -> None:

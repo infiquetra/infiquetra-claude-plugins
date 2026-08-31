@@ -2,6 +2,23 @@
 
 ## [3.1.0] - 2026-08-31
 
+### Upgrade order — read this before relying on board writeback
+
+**Install saga 0.151.0 or later, and mission-control 2.15.1 or later, BEFORE this version.**
+Orchestrate does not execute board writes; it shells out to whichever saga
+`reconcile_controller.py` resolves on the machine, which is not necessarily the saga in your
+checkout. A saga older than the `(Stage, Status)` pair contract accepts the call, ignores the
+`Stage` assignment, writes the `Status` half alone and reports success. Orchestrate now catches that
+by reading the record's own field identity and fails the writeback rather than posting a progress
+comment that claims both halves moved — but catching it leaves the card half-moved. Both
+requirements are now declared in `plugin.json`.
+
+The resolver also picks the **newest installed version**, not the first one a glob returns. Sorting
+the glob's raw strings is lexicographic, which put `0.136.0` ahead of every later release; on a
+machine with sixty installed saga copies across two plugin roots it selected a saga from well before
+any of this existed. `~/.claude-company` is searched too — it is a second plugin tree beside
+`~/.claude`, not a symlink to it, and it had been omitted.
+
 ### Fixed
 
 - **`codereview` no longer maps to `Verify` (#927).** Closed `infiquetra/infiquetra-sdlc` #89 (W8),
@@ -15,9 +32,21 @@
   hard-coded second copy of the board's Status vocabulary and had gone stale — not one of its six
   values is a live `Status` option, so `_set_lifecycle_field_cross_board` halted before the first
   write, every time. The ladder is replaced by the `workflows.stage_flow` block resolved from the
-  Mission Control schema document, so the vocabulary has exactly one source.
-- **An unresolvable rung fails loud instead of skipping.** An off-ladder value used to be dropped
-  with a `skipped` record, which is precisely how six stale rungs stayed invisible.
+  Mission Control schema document.
+- **Three silent no-ops are now loud.** An off-ladder rung used to be dropped with a `skipped`
+  record — precisely how six stale rungs stayed invisible. An unresolvable Mission Control schema
+  did the same, and worse: `report_announcements` prints a skip only under `verbose`, both `land`
+  call sites pass the default, and `_failed_writebacks` excludes skips by design, so `land` wrote
+  nothing, printed nothing and exited 0. And a writeback failure's reason was built and never
+  printed, so a failure read as the single word `failed`. All three now produce a failure record
+  with its reason on the operator's line, and the schema case also prints to stderr the way the
+  sibling missing-saga branch always did.
+- **`announce` exits 2 on a hard writeback failure**, as `land` already did. It is the retry door,
+  so a green exit from it was a direct claim that the card is now right — read by an operator who
+  ran it precisely because the card was wrong.
+- **The retry door is named only when a retry can clear the failure.** `announce` is
+  idempotency-keyed and safe to repeat, but repeating it cannot fix a stale install, an unresolvable
+  schema, or a run file whose override is not a pair. Those now report their cause instead.
 
 ### Changed
 
@@ -29,11 +58,26 @@
   stage-monotonic, and `landed` is deliberately `Verify` rather than `Retro` — it is the post-merge
   unit announce, not close-out.
 - **A `status_map` override is a pair and is validated against the resolved vocabulary.** A run
-  file carrying the older single-string override fails loud rather than half-submitting. No
-  configuration that previously *worked* stops working: none of the retired ladder's values was
-  live, so every such write was already halting at Mission Control.
-- The announce path is otherwise unchanged: it still posts one progress comment, still dedups on
-  its own discriminator, and still degrades silently when saga's reconcile controller is absent.
+  file carrying the older single-string override fails loud rather than half-submitting.
+- **Two observable changes for an existing run file, stated rather than implied.** A run file whose
+  `status_map` holds a pre-pair single string made `land` exit **0** before and exits **2** now; the
+  fail-loud direction is deliberate, and nothing that previously *worked* stops working, because
+  none of the retired ladder's values was a live option and every such write was already halting at
+  Mission Control. And the progress comment now carries a `board stage:` line above its
+  `board status:` line, so its rendered body differs from the pre-3.1.0 shape.
+- **The announce path is unchanged in what it announces and how it dedups** — one progress comment
+  per boundary, the same idempotency discriminator shape, and the same silent degradation when
+  saga's reconcile controller is absent. Two things about it did change and are listed above: the
+  exit code on a hard failure, and the reporting of a failure's reason. The drift half of the
+  submission path also changed, in saga rather than here (see saga 0.151.0).
+- **Where the vocabulary comes from, precisely.** Orchestrate keeps no board vocabulary of its own,
+  which is the property that matters: a value that stops being live stops validating here as soon as
+  the plugin updates. It reads Mission Control's *shipped* schema document, which is that resolver's
+  offline source rather than its only one — `_resolve_sdlc_schema` prefers the copy on GitHub `main`
+  — so a live schema newer than the installed plugin is not visible, and a rung that is
+  live-but-newer fails loud here rather than being submitted blind. Reading the document instead of
+  importing `sdlc_manager` is deliberate: that resolver reaches GitHub through a `gh` child, and a
+  land must never wait on the network.
 
 ## [3.0.8] - 2026-08-27
 

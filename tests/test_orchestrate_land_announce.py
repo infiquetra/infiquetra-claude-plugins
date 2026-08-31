@@ -77,6 +77,26 @@ def _options_of(argv: list[str]) -> dict[str, str]:
     return opts
 
 
+def _identity_of(argv: list[str]) -> dict[str, str]:
+    """The `field` identity the REAL controller records for this argv.
+
+    Load-bearing rather than decorative. `board_progression.assignment_identity` joins a
+    submission's field names, sorted, with `+`, and `authorize_and_write` puts the result in the
+    record's `field`. Orchestrate reads it back to prove the saga that executed the call actually
+    carried both halves -- a saga older than the pair contract drops `payload["assignments"]`,
+    writes only `--field Status`, and reports `written`. A fake that omitted `field` was the shape
+    of that older saga, so it made every test agree with the defect instead of catching it.
+    """
+    opts = _options_of(argv)
+    if opts.get("--op") != "set-field-status":
+        return {}
+    payload = json.loads(opts.get("--payload", "{}") or "{}")
+    assignments = payload.get("assignments")
+    if not assignments:
+        return {"field": "Status"}
+    return {"field": "+".join(sorted(str(field) for field, _option in assignments))}
+
+
 class FakeReconcileController:
     """Stand-in for the ``reconcile_controller`` subprocess, with a switchable failure mode.
 
@@ -101,6 +121,7 @@ class FakeReconcileController:
                 cmd, 1, stdout="", stderr="transient controller failure"
             )
         record = {"status": "written", "key": "fake", "op_kind": _options_of(argv)["--op"]}
+        record.update(_identity_of(argv))
         return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(record) + "\n", stderr="")
 
     def ops(self) -> list[str]:

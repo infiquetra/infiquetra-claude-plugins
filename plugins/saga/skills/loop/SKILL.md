@@ -112,7 +112,7 @@ stdin and emits the `handoff` object). Use `handoff.maturity` for maturity routi
 - `idea-ready` / `requirements-ready` -> the next command is `/plan` (no plan exists yet).
 - `plan-ready` / `resume-ready` -> the next command is `/work` (a plan already exists).
 - `pending-confirmation` -> the next command is `/brainstorm` (boundary recorded but unconfirmed, dispatch-table `pending-confirmation` row).
-- empty or `unknown:`-prefixed -> no route: the declaring artifact's frontmatter fails closed (unrecognized value, blank value, or non-delimited carrier). Stop and show the diagnostic; never route on a sentinel.
+- empty -> the issue carries no recognized handoff metadata; continue to the saga scan (Phase 0.3) and classify normally — an ordinary issue without a handoff section is the common case, not a frontmatter failure.
 
 The parsed `flags` (`has_security`, `has_infra`, `has_api`) feed the hard test-gate check (Phase 2)
 and the backend recommendation when `/loop` itself drives (Phase 3).

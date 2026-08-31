@@ -162,12 +162,12 @@ def test_readiness_is_derived_not_stored() -> None:
     }
     assert "docs/specs/" in maturity["values"]["requirements-ready"]["from"]
     assert "docs/brainstorms/" in str(maturity["values"]["pending-confirmation"]["from"])
-    # consumed_by is the single routing destination (matches the dispatch table row);
-    # /resume reads the value but routes onward, so it is recorded under read_by, not
-    # consumed_by — the assertion is a superset check so adding a consumer needs no
-    # test edit (AM-10).
-    assert set(maturity["values"]["pending-confirmation"]["consumed_by"]) >= {"/brainstorm"}
-    assert "/brainstorm" in set(maturity["values"]["pending-confirmation"]["consumed_by"])
+    assert set(maturity["values"]["pending-confirmation"]["consumed_by"]) == {"/brainstorm"}
+    assert set(maturity["values"]["pending-confirmation"]["read_by"]) == {
+        "/resume",
+        "/loop",
+        "/handoff",
+    }
 
 
 def test_required_scenarios_pairs_and_visual_inventory_are_present() -> None:
@@ -236,6 +236,7 @@ def test_generated_visual_assets_match_model() -> None:
             "uv run python plugins/saga/scripts/render_docs_visuals.py"
         )
         assert f'<title id="title">{visual["title"]}</title>' in svg
+        assert "Do not edit by hand" in svg
 
 
 def test_ladder_renderer_rows_equal_model_maturity_values() -> None:
@@ -243,18 +244,63 @@ def test_ladder_renderer_rows_equal_model_maturity_values() -> None:
 
     The renderer's row list is separate from the model's maturity map, so a new maturity
     value added to the model without a renderer row produces a diagram that disagrees with
-    the very document embedding it. This guard compares the row labels against the model so
-    the next vocabulary change fails here instead of shipping a stale asset.
+    the very document embedding it. This guard compares the row labels directly against the
+    model so the next vocabulary change fails here instead of shipping a stale asset.
     """
     model = _load_model()
     renderer = _load_renderer()
-    rendered = renderer.render_all(model)
-    svg = rendered["state-readiness-ladder"]
-
+    row_labels = {maturity for _, maturity, _ in renderer.MATURITY_ROWS}
     model_values = set(model["maturity"]["values"])
+    assert row_labels == model_values, (
+        f"ladder rows {row_labels!r} != model values {model_values!r}; "
+        "add the missing maturity to render_docs_visuals.py's MATURITY_ROWS and regenerate the asset"
+    )
+    # Secondary: the rows must have reached the asset (not just the list)
+    svg = renderer.render_all(model)["state-readiness-ladder"]
     for value in model_values:
-        assert value in svg, (
-            f"ladder SVG is missing maturity row {value!r}; add it to "
-            "render_docs_visuals.py's maturity_rows and regenerate the asset"
+        assert value in svg
+
+
+def test_state_readiness_table_matches_model() -> None:
+    """DOC-20: the maturity table in the manual page must match the model exactly.
+
+    The model README declares the model the maintained source for readiness mappings,
+    so the page that embeds the diagram must not diverge from it. This guard parses
+    the page's markdown table and asserts its (maturity, consumed) pairs are exactly
+    the model's, so the divergent row that predated this change cannot recur.
+    """
+    model = _load_model()
+    text = (SAGA_ROOT / "docs" / "state-readiness.md").read_text(encoding="utf-8")
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if "| Source" in line and "Derived maturity" in line:
+            start = i
+            break
+    assert start is not None, "maturity table header not found in state-readiness.md"
+    rows: list[tuple[str, str, str]] = []
+    for line in lines[start + 2 :]:
+        if not line.startswith("|"):
+            break
+        parts = [p.strip() for p in line.split("|")[1:-1]]
+        if len(parts) < 3:
+            continue
+        source, maturity_raw, consumed_raw = parts[0], parts[1], parts[2]
+        maturity = maturity_raw.strip("`").strip()
+        rows.append((source, maturity, consumed_raw))
+    # Build expected pairs from model: each maturity value and its consumed_by
+    expected_maturities = set(model["maturity"]["values"])
+    table_maturities = {m for _, m, _ in rows}
+    assert table_maturities == expected_maturities, (
+        f"table maturities {table_maturities!r} != model {expected_maturities!r}"
+    )
+    for _source, maturity, consumed in rows:
+        assert maturity in expected_maturities, f"table maturity {maturity!r} not in model"
+        expected_consumers = set(model["maturity"]["values"][maturity]["consumed_by"])
+        # The consumed cell may contain extra annotation like " (no durable route)"
+        # or " or /handoff" for specs — check that at least one expected consumer appears
+        # and that no unexpected /command appears.
+        found = [c for c in expected_consumers if c in consumed]
+        assert found, (
+            f"table row for {maturity!r} has consumer {consumed!r} not in model's {expected_consumers!r}"
         )
-        assert "Do not edit by hand" in svg

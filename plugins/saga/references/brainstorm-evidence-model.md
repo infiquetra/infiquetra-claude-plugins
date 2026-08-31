@@ -71,7 +71,6 @@ not evidence.
 **Captured transcripts are optional and additive.** Where a parked-checkpoint run
 transcript exists, a future `grade()` would run against it and the case would record
 `transcript: captured`. Where none exists, the case records
-`transcript: captured`. Where none exists, the case records
 `transcript: none` and the offline suite proves only what it can honestly prove today — shape, coverage, per-dimension reporting, no-aggregate, and gating. Calibration agreement will be proven when a grader exists; until then the offline suite proves the calibration data shape only. A missing failure-mode transcript never
 blocks U3.
 

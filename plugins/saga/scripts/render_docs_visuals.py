@@ -32,6 +32,15 @@ COLORS = {
     "panel": "#ffffff",
 }
 
+MATURITY_ROWS = [
+    ("docs/ideation/", "idea-ready", "/plan"),
+    ("docs/brainstorms/ + docs/specs/", "requirements-ready", "/plan"),
+    ("frontmatter pending-confirmation", "pending-confirmation", "/brainstorm"),
+    ("preserve/defer language", "deferred-context", "/handoff"),
+    ("docs/plans/ + docs/reviews/", "plan-ready", "/work"),
+    ("docs/work-sessions/ + branch refs", "resume-ready", "/work"),
+]
+
 
 def _load_model(path: Path = MODEL_PATH) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -224,14 +233,7 @@ def render_state_readiness_ladder(model: dict[str, Any]) -> str:
 
     _box(parts, 760, 180, 770, 560)
     _text(parts, 800, 230, "Derived maturity passport", cls="label")
-    maturity_rows = [
-        ("docs/ideation/", "idea-ready", "/plan"),
-        ("docs/brainstorms/ + docs/specs/", "requirements-ready", "/plan"),
-        ("frontmatter pending-confirmation", "pending-confirmation", "/brainstorm"),
-        ("preserve/defer language", "deferred-context", "/handoff"),
-        ("docs/plans/ + docs/reviews/", "plan-ready", "/work"),
-        ("docs/work-sessions/ + branch refs", "resume-ready", "/work"),
-    ]
+    maturity_rows = MATURITY_ROWS
     y = 285
     for source, maturity, consumer in maturity_rows:
         _box(parts, 800, y, 660, 62)

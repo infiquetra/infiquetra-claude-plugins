@@ -2,7 +2,7 @@
 date: 2026-06-24
 topic: muse-imagination-plugin
 kind: imagination-seeds
-maturity: imagination-seeds   # upstream of idea-ready; feeds /ideate
+maturity: idea-ready
 source: socratic imagination session (this transcript) + 2 verified tool-research sweeps
 working-name: /muse
 ---

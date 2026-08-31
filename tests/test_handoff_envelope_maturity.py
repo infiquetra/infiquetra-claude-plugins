@@ -366,3 +366,175 @@ def test_quoted_declared_maturity_resolves(tmp_path: Path) -> None:
     single = brainstorms / "2026-08-30-single-requirements.md"
     single.write_text("---\nmaturity: 'pending-confirmation'\n---\n\nBody\n", encoding="utf-8")
     assert HE.infer_maturity(str(single)) == "pending-confirmation"
+
+
+def test_envelope_schema_version_pinned(tmp_path: Path) -> None:
+    """AM-11: envelope schema_version literal carries a drift guard."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-schema-requirements.md"
+    target.write_text("---\nmaturity: requirements-ready\n---\n\nBody\n", encoding="utf-8")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-schema-requirements.md", root=tmp_path
+    )
+    assert envelope["schema_version"] == "1.1"
+    spec_text = (ROOT / "plugins/saga/references/saga-spec.md").read_text(encoding="utf-8")
+    assert "1.1" in spec_text
+    assert "handoff envelope" in spec_text.lower()
+
+
+def test_carrier_diagnostic_names_delimiters_not_vocabulary(tmp_path: Path) -> None:
+    """AM-12: carrier diagnostic must name the missing delimiters, not the vocabulary."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-carrier-requirements.md"
+    # Valid vocabulary value but declared outside delimited block (bullet carrier)
+    target.write_text(
+        "- maturity: pending-confirmation\n\nBody\n",
+        encoding="utf-8",
+    )
+    assert HE.infer_maturity(str(target)).startswith("unknown:carrier:")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-carrier-requirements.md", root=tmp_path
+    )
+    assert envelope["handoff_maturity"].startswith("unknown:carrier:")
+    assert "/issue --prepare" not in envelope["suggested_command"]
+    # Diagnostic must name delimiters, not claim unrecognized value
+    assert "delimited" in envelope["suggested_command"].lower()
+    assert (
+        "carrier" in envelope["suggested_command"].lower()
+        or "delimiters" in envelope["suggested_command"].lower()
+    )
+
+
+def test_unterminated_frontmatter_block_fails_closed(tmp_path: Path) -> None:
+    """API-13/CORR-15: unterminated block (opening --- without closing ---) must fail closed."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-unterminated-requirements.md"
+    target.write_text(
+        "---\nmaturity: pending-confirmation\n\nBody without closing delimiter", encoding="utf-8"
+    )
+    assert HE.infer_maturity(str(target)).startswith("unknown:unterminated:")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-unterminated-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+    # Also test with bullet carrier inside unterminated? No, just ensure no route
+    # And test that missing closing delimiter with valid routable value also fails closed
+    target2 = brainstorms / "2026-08-30-unterminated2-requirements.md"
+    target2.write_text("---\nmaturity: requirements-ready\n\nBody", encoding="utf-8")
+    assert HE.infer_maturity(str(target2)).startswith("unknown:unterminated:")
+    envelope2 = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-unterminated2-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope2["suggested_command"]
+
+
+def test_sentinel_length_bound(tmp_path: Path) -> None:
+    """TEST-14: sentinel truncation bounds unbounded author-controlled text."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-long-requirements.md"
+    long_value = "x" * 300
+    target.write_text(f"---\nmaturity: {long_value}\n---\n\nBody\n", encoding="utf-8")
+    maturity = HE.infer_maturity(str(target))
+    assert maturity.startswith("unknown:")
+    # infer returns full raw; envelope truncates to 120 chars after prefix (API-12)
+    assert len(maturity) == len("unknown:") + 300
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-long-requirements.md", root=tmp_path
+    )
+    assert len(envelope["handoff_maturity"]) == len("unknown:") + 120  # type: ignore[index]
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_blank_carrier_fails_closed(tmp_path: Path) -> None:
+    """TEST-15: blank-value non-delimited carrier must fail closed with bare sentinel."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-blank-carrier-requirements.md"
+    target.write_text("- maturity: \n\nBody\n", encoding="utf-8")
+    maturity = HE.infer_maturity(str(target))
+    assert maturity == "unknown:carrier:"
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-blank-carrier-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_read_failure_fails_closed(tmp_path: Path) -> None:
+    """API-15/CORR-15: read/decode failure must fail closed with distinct sentinel."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-unreadable-requirements.md"
+    # Write bytes that are not valid UTF-8 and contain no recoverable frontmatter
+    # (so the retry logic cannot extract a maturity and must return the unreadable sentinel)
+    target.write_bytes(b"\xff\xfe\xfd\xfc\xfb")
+    maturity = HE.infer_maturity(str(target))
+    assert maturity == "unknown:unreadable"
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-unreadable-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+    assert "unreadable" in envelope["suggested_command"].lower()
+    # Valid frontmatter with invalid body byte should still be classified, not unreadable
+    valid = brainstorms / "2026-08-30-valid-with-bad-body-requirements.md"
+    valid.write_bytes(b"---\nmaturity: pending-confirmation\n---\n\nBody \xe9\n")
+    assert HE.infer_maturity(str(valid)) == "pending-confirmation"
+
+
+def test_reanchored_missing_fallback_to_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CORR-13: re-anchored subpath missing must fallback to original absolute, not path rule."""
+    # Root has no docs/brainstorms/b.md, but absolute file outside root declares pending-confirmation
+    outside = Path(tempfile.mkdtemp()) / "outside"
+    (outside / "docs" / "brainstorms").mkdir(parents=True)
+    abs_file = outside / "docs" / "brainstorms" / "2026-08-30-missing-reanchored-requirements.md"
+    abs_file.write_text("---\nmaturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8")
+    # Ensure root has no such subpath
+    assert not (
+        tmp_path / "docs" / "brainstorms" / "2026-08-30-missing-reanchored-requirements.md"
+    ).exists()
+    # Infer with root declared as tmp_path, source is absolute outside root
+    maturity = HE.infer_maturity(str(abs_file), root=tmp_path)
+    assert maturity == "pending-confirmation"
+    envelope = HE.build_handoff_envelope(str(abs_file), root=tmp_path)
+    assert envelope["handoff_maturity"] == "pending-confirmation"
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_no_checked_in_artifact_declares_non_vocab_maturity() -> None:
+    """CORR-17: repository check — no checked-in artifact declares a non-vocabulary maturity."""
+    allowed = set(HE.HANDOFF_MATURITIES)
+    source_dirs = [
+        ROOT / "docs" / d
+        for d in ["ideation", "brainstorms", "specs", "plans", "reviews", "work-sessions"]
+    ]
+    bad: list[tuple[str, str]] = []
+    for base in source_dirs:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.md"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if not text.startswith("---"):
+                continue
+            end = text.find("\n---", 3)
+            if end == -1:
+                continue
+            frontmatter = text[3:end]
+            for line in frontmatter.splitlines():
+                if line.startswith("maturity:"):
+                    raw = (
+                        line.split(":", 1)[1].strip().split("#", 1)[0].strip().strip("\"'").strip()
+                    )
+                    if raw and raw not in allowed:
+                        bad.append((str(path.relative_to(ROOT)), raw))
+                    break
+    assert not bad, (
+        f"checked-in artifacts declare non-vocab maturity outside HANDOFF_MATURITIES: {bad}"
+    )

@@ -33,23 +33,67 @@ HANDOFF_MATURITIES = (
 def _read_frontmatter_maturity(path: Path) -> str | None:
     try:
         text = path.read_text(encoding="utf-8-sig")
-    except (OSError, UnicodeDecodeError):
-        return None
+    except UnicodeDecodeError:
+        # Decode failure (API-15/CORR-15): try alternative encodings so a declared
+        # value is classified rather than lost. A file whose body contains a
+        # Latin-1 byte but whose frontmatter is valid should still return the
+        # frontmatter value; a UTF-16 file should be sniffed.
+        raw = path.read_bytes()
+        for enc in ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            try:
+                text = raw.decode("utf-8-sig", errors="replace")
+            except OSError:
+                return "unknown:unreadable"
+        # If the decoded text still contains no visible maturity declaration,
+        # treat the file as unreadable rather than falling through to the path
+        # rule — the file exists and was unreadable as UTF-8, so routing live
+        # would be fail-open.
+        if "maturity:" not in text:
+            return "unknown:unreadable"
+    except OSError:
+        return "unknown:unreadable"
     if not text.startswith("---"):
         # Non-delimited carrier (AU-09): a `maturity:` mention in the first lines
         # means the document declares a maturity the delimited-block reader cannot
-        # honour — fail closed with the unknown sentinel naming the carrier, rather
-        # than silently routing on the path default. No mention at all keeps the
+        # honour — fail closed with a carrier-distinguished sentinel, rather than
+        # silently routing on the path default. No mention at all keeps the
         # legacy path-default behaviour.
         for line in text.splitlines()[:10]:
             stripped = line.strip()
             if stripped.lstrip("-*").strip().startswith("maturity:"):
                 raw = stripped.split(":", 1)[1].strip() if ":" in stripped else ""
                 raw = raw.strip("\"'").strip()
-                return f"unknown:{raw}" if raw else "unknown:"
+                if raw:
+                    return f"unknown:carrier:{raw}"
+                return "unknown:carrier:"
         return None
     end = text.find("\n---", 3)
     if end == -1:
+        # Unterminated frontmatter block (API-13/CORR-15): opening delimiter present
+        # but no closing delimiter — scan the opened block for a visible maturity
+        # declaration and fail closed with a distinct sentinel rather than falling
+        # through to the path rule.
+        frontmatter = text[3:]
+        for line in frontmatter.splitlines():
+            if line.startswith("maturity:"):
+                stripped = line.strip()
+                value = stripped[len("maturity:") :].strip()
+                if "#" in value:
+                    value = value.split("#", 1)[0].strip()
+                value = value.strip("\"'").strip()
+                if not value:
+                    return ""
+                if value in HANDOFF_MATURITIES:
+                    return f"unknown:unterminated:{value}"
+                return f"unknown:unterminated:{value}"
+            if line.strip().startswith("maturity:") and line[0] in (" ", "\t"):
+                continue
         return None
     frontmatter = text[3:end]
     for line in frontmatter.splitlines():
@@ -78,26 +122,50 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
     # Frontmatter-declared maturity wins when the source resolves to an existing file
     # that declares one (KTD7) — so a pending-confirmation checkpoint under
     # docs/brainstorms/ no longer hands off as requirements-ready.
-    # Candidate resolution (SEC-01, fix-c23): the caller-declared root wins over the
-    # process cwd in BOTH forms. A trusted candidate is resolved under `base`
-    # (root when declared, else cwd) and — for an absolute source under a DIFFERENT
-    # declared root — never read at all. pathlib's `/` silently keeps an absolute
-    # right-hand side, so `base / normalized` would resurrect the decoy path; the
-    # untrusted-absolute arm strips to the root-relative subpath first, so the
-    # declared root's artifact wins and the path rule judges the same subpath.
+    # Candidate resolution (SEC-01, fix-c23, CORR-13): the caller-declared root wins
+    # over the process cwd in BOTH forms. For an absolute source outside the declared
+    # root, re-anchor to the subpath below the marker directory and resolve under
+    # `base`; accept the re-anchored candidate ONLY when it is an existing file —
+    # otherwise read the original absolute path directly or fail closed with a
+    # sentinel, never fall through to the path rule (which would route live).
     base = root or Path.cwd()
     absolute = Path(normalized).is_absolute()
     if absolute and root is not None and not Path(normalized).is_relative_to(base.resolve()):
-        # Untrusted absolute input (root != cwd): re-anchor on the declared root,
-        # keeping only the path's subpath below its own SOURCE marker directory
-        # (docs/brainstorms/..., docs/plans/..., ...).
+        # Untrusted absolute input (root != cwd): try re-anchored subpath first.
         parts = Path(normalized).parts
+        reanchored_normalized: str | None = None
         for marker in ("ideation", "brainstorms", "specs", "plans", "reviews", "work-sessions"):
             if marker in parts:
                 idx = parts.index(marker)
-                normalized = "/".join(parts[idx - 1 :])
+                reanchored_normalized = "/".join(parts[idx - 1 :])
                 break
-        absolute = False
+        if reanchored_normalized is not None:
+            reanchored_candidate = base / reanchored_normalized
+            if reanchored_candidate.is_file():
+                declared = _read_frontmatter_maturity(reanchored_candidate)
+                if declared is not None:
+                    return declared
+                # Re-anchored file exists but declares no maturity — use its path
+                # for the path-rule fallback below, not the original absolute.
+                normalized = reanchored_normalized
+                absolute = False
+            else:
+                # Re-anchored subpath does not exist under declared root — read
+                # the original absolute file directly (the file the caller named)
+                # or fail closed, never fall through to the path rule.
+                original_candidate = Path(normalized)
+                if original_candidate.is_file():
+                    declared = _read_frontmatter_maturity(original_candidate)
+                    if declared is not None:
+                        return declared
+                # Original also has no visible maturity — fall through using the
+                # re-anchored subpath for the path-rule check (consistent marker-based path)
+                normalized = reanchored_normalized
+                absolute = False
+        else:
+            # No marker directory in absolute path — keep original absolute handling:
+            # `base / normalized` with absolute RHS returns the absolute path itself.
+            absolute = False
     candidate = Path(normalized) if absolute else base / normalized
     if candidate.is_file():
         declared = _read_frontmatter_maturity(candidate)
@@ -206,12 +274,35 @@ def build_handoff_envelope(
             "no durable route exists until the operator confirms in Brainstorm Phase 2.5"
         )
     elif maturity == "" or maturity.startswith("unknown:"):
-        raw = maturity.removeprefix("unknown:") if maturity.startswith("unknown:") else "(empty)"
-        suggested_command = (
-            f"Unrecognized maturity {raw!r} for {selected_source} — "
-            "no durable route; fix frontmatter to one of "
-            f"{', '.join(HANDOFF_MATURITIES)}"
-        )
+        if maturity.startswith("unknown:carrier:"):
+            raw = maturity.removeprefix("unknown:carrier:")
+            suggested_command = (
+                f"Frontmatter carrier missing delimiters for {selected_source} — "
+                f"maturity {raw!r} declared outside a delimited YAML block; "
+                f"no durable route; fix frontmatter to be delimited by literal --- lines "
+                f"with an unindented maturity: key"
+            )
+        elif maturity.startswith("unknown:unterminated:"):
+            raw = maturity.removeprefix("unknown:unterminated:")
+            suggested_command = (
+                f"Unterminated frontmatter block for {selected_source} — "
+                f"maturity {raw!r} declared but closing --- missing; "
+                f"no durable route; fix frontmatter to close the block"
+            )
+        elif maturity == "unknown:unreadable":
+            suggested_command = (
+                f"Unreadable frontmatter for {selected_source} — "
+                f"file could not be read or decoded; no durable route"
+            )
+        else:
+            raw = (
+                maturity.removeprefix("unknown:") if maturity.startswith("unknown:") else "(empty)"
+            )
+            suggested_command = (
+                f"Unrecognized maturity {raw!r} for {selected_source} — "
+                "no durable route; fix frontmatter to one of "
+                f"{', '.join(HANDOFF_MATURITIES)}"
+            )
         # Keep handoff_maturity as the raw signal for diagnostics, but do not emit a route
     else:
         suggested_command = f"/issue --prepare --from {selected_source} --maturity {maturity}"

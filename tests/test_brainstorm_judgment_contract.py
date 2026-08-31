@@ -144,10 +144,13 @@ def check_helper_capability(text: str) -> list[str]:
     if "worktree-isolated" not in norm:
         violations.append("missing worktree-isolated")
     # The safeguard itself: helpers are read-only by omitting the file-mutation
-    # tools. Requiring exact phrasing keeps the operator's withhold-write-tools
-    # instruction anchored — deleting it must fail this check (TEST-08).
-    if "read-only by omission of `Edit`/`Write`/`NotebookEdit`" not in norm:
-        violations.append("missing read-only by omission of Edit/Write/NotebookEdit")
+    # tools. Both helpers must carry the instruction — the verifier and the scout
+    # each state it, and the scout is the one not worktree-isolated so tool omission
+    # is its only protection. Require two occurrences (TEST-13).
+    if norm.count("read-only by omission of `Edit`/`Write`/`NotebookEdit`") < 2:
+        violations.append(
+            "missing read-only by omission of Edit/Write/NotebookEdit (expected 2 occurrences for both helpers)"
+        )
     if "may not choose requirements" not in norm:
         violations.append("missing may not choose requirements")
     if "may not address the operator" not in norm:

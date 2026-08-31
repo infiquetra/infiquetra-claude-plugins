@@ -4038,11 +4038,14 @@ def test_handoff_and_loop_skills_use_positive_routable_vocabulary_gate() -> None
         assert shape in handoff_skill, f"handoff skill must name the non-routable shape {shape}"
     assert "NEVER a runnable command" in handoff_skill
 
-    # Loop 4.2: same positive form.
+    # Loop 4.2: same positive form (envelope path, which CAN produce sentinel).
     assert "ONLY when the maturity is one of the routable vocabulary values" in loop_skill
     assert "`unknown:`-prefixed" in loop_skill and "never a runnable command" in loop_skill
-    # Loop 0.2 maturity routing table must carry the sentinel stop row.
-    assert "empty or `unknown:`-prefixed" in loop_skill
+    # Loop 0.2 maturity routing: empty from issue parser means no handoff metadata —
+    # continue to saga scan, not a frontmatter failure. The issue parser collapses
+    # unrecognized to empty (never to unknown:), so 0.2 must not claim sentinel.
+    assert "empty -> the issue carries no recognized handoff metadata" in loop_skill
+    assert "continue to the saga scan" in loop_skill
 
     # The Maturity list in the handoff skill must document the two added states.
     assert "two fail-closed states" in handoff_skill

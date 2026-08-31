@@ -45,7 +45,10 @@ maturity:
     pending-confirmation:
       from: [docs/brainstorms/ frontmatter pending-confirmation]
       consumed_by: [/brainstorm]
-      read_by: [/resume]
+      # read_by: commands that branch on the maturity value to decide routing,
+      # distinct from consumed_by which is the single terminal destination.
+      # Every other maturity has no readers; pending-confirmation has three.
+      read_by: [/resume, /loop, /handoff]
   source_refs:
     - plugins/saga/references/saga-spec.md
     - plugins/saga/skills/handoff/SKILL.md

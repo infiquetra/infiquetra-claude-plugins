@@ -803,9 +803,12 @@ python3 plugins/saga/scripts/issue_progress.py \
 ```
 
 An override must name which gate it waives: `--doc-review-override` for the doc-review gate and
-`--review-gate-override` for the review gate. A rationale without a known gate is refused by
-`issue_progress.py:_override_line`, and the rendered issue comment labels the two waivers
-`doc review override` and `review gate override` so the audit trail is unambiguous.
+`--review-gate-override` for the review gate. What makes that unambiguous is the **split itself** —
+two flags, each hard-wired to one gate, so a rationale cannot arrive without a gate through this
+path at all, and the rendered issue comment labels the two waivers `doc review override` and
+`review gate override`. `issue_progress.py:_override_line` does carry a refusal for an unknown gate
+name, but the source itself records that it is unreachable from here: it is a guard for a direct
+caller, and describing it as what enforces the property reads as a runtime check that never runs.
 
 Then **post it**, through the same reconcile controller Phase 4.4 uses. Rendering is not posting, and
 "hand it to `mission-control`" was for a long time the only instruction here — so nothing ran, and no
@@ -1047,8 +1050,8 @@ capturing a fresh `REVIEWED_SHA`, before any PR/merge offer.
 
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
 via `--review-gate-override` for the review gate and `--doc-review-override` for the doc-review gate,
-each validated by `issue_progress.py:_override_line` to name its gate, plus the work-session). Never a
-silent skip.
+each rendered through `issue_progress.py:_override_line` under its own gate's label, plus the
+work-session). Never a silent skip.
 
 ### 5.4 Reach PR-ready and present continuation routing
 

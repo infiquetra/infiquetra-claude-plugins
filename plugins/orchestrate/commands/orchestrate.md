@@ -498,8 +498,10 @@ land in `Planning`; `work`, `fix` and `codereview` in `Active`. That is all five
 override naming either stage is refused at submission, not merely absent from the default map.
 
 **Install saga 0.151.0 or later and mission-control 2.15.1 or later before relying on this.** Both
-floors are declared in `plugin.json` and enforced: a saga below the floor is refused before any
-submission. An older saga silently drops the `Stage` half and reports success.
+floors are declared in `plugin.json`; **only saga's is enforced** — a saga below its floor is
+refused before any submission, because an older saga silently drops the `Stage` half and reports
+success. The mission-control floor, like the agent-launcher one beside it, is a declaration the
+installer reads and no code checks.
 
 Read the exit code, not the prose. `land` and `announce` both exit **2** when a card was not
 updated, and every failure prints its reason and whether a retry can clear it. A failure survives

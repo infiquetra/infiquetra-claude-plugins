@@ -22,6 +22,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -1111,6 +1112,94 @@ class TestTheBudgetsAndFloorsAreDerivedFromWhatTheyGuard:
         monkeypatch.chdir(repo)
         assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 2
         assert fake_controller.calls == [], "a stale saga must never be handed a submission"
+
+
+class TestARealTimeoutReturnsTheSafetyRecord:
+    """The timeout branch, driven by an actual timeout rather than asserted about.
+
+    It was written as `except subprocess.TimeoutExpired` around the `run(...)` call and could never
+    execute. The effective runner is NOT `_subprocess_run`: `_ingest_agent_launcher()` execs
+    `launcher.py` into this module's globals immediately after the fallback is bound, and that file
+    defines its own `run`, which shadows it. Both catch the timeout themselves and, under
+    `check=False`, return `CompletedProcess(returncode=124, stderr="timed out")` -- so nothing ever
+    crossed that frame as an exception, and a real timeout fell through to the generic non-zero
+    return: a bare `failed` with no `retryable` key, which every reader defaults to retryable.
+
+    That is the one failure where a retry is worst. `subprocess` kills the direct child only, so
+    saga's mission-control grandchild survives and may still be writing the card.
+
+    These tests spawn a REAL child and let it really time out. They deliberately do not use the
+    `fake_controller` fixture, which patches `subprocess.run` away.
+    """
+
+    def _controller(self, tmp_path: Path, body: str) -> Path:
+        script = tmp_path / "stand_in_controller.py"
+        script.write_text(body, encoding="utf-8")
+        return script
+
+    def test_a_timed_out_controller_is_reported_as_unretryable_and_possibly_in_flight(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Sleeps well past its budget. The budget is shrunk to keep the test near a second; the
+        # arithmetic that produces the real budget is pinned separately above.
+        controller = self._controller(tmp_path, "import time\ntime.sleep(30)\n")
+        monkeypatch.setattr(orchestrate, "reconcile_timeout", lambda _payload: 1)
+        started = time.monotonic()
+        record = orchestrate._reconcile_call(
+            controller,
+            "set-field-status",
+            "infiquetra/orch",
+            52,
+            "Implementing",
+            payload=None,
+            root=tmp_path,
+        )
+        elapsed = time.monotonic() - started
+        assert elapsed < 20, "the call must return on the timeout, not on the child finishing"
+        assert record["status"] == "failed"
+        assert record["retryable"] is False, "a retry here races a writer that may still be live"
+        assert "did not finish within 1s" in record["error"]
+        assert "a write may still be in flight" in record["error"]
+        assert "read the card before doing anything else" in record["error"]
+
+    def test_an_ordinary_controller_failure_is_not_dressed_as_a_timeout(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Control: the branch must DISCRIMINATE, not be what every non-zero exit produces.
+
+        Without this, returning the safety record unconditionally would pass the test above and
+        tell an operator to stop retrying every ordinary failure."""
+        controller = self._controller(
+            tmp_path, "import sys\nsys.stderr.write('boom')\nsys.exit(1)\n"
+        )
+        monkeypatch.setattr(orchestrate, "reconcile_timeout", lambda _payload: 30)
+        record = orchestrate._reconcile_call(
+            controller,
+            "set-field-status",
+            "infiquetra/orch",
+            52,
+            "Implementing",
+            payload=None,
+            root=tmp_path,
+        )
+        assert record["status"] == "failed"
+        assert "retryable" not in record, "an ordinary failure keeps the retryable default"
+        assert "in flight" not in record["error"]
+        assert record["error"] == "boom"
+
+    def test_the_timeout_return_code_is_what_the_effective_runner_actually_produces(
+        self, orchestrate: ModuleType
+    ) -> None:
+        """The sentinel is read off the runner that runs, not off the one that is shadowed.
+
+        Asserted by driving a real timeout through `orchestrate.run` itself, so a runner swap that
+        stopped returning 124 -- or started raising again -- fails here rather than silently
+        reopening the hole this class exists to close."""
+        proc = orchestrate.run(
+            [sys.executable, "-c", "import time; time.sleep(30)"], check=False, timeout=1
+        )
+        assert proc.returncode == orchestrate.RUNNER_TIMEOUT_RETURNCODE
+        assert isinstance(proc, subprocess.CompletedProcess)
 
 
 class TestAFailedWritebackOutlivesTheInvocationThatSawIt:

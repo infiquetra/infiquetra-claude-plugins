@@ -506,8 +506,9 @@ def test_unreadable_invocation_file_stops_with_the_same_json_shape(
     import subprocess
 
     script = SCRIPTS_DIR / "plan_pre_answers.py"
+    missing_path = tmp_path / "missing.md"
     proc = subprocess.run(
-        [sys.executable, str(script), "--invocation-file", str(tmp_path / "missing.md")],
+        [sys.executable, str(script), "--invocation-file", str(missing_path)],
         capture_output=True,
         text=True,
         check=False,
@@ -519,6 +520,9 @@ def test_unreadable_invocation_file_stops_with_the_same_json_shape(
     assert payload["applied"] == {}
     assert payload["stop"] is not None
     assert "unreadable" in payload["stop"]
+    assert str(missing_path) in payload["stop"], (
+        "the stop itself must name the path; the subprocess argv cannot satisfy this assertion"
+    )
 
 
 # --- drift pins (reviews F14/F14a): the enums equal their canonical sources -----------

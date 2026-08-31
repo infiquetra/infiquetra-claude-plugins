@@ -626,11 +626,12 @@ When resuming (Phase 0.3 matched), this appends a tick to the existing saga dire
 minting a new one.
 
 **Check the save's exit status.** A non-zero exit means the save failed, and the error message
-names which write did. If the tick envelope was never written and no earlier tick references the
-plan, the plan document named in the error is on disk with no saga state referencing it, so
-`/work` and `/loop` cannot see it; when an earlier tick already records the plan path, the
-document is tracked and only this save's tick is missing. If the envelope landed but the
-`state.json` index rewrite failed, the tick IS tracked — `restore` reads the envelope directly —
+names which write did. If the tick envelope was never written and the full tick chain contains no
+reference to the same normalized plan path, the plan document named in the error is on disk with
+no saga state referencing it, so `/work` and `/loop` cannot see it; when any earlier tick already
+records the plan path, the document is tracked and only this save's tick is missing. If the envelope
+landed but the `state.json` index rewrite failed, the tick IS tracked — `restore` reads the envelope
+directly —
 and re-running the same save once the write failure is cleared rebuilds the index and appends one
 additional tick carrying the same state (harmless to `restore`, visible to `saga.py ticks`).
 Either way, STOP and surface the error to the operator — do not continue to Phase 5.4 on a

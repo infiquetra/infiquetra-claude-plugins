@@ -377,12 +377,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, UnicodeDecodeError) as exc:
         # The run stops on the same JSON shape every other stop uses (cycle-2 U03/C10):
         # an unreadable invocation file must surface, never escape as a bare traceback.
+        detail = getattr(exc, "strerror", None) or str(exc)
         outcome = PreAnswerOutcome(
             applied={},
             omitted=(),
             stop=(
-                "pre-answer validator stopped: the invocation text is unreadable "
-                f"({_echo(str(exc))}) — surface this, never continue silently"
+                f"pre-answer validator stopped: the invocation file {args.invocation_file} "
+                f"is unreadable ({_echo(detail)}) — surface this, never continue silently"
             ),
             caller=None,
         )

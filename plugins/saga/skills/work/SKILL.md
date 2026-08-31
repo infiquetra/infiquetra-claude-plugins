@@ -425,13 +425,39 @@ Workflow({ scriptPath: "docs/workflows/<topic>.workflow.js" })
 After the Workflow returns, or after the host authoritatively confirms cancellation, close the
 protocol with the release command (semantics: cc-workflows plugin `references/protocol.md`).
 This block runs in a **fresh shell** after the Workflow tool returns, so it re-establishes the
-launch identity itself: take `WORKFLOW_INVOCATION_ID` from the saga tick that recorded it —
-never mint a new one here, or the release targets a lease that was never reserved (review
-A01/U01).
+launch identity itself from the newest lease metadata artifact already written under `.saga/`.
+Never mint a new id here, or the release targets a lease that was never reserved (review A01/U01).
 
 ```bash
-export WORKFLOW_INVOCATION_ID="<the invocation id recorded in the saga tick for this launch>"
-export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+WORKFLOW_LEASE_METADATA="$(
+  python3 - <<'PY'
+from pathlib import Path
+
+leases = [
+    path
+    for path in Path(".saga").glob("workflow-lease-*.json")
+    if not path.name.startswith("workflow-lease-receipt-")
+]
+if not leases:
+    raise SystemExit("HALT — no Workflow lease metadata found under .saga")
+print(max(leases, key=lambda path: (path.stat().st_mtime_ns, path.name)))
+PY
+)" || exit 2
+WORKFLOW_INVOCATION_ID="$(
+  python3 - "$WORKFLOW_LEASE_METADATA" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+metadata_path = Path(sys.argv[1])
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+invocation_id = metadata.get("invocation_id")
+if not isinstance(invocation_id, str) or not invocation_id:
+    raise SystemExit(f"HALT — {metadata_path} has no invocation_id")
+print(invocation_id)
+PY
+)" || exit 2
+WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
 CC_WORKFLOWS_SCRIPTS_DIR="${CC_WORKFLOWS_SCRIPTS_DIR:-plugins/cc-workflows/skills/cc-workflows/scripts}"
 python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" release "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID"
@@ -439,11 +465,38 @@ python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" release "$WORKFLOW_LEASE
 
 For a long driver-side collection step, the boundary renew call stays for protocol continuity
 (semantics: cc-workflows plugin `references/protocol.md`). Fresh shell, same rule as the release
-block: re-establish the launch identity from the saga tick first.
+block: re-establish the launch identity from the newest on-disk lease metadata first.
 
 ```bash
-export WORKFLOW_INVOCATION_ID="<the invocation id recorded in the saga tick for this launch>"
-export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+WORKFLOW_LEASE_METADATA="$(
+  python3 - <<'PY'
+from pathlib import Path
+
+leases = [
+    path
+    for path in Path(".saga").glob("workflow-lease-*.json")
+    if not path.name.startswith("workflow-lease-receipt-")
+]
+if not leases:
+    raise SystemExit("HALT — no Workflow lease metadata found under .saga")
+print(max(leases, key=lambda path: (path.stat().st_mtime_ns, path.name)))
+PY
+)" || exit 2
+WORKFLOW_INVOCATION_ID="$(
+  python3 - "$WORKFLOW_LEASE_METADATA" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+metadata_path = Path(sys.argv[1])
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+invocation_id = metadata.get("invocation_id")
+if not isinstance(invocation_id, str) or not invocation_id:
+    raise SystemExit(f"HALT — {metadata_path} has no invocation_id")
+print(invocation_id)
+PY
+)" || exit 2
+WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
 CC_WORKFLOWS_SCRIPTS_DIR="${CC_WORKFLOWS_SCRIPTS_DIR:-plugins/cc-workflows/skills/cc-workflows/scripts}"
 python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" renew "$WORKFLOW_LEASE_METADATA"
 ```

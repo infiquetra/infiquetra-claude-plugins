@@ -225,27 +225,29 @@ def test_index_only_save_failure_reports_the_tick_tracked_not_stranded(
     assert restored.phase_status == "complete"
 
 
-def test_envelope_failure_with_a_prior_tick_does_not_claim_the_plan_stranded(
+def test_envelope_failure_scans_all_prior_ticks_for_the_plan_document(
     saga: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Envelope failure AFTER an earlier tick recorded the plan: not stranded (C02/D04).
+    """A plan referenced before the newest tick is still tracked (cycle-3 defect A2).
 
-    The first save succeeds and records the plan path. The saga directory is then made
-    read-only, so the second save's envelope write fails with a real PermissionError.
-    The surfaced error must NOT claim the plan has no tick: the earlier tick still
-    references it, ``restore`` still resolves it, and only this save's tick is missing.
-    Before the repair the message asserted a falsehood whenever ``--plan-path`` was set.
+    Two successful saves record different plans. The saga directory is then made
+    read-only, so a third save for the first plan fails with a real PermissionError.
+    ``restore`` sees only the second plan, but ``read_ticks`` proves the first plan is
+    still referenced. The surfaced error must inspect the full chain rather than claim
+    the first plan is stranded.
     """
     monkeypatch.chdir(tmp_path)
     _stub_no_git(saga, monkeypatch)
     saga_id = saga.derive_saga_id("issue", "923")
     plan_doc = "docs/plans/2026-08-30-tracked-despite-failure-plan.md"
-    plan_file = tmp_path / plan_doc
-    plan_file.parent.mkdir(parents=True)
-    plan_file.write_text("# Plan\n", encoding="utf-8")
+    latest_plan_doc = "docs/plans/2026-08-30-newest-tick-plan.md"
+    for path in (plan_doc, latest_plan_doc):
+        plan_file = tmp_path / path
+        plan_file.parent.mkdir(parents=True, exist_ok=True)
+        plan_file.write_text("# Plan\n", encoding="utf-8")
     argv = [
         "script",
         "save",
@@ -260,11 +262,22 @@ def test_envelope_failure_with_a_prior_tick_does_not_claim_the_plan_stranded(
     ]
 
     monkeypatch.setattr("sys.argv", argv)
-    assert saga.main() == 0  # the earlier tick lands and records the plan path
+    assert saga.main() == 0
     capsys.readouterr()
 
+    newest_argv = [*argv[:-1], latest_plan_doc]
+    monkeypatch.setattr("sys.argv", newest_argv)
+    assert saga.main() == 0
+    capsys.readouterr()
+    restored = saga.restore(tmp_path, saga_id)
+    assert restored is not None and restored.plan_path == latest_plan_doc
+    assert [tick.plan_path for tick in saga.read_ticks(tmp_path, saga_id)] == [
+        plan_doc,
+        latest_plan_doc,
+    ]
+
     saga_dir = tmp_path / saga.SAGAS_DIR / saga_id
-    saga_dir.chmod(0o500)  # the next envelope write fails with PermissionError
+    saga_dir.chmod(0o500)  # the third envelope write fails with PermissionError
     try:
         monkeypatch.setattr("sys.argv", argv)
         rc = saga.main()
@@ -281,9 +294,59 @@ def test_envelope_failure_with_a_prior_tick_does_not_claim_the_plan_stranded(
     assert "an earlier tick still references" in err, (
         "the envelope handler's own words must say the plan is tracked by the prior tick"
     )
-    # The document IS tracked: restore resolves it from the earlier envelope.
+    # The newest tick still names the other plan; only a full-chain scan finds this one.
     restored = saga.restore(tmp_path, saga_id)
-    assert restored is not None and restored.plan_path == plan_doc
+    assert restored is not None and restored.plan_path == latest_plan_doc
+
+
+def test_envelope_failure_normalizes_equivalent_plan_paths(
+    saga: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Equivalent spellings of one plan path remain tracked (cycle-3 defect A2)."""
+    monkeypatch.chdir(tmp_path)
+    _stub_no_git(saga, monkeypatch)
+    saga_id = saga.derive_saga_id("issue", "923")
+    recorded_plan_doc = "docs/plans/2026-08-30-equivalent-path-plan.md"
+    requested_plan_doc = f"./{recorded_plan_doc}"
+    plan_file = tmp_path / recorded_plan_doc
+    plan_file.parent.mkdir(parents=True)
+    plan_file.write_text("# Plan\n", encoding="utf-8")
+    recorded_argv = [
+        "script",
+        "save",
+        "--id",
+        "923",
+        "--lifecycle-phase",
+        "plan",
+        "--phase-status",
+        "complete",
+        "--plan-path",
+        recorded_plan_doc,
+    ]
+
+    monkeypatch.setattr("sys.argv", recorded_argv)
+    assert saga.main() == 0
+    capsys.readouterr()
+    assert saga.restore(tmp_path, saga_id).plan_path == recorded_plan_doc
+
+    saga_dir = tmp_path / saga.SAGAS_DIR / saga_id
+    saga_dir.chmod(0o500)
+    try:
+        monkeypatch.setattr("sys.argv", [*recorded_argv[:-1], requested_plan_doc])
+        rc = saga.main()
+        err = capsys.readouterr().err
+    finally:
+        saga_dir.chmod(0o755)
+
+    assert rc == 2
+    assert requested_plan_doc in err
+    assert "NO saga tick" not in err, (
+        "normalized equivalent paths reference one document, so it must not be called stranded"
+    )
+    assert "an earlier tick still references" in err
 
 
 def test_successful_plan_save_tick_resolves_to_the_written_document(

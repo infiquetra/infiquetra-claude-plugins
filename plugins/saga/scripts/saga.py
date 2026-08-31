@@ -1040,6 +1040,14 @@ def read_ticks(root: Path, saga_id: str) -> list[Saga]:
     return [parse_envelope(p.read_text(encoding="utf-8")) for p in files]
 
 
+def _normalized_plan_path(root: Path, plan_path: str) -> Path:
+    """Return a lexical absolute path for comparing recorded plan references."""
+    path = Path(plan_path)
+    if not path.is_absolute():
+        path = root / path
+    return Path(os.path.abspath(path))
+
+
 def _scan_legacy(root: Path) -> list[dict[str, Any]]:
     """Read pre-0.4.0 ``checkpoints/`` as a low-priority, flagged fallback."""
     legacy_dir = root / LEGACY_CHECKPOINT_DIR
@@ -1700,26 +1708,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         except SagaTickEnvelopeWriteError as exc:
             # The envelope never reached disk, so THIS save's tick does NOT exist. Name
-            # the stranded document only when no earlier tick references it; when the
-            # chain already records the plan path the document is tracked and only this
-            # tick is missing (issue #923, plan KTD2; cycle-2 C02/D04).
+            # the stranded document only after scanning the full prior chain for the
+            # normalized plan path; when any earlier tick records the document, only
+            # this tick is missing (issue #923, plan KTD2; cycle-3 defect A2).
             message = f"error: failed to write the saga tick: {exc}"
             if args.plan_path:
                 try:
-                    prior = restore(root, incoming.saga_id)
-                except (OSError, ValueError, TypeError, KeyError):
-                    prior = None  # an unreadable prior proves no reference
-                if prior is not None and prior.plan_path == args.plan_path:
+                    prior_ticks = read_ticks(root, incoming.saga_id)
+                except (OSError, ValueError, TypeError, KeyError) as read_exc:
                     message += (
-                        " — this save's tick envelope was never written, but an earlier"
-                        f" tick still references the plan document {args.plan_path}; the"
-                        " document is tracked. Re-run the save to append this tick."
+                        " — this save's tick envelope was never written, and the prior"
+                        f" tick chain could not be inspected ({read_exc}). Check whether"
+                        f" it references the plan document {args.plan_path} before"
+                        " treating the document as stranded."
                     )
                 else:
-                    message += (
-                        f" — the plan document {args.plan_path} now has NO saga tick"
-                        " referencing it. Re-run the save before routing onward."
+                    requested_path = _normalized_plan_path(root, args.plan_path)
+                    is_tracked = any(
+                        tick.plan_path is not None
+                        and _normalized_plan_path(root, tick.plan_path) == requested_path
+                        for tick in prior_ticks
                     )
+                    if is_tracked:
+                        message += (
+                            " — this save's tick envelope was never written, but an earlier"
+                            f" tick still references the plan document {args.plan_path}; the"
+                            " document is tracked. Re-run the save to append this tick."
+                        )
+                    else:
+                        message += (
+                            f" — the plan document {args.plan_path} now has NO saga tick"
+                            " referencing it. Re-run the save before routing onward."
+                        )
             print(message, file=sys.stderr)
             return 2
         except OSError as exc:

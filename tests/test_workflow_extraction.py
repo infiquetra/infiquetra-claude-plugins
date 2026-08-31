@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import json
 import os
 import re
 import subprocess
@@ -325,40 +326,52 @@ def test_every_scripts_dir_consumer_block_assigns_the_scripts_dir() -> None:
         )
 
 
-def test_release_and_renew_blocks_resolve_in_a_fresh_shell() -> None:
-    # Review A01/U01, proven the way the defect actually bites: run the release and
-    # renew blocks AS WRITTEN in a fresh bash that never ran the pre-submit block,
-    # substituting only the invocation-id placeholder and stripping every inherited
-    # variable. The scripts-dir variable must resolve to the real lease CLI — proven
-    # by the CLI's own loud HALT on the absent metadata file; an unresolved variable
-    # dies as python's "can't open file '/workflow_emitter.py'" instead.
-    placeholder = "<the invocation id recorded in the saga tick for this launch>"
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in {"CC_WORKFLOWS_SCRIPTS_DIR", "CLAUDE_CODE_SESSION_ID"}
-        and not key.startswith("WORKFLOW_")
-    }
+def test_release_and_renew_blocks_resolve_in_a_fresh_shell(tmp_path: Path) -> None:
+    # Review cycle 3 defect A1, proven at the real boundary: each close-out block runs
+    # AS WRITTEN under env -i, discovers the lease artifact persisted at launch, reads
+    # its invocation_id, and reaches the real lease CLI. A symlink keeps the shipped
+    # repo-relative CLI path intact without writing test artifacts into the checkout.
+    (tmp_path / "plugins").symlink_to(ROOT / "plugins", target_is_directory=True)
+    lease_dir = tmp_path / ".saga"
+    lease_dir.mkdir()
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    clean_path = os.environ.get("PATH", "/usr/bin:/bin")
+    session_id = "cp918-fresh-shell-session"
+
     for verb in ("release", "renew"):
         block = next(b for b in _work_skill_bash_blocks() if f'workflow_emitter.py" {verb}' in b)
         invocation_id = f"cp918-fresh-shell-{uuid.uuid4().hex}"
-        script = block.replace(placeholder, invocation_id)
+        metadata = ES.workflow_lease_metadata(spec, invocation_id=invocation_id, environment={})
+        lease_path = lease_dir / f"workflow-lease-{invocation_id}.json"
+        lease_path.write_text(json.dumps(metadata), encoding="utf-8")
         proc = subprocess.run(  # nosec B603 - a literal block from the shipped skill
-            ["bash", "-c", script],
-            cwd=ROOT,
+            [
+                "env",
+                "-i",
+                f"PATH={clean_path}",
+                f"CLAUDE_CODE_SESSION_ID={session_id}",
+                "bash",
+                "-c",
+                block,
+            ],
+            cwd=tmp_path,
             capture_output=True,
             text=True,
-            env=env,
             timeout=60,
         )
         assert "can't open file" not in proc.stderr, (
             f"the {verb} block's scripts-dir variable expanded empty in a fresh shell"
         )
-        assert proc.returncode == 2 and "workflow-lease: HALT" in proc.stderr, (
-            f"the {verb} block did not reach the real lease CLI in a fresh shell: "
-            f"rc={proc.returncode}, stderr={proc.stderr!r}"
+        assert "cannot read lease metadata" not in proc.stderr, (
+            f"the {verb} block did not resolve the persisted lease metadata: {proc.stderr!r}"
         )
-        assert invocation_id in proc.stderr, (
-            f"the {verb} block did not re-derive the lease-metadata path from the "
-            "invocation id it re-established"
-        )
+        if verb == "release":
+            assert proc.returncode == 0 and '"released_lease_ids": []' in proc.stdout, (
+                f"the release block did not complete through the real lease CLI: "
+                f"rc={proc.returncode}, stdout={proc.stdout!r}, stderr={proc.stderr!r}"
+            )
+        else:
+            assert proc.returncode == 0 and '"renewed_lease_ids": []' in proc.stdout, (
+                f"the renew block did not complete through the real lease CLI: "
+                f"rc={proc.returncode}, stdout={proc.stdout!r}, stderr={proc.stderr!r}"
+            )

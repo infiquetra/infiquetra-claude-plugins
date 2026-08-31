@@ -184,13 +184,16 @@ It emits one record:
 
 The same shared drift vocabulary and idempotency writer sit underneath (`/outcome` composes the
 same `board_progression` + drift-vocabulary primitives underneath, but its `advance` loop is not
-yet a controller consumer — tracked in #593). The no-new-forward-progression boundary (a
-first-time forward move is submitted by `/work` through the reconcile controller and executed by
-Mission Control — the submission path built in 0.151.0 as the board-submission plan's first child
-— and the field move to Mission Control) is now mechanically enforced for this tick — `detect`
-cannot write — in addition to being documented convention: pass a `--target-state` only for a
-Status `/loop` has already asserted, and never run a writing `reconcile` tick for a lifecycle
-field from this skill.
+yet a controller consumer — tracked in #593).
+
+**`/loop` makes no first-time forward move.** That move belongs to `/plan` and `/work`, which submit
+it through the reconcile controller for Mission Control to execute — the submission path built in
+0.151.0 as the board-submission plan's first child. `/loop` only *detects* drift against a value the
+lifecycle has already asserted, and since W7 that boundary is mechanically enforced here rather than
+merely documented: this tick drives `detect`, which builds no writer and mints no ledger key, so it
+cannot write at all. Two conventions still hold on top of the mechanism: pass a `--target-state`
+only for a Status `/loop` has already asserted, and never run a writing `reconcile` tick for a
+lifecycle field from this skill.
 
 ---
 

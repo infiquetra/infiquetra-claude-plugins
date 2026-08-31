@@ -213,14 +213,25 @@ the pre-select differs, so R12 telemetry still sees recommended-vs-chosen.
 ## Build-unit tier resolution — `resolve_build_unit_tier()` (Phase 2)
 
 When Work directly launches a build unit (an Implementation Unit executed as a direct build unit),
-resolve its `{model, effort}` via `plugins/saga/scripts/lifecycle_state.py:resolve_build_unit_tier`.
-An explicit `{model, effort}` on the plan unit wins unchanged; otherwise the work shape is selected
-and resolved through the shared registry: `plugins/fleet-core/scripts/fleet_commons/tier_policy.json`
-via `tier_resolver` / `tier_defaults`. When a unit declares neither a tier nor a work shape, the
-selected shape is `mechanical` — bounded, specified work per `/work`'s own execution context and the
-middle rung that bounds either-direction error (KTD7) — so `resolve_build_unit_tier(plan_tier=None,
-work_shape=None)` resolves the `mechanical` row from `tier_policy.json`, not a literal at the spawn
-site. Values stay in that registry; this file only names the shape-selection rule — see
-`lifecycle_state.py:resolve_build_unit_tier` for the single delegation seam. The resolver accepts a
-host tier argument but ignores it, so the dispatch does not consult the host session. Record the
-resolved tier in the Phase-4 work-session execution evidence for both the explicit and defaulted case.
+resolve its `{model, effort}` by running the resolver:
+
+```bash
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+  --plan-model <model> --plan-effort <effort>      # explicit plan tier
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+  --work-shape <shape>                             # no explicit tier
+```
+
+An explicit `{model, effort}` on the plan unit wins on **precedence** — and is validated against the
+same vocabulary the shape path resolves from, so a model or effort the registry does not carry is
+refused rather than passed through to a spawn. Otherwise the work shape is selected and resolved
+through the shared registry: `plugins/fleet-core/scripts/fleet_commons/tier_policy.json` via
+`tier_resolver` / `tier_defaults`. When a unit declares neither a tier nor a work shape, the selected
+shape is `mechanical` — bounded, specified work per `/work`'s own execution context and the middle
+rung that bounds either-direction error (KTD7) — so the resolver with neither argument resolves the
+`mechanical` row from `tier_policy.json`, not a literal at the spawn site. Values stay in that
+registry; this file only names the shape-selection rule — `resolve_build_unit_tier` in
+`lifecycle_state.py` is the single delegation seam behind the subcommand. **The resolver takes no
+host or session input at all**, which is what makes inheritance impossible: it cannot consult a host
+tier it is never given. Record the resolved tier in the Phase-4 work-session execution evidence for
+both the explicit and defaulted case.

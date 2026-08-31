@@ -82,13 +82,21 @@ def test_no_saga_file_claims_first_board_move_belongs_to_work() -> None:
     assert "0.151.0" in loop_text or "submission path" in loop_text.lower()
 
 
-def test_artifact_pointer_is_referenced_by_full_path_under_skills() -> None:
-    # Every bare artifact_pointer.py under plugins/saga/skills must use the full path.
-    # Scope to skills to avoid flagging the saga.py field name artifact_pointers and historical
-    # CHANGELOG notes which are not bare module invocations.
-    skills_root = ROOT / "plugins" / "saga" / "skills"
+def test_artifact_pointer_is_referenced_by_full_path_in_saga_prose() -> None:
+    """Every bare `artifact_pointer.py` in saga's prose must carry the full path.
+
+    Scoped to `plugins/saga/skills` before, which is narrower than the requirement and missed a
+    live reference in `plugins/saga/references/`: the module is not saga's -- it lives in
+    team-execution -- so a bare filename in saga prose points a reader at a file that is not there,
+    wherever in saga it appears. team-execution's own prose is untouched: a bare filename inside
+    the plugin that OWNS the script is correct. The CHANGELOG stays out of scope because a
+    historical note records what was written at the time.
+    """
+    saga_root = ROOT / "plugins" / "saga"
     bare: list[str] = []
-    for path in skills_root.rglob("*.md"):
+    for path in saga_root.rglob("*.md"):
+        if path.name == "CHANGELOG.md":
+            continue
         content = path.read_text(encoding="utf-8")
         for lineno, line in enumerate(content.splitlines(), start=1):
             if (

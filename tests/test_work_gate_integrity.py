@@ -20,6 +20,53 @@ CODE_REVIEW_SKILL = ROOT / "plugins" / "saga" / "skills" / "code-review" / "SKIL
 SAGA_PY = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
 
 
+# The single-sourcing clause section 4.1 must carry -- "the ... and the ... are the same list".
+_SINGLE_SOURCE_CLAUSE = re.compile(
+    r"writeup\s+field\s+and\s+the\s+gate\s+input\s+are\s+the\s+same\s+list", re.IGNORECASE
+)
+
+
+def _issue_progress():
+    """Load `issue_progress` BY PATH, the way 264 of this suite's 267 modules load a plugin script.
+
+    The package form `from plugins.saga.scripts import ...` resolves against whatever `plugins`
+    package `find_spec` reaches first, which is the primary checkout when the worktree under test is
+    nested beneath it -- so the module under test is not necessarily the module in this tree.
+    """
+    import importlib.util
+
+    path = ROOT / "plugins" / "saga" / "scripts" / "issue_progress.py"
+    spec = importlib.util.spec_from_file_location("_issue_progress_for_gate_integrity", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    if str(path.parent) not in sys.path:
+        sys.path.insert(0, str(path.parent))
+    # Registered BEFORE exec: `dataclasses` resolves a string annotation through
+    # `sys.modules[cls.__module__]`, so a frozen dataclass in the module under load fails to build
+    # if its own name is not there yet.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _saga_module():
+    """Load `saga.py` by path, for the same reason `_issue_progress` does."""
+    import importlib.util
+
+    path = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
+    spec = importlib.util.spec_from_file_location("_saga_for_gate_integrity", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    if str(path.parent) not in sys.path:
+        sys.path.insert(0, str(path.parent))
+    # Registered BEFORE exec: `dataclasses` resolves a string annotation through
+    # `sys.modules[cls.__module__]`, so a frozen dataclass in the module under load fails to build
+    # if its own name is not there yet.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _read_skill() -> str:
     return WORK_SKILL.read_text(encoding="utf-8")
 
@@ -84,7 +131,7 @@ def test_valid_verdict_with_colon_ref_survives_intact(tmp_path: Path) -> None:
     payload = json.loads(restore.stdout)
     assert payload["gate_verdicts"] == [verdict]
     # Also direct parse preserves ref.
-    from plugins.saga.scripts import saga as saga_mod  # type: ignore
+    saga_mod = _saga_module()
 
     g, s, ref = saga_mod.parse_gate_verdict(verdict)
     assert g == "tests" and s == "done" and ref == "https://github.com/o/r/pull/9"
@@ -138,14 +185,33 @@ def test_malformed_verdict_no_colon_is_refused(tmp_path: Path) -> None:
 
 
 def test_work_writeup_records_change_kinds_and_single_sources_gate() -> None:
+    """The writeup field and the gate input must be ONE list, and the section must say so.
+
+    `assert "same" in collapsed.lower()` was the whole single-sourcing check, and the word "same"
+    appears in ordinary prose for a hundred unrelated reasons -- it could not distinguish the
+    contract from a sentence that happened to contain it. These assert the clause itself, and the
+    control below proves they discriminate.
+    """
     text = _read_skill()
     sec = _section(text, "### 4.1 ", "### 4.2 ")
     collapsed = " ".join(sec.split())
     assert "change_kinds" in sec
     assert "requires_hard_test_gate" in collapsed
-    # Same list / same value wording ensures single-source.
-    assert "same" in collapsed.lower()
-    assert "change_kinds" in collapsed and "requires_hard_test_gate" in collapsed
+    assert _SINGLE_SOURCE_CLAUSE.search(collapsed), (
+        "section 4.1 must state that the recorded change_kinds value and the gate input are the "
+        "same list, not two derivations"
+    )
+    assert "verbatim" in collapsed, "the recorded value must be required to be verbatim"
+
+
+def test_the_single_source_clause_pattern_discriminates() -> None:
+    """Control: the pattern must reject prose that merely contains the word "same"."""
+    assert _SINGLE_SOURCE_CLAUSE.search(
+        "the writeup field and the gate input are the same list, not two separate derivations"
+    )
+    assert not _SINGLE_SOURCE_CLAUSE.search(
+        "run the tests in the same directory as the plan, then record the same day's date"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +220,7 @@ def test_work_writeup_records_change_kinds_and_single_sources_gate() -> None:
 
 
 def test_override_without_gate_is_refused() -> None:
-    from plugins.saga.scripts import issue_progress as ip
+    ip = _issue_progress()
 
     with pytest.raises(ValueError):
         ip._override_line(None, "some rationale")
@@ -169,7 +235,7 @@ def test_override_without_gate_is_refused() -> None:
 
 
 def test_override_renders_distinguishable_labels() -> None:
-    from plugins.saga.scripts import issue_progress as ip
+    ip = _issue_progress()
 
     doc_comment = ip.render_issue_comment(
         event="phase",

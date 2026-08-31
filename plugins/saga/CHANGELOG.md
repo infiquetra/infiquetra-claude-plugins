@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.155.0] - 2026-08-31
+
+### Fixed
+
+- **`/work`'s `/qa` preamble said the opposite of what `/qa` does (#930).** It read "`/qa` does not
+  yet advance the phase". `/qa` advances `lifecycle_phase` from `work` to `qa` on a PASS and keeps
+  it at `work` on a FAIL — its own skill says so and the saga specification's consumer table agrees.
+  The saga legitimately sits at `work` from merge until `/qa` runs and passes, which is the true
+  reason and is now what the sentence says.
+- **`halt` was attributed to an allowlist no conditional reads (#930).** Phase 4.4 said any op
+  "outside the closed auto-correct allowlist" returns `halt`. `AUTO_CORRECT_OP_KINDS` is
+  `frozenset()` and nothing anywhere branches on membership in it. `halt` is what an outside DRIFT
+  returns; what the empty allowlist means is that the auto-correct branch was deleted, leaving
+  `halt` as a drift's only outcome.
+- **The certificate's own comment named a mechanism retired by W7.** The idempotency-key recipe note
+  justified not migrating orphaned keys partly because `set-field-status` "is in
+  `AUTO_CORRECT_OP_KINDS`, which re-drives the asserted value on drift anyway". Nothing re-drives
+  anything. The conclusion stands; the reason given for it did not, and the note now says what
+  actually happens.
+- **The build-unit tier instructions named a function with no way to run it (#928/#929).** Both the
+  skill and its execution-strategy reference told an agent to resolve a tier "via
+  `lifecycle_state.py:resolve_build_unit_tier`" — a Python symbol with no CLI entry point. A
+  `resolve-build-unit-tier` subcommand now exists and prints `{"model": ..., "effort": ...}`, and
+  both documents name the runnable form.
+- **An explicit plan tier bypassed the validation its sibling path enforces (#929).** It was
+  returned after a key-presence check alone, so a plan naming a model or effort the shared registry
+  does not carry reached a spawn, while the shape path could only ever produce a registry value.
+  "Explicit wins" is about precedence, not about skipping the check that the value exists.
+- **A bare `artifact_pointer.py` reference survived outside the guard's scope (#930).** The guard
+  was scoped to `plugins/saga/skills`, and `plugins/saga/references/liveness-consumer-sites.md`
+  named the module bare. The module lives in team-execution, so a bare filename in saga prose points
+  at a file that is not there wherever in saga it appears; the guard now covers saga's prose and the
+  reference carries the full path.
+- **The `/loop` first-move sentence was left a verbless fragment (#930).** Rewritten as prose that
+  states the boundary it is about: `/loop` makes no first-time forward move, that move belongs to
+  `/plan` and `/work`, and since W7 the `detect` tick enforces it mechanically rather than by
+  convention.
+
+### Changed
+
+- **Three guard tests could not fail, and now can.** The tier test's literal check ended in
+  `or "resolve_build_unit_tier" in text` — the name of the function the file under test defines, so
+  the disjunction was true on every possible tree; proved by a mutation that hard-coded the pair at
+  the spawn site and left it green. The no-inheritance test passed a `host_tier` argument the
+  resolver accepted and discarded, so it asserted that discarding works; non-inheritance is now
+  proved from the signature and from a hostile environment, and the dead parameter is gone. The
+  change-kinds single-sourcing test was `assert "same" in collapsed.lower()`, which ordinary prose
+  satisfies; it now matches the clause itself, with a control proving the pattern discriminates.
+- **Two test modules import their subject by path**, like 264 of this suite's 267 modules. The
+  package form resolves against whichever `plugins` package is found first, which is the primary
+  checkout when the worktree under test is nested beneath it — so the module under test was not
+  necessarily the module in the tree under test.
+
 ## [0.154.0] - 2026-08-31
 
 ### Fixed
@@ -21,9 +74,10 @@
   its `{model, effort}` via `lifecycle_state.py:resolve_build_unit_tier` — an explicit plan tier
   wins unchanged, otherwise the work shape (default `mechanical` when undeclared) is resolved
   through the shared `tier_policy.json` registry via `tier_resolver` / `tier_defaults`, never a
-  literal at the spawn site and never by consulting the host session's tier. The seam accepts a
-  `host_tier` argument but never reads it, so the no-inheritance guarantee is provable, and a
-  malformed `.saga/tier-defaults.json` still raises `TierDefaultsError` through the seam.
+  literal at the spawn site and never by consulting the host session's tier. The seam takes **no
+  host or session input at all**, which is what makes that guarantee real: it cannot read a tier it
+  is never given. A malformed `.saga/tier-defaults.json` still raises `TierDefaultsError` through
+  the seam.
 
 ## [0.152.0] - 2026-08-31
 

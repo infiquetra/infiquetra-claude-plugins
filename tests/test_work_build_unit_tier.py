@@ -32,6 +32,23 @@ def _load_policy() -> dict[str, dict[str, str]]:
     return json.loads(TIER_POLICY.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
 
 
+# A {model, effort} pair written as a literal -- the shape the spawn site must never carry.
+_TIER_PAIR_LITERAL = re.compile(
+    r"""["']model["']\s*:\s*["'][a-z0-9.-]+["']\s*,\s*["']effort["']\s*:\s*["'][a-z]+["']"""
+)
+
+
+def _resolver():
+    """The real `resolve_build_unit_tier` callable, loaded by path like its sibling helpers."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("lifecycle_state_sig", LIFECYCLE_STATE_PY)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.resolve_build_unit_tier
+
+
 def _resolve(*args, **kwargs):
     # Lazy import to avoid top-level side effects.
     import importlib.util
@@ -58,13 +75,29 @@ def test_default_mechanical_resolves_from_shared_policy_not_literal() -> None:
     result = _resolve(plan_tier=None, work_shape=None)
     assert result["model"] == mechanical["default_model"]
     assert result["effort"] == mechanical["default_effort"]
-    # No tier literal at spawn site — the file must not hardcode the pair.
+    # No tier literal at the spawn site. The earlier form of this assertion ended in
+    # `or "resolve_build_unit_tier" in text`, and that substring is the name of the function the
+    # file DEFINES -- so the disjunction was true on every possible tree and the assertion could
+    # never fail. Proved by mutation: hard-coding the pair at the spawn site left it green.
     text = LIFECYCLE_STATE_PY.read_text(encoding="utf-8")
-    # The seam must delegate; a hard-coded literal would be a violation.
-    # Check that the file does not contain a dict literal with the mechanical tier pair.
-    assert '"sonnet"' not in text or '"medium"' not in text or "resolve_build_unit_tier" in text
-    # More precise: the seam file must mention tier_resolver or tier_defaults, not a literal.
-    assert "tier_defaults" in text or "tier_resolver" in text
+    assert not _TIER_PAIR_LITERAL.search(text), (
+        "a {model, effort} pair literal appears at the spawn site; the tier must resolve through "
+        "the shared registry"
+    )
+    assert "tier_defaults" in text, "the seam must delegate to the shared resolution chain"
+
+
+def test_the_literal_guard_can_actually_fail() -> None:
+    """Control for the assertion above: prove the pattern detects what its name forbids.
+
+    An absence assertion is green on a tree where it could never match anything, which is exactly
+    how the retired form passed.
+    """
+    assert _TIER_PAIR_LITERAL.search('    return {"model": "sonnet", "effort": "medium"}')
+    assert _TIER_PAIR_LITERAL.search("    return {'model': 'opus', 'effort': 'high'}")
+    assert not _TIER_PAIR_LITERAL.search(
+        '        return {"model": str(plan_tier["model"]), "effort": str(plan_tier["effort"])}'
+    )
 
 
 def test_judgment_shape_resolves_its_registry_default() -> None:
@@ -81,20 +114,51 @@ def test_judgment_shape_resolves_its_registry_default() -> None:
     )
 
 
-def test_no_inheritance_host_tier_is_ignored() -> None:
-    # Host differs from both explicit plan tier and mechanical default.
-    host = {"model": "fable", "effort": "xhigh"}
-    plan = {"model": "opus", "effort": "high"}
-    # Explicit case: host must not affect result.
-    explicit = _resolve(plan_tier=plan, work_shape=None, host_tier=host)
-    assert explicit == plan
-    # Defaulted case: host must not affect resolution via registry.
+def test_no_inheritance_the_resolver_has_no_host_input_at_all() -> None:
+    """Non-inheritance proved structurally and behaviourally, not by a discarded parameter.
+
+    The earlier form passed a `host_tier` argument the function accepted and threw away. A
+    parameter whose only purpose is to be ignored cannot make its own guard fail: the test asserted
+    that discarding works.
+    """
+    import inspect
+
+    parameters = set(inspect.signature(_resolver()).parameters)
+    assert parameters == {"plan_tier", "work_shape"}, (
+        f"the resolver must take no host or session input at all; got {sorted(parameters)}"
+    )
+
+
+def test_no_inheritance_a_hostile_environment_does_not_leak_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host-looking environment must not move the answer."""
+    for name in ("CLAUDE_MODEL", "CLAUDE_EFFORT", "SAGA_MODEL", "SAGA_EFFORT", "MODEL", "EFFORT"):
+        monkeypatch.setenv(name, "fable")
     policy = _load_policy()
     mechanical = policy["mechanical"]
-    defaulted = _resolve(plan_tier=None, work_shape=None, host_tier=host)
+    defaulted = _resolve(plan_tier=None, work_shape=None)
     assert defaulted["model"] == mechanical["default_model"]
     assert defaulted["effort"] == mechanical["default_effort"]
-    assert defaulted != host
+    explicit = _resolve(plan_tier={"model": "opus", "effort": "high"}, work_shape=None)
+    assert explicit == {"model": "opus", "effort": "high"}
+
+
+def test_an_explicit_plan_tier_is_validated_like_its_sibling_path() -> None:
+    """ "Explicit wins" is about precedence, not about skipping the vocabulary check.
+
+    The shape path can only ever produce a registry value; the explicit path used to return
+    anything carrying both keys, so a plan naming a model that does not exist reached a spawn.
+    """
+    with pytest.raises(ValueError, match="is not one of"):
+        _resolve(plan_tier={"model": "gpt-5", "effort": "high"}, work_shape=None)
+    with pytest.raises(ValueError, match="is not one of"):
+        _resolve(plan_tier={"model": "opus", "effort": "maximum"}, work_shape=None)
+    # And a legal explicit tier still wins unchanged.
+    assert _resolve(plan_tier={"model": "haiku", "effort": "low"}, work_shape=None) == {
+        "model": "haiku",
+        "effort": "low",
+    }
 
 
 def test_dispatch_prose_names_resolver_and_has_no_inheritance_instruction() -> None:
@@ -104,7 +168,15 @@ def test_dispatch_prose_names_resolver_and_has_no_inheritance_instruction() -> N
     end = text.find("## Phase 3", start)
     assert start >= 0 and end >= 0
     phase2 = text[start:end]
-    assert "resolve_build_unit_tier" in phase2
+    # The dispatch prose must name something an agent can RUN. Naming the Python function alone --
+    # `lifecycle_state.py:resolve_build_unit_tier` -- told an agent to call a function with no CLI
+    # entry point, which is an instruction it cannot follow.
+    assert "resolve-build-unit-tier" in phase2, (
+        "Phase 2 must name the runnable resolver subcommand, not just a Python symbol"
+    )
+    assert "lifecycle_state.py resolve-build-unit-tier" in phase2, (
+        "the subcommand must appear as a runnable invocation against the script"
+    )
     # Forbidden inheritance phrasing must not appear anywhere in the skill.
     for pattern in [
         r"inherit",
@@ -151,8 +223,7 @@ def test_resolved_tier_in_execution_evidence_prose() -> None:
     work = _read_skill()
     strat = EXEC_STRATEGY.read_text(encoding="utf-8")
     # Phase-4 work-session must mention recording the tier.
-    # Search near Phase 4.
-    assert "resolve_build_unit_tier" in work
+    assert "resolve-build-unit-tier" in work
     # Execution evidence mention lives in Phase 2 bullet and Phase 4.
     assert "execution evidence" in work.lower() or "execution evidence" in strat.lower()
     # Strategy doc must describe build-unit tier resolution.

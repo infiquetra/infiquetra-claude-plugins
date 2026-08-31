@@ -89,8 +89,12 @@ def render_issue_comment(
     lines = [f"### {title}", "", f"- issue: {issue_ref}", f"- selected destination: {destination}"]
     override_candidates: list[str | None] = []
     if doc_review_override is not None or review_gate_override is not None:
-        # Route each override through the single gate-naming helper so a waiver
-        # without a gate is refused. Use explicit gate names for the two flags.
+        # What makes a gate-less waiver impossible is the FLAG SPLIT, not a runtime refusal: there
+        # are exactly two override parameters and each one carries its gate's name as a literal
+        # here, so an unnamed waiver has nowhere to enter. `_override_line`'s raise is a defensive
+        # guard for a direct caller, and is unreachable from this path by construction — the
+        # earlier note credited it with enforcing the property, which reads as a runtime check that
+        # never runs.
         if doc_review_override is not None:
             override_candidates.append(_override_line("doc-review", doc_review_override))
         if review_gate_override is not None:

@@ -30,8 +30,10 @@ gate, not a saga round-trip.
 - `/qa` answers: "Does the shipped thing actually work?" (`/work` routes here advisorily after merge)
 
 `/work` consumes what `/plan` produced (the plan doc + the plan saga) and advances that same saga
-through `work`. It calls `/code-review` before opening a PR. After merge it routes to `/qa` advisorily —
-it leaves `lifecycle_phase=work` because `/qa` does not yet advance the phase (see Phase 5).
+through `work`. It calls `/code-review` before opening a PR. After merge it routes to `/qa`
+advisorily and leaves `lifecycle_phase=work`, because the advance to `qa` is **`/qa`'s to make and
+only on a PASS** — on a FAIL `/qa` keeps the phase at `work` and records the evidence. So the saga
+legitimately sits at `work` from merge until `/qa` runs and passes (see Phase 5).
 
 ## Core principles
 
@@ -663,13 +665,25 @@ lease preflight retires with U6.
   isolation, or downgrade to serial when isolation is unavailable). Subagent dispatch passes each unit's
   Goal / Files / Approach / Execution note / Patterns / Test scenarios / Verification and **preserves the
   U-ID**.
-- **Build-unit tier** — When directly launching a build unit, resolve its `{model, effort}` via
-  `plugins/saga/scripts/lifecycle_state.py:resolve_build_unit_tier`. An explicit plan tier wins;
-  otherwise the work shape (default `mechanical` when undeclared per
-  `references/execution-strategy.md`) resolves through the shared `tier_policy.json` registry via
-  `tier_resolver` / `tier_defaults`. The resolver accepts a host tier argument but ignores it, so the
-  dispatch does not consult the host session. Record the resolved tier in the Phase-4 work-session
-  execution evidence.
+- **Build-unit tier** — When directly launching a build unit, resolve its `{model, effort}` by
+  running the resolver, not by reading it:
+
+  ```bash
+  # explicit plan tier
+  python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+    --plan-model <model> --plan-effort <effort>
+  # or, with no explicit tier, from the work shape (default: mechanical)
+  python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --work-shape <shape>
+  ```
+
+  It prints `{"model": ..., "effort": ...}` as JSON. An explicit plan tier wins on **precedence**,
+  and is still validated against the same vocabulary the shape path resolves from — a model or
+  effort the registry does not carry is refused rather than passed through to a spawn. Otherwise the
+  work shape (default `mechanical` when undeclared per `references/execution-strategy.md`) resolves
+  through the shared `tier_policy.json` registry via `tier_resolver` / `tier_defaults`. **The
+  resolver takes no host or session input at all**, so the dispatch never consults the host
+  session's tier — it cannot read one it is never given. Record the resolved tier in the Phase-4
+  work-session execution evidence.
 - **Follow existing patterns** — read the plan's referenced code first; match naming and conventions;
   grep for similar implementations before inventing.
 - **Already shipped → verify, don't reimplement.** If a unit's `Verification` is already satisfied by the
@@ -910,13 +924,15 @@ prints a record JSON:
   Status-field edit — is surfaced with its named reason, never silently overwritten or
   auto-corrected. Surface the `halt_reason` to the operator and fall back to the operator-prompted
   `mission-control` path.
-- `{"status":"halt"}` — which any op outside the **closed** (empty since W7) auto-correct
-  allowlist (`reconcile_controller.py:AUTO_CORRECT_OP_KINDS`, now `frozenset()`) returns, because the
-  controller holds no autonomous lifecycle-field write authority (W7) — fall back to the
-  operator-prompted `mission-control` path unchanged. `{"status":"gated"}` is the separate
-  reversibility-certificate verdict (e.g. an unauthorized merge/deploy) that also withholds with no
-  write. Either `halt` or `gated` is the controller correctly withholding an action that needs a
-  human, never a failure.
+- `{"status":"halt"}` — returned when the live board has drifted away from what the lifecycle
+  asserted. It is **not** an allowlist verdict: `AUTO_CORRECT_OP_KINDS` is `frozenset()` and no
+  conditional anywhere reads it, so nothing is classified by membership in it. What the empty
+  allowlist means is that the auto-correct branch was **deleted**, leaving `halt` as the only
+  outcome a drift can have — the controller holds no autonomous lifecycle-field write authority
+  (W7). Fall back to the operator-prompted `mission-control` path unchanged. `{"status":"gated"}` is
+  the separate reversibility-certificate verdict (an unauthorized merge or deploy, an unauthorized
+  correction field, or a malformed submission) that also withholds with no write. Either `halt` or
+  `gated` is the controller correctly withholding an action that needs a human, never a failure.
 
 **Reading a lifecycle record — what proves a pair moved, and what does not.**
 

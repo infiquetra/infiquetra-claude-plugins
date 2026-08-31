@@ -120,16 +120,44 @@ If depth is unclear, ask one targeted question, then continue.
 
 ---
 
-### 0.6 The card moves to Shaping — through Mission Control, not through this skill
+### 0.6 Submit the card's move to `Planning` / `Designing` — Mission Control executes it
 
-**Saga does not write the board.** Mission Control is the only routine writer of the board's
-`Stage` and `Status` fields; a Saga command that decided on its own that a card should move would
-hold autonomous write authority over a field it no longer writes. What this skill owns is the
-*durable state the move is derived from*: the plan artifact, the saga tick (`lifecycle_phase=plan`),
-and the work-session path. Mission Control — the operator, or the run coordinator's board flow —
-moves the card to Shaping from that derived state. Do not run a reconcile tick, a `flow set-field`
-submission, or any other lifecycle-field write from here. When there is no issue, there is simply
-no card to move; say nothing further.
+**Actor:** this skill. **Trigger:** planning has started for a real issue — §0.4 judged a plan
+document warranted and the issue reference is known. **Move:** the live pair `Stage` = `Planning`,
+`Status` = `Designing`.
+
+**The trigger names only what exists at §0.6.** An earlier form required the saga tick to be minted
+and "the plan artifact's path is settled": the tick is minted in §5.3 and the artifact in
+Phase 3, so neither condition can be true where the move is placed. An agent reading the section
+literally would either never submit the move or submit it from the wrong phase, and the card would
+sit in the stage before. A board move's trigger must be observable at the point the move is made —
+which is the whole point of moving the card *early*, when planning starts rather than when it ends.
+
+**Deciding and submitting is not writing.** Mission Control remains the only executor of a `Stage`
+or `Status` write; this skill submits the move and never composes or executes one itself. The
+submission goes through the reconcile controller, which owns the certificate gate, the idempotency
+ledger and the replay key:
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> \
+  --target-state "Designing" \
+  --payload '{"assignments": [["Stage", "Planning"], ["Status", "Designing"]]}'
+```
+
+**Submit both halves, and check both.** The move is one invocation carrying two assignments, and
+Mission Control does **not** roll the pair back: a `Stage` write can land while `Status` fails.
+Read the record the same way Phase 5.0 does, and read it by more than its `status` word. The
+record's `field` is the whole submission's identity: `Stage+Status` when both halves were executed,
+a bare `Status` when they were not — which is what an installed saga older than the pair contract
+reports after writing the `Status` half alone, `written` and all. `skipped` is not a synonym for
+success either: it also means "already keyed" or "could not judge", and carries a `note` in the
+second case. A `failed` record names which half landed and which did not; `halt`/`gated` falls back
+to the operator-prompted Mission Control path rather than forcing the write. Submitting the
+`Status` half alone is the failure worth naming: `Designing` is a legal `Status` on its own, so a
+half-write looks like success while `Stage` stays where it was.
+
+When there is no issue, there is simply no card to move; say nothing further.
 
 ### 0.7 Structured pre-answers — intake, evaluated once
 
@@ -305,15 +333,30 @@ vector). Add `deepened: YYYY-MM-DD` to frontmatter when the plan was substantive
 
 ## Phase 5 — Saga, route, and operator-choice
 
-### 5.0 The card moves to Ready — through Mission Control, not through this skill
+### 5.0 Submit the card's move to `Planning` / `Ready for Active` — Mission Control executes it
 
-The plan exists and is committed, so the card is no longer being shaped -- it is ready to build.
+**Actor:** this skill. **Trigger:** the plan exists, is committed, and has cleared review, so the
+card is no longer being designed -- it is ready to build. **Move:** the live pair `Stage` =
+`Planning`, `Status` = `Ready for Active`. `Ready for Active` is the schema's own named terminal
+option for the Planning stage; there is no bare `Ready` option on either live field.
 
-**Saga does not write the board.** As in Phase 0.6, the `Status → Ready` move belongs to Mission
-Control, derived from what this skill durably produced: the committed plan, the saga tick, and the
-work-session path. Do not run a reconcile tick, a `flow set-field` submission, or any other
-lifecycle-field write from here. When there is no issue, there is no card to move; say nothing
-further.
+**Deciding and submitting is not writing.** As in Phase 0.6, this skill submits the move and
+Mission Control executes it, derived from what this skill durably produced: the committed plan, the
+saga tick, and the work-session path.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> \
+  --target-state "Ready for Active" \
+  --payload '{"assignments": [["Stage", "Planning"], ["Status", "Ready for Active"]]}'
+```
+
+**Submit both halves, and check both** — the pair is not rolled back if one half fails, so a
+`failed` record naming the landed and the unlanded assignment is the signal to repair the half that
+did not land. Check the record's `field` reads `Stage+Status` before reporting the move: a
+`written` from a saga too old to carry the pair names a bare `Status` and moved one field.
+`halt`/`gated` falls back to the operator-prompted Mission Control path. When there is no issue,
+there is no card to move; say nothing further.
 
 ### 5.1 Ask the destination
 

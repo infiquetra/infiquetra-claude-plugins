@@ -103,7 +103,7 @@ cat > "$PLUGIN_DIR/.claude-plugin/plugin.json" <<EOF
   "scripts": {
     "run": "python3 src/main.py"
   },
-  "dependencies": {},
+  "dependencies": [],
   "devDependencies": {
     "pytest": ">=8.0.0",
     "ruff": ">=0.2.0",

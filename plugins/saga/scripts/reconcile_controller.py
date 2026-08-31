@@ -143,10 +143,24 @@ def _close_satisfies_contract(node: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _expected_live(op_kind: str, target_state: str) -> str:
+def _expected_live(
+    op_kind: str, target_state: str, assignments: list[tuple[str, str]] | None = None
+) -> str:
     """The live value a converged board holds for ``op_kind`` — "" when the op has no readable live
-    field (fail-closed: an unknown op never claims a match, so its drift is never auto-corrected)."""
+    field (fail-closed: an unknown op never claims a match, so its drift is never auto-corrected).
+
+    ``assignments`` (#927) is a lifecycle submission's ``(field, option)`` list. The expected value
+    is the option assigned to the ONE field this controller can read back
+    (:data:`LIVE_READABLE_CORRECTION_FIELD`), so a ``(Stage, Status)`` pair is judged on its
+    ``Status`` half — exactly as readable as a ``Status``-only write — and a ``Stage``-only
+    submission returns "" and is never judged. Absent, the pre-#927 behaviour is unchanged.
+    """
     if op_kind == str(_cert().OpKind.SET_FIELD_STATUS):
+        if assignments:
+            for field_name, option_name in assignments:
+                if field_name == LIVE_READABLE_CORRECTION_FIELD:
+                    return option_name
+            return ""
         return target_state
     if op_kind == str(_cert().OpKind.SUB_ISSUE_CLOSE):
         return "closed"
@@ -229,25 +243,51 @@ def reconcile_op(
         }
 
     field_kw: str | None = None
+    state_kw = target_state
+    assignments: list[tuple[str, str]] = []
     if op_kind == "set-field-status":
-        field_kw = str((payload or {}).get("field") or "Status")
-        base["field"] = field_kw
-        if cert.authorize_correction_field(field_kw) != cert.AUTHORIZED:
+        # #927: the op may carry a whole ``(Stage, Status)`` pair in its payload. Absent
+        # ``assignments`` this normalizes to exactly the single ``field`` (default ``Status``)
+        # this controller lifted before, so every pre-#927 caller is byte-unchanged.
+        try:
+            assignments = bp.normalize_assignments(payload, target_state)
+        except ValueError as exc:
             return {
                 "status": "gated",
                 "halt": True,
-                "halt_reason": f"certificate-gate:correction-field:{field_kw}",
+                "halt_reason": f"malformed-assignments:{exc}",
                 "verdict": "GATE",
                 **base,
             }
+        # EVERY field in the submission is authorized, not just the first: a pair whose second half
+        # names an unauthorized field must gate whole rather than land one legal half.
+        for field_name, _option in assignments:
+            if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
+                base["field"] = field_name
+                return {
+                    "status": "gated",
+                    "halt": True,
+                    "halt_reason": f"certificate-gate:correction-field:{field_name}",
+                    "verdict": "GATE",
+                    **base,
+                }
+        # Both key-minting sites (here and ``board_progression.authorize_and_write``) derive the
+        # identity from the same helper, so a re-announce meets the key the first write left and a
+        # pair can never collide with a Status-only write to the same option.
+        field_kw, state_kw = bp.assignment_identity(assignments)
+        base["field"] = field_kw
 
-    key = cert.idempotency_key(op_kind, repo, number, target_state, field=field_kw)
+    key = cert.idempotency_key(op_kind, repo, number, state_kw, field=field_kw)
     ledger_file = ledger_dir / bp._safe_ledger_name(key)  # noqa: SLF001
 
     # (2) Absent key → normal idempotent write / crash-safe resume, via the shared write mechanism.
     if not ledger_file.exists():
         pay: dict[str, Any] = dict(payload or {})
-        if field_kw is not None:
+        if len(assignments) > 1:
+            # Carry the whole pair, never the composite identity: ``field`` names one field and
+            # ``Stage+Status`` is not one. The writer reads ``assignments``.
+            pay["assignments"] = [[name, option] for name, option in assignments]
+        elif field_kw is not None:
             pay.setdefault("field", field_kw)
         return bp.authorize_and_write(
             op_kind,
@@ -266,10 +306,19 @@ def reconcile_op(
     # (3) Present key → level-triggered drift check against live.
     if live_reader is None:
         return {"status": "skipped", "key": key, **base}
-    # Fail closed on a field this controller cannot read back (#812). Comparing the live Status
-    # against another field's target_state would manufacture a false drift record — a correction
-    # request driven by a reading that was never about this field. Skip instead of guessing.
-    if field_kw is not None and field_kw != LIVE_READABLE_CORRECTION_FIELD:
+    # Fail closed on a submission this controller cannot read back (#812). Comparing the live
+    # Status against another field's value would manufacture a false drift record — a correction
+    # request driven by a reading that was never about that field. Skip instead of guessing.
+    #
+    # The question is whether the submission CONTAINS the readable field, not whether its ledger
+    # identity equals it. #927's pair mints the composite identity ``Stage+Status``, which can never
+    # equal ``Status``, so an identity comparison sent EVERY pair down this branch: from the second
+    # tick onward the controller returned ``skipped`` without calling ``live_reader`` at all, and
+    # the level-triggered convergence loop — the one property this module exists to provide — was
+    # off for every lifecycle write Plan, Work and Orchestrate make. The ``Status`` half of a pair
+    # is exactly as readable as a ``Status``-only write; a ``Stage``-only submission still is not.
+    expected_live = _expected_live(op_kind, target_state, assignments or None)
+    if op_kind == "set-field-status" and not expected_live:
         return {
             "status": "skipped",
             "key": key,
@@ -280,7 +329,6 @@ def reconcile_op(
     if not live:
         return {"status": "skipped", "key": key, "note": "live unreadable", **base}
 
-    expected_live = _expected_live(op_kind, target_state)
     if expected_live and live == expected_live:
         return {"status": "skipped", "key": key, **base}
 
@@ -292,7 +340,11 @@ def reconcile_op(
     # AUTO_CORRECT_OP_KINDS is ever deliberately re-widened, restore a bounded-retry auto-correct
     # branch HERE, doubly gated (certificate AUTHORIZED + allowlist membership) — never silently.
     drift_kind = _drift_kind_for(op_kind)
-    drift_id = _drift_id(drift_kind, repo, number, target_state, live)
+    # The saga-asserted value the drift is measured against is the one the READ was about: for a
+    # lifecycle submission that is the readable half, which equals ``target_state`` for every
+    # single-field write and is the ``Status`` assignment for a pair.
+    saga_value = expected_live if op_kind == "set-field-status" else target_state
+    drift_id = _drift_id(drift_kind, repo, number, saga_value, live)
     return {
         "status": "halt",
         "halt": True,

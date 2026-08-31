@@ -1,5 +1,106 @@
 # Changelog
 
+## [0.151.0] - 2026-08-31
+
+### Fixed
+
+- **The pair guard is bounded at both ends, and an empty list is not a single-field write.** The
+  guard refused fewer than two *distinct* fields and accepted anything above: three fields is not a
+  lifecycle boundary, and authorizing one here would put an unreviewed field on the same
+  certificate as the pair. Two assignments to the same field cleared the distinct-count check while
+  carrying conflicting values for it. And an `assignments` key present but **empty** fell through
+  to the single-field fallback and reported a clean `Status`-only write — absent is the fallback,
+  empty is a caller that built a pair payload and put nothing in it.
+- **A pair's replay key is readable again.** `+` — the identity separator — was not in
+  `_safe_ledger_name`'s safe-character set, so every pair key took the SHA-1 fallback and the
+  ledger held an opaque digest for exactly the writes it most needs to be inspectable for. The
+  hostile-key fallback is unchanged.
+- **A single-field write is no longer told it has halves.** `outcome_reconcile.py` still drives
+  single-field `set-field-status`, and the no-report message told those callers that "which halves
+  landed is UNKNOWN" and to check every field — inventing a half-written board out of a write that
+  could only land or not.
+- **Both board-move triggers name conditions that exist where the move is made.** Plan §0.6
+  required the plan artifact's path (Phase 3) and Work §1.3b required the saga tick (§1.4) and the
+  work-session writeup (Phase 4) — conditions produced *after* the move they gate, so an agent
+  following either literally would defer the move or skip it and leave the card a stage behind.
+- **The reconcile controller's exit codes are documented, including where they are coarser than the
+  record.** `failed` and `error` share exit 1 and are opposites: `failed` wrote nothing, while
+  `error` means the board write committed and only the replay key is missing. A caller branching on
+  the exit code alone retries a move that already landed.
+- **`gated` and `halt` are stated as different decisions**, and the record contract no longer
+  accepts a note-free `skipped` as proof: a `skipped` proves convergence only when it also carries
+  its replay `key`, which is what distinguishes "already on disk" from a saga too old to emit a
+  note.
+
+- **Plan and Work submit their five lifecycle board moves again, as live `(Stage, Status)` pairs
+  (#927).** Since the 0.145.0 change Saga made none of the project-board moves: the submission
+  mechanism shipped and the caller never did, so a card sat exactly as it was picked up while
+  several units built against it. Each of the five boundaries — `plan` §0.6 `Planning`/`Designing`,
+  `plan` §5.0 `Planning`/`Ready for Active`, `work` §1.3b `Active`/`Implementing`, `work` §4.4
+  `Verify`/`Awaiting verification`, `work` §4.4 `Retro`/`Ready to close` — now names its actor, its
+  trigger, and a runnable submission through the reconcile controller. Deciding and submitting is
+  not writing: Mission Control remains the only executor of a `Stage` or `Status` write, and no
+  Saga path composes or executes one. `/loop` stays correction-only.
+- **The board move is a pair, and both halves are checked.** `Ready for Active` is a legal `Status`
+  on its own, so a `Status`-only submission writes a legal value, reports success, and leaves
+  `Stage` behind — a wrong card with a clean record. All five lifecycle boundaries carry both
+  assignments in one `flow set-field` invocation, every assertion in the suite reads both, and the
+  mechanism refuses a submission that opts into the pair payload and then carries fewer than two
+  **distinct** fields — counting elements would accept two assignments to one field, which is a
+  half-move wearing a pair's shape. A genuine single-field write keeps the pre-existing
+  `field`/`target_state` form, which is unchanged and stays legal.
+
+  One invocation is one process spawn, one CLI parse and one authorization pass — **not** one
+  discovery pass. `flow_set_fields_bulk` calls `_set_lifecycle_field_cross_board` once per
+  assignment and each does its own cross-board discovery, which is why the pair also doubles the
+  call's time budget rather than sharing the single-field one.
+- **A half-applied pair now names which half landed.** Mission Control writes one assignment at a
+  time and does not roll the first back, so a `Stage` write can land while `Status` fails.
+  Detection always worked — a non-empty `failed` raises, so the exit is non-zero — but
+  `default_board_writer` raised with `stderr` while the `updated`/`failed`/`identity` evidence sat
+  on discarded stdout, leaving the board half-written with no record of which field to repair. The
+  writer now parses that stdout and names the landed and the unlanded assignment. When there is no
+  report at all — a halt propagating out of the second assignment kills the run before the report is
+  printed, and leaves the first assignment written — it says the outcome is UNKNOWN and names what
+  was submitted, rather than reporting a total failure for a board that may be half-moved.
+- **The replay identity names the whole submission, at both minting sites.** `authorize_and_write`
+  mints its own idempotency key as well as the reconcile controller, and widening only the
+  controller would let a `(Stage, Status)` pair and a `Status`-only write to the same option
+  collide on one key — so the second is recorded `skipped` as already-applied, a success-shaped
+  record for a move that never landed. Both sites now derive the identity from the same helper. A
+  single-assignment submission renders exactly as before, so no existing ledger key is orphaned and
+  every pre-#927 caller is byte-unchanged. The pair's identity is order-independent — it names the
+  move, not the order a caller happened to list the halves in — and a field or option containing the
+  identity separator is refused rather than allowed to collide two different moves onto one key.
+- **A pair keeps its live drift check.** The guard that skips a field this controller cannot read
+  back compared the submission's ledger *identity* against the one readable field. A pair mints the
+  composite `Stage+Status`, which can never equal `Status`, so from the second tick every pair
+  returned `skipped` without reading the live board at all — the level-triggered convergence loop,
+  the single property that module exists to provide, off for every lifecycle write Plan, Work and
+  Orchestrate make. The question is whether the submission *contains* the readable field, not
+  whether its identity equals it; a `Stage`-only submission still refuses to judge.
+
+### Changed
+
+- **The zero-direct-write guard asks a new question, fleet-wide (#927).** `tests/test_saga_no_direct_write.py`
+  asked whether a file *named* the lifecycle-field operation and treated any mention as an offense;
+  under the operator's 2026-08-30 ruling that assertion forbids the sanctioned submission. It now
+  asks whether a path reaches GitHub's project fields *without* Mission Control's executor, and it
+  scans the whole of `plugins/` rather than `plugins/saga/` alone — the one-plugin scope is why
+  Orchestrate's leftover writer never failed it. The constant-resolution false-green guard, the
+  nested-run-artifact exclusion and the submission-core allowlists are unchanged.
+- **The Work and Plan skills state what a record actually proves.** Five submission blocks told an
+  agent that `written`/`skipped` is success. `skipped` is not a synonym for `written` — it also
+  means "already keyed" and "could not judge", carrying a `note` in the second case — and neither
+  word proves a *pair* moved, because an installed saga older than this release reports `written`
+  after writing one field. Phase 4.4 now carries the record contract once: check the `field`
+  identity, then the status, then the landed/NOT-landed detail on a failure. It also documents the
+  `error` status, which means the board write committed and the replay key did not, and states
+  plainly that Mission Control exposes **no read-back for `Stage`**, so "check both halves" is a
+  record check rather than a board read. The delivered-terminal trigger is stated to the same
+  standard as the Verify trigger it follows, since a weaker gate there would let a card reach the
+  terminal rung having skipped the one before it.
+
 ## [0.150.0] - 2026-08-30
 
 ### Added

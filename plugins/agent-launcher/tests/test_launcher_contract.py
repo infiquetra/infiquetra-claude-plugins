@@ -350,27 +350,32 @@ def _prepare_guard_launch(
             "cwd": "/tmp/wt",
             "workspace_id": "w80",
             "interactive_ready": True,
-            "agent": "codex",
+            "agent": "claude",
         },
     )
     monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
-    unit = launcher.LaunchRequest(name="reviewer", vendor="codex", worktree="/tmp/wt")
+    # The unit's vendor keys the composer glyph the scan looks for; the ❯ dumps below are a
+    # claude pane's shape.
+    unit = launcher.LaunchRequest(name="reviewer", vendor="claude", worktree="/tmp/wt")
     return unit, recorded, sends
 
 
-def test_composer_placeholder_is_not_staged_text(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text(CODEX_PLACEHOLDER) == ""
+def test_a_closed_placeholder_reads_unreadable_not_empty(launcher: ModuleType) -> None:
+    """A line fully styled with its span closing at end of line is byte-identical between a
+    vendor placeholder and a draft, so it must never be claimed empty: the honest answer is
+    unreadable, and the guard takes the unreadable branch rather than prompting on a claim."""
+    assert launcher.composer_staged_text(CODEX_PLACEHOLDER, vendor="codex") is None
 
 
 def test_composer_typed_text_is_staged(launcher: ModuleType) -> None:
-    staged = launcher.composer_staged_text(f"❯ {STAGED_SLASH_COMMAND}")
+    staged = launcher.composer_staged_text(f"❯ {STAGED_SLASH_COMMAND}", vendor="claude")
     assert staged == STAGED_SLASH_COMMAND
 
 
 def test_composer_absent_reads_as_unreadable(launcher: ModuleType) -> None:
     dump = "some session output\na second line of plain output\n"
-    assert launcher.composer_staged_text(dump) is None
+    assert launcher.composer_staged_text(dump, vendor="claude") is None
 
 
 def test_reused_pane_holding_a_slash_command_is_not_prompted(
@@ -448,39 +453,45 @@ def test_reset_codes_after_a_styled_marker_return_the_staged_text(
 ) -> None:
     """Every style-off shape the terminal defines ends the styled span at the marker."""
     line = f"\x1b[2m❯\x1b[{reset_code}m /deploy prod --force"
-    assert launcher.composer_staged_text(line) == "/deploy prod --force"
+    assert launcher.composer_staged_text(line, vendor="claude") == "/deploy prod --force"
 
 
 def test_marker_styled_and_never_reset_counts_as_staged(launcher: ModuleType) -> None:
     """Styling that spans the whole line and never ends cannot be a placeholder signal."""
-    assert launcher.composer_staged_text("\x1b[2m❯ /deploy prod --force") == "/deploy prod --force"
+    assert (
+        launcher.composer_staged_text("\x1b[2m❯ /deploy prod --force", vendor="claude")
+        == "/deploy prod --force"
+    )
 
 
 def test_a_bare_marker_row_below_staged_text_is_a_decoy(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("❯ rm -rf /important\n> ") == "rm -rf /important"
+    assert launcher.composer_staged_text("❯ rm -rf /important\n> ", vendor="claude") == (
+        "rm -rf /important"
+    )
 
 
 def test_a_quoted_row_below_staged_text_is_not_the_composer(launcher: ModuleType) -> None:
     dump = "❯ rm -rf /important\n> quoted line"
-    assert launcher.composer_staged_text(dump) == "rm -rf /important"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "rm -rf /important"
 
 
-def test_menu_rows_below_staged_text_are_not_the_composer(launcher: ModuleType) -> None:
-    dump = "❯ deploy now\n> Option A\n> Option B"
-    assert launcher.composer_staged_text(dump) == "deploy now"
-
-
-def test_a_non_empty_marker_line_outranks_a_later_empty_one(launcher: ModuleType) -> None:
-    """A later empty marker row must not shadow a row holding text. The scan cannot tell a
-    scrollback echo from a live box when both carry the same glyph, so the last NON-EMPTY
-    marker line wins: reading a draft as staged is a safe stop, while reading an empty box over
-    a draft dispatches the prompt into it."""
+def test_an_empty_live_box_below_an_echo_reads_empty(launcher: ModuleType) -> None:
+    """B4: the box is decided positionally -- it is the last classified block of the pane's own
+    glyph. A reused pane whose live box is empty below an earlier echoed prompt reads empty and
+    does not stop: the echo is scrollback, not the box, and a working launch must not become a
+    refusal."""
     dump = "❯ earlier submitted prompt\npane output line\n❯ "
-    assert launcher.composer_staged_text(dump) == "earlier submitted prompt"
+    assert launcher.composer_staged_text(dump, vendor="claude") == ""
+
+
+def test_an_empty_box_directly_below_an_echo_reads_empty(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("❯ draft text\n❯ ", vendor="claude") == ""
 
 
 def test_escapes_inside_staged_text_are_stripped(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("❯ deploy the \x1b[Kfleet") == "deploy the fleet"
+    assert launcher.composer_staged_text("❯ deploy the \x1b[Kfleet", vendor="claude") == (
+        "deploy the fleet"
+    )
 
 
 # The style-reset predicate, unit-tested directly over the attribute-off code set AND its
@@ -520,46 +531,72 @@ def test_reset_forms_end_a_styled_span(launcher: ModuleType, params: str) -> Non
     assert launcher._sgr_ends_styled_span(params) is True
 
 
-# The marker scan: the winning line must be the box -- the last marker line that is non-empty
-# after stripping -- in each decoy shape the review executed.
-def test_same_class_decoy_does_not_shadow_a_box_holding_text(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("❯ draft text\n❯ ") == "draft text"
+# The marker scan: the box is the last classified block of the pane's own glyph. Lines carrying
+# another glyph are content, a blank marker row groups with the unmarked rows that continue its
+# draft, and a closed styled span is a decoration that never shadows a classified block.
+def test_menu_rows_below_the_box_are_content_not_the_box(launcher: ModuleType) -> None:
+    dump = "❯ deploy now\n> Option A\n> Option B"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "deploy now"
 
 
-def test_cross_glyph_decoy_does_not_shadow_a_box_holding_text(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("❯ draft text\n› ") == "draft text"
+def test_cross_glyph_rows_are_content_not_the_box(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("❯ draft text\n› ", vendor="claude") == "draft text"
 
 
-def test_weak_class_decoy_does_not_shadow_a_box_holding_text(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("❯ \n> draft text") == "draft text"
+def test_a_weak_marker_under_a_decorated_box_is_content(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("❯ \n> draft text", vendor="claude") == ""
+
+
+def test_a_plain_marker_vendor_reads_its_own_box(launcher: ModuleType) -> None:
+    assert launcher.composer_staged_text("> draft text", vendor="agy") == "draft text"
+
+
+def test_a_blank_marker_row_with_continuation_rows_is_one_block(launcher: ModuleType) -> None:
+    """A wrapped draft continues on unmarked rows; reading only the marker row reports the
+    first wrapped line and drops the rest."""
+    dump = "❯\nwrapped draft continuation"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "wrapped draft continuation"
+
+
+def test_a_draft_above_a_closed_placeholder_row_is_staged(launcher: ModuleType) -> None:
+    """The cycle-2 probe: the decorated draft block classifies, the closed placeholder row does
+    not, and the decoration never shadows the box -- the guard must stop, not record empty."""
+    dump = f"❯ deploy the prod key now\n{CODEX_PLACEHOLDER}"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "deploy the prod key now"
 
 
 def test_styled_draft_reopened_after_a_close_is_staged(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("\x1b[2m❯\x1b[0m\x1b[2m draft text") == "draft text"
+    assert (
+        launcher.composer_staged_text("\x1b[2m❯\x1b[0m\x1b[2m draft text", vendor="claude")
+        == "draft text"
+    )
 
 
 # The never-reset fallback: a span still open at end of line triggers it, whatever resets
 # appeared earlier on the row.
 def test_leading_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("\x1b[0m\x1b[2m❯ /deploy prod") == "/deploy prod"
+    assert launcher.composer_staged_text("\x1b[0m\x1b[2m❯ /deploy prod", vendor="claude") == (
+        "/deploy prod"
+    )
 
 
 def test_bare_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("\x1b[m\x1b[2m❯ /deploy prod") == "/deploy prod"
+    assert launcher.composer_staged_text("\x1b[m\x1b[2m❯ /deploy prod", vendor="claude") == (
+        "/deploy prod"
+    )
 
 
 def test_lone_colour_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("\x1b[39m\x1b[2m❯ /deploy prod") == "/deploy prod"
+    assert launcher.composer_staged_text("\x1b[39m\x1b[2m❯ /deploy prod", vendor="claude") == (
+        "/deploy prod"
+    )
 
 
 def test_closed_hint_then_reopened_span_keeps_the_draft(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("\x1b[2m❯ \x1b[0m\x1b[2mdeploy prod") == "deploy prod"
-
-
-def test_closed_placeholder_still_reads_empty(launcher: ModuleType) -> None:
-    """The fallback gate must not fire when every span closes: a codex placeholder ends with
-    its reset, and reading it as staged would stop every idle launch."""
-    assert launcher.composer_staged_text(CODEX_PLACEHOLDER) == ""
+    assert (
+        launcher.composer_staged_text("\x1b[2m❯ \x1b[0m\x1b[2mdeploy prod", vendor="claude")
+        == "deploy prod"
+    )
 
 
 def test_unreadable_box_is_marked_and_the_prompt_still_goes(
@@ -646,7 +683,9 @@ def test_opencode_guard_reads_before_the_picker_types(
     """An unowned OpenCode pane holding staged text: the guard must stop the launch before the
     variant picker has typed anything into the pane through the same door prompts use."""
     typed: list[list[str]] = []
-    dump = "Choose variant:\n> high\n> low\n" + _claude_pane(f"❯ {STAGED_SLASH_COMMAND}")
+    # An opencode pane's own glyph is ">": the menu rows and the staged draft all carry it, and
+    # the last classified block is the box.
+    dump = "Choose variant:\n> high\n> low\n" + f"> {STAGED_SLASH_COMMAND}"
     receipt = {
         "tab_id": "w80:t1",
         "agent_name": "oc-2",
@@ -676,6 +715,59 @@ def test_opencode_guard_reads_before_the_picker_types(
     with pytest.raises(SystemExit, match="already holds staged input"):
         launcher.launch(unit)
     assert typed == []
+
+
+def test_a_reused_pane_with_an_empty_box_below_an_echo_is_not_stopped(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B4 end to end: a reused pane whose live box is empty below an earlier prompt echo is a
+    normal pane. The launch must prompt, not refuse, and the receipt must say empty."""
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump="❯ earlier submitted prompt\npane output line\n❯ ",
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    launcher.launch(unit)
+    assert len(sends) == 1
+    assert unit.launch_receipt["input_box"] == "empty"
+
+
+def test_the_cycle_2_mixed_glyph_probe_stops_and_never_claims_empty(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cycle-2 probe end to end: a draft above the captured codex placeholder row stops the
+    launch and is recorded staged. The box is never claimed empty over operator text."""
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=f"❯ deploy the prod key now\n{CODEX_PLACEHOLDER}",
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    with pytest.raises(SystemExit, match="already holds staged input"):
+        launcher.launch(unit)
+    assert sends == []
+    assert unit.launch_receipt["input_box"] == "staged"
+
+
+def test_a_closed_styled_box_is_recorded_unreadable_not_empty(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B5 end to end: styling that closes at end of line cannot be classified as placeholder or
+    draft, so the guard takes the unreadable branch and prompts as today -- it never records a
+    silent empty claim it cannot justify."""
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump='❯ \x1b[2mTry "fix it"\x1b[0m',
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    launcher.launch(unit)
+    assert len(sends) == 1
+    assert unit.launch_receipt["input_box"] == "unreadable"
 
 
 def _preflight_stubs(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[str]:

@@ -678,10 +678,12 @@ def read_pane(pane_id: str, lines: int = 120) -> str:
 # included for a vendor that draws no decorated marker.
 COMPOSER_MARKERS = ("❯", "›", ">")
 
-# ">" doubles as scrollback quoting, diff hunks and picker rows, so a decorated glyph present in
-# the same pane outranks it. Within a glyph class the last line wins, because Claude echoes every
-# submitted prompt into scrollback under its own glyph and the live box sits below the echoes.
-_STRONG_COMPOSER_MARKERS = ("❯", "›")
+# A pane runs one client, so the box carries that client's glyph and every other marker glyph
+# in the pane is content: scrollback quoting, diff hunks, picker rows, or another client's
+# echoed output. Claude draws U+276F, codex U+203A; a vendor with no decorated glyph prompts
+# with a plain ">".
+_COMPOSER_GLYPH_BY_VENDOR = {"claude": "❯", "codex": "›"}
+_DEFAULT_COMPOSER_GLYPH = ">"
 
 # Attribute-off codes per ECMA-48: intensity, italic, underline, blink, inverse, conceal,
 # strikethrough off, and default foreground/background. A parameter list ending in any of these
@@ -703,75 +705,84 @@ def _sgr_ends_styled_span(params: str) -> bool:
     return all(code in _STYLE_OFF_SGR_CODES for code in codes)
 
 
-def _composer_line_content(line: str) -> str:
-    """The line's text once its styling and its leading marker glyph are removed."""
-    text = strip_ansi(line).lstrip()
-    if text[:1] in COMPOSER_MARKERS:
-        text = text[1:]
-    return text.strip()
+def _strip_marker_glyph(text: str) -> str:
+    """The block's text once its first line's leading marker glyph is removed."""
+    lines = text.splitlines()
+    if lines:
+        first = lines[0].lstrip()
+        if first[:1] in COMPOSER_MARKERS:
+            lines[0] = first[1:]
+    return "\n".join(lines)
 
 
-def composer_staged_text(ansi_text: str) -> str | None:
-    """Text a human staged in the input box, or None when no composer line was found.
+def _block_staged_text(block_lines: list[str]) -> str | None:
+    """One composer block's staged text under the extractor's single definition of emptiness.
 
-    A client's own placeholder is drawn inside a styled run -- codex's "Ask Codex to do
-    anything" arrives wrapped in a dim foreground SGR, and claude's hints the same way --
-    while text somebody typed carries no styling. Discarding a placeholder is harmless and
-    discarding staged operator text is not, so only unstyled runs count as staged -- with one
-    exception: when a styled span is still open at the end of the line, nothing distinguishes
-    the client's decoration from typed text, and the text counts as staged rather than being
-    discarded, whatever resets appeared earlier on the row.
+    Returns the staged text, "" for a block that is cleanly empty, and None when the block
+    cannot be classified at all: styling that closes before the block ends is byte-identical
+    between a vendor placeholder and a draft, and this read cannot tell them apart.
     """
-    strong: list[str] = []
-    weak: list[str] = []
-    for line in ansi_text.splitlines():
-        # The marker itself can sit inside a styled run, so find it with styling stripped.
-        first = strip_ansi(line).lstrip()[:1]
-        if first in _STRONG_COMPOSER_MARKERS:
-            strong.append(line)
-        elif first == ">":
-            weak.append(line)
-    # The winning line must be the box, and the box is the last marker line that is non-empty
-    # after stripping: an empty later row -- a decoy menu row, a quoted line, an echo of the
-    # glyph -- must not shadow a box holding text. The decorated-glyph class outranks the bare
-    # ">" class; when every line of the stronger class is empty, the weaker class still names a
-    # box; only when every marker line is empty does the bare last one stand.
-    composer: str | None = None
-    for lines in (strong, weak):
-        non_empty = [line for line in lines if _composer_line_content(line)]
-        if non_empty:
-            composer = non_empty[-1]
-            break
-    if composer is None:
-        composer = (strong or weak)[-1] if (strong or weak) else None
-    if composer is None:
-        return None
+    block_text = "\n".join(block_lines)
     unstyled: list[str] = []
     styled = False
     cursor = 0
-    for sgr in re.finditer(r"\x1b\[[0-9;]*m", composer):
+    for sgr in re.finditer(r"\x1b\[[0-9;]*m", block_text):
         if not styled:
-            unstyled.append(composer[cursor : sgr.start()])
+            unstyled.append(block_text[cursor : sgr.start()])
         styled = not _sgr_ends_styled_span(sgr.group(0)[2:-1])
         cursor = sgr.end()
     if not styled:
-        unstyled.append(composer[cursor:])
-    staged = strip_ansi("".join(unstyled)).lstrip()
-    if staged[:1] in COMPOSER_MARKERS:
-        staged = staged[1:]
-    staged = staged.strip()
-    if not staged and styled:
-        # A span still open at end of line: apply the fallback on that fact alone. An earlier
-        # reset anywhere on the row says nothing about the span that ends the line.
-        whole = strip_ansi(composer).lstrip()
-        if whole[:1] in COMPOSER_MARKERS:
-            whole = whole[1:]
-        staged = whole.strip()
-    return staged
+        unstyled.append(block_text[cursor:])
+    staged = _strip_marker_glyph(strip_ansi("".join(unstyled))).strip()
+    if staged:
+        return staged
+    if styled:
+        # A span still open at the end of the block: nothing distinguishes the client's
+        # decoration from typed text, whatever resets appeared earlier. The block counts as
+        # staged rather than being discarded.
+        return _strip_marker_glyph(strip_ansi(block_text)).strip()
+    if re.search(r"\x1b\[[0-9;]*m", block_text):
+        return None
+    return ""
 
 
-def pane_input_text(pane_id: str) -> str | None:
-    """Staged text in a pane's input box, or None when the box cannot be read.
+def composer_staged_text(ansi_text: str, *, vendor: str) -> str | None:
+    """Text a human staged in the input box, or None when the box cannot be read or classified.
+
+    A client's own placeholder is drawn inside a styled run -- codex's "Ask Codex to do
+    anything" arrives wrapped in a dim foreground SGR, and claude's hints the same way --
+    while text somebody typed carries no styling, so only unstyled runs count as staged.
+
+    The box is decided positionally. Only the pane's own glyph names a box; lines carrying any
+    other marker glyph are content. Marker lines group with the plain, unmarked lines that
+    follow them, because a wrapped draft continues on unmarked rows. The last CLASSIFIED block
+    is the box: the box is drawn at the bottom of the pane, so a scrollback echo of the glyph
+    above it is not the box, and its emptiness is the answer. An unclassifiable block -- a
+    closed styled span -- is a decoration, never a box, and never shadows a classified one;
+    when nothing in the pane classifies, the box is reported unreadable rather than silently
+    claimed empty.
+    """
+    glyph = _COMPOSER_GLYPH_BY_VENDOR.get(vendor, _DEFAULT_COMPOSER_GLYPH)
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in ansi_text.splitlines():
+        # The marker itself can sit inside a styled run, so find it with styling stripped.
+        first = strip_ansi(line).lstrip()[:1]
+        if first == glyph:
+            current = [line]
+            blocks.append(current)
+        elif current is not None and "\x1b" not in line and first not in COMPOSER_MARKERS:
+            # A wrapped draft continues on unmarked rows; a row starting with ANY marker glyph
+            # -- even another client's -- is visibly delimited content, not a continuation.
+            current.append(line)
+    classified = [text for text in map(_block_staged_text, blocks) if text is not None]
+    if classified:
+        return classified[-1]
+    return None
+
+
+def pane_input_text(pane_id: str, *, vendor: str) -> str | None:
+    """Staged text in a pane's input box, or None when the box cannot be read or classified.
 
     Reads the visible pane with its styling intact, because the staged-versus-placeholder
     distinction lives in the styling. A failed or timed-out read is None -- unreadable -- rather
@@ -784,7 +795,7 @@ def pane_input_text(pane_id: str) -> str | None:
     )
     if proc.returncode != 0:
         return None
-    return composer_staged_text(proc.stdout)
+    return composer_staged_text(proc.stdout, vendor=vendor)
 
 
 def guard_reused_pane(unit: Any, pane_id: str) -> None:
@@ -798,7 +809,7 @@ def guard_reused_pane(unit: Any, pane_id: str) -> None:
     which is the strongest reading of "never silently discarded". A box that cannot be read is
     noted on the unit and in the receipt and prompted as today -- visible, not silent.
     """
-    staged = pane_input_text(pane_id)
+    staged = pane_input_text(pane_id, vendor=unit.vendor)
     receipt = unit.launch_receipt if isinstance(unit.launch_receipt, dict) else None
     if staged is None:
         append_unit_note(unit, "input box not readable; prompted without inspection")

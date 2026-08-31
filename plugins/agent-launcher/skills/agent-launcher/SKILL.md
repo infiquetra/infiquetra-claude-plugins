@@ -25,15 +25,17 @@ S="$CLAUDE_PLUGIN_ROOT/skills/agent-launcher/scripts/launcher.py"
 [ -f "$S" ] || S=$(ls -d ~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/launcher.py | sort -V | tail -1)
 
 python3 "$S" preview --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort>
-python3 "$S" launch  --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort> > receipt.json
+python3 "$S" launch  --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort> --prompt <text> > receipt.json
 python3 "$S" close --receipt-json receipt.json
 ```
+
+The launch line carries a real prompt: without one, the session never leaves idle, delivery is recorded as failed, and the command exits nonzero.
 
 `launch` always dry-runs first. It writes one JSON receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr state (kind, pane, cwd, workspace, readiness) before any prompt is sent. Model stays `requested_only` because `herdr agent list` does not publish it; Herdr publishes no permission either, so the declared posture is confirmed against the launch argv instead and recorded under `permission_resolved` in the receipt, distinctly from the requested `permission` value. `close` reads `tab_id` and `owned` from that file. `owned` is true only when the receipt `tab_id` was **not** in the Herdr workspace tab set snapshotted immediately before the wrapper ran. The wrapper's `reused` bit means the *workspace* already existed, which is the common case inside Herdr, and is not tab ownership.
 
 Permission is granted at launch and is not correctable in place: cycling a live session's permission control moves only through manual, accept-edits, plan and back to auto, so a session that came up in `auto` cannot be promoted to `bypass` afterwards and must be torn down and relaunched.
 
-A session whose tab the launcher did not create (`owned` false in the receipt) has its input box inspected before any prompt is sent — and before any vendor picker types into the pane — because a prompt typed behind staged text concatenates onto it and can submit it. Staged text is a stop, not a clear: the launch refuses to prompt and records a redacted characterisation of the box — the staged text's length, never its content — in the receipt and the unit note, naming that the text itself was withheld; nothing typed by an operator is persisted, and nothing in the box is discarded. A client's own placeholder (the dim hint a vendor draws in an empty box) is not staged text and does not stop the launch, and a box that cannot be read is recorded as `unreadable` in the receipt and prompted as today.
+A session whose tab the launcher did not create (`owned` false in the receipt) has its input box inspected before any prompt is sent — and before any vendor picker types into the pane — because a prompt typed behind staged text concatenates onto it and can submit it. Staged text is a stop, not a clear: the launch refuses to prompt and records a redacted characterisation of the box — the staged text's length, never its content — in the receipt and the unit note, naming that the text itself was withheld; nothing typed by an operator is persisted, and nothing in the box is discarded. The box is the last marker block the pane's own client glyph draws, so a scrollback echo of the glyph above an empty box is not the box and does not stop the launch. Two shapes this read cannot classify are never claimed either way: a line fully styled with its span closing at end of line is byte-identical between a client's placeholder and a draft, and a box that cannot be read at all is the other — both are recorded as `unreadable` in the receipt and prompted as today.
 
 **Stop conditions (verbatim):**
 
@@ -75,11 +77,11 @@ The read-back shape, using only allowlisted non-secret arguments. The probe take
 
 ```bash
 python3 "$S" launch --vendor <tool> --task <probe-name> --cwd "$PWD" --model <model> --effort <effort> --account <selection> --prompt <probe-task> > receipt.json
-jq '{confirmed_against_herdr, requested_only, account, account_evidence, permission_resolved}' receipt.json
+jq '{confirmed_against_herdr, requested_only, account, account_evidence, permission_resolved, variant}' receipt.json
 python3 "$S" close --receipt-json receipt.json
 ```
 
-Read back only what the receipt can supply: `confirmed_against_herdr` against `requested_only`, the account evidence, and the argv record of the permission posture. `model` in the receipt is the requested string echoed back, not a read-back — do not treat it as confirmed — and the receipt carries no reasoning-effort value at all.
+Read back only what the receipt can supply: `confirmed_against_herdr` against `requested_only`, the account evidence, and the argv record of the permission posture. `model` in the receipt is the requested string echoed back, not a read-back — do not treat it as confirmed. The reasoning effort is recorded under the `variant` key: for OpenCode it is confirmed against the live session and listed in `confirmed_against_herdr` — the strongest read-back the preflight produces — and for every other vendor it is the request echoed back and listed under `requested_only`.
 
 Whatever the read-back reports as missing or wrong is a stop: tear the probe session down using the receipt and resolve it before anything else launches.
 

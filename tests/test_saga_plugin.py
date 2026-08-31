@@ -45,10 +45,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.153.0"  # issue #929: build-unit tier resolution
-    # — explicit plan tier or documented default from the shared work-shape policy, never
-    # the host session's tier.
-    # Successor to issue #928's merge-gate integrity at 0.152.0
+    assert plugin_json["version"] == "0.154.0"  # issue #930: maintenance sweep
+    # — teardown as fifth ceremony call, first-time move, gated/allowlist separation,
+    # and the full artifact_pointer path.
+    # Successor to issue #929's build-unit tier resolution at 0.153.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

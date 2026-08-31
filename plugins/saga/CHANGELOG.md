@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.154.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work maintenance sweep (#930).** Work's post-merge ceremony now names all five calls
+  including `teardown` as the terminal reclamation gate; the expected five are derived as the
+  post-merge slice of `ship_ceremony.TRANSITIONS`. `/loop` no longer claims the first-time board
+  move belongs to `/work` and describes the submission path Work submits through Mission Control
+  (built in 0.151.0). The Phase-4.4 gated/allowlist conflation is separated — `gated` is the
+  certificate verdict, `halt` is the empty allowlist — and the orphaned `skip silently` line is
+  made explicit. Every bare `artifact_pointer.py` under `plugins/saga/skills` now uses its full
+  repository-relative path `plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py`.
+
 ## [0.153.0] - 2026-08-31
 
 ### Fixed

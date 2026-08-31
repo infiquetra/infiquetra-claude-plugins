@@ -269,7 +269,8 @@ if the second assignment fails, so read the record: `written`/`skipped` is succe
 record names the landed and the unlanded assignment, and `halt`/`gated` falls back to the
 operator-prompted Mission Control path. Say in the phase header that work is starting.
 
-Skip silently when there is no issue -- a unit with no card has no lifecycle field to move.
+When there is no issue, no board move is submitted — a unit with no card has no lifecycle field
+to move, so this step is a no-op (not a silent skip of a required write).
 
 ### 1.4 Offer the backend, then mint/advance the saga
 
@@ -754,7 +755,8 @@ canonical states is surfaced verbatim. A passing test gate is `tests:done:<ref>`
 
 List fields are full-snapshot (saga-spec §6) — pass the complete current set each tick, not a delta.
 
-When a team-execution run stored Layer-2 artifacts (`artifact_pointer.py store`), record their typed
+When a team-execution run stored Layer-2 artifacts
+(`plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py store`), record their typed
 pointers on the tick via `--artifact-pointers "<pointer-json>|<pointer-json>"` (pipe-separated, omit =
 carry forward) so a resuming thread can `deref` the exact bytes instead of re-inlining them.
 
@@ -876,10 +878,13 @@ prints a record JSON:
   Status-field edit — is surfaced with its named reason, never silently overwritten or
   auto-corrected. Surface the `halt_reason` to the operator and fall back to the operator-prompted
   `mission-control` path.
-- `{"status":"gated"}` — which merge/deploy and any op outside the **closed** (empty since W7)
-  auto-correct allowlist returns, because the certificate lives in `reversibility_certificate` —
-  fall back to the operator-prompted `mission-control` path unchanged. A `gated`/`halt` result is
-  the controller correctly withholding an action that needs a human, never a failure.
+- `{"status":"halt"}` — which any op outside the **closed** (empty since W7) auto-correct
+  allowlist (`reconcile_controller.py:AUTO_CORRECT_OP_KINDS`, now `frozenset()`) returns, because the
+  controller holds no autonomous lifecycle-field write authority (W7) — fall back to the
+  operator-prompted `mission-control` path unchanged. `{"status":"gated"}` is the separate
+  reversibility-certificate verdict (e.g. an unauthorized merge/deploy) that also withholds with no
+  write. Either `halt` or `gated` is the controller correctly withholding an action that needs a
+  human, never a failure.
 
 `/work` still does **not** merge or deploy autonomously (permanently gated), and the controller
 never widens the autonomously-writable set beyond what `board_progression`/`reversibility_certificate`
@@ -971,14 +976,16 @@ On a clean gate (or recorded override):
    `next_step="await review on PR #N"`; comment the PR status to the issue via the extended
    `issue_progress.py` CLI (`--pr-url`, `--review-status`).
 4. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
-   transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
-   approved + clean + fresh, **offer to run the rest of the ceremony** — four separate
-   `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
-   a bare `run` for `checkout_main`, a bare `run` for `pull`, then
-   `run --operator-confirmed branch_delete:<target>` naming the resolved head branch (issue
-   #635/KTD6) — each explicitly confirmed, never silent; merge is a
-   git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
-   On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
+    transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
+    approved + clean + fresh, **offer to run the rest of the ceremony** — five separate
+    `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
+    a bare `run` for `checkout_main`, a bare `run` for `pull`,
+    `run --operator-confirmed branch_delete:<target>` naming the resolved head branch (issue
+    #635/KTD6), then a bare `run` for `teardown` (issue #347 — the terminal reclamation gate that
+    closes the opened-resource manifest; `teardown` is `CeremonyTier.REVERSIBLE` and structurally
+    required) — each explicitly confirmed, never silent; merge is a
+    git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
+    On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
    See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.
    When the destination includes deploy, route the merged item's ownership transfer through the
    offer step in `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept

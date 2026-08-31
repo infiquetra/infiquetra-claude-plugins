@@ -29,7 +29,7 @@ def _read_skill() -> str:
 
 
 def _load_policy() -> dict[str, dict[str, str]]:
-    return json.loads(TIER_POLICY.read_text(encoding="utf-8"))
+    return json.loads(TIER_POLICY.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
 
 
 def _resolve(*args, **kwargs):

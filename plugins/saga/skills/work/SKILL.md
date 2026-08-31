@@ -660,6 +660,13 @@ lease preflight retires with U6.
   isolation, or downgrade to serial when isolation is unavailable). Subagent dispatch passes each unit's
   Goal / Files / Approach / Execution note / Patterns / Test scenarios / Verification and **preserves the
   U-ID**.
+- **Build-unit tier** — When directly launching a build unit, resolve its `{model, effort}` via
+  `plugins/saga/scripts/lifecycle_state.py:resolve_build_unit_tier`. An explicit plan tier wins;
+  otherwise the work shape (default `mechanical` when undeclared per
+  `references/execution-strategy.md`) resolves through the shared `tier_policy.json` registry via
+  `tier_resolver` / `tier_defaults`. The resolver accepts a host tier argument but ignores it, so the
+  dispatch does not consult the host session. Record the resolved tier in the Phase-4 work-session
+  execution evidence.
 - **Follow existing patterns** — read the plan's referenced code first; match naming and conventions;
   grep for similar implementations before inventing.
 - **Already shipped → verify, don't reimplement.** If a unit's `Verification` is already satisfied by the

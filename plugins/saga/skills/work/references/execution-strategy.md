@@ -209,3 +209,18 @@ operator's pick via the saga's `--orchestration-mode` (Phase 1.4) — that is th
 choice (operator-choice §6). Pass the helper's `recommended` value — the bare enum string, since
 `--orchestration-recommended` takes `choices=ORCHESTRATION_MODES`, not the JSON object — even when
 the pre-select differs, so R12 telemetry still sees recommended-vs-chosen.
+
+## Build-unit tier resolution — `resolve_build_unit_tier()` (Phase 2)
+
+When Work directly launches a build unit (an Implementation Unit executed as a direct build unit),
+resolve its `{model, effort}` via `plugins/saga/scripts/lifecycle_state.py:resolve_build_unit_tier`.
+An explicit `{model, effort}` on the plan unit wins unchanged; otherwise the work shape is selected
+and resolved through the shared registry: `plugins/fleet-core/scripts/fleet_commons/tier_policy.json`
+via `tier_resolver` / `tier_defaults`. When a unit declares neither a tier nor a work shape, the
+selected shape is `mechanical` — bounded, specified work per `/work`'s own execution context and the
+middle rung that bounds either-direction error (KTD7) — so `resolve_build_unit_tier(plan_tier=None,
+work_shape=None)` resolves the `mechanical` row from `tier_policy.json`, not a literal at the spawn
+site. Values stay in that registry; this file only names the shape-selection rule — see
+`lifecycle_state.py:resolve_build_unit_tier` for the single delegation seam. The resolver accepts a
+host tier argument but ignores it, so the dispatch does not consult the host session. Record the
+resolved tier in the Phase-4 work-session execution evidence for both the explicit and defaulted case.

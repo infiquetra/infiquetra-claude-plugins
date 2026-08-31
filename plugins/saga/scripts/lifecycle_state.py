@@ -430,6 +430,39 @@ def recheck_orchestration_capability(
     }
 
 
+def resolve_build_unit_tier(
+    *,
+    plan_tier: dict[str, str] | None = None,
+    work_shape: str | None = None,
+    host_tier: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Resolve the tier for a directly launched build unit (WK3 #929).
+
+    Precedence mirrors the shared tier chain: an explicit ``plan_tier`` wins
+    unchanged; otherwise the work shape (default ``mechanical`` for an undeclared
+    unit per ``references/execution-strategy.md``) is resolved through
+    :mod:`tier_defaults` / :mod:`fleet_commons.tier_resolver`, never a literal at
+    the spawn site. ``host_tier`` is accepted and deliberately never read so a
+    test can prove inheritance is not consulted.
+    """
+    _ = host_tier  # accepted but never read — the no-inheritance guarantee
+    if plan_tier is not None:
+        if "model" not in plan_tier or "effort" not in plan_tier:
+            raise ValueError(f"plan_tier must contain model and effort, got {plan_tier!r}")
+        return {"model": str(plan_tier["model"]), "effort": str(plan_tier["effort"])}
+    shape = work_shape or "mechanical"
+    # Delegate to the existing chain so values stay in tier_policy.json and a
+    # malformed .saga/tier-defaults.json still raises TierDefaultsError.
+    from pathlib import Path as _Path  # noqa: PLC0415  (lazy to avoid top-level side effects)
+
+    _scripts_dir = _Path(__file__).resolve().parent
+    if str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+    import tier_defaults as _tier_defaults  # noqa: PLC0415
+
+    return _tier_defaults.resolve_tier_with_overlay(shape)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)

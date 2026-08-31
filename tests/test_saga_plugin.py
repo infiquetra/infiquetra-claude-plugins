@@ -45,10 +45,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.152.0"  # issue #928: Saga Work merge-gate integrity
-    # — validate the verdict at save time, record change_kinds, and split the dual-purpose
-    # override flag so the waived gate is unambiguous.
-    # Successor to issue #927's board-submission path at 0.151.0
+    assert plugin_json["version"] == "0.153.0"  # issue #929: build-unit tier resolution
+    # — explicit plan tier or documented default from the shared work-shape policy, never
+    # the host session's tier.
+    # Successor to issue #928's merge-gate integrity at 0.152.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

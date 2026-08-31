@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.153.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work build-unit tier resolution (#929).** Work's direct build-unit dispatch now resolves
+  its `{model, effort}` via `lifecycle_state.py:resolve_build_unit_tier` — an explicit plan tier
+  wins unchanged, otherwise the work shape (default `mechanical` when undeclared) is resolved
+  through the shared `tier_policy.json` registry via `tier_resolver` / `tier_defaults`, never a
+  literal at the spawn site and never by consulting the host session's tier. The seam accepts a
+  `host_tier` argument but never reads it, so the no-inheritance guarantee is provable, and a
+  malformed `.saga/tier-defaults.json` still raises `TierDefaultsError` through the seam.
+
 ## [0.152.0] - 2026-08-31
 
 ### Fixed

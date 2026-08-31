@@ -32,7 +32,14 @@ def is_blocking(
     second_grader_agrees: bool,
     operator_adjudicated: bool,
 ) -> bool:
-    """Evaluator-trust rule (R20)."""
+    """Evaluator-trust rule (R20) — SPECIFICATION ONLY, not implemented in production.
+
+    No Saga script defines or calls this predicate. The tests below fix the intended
+    rule so a future implementation has something to satisfy; they prove this
+    function's shape, not the behaviour of anything Saga ships. The similarly named
+    is_blocking_finding in plugins/saga/scripts/second_opinion.py is a different rule
+    with a different signature and does not implement R20.
+    """
     if finding.get("kind") == "deterministic":
         return True
     # Model-judged finding: reproducible AND (second grader agrees OR adjudicated)

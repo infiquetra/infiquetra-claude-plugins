@@ -515,7 +515,6 @@ def test_reanchored_missing_fallback_to_original(
 
 def test_no_checked_in_artifact_declares_non_vocab_maturity() -> None:
     """CORR-17: repository check — no checked-in artifact declares a non-vocabulary maturity."""
-    allowed = set(HE.HANDOFF_MATURITIES)
     source_dirs = [
         ROOT / "docs" / d
         for d in ["ideation", "brainstorms", "specs", "plans", "reviews", "work-sessions"]
@@ -525,24 +524,49 @@ def test_no_checked_in_artifact_declares_non_vocab_maturity() -> None:
         if not base.exists():
             continue
         for path in base.rglob("*.md"):
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+            # Use the shared helper so carrier and unterminated shapes are not skipped.
+            declared = HE._read_frontmatter_maturity(path)  # type: ignore[attr-defined]
+            if declared is None:
                 continue
-            if not text.startswith("---"):
-                continue
-            end = text.find("\n---", 3)
-            if end == -1:
-                continue
-            frontmatter = text[3:end]
-            for line in frontmatter.splitlines():
-                if line.startswith("maturity:"):
-                    raw = (
-                        line.split(":", 1)[1].strip().split("#", 1)[0].strip().strip("\"'").strip()
-                    )
-                    if raw and raw not in allowed:
-                        bad.append((str(path.relative_to(ROOT)), raw))
-                    break
+            # Empty string or any unknown:-prefixed sentinel means the checked-in file
+            # declares a value outside the vocabulary (or a malformed block).
+            # `_read_frontmatter_maturity` returns a vocabulary value, the empty string, or
+            # an `unknown:`-prefixed sentinel, so these two cases cover everything outside
+            # HANDOFF_MATURITIES without needing the vocabulary set itself.
+            if declared == "" or declared.startswith("unknown:"):
+                bad.append((str(path.relative_to(ROOT)), declared))
     assert not bad, (
         f"checked-in artifacts declare non-vocab maturity outside HANDOFF_MATURITIES: {bad}"
     )
+
+
+def test_utf16_with_bom_pending_confirmation(tmp_path: Path) -> None:
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    target = plans / "2026-08-30-utf16-bom-requirements.md"
+    target.write_bytes("---\nmaturity: pending-confirmation\n---\n\nbody\n".encode("utf-16"))
+    assert HE.infer_maturity(str(target)) == "pending-confirmation"
+
+
+def test_utf16_le_without_bom_pending_confirmation(tmp_path: Path) -> None:
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    target = plans / "2026-08-30-utf16-le-requirements.md"
+    target.write_bytes("---\nmaturity: pending-confirmation\n---\n\nbody\n".encode("utf-16-le"))
+    assert HE.infer_maturity(str(target)) == "pending-confirmation"
+
+
+def test_utf16_be_without_bom_pending_confirmation(tmp_path: Path) -> None:
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    target = plans / "2026-08-30-utf16-be-requirements.md"
+    target.write_bytes("---\nmaturity: pending-confirmation\n---\n\nbody\n".encode("utf-16-be"))
+    assert HE.infer_maturity(str(target)) == "pending-confirmation"
+
+
+def test_corrupt_nul_bearing_file_is_unreadable(tmp_path: Path) -> None:
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    target = plans / "2026-08-30-corrupt-requirements.md"
+    target.write_bytes(b"\x00\x01\x02\xff\xfe\x99")
+    assert HE.infer_maturity(str(target)) == "unknown:unreadable"

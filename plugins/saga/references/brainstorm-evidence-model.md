@@ -85,7 +85,7 @@ name — and reporting is per dimension only.
 
 ## Layer 3 — Evaluator trust and safeguard-phrase drift guard
 
-*Audience: maintainer of tests and contract files. Version: 0.149.0.*
+*Audience: maintainer of tests and contract files. Version: 0.151.0.*
 
 **Evaluator-trust rule (R20).** `is_blocking(finding, *, reproducible,
 second_grader_agrees, operator_adjudicated) -> bool` returns `True`
@@ -93,6 +93,8 @@ unconditionally for a deterministic contract failure, and for a
 model-judged finding returns `True` only when the scenario is
 reproducible **and** either a second independent grader agrees or an
 operator adjudication is recorded. The deterministic case plus the four decisive model-judged combinations are asserted directly.
+
+**This rule is specified, not implemented.** No Saga script defines or calls `is_blocking`; the predicate lives in `tests/test_brainstorm_scenarios.py` and the two tests that exercise it are *specification* tests, fixing the intended rule so a future implementation has something to satisfy. They prove the rule's shape, not that anything Saga ships behaves this way. The similarly named `is_blocking_finding` in `plugins/saga/scripts/second_opinion.py` is a different rule with a different signature (severity, status, pre-existing) and does not implement R20.
 
 **Calibration (R21).** `tests/data/brainstorm/calibration.json` holds a
 small fixed set of cases with expected grades and a `drift_floor` key that today has no consumer. No grader exists yet; the test asserts only that the calibration data has the expected shape (three cases, each with `id` and `expected` per rubric dimension) and that no aggregate target exists. Drift will be surfaced when a grader is built; until then the floor is data only.
@@ -111,7 +113,7 @@ drift-guard case fails.
 
 ## What this suite does not prove
 
-The suite proves the deterministic boundary, the data shape and per-dimension structure, and the gating machinery. It does **not** prove that any
+The suite proves the deterministic boundary, the data shape and per-dimension structure, and the gating machinery. It does **not** prove the evaluator-trust rule (R20) is enforced anywhere: that predicate is specified in the test module and has no production implementation or caller, so those assertions would pass unchanged if every other part of this evidence work were deleted. It does **not** prove that any
 given brainstorm was good and it does not prove any transcript was graded — Layer 2 has no grader yet and the drift check is deferred. Layer 3's eight cases prove a safeguard sentence is present and its predicate is wired, not that the safeguard's behaviour holds — a file edited to instruct the opposite of a safeguard while keeping its sentence would still pass the string check. Formal completeness and contradiction review
 stay after the confirmed artifact, in Document Review or a narrow
 post-write validator, never in the live dialogue. A green scenario run

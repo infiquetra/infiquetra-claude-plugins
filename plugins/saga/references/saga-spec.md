@@ -310,8 +310,8 @@ HANDOFF_MATURITIES = ("idea-ready", "requirements-ready", "plan-ready", "resume-
 user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing. `HANDOFF_MATURITIES` is
 implemented in `plugins/saga/scripts/handoff_envelope.py`. Frontmatter `maturity` must be an
 unindented top-level `maturity:` key inside YAML delimited by `---` lines; indented nested keys are
-ignored. An unrecognized non-empty, empty, non-delimited carrier, unterminated block, or unreadable
-file fails closed with no durable route and a diagnostic, rather than falling through to the path rule.
+ignored. An unrecognized non-empty, empty, non-delimited carrier (within the first 30 lines), unterminated block, or unreadable
+file (within the first 8192 bytes) fails closed with no durable route and a diagnostic, rather than falling through to the path rule, provided the declaration lies within the bounded read windows; beyond those windows the path rule applies.
 The field's runtime domain is consequently NOT closed at the six values: `infer_maturity` may also
 return the empty string, an `unknown:unrecognized:<raw>` sentinel carrying an unrecognized raw value
 (reserved namespace `unrecognized:` that no vocabulary value contains, so author text cannot forge it),

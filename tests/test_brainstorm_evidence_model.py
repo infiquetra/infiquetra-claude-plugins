@@ -45,11 +45,50 @@ _AREA_KEYWORDS = {
 
 def check_deterministic_coverage(texts: dict[str, str]) -> list[str]:
     violations: list[str] = []
-    combined = "\n".join(texts.values()).lower()
+    # Strip comments and docstrings: parse each file and collect string literals
+    # that are inside assert nodes or function bodies, so a stub file containing
+    # only a comment with keywords does not satisfy coverage.
+    collected: list[str] = []
+    for source in texts.values():
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assert):
+                for child in ast.walk(node.test):
+                    if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                        collected.append(child.value)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for child in ast.walk(node):
+                    if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                        # Exclude docstrings: first Expr(Constant) in function body
+                        is_docstring = False
+                        if (
+                            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and node.body
+                            and isinstance(node.body[0], ast.Expr)
+                            and node.body[0].value is child
+                        ):
+                            is_docstring = True
+                        if not is_docstring:
+                            collected.append(child.value)
+    combined = "\n".join(collected).lower()
+    # Fallback: also consider raw text lower for areas whose keywords appear as code identifiers
+    # but not as string literals (e.g., "grounding scout" as part of a larger string)
+    raw_combined = "\n".join(texts.values()).lower()
     for area in _REQUIRED_AREAS:
         keywords = _AREA_KEYWORDS[area]
         if not any(kw.lower() in combined for kw in keywords):
-            violations.append(f"missing coverage for {area!r}")
+            # No keyword reached `collected`, which holds only assert and function-body
+            # string literals. A file carrying the keyword solely in a comment or docstring
+            # therefore fails here rather than passing on raw text alone.
+            if any(kw.lower() in raw_combined for kw in keywords):
+                violations.append(
+                    f"missing coverage for {area!r} (keyword only in comments/docstrings)"
+                )
+            else:
+                violations.append(f"missing coverage for {area!r}")
     return violations
 
 

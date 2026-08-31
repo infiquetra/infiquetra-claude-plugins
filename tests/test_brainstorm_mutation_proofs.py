@@ -85,7 +85,7 @@ def _cases():  # type: ignore[no-untyped-def]
             "helper_ceiling",
             judg.check_helper_ceiling,
             BRAINSTORM_SKILL,
-            "two helpers on the same question is one helper too many",
+            "two helpers on the same question is one too many",
         ),
         (
             "map_privacy",

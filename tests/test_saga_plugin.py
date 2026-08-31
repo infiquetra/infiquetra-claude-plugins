@@ -4003,9 +4003,13 @@ def test_loop_pending_confirmation_routes_to_brainstorm(tmp_path: Path) -> None:
     assert "pending-confirmation" in loop_skill and "/brainstorm" in loop_skill, (
         "loop must route pending-confirmation to /brainstorm"
     )
-    # Dispatch table row must be reachable: (none) | — | pending-confirmation | /brainstorm
+    # Dispatch table rows must be reachable: (none) | — | pending-confirmation | /brainstorm
+    # and brainstorm | any | pending-confirmation | /brainstorm (fail-closed for active brainstorm)
     dispatch = _read(PLUGIN_ROOT / "skills" / "loop" / "references" / "dispatch-table.md")
     assert "| (none) | — | `pending-confirmation` | `/brainstorm` |" in dispatch
+    assert "| `brainstorm` | any | `pending-confirmation` | `/brainstorm` |" in dispatch
+    # Brainstorm phase with no declared maturity must also route (exploratory-only outcome writes no file)
+    assert "| `brainstorm` | any | — | `/brainstorm` (finish the WHAT) |" in dispatch
     # Also verify parse_issue actually returns it via real path
     body = "### Handoff maturity\npending-confirmation\n"
     assert mod.extract(body)["handoff"]["maturity"] == "pending-confirmation"

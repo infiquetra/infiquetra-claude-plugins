@@ -94,7 +94,7 @@ def check_resume_restore(text: str) -> list[str]:
 def check_ambiguity_stop(text: str) -> list[str]:
     violations: list[str] = []
     norm = _norm(text).lower()
-    if "two or more plausible matches stop and ask" not in norm:
+    if "two or more near-matches stop and ask" not in norm:
         violations.append("missing ambiguity stop rule")
     if "never by recency" not in norm:
         violations.append("missing never by recency refusal")
@@ -408,11 +408,46 @@ def check_no_tick(text: str) -> list[str]:
 
 def check_dispatch_pending(text: str) -> list[str]:
     violations: list[str] = []
-    if "pending-confirmation" not in text or "/brainstorm" not in text:
+    pending_rows = 0
+    for line in text.splitlines():
+        if "pending-confirmation" in line and line.strip().startswith("|"):
+            pending_rows += 1
+            parts = [p.strip() for p in line.split("|")]
+            # 4-column main-chain table: | Saga `lifecycle_phase` | `phase_status` | Handoff maturity | Next command |
+            # parts[0] empty, parts[1] phase, parts[2] status, parts[3] maturity, parts[4] command, parts[5] empty
+            if len(parts) >= 5:
+                consumer = parts[4]
+                if "`/brainstorm`" not in consumer:
+                    violations.append(
+                        f"pending-confirmation row does not route to /brainstorm: {line.strip()[:80]}"
+                    )
+    if pending_rows == 0:
         violations.append("missing pending-confirmation -> /brainstorm row")
-    # Check that requirements-ready still routes to /plan
-    if "requirements-ready" not in text or "`/plan` (settle HOW)" not in text:
+    elif pending_rows < 2:
+        violations.append(
+            f"expected at least 2 pending-confirmation rows (no-saga and brainstorm), found {pending_rows}"
+        )
+    # Check that requirements-ready still routes to /plan (at least one row)
+    has_requirements_row = False
+    for line in text.splitlines():
+        if "requirements-ready" in line and line.strip().startswith("|") and "`/plan`" in line:
+            has_requirements_row = True
+            break
+    if not has_requirements_row:
         violations.append("missing requirements-ready -> /plan row")
+    # Check for brainstorm -- row (no declared maturity)
+    has_brainstorm_empty = False
+    for line in text.splitlines():
+        if (
+            line.strip().startswith("|")
+            and "`brainstorm`" in line
+            and "| — |" in line
+            # Must be the brainstorm any -- row, not the pending row
+            and "`/brainstorm`" in line
+        ):
+            has_brainstorm_empty = True
+    if not has_brainstorm_empty:
+        violations.append("missing brainstorm -- (no maturity) -> /brainstorm row")
     return violations
 
 

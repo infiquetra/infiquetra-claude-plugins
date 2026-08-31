@@ -106,8 +106,8 @@ labelled inference path rather than counting as absent — a file missing `capab
 artifact, never a miss; and only a genuinely empty scan reports no candidate. One unambiguous match
 is a matched candidate that routes to `/brainstorm` — summarize the restored boundary and continue
 from it without re-presenting settled decisions, reusing the existing Phase 1 disambiguation shape
-(single-select over the candidate list); two or more plausible matches stop and ask the operator to
-choose, explicitly never by recency, filename, or broad content match; a `pending-confirmation` match
+(single-select over the candidate list); two or more near-matches stop and ask the operator to
+choose, using the same slug-subset near-match predicate Brainstorm Tier 1 defines and explicitly never by recency, filename, or broad content match; a `pending-confirmation` match
 is restored as a proposed boundary awaiting confirmation, never as finished work. This document scan
 is read-only — Brainstorm still writes no Saga state. Classify the run:
 

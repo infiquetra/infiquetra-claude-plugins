@@ -38,20 +38,31 @@ MARKER_DIRS = tuple(p.name for p in SOURCE_DIRS)
 _FRONTMATTER_READ_LIMIT = 8192
 
 
-def _extract_declared_maturity_value(line: str) -> str | None:
-    """Extract a top-level ``maturity:`` value from a single frontmatter line.
+def _extract_declared_maturity_value(line: str, allow_bullet: bool = False) -> str | None:
+    """Extract a ``maturity:`` value from a single frontmatter line.
 
-    Returns the raw stripped value (may be empty string) if the line is an
-    unindented top-level ``maturity:`` key, otherwise ``None`` for indented
-    or non-matching lines. Centralizes the inline-comment and quote stripping
-    that was previously triplicated across reader arms.
+    When ``allow_bullet`` is False (delimited frontmatter), only an unindented
+    top-level ``maturity:`` at column 0 is accepted. When True (carrier and
+    unterminated arms), a bullet- or indent-prefixed ``maturity:`` is also
+    accepted, so both arms share one notion of a declaration line. Inline-comment
+    and quote stripping is centralized here.
     """
-    if not line.startswith("maturity:"):
-        if line.strip().startswith("maturity:") and line[0] in (" ", "\t"):
+    if allow_bullet:
+        stripped = line.strip()
+        cleaned = stripped.lstrip("-*").strip()
+        if not cleaned.startswith("maturity:"):
             return None
-        return None
-    stripped = line.strip()
-    value = stripped[len("maturity:") :].strip()
+        # Do not treat an indented line that is not a bullet as a top-level key
+        # when allow_bullet is True — the carrier/unterminated arms intentionally
+        # accept both, so any line whose stripped form starts with maturity: is a hit.
+        value = cleaned[len("maturity:") :].strip()
+    else:
+        if not line.startswith("maturity:"):
+            if line.strip().startswith("maturity:") and line[0] in (" ", "\t"):
+                return None
+            return None
+        stripped = line.strip()
+        value = stripped[len("maturity:") :].strip()
     if "#" in value:
         value = value.split("#", 1)[0].strip()
     value = value.strip("\"'").strip()
@@ -63,20 +74,48 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
     try:
         with path.open("rb") as f:
             raw_bytes = f.read(_FRONTMATTER_READ_LIMIT)
+            # If we hit the limit and the file is larger, the slice may end mid-codepoint.
+            # Trim trailing partial UTF-8 sequence so a valid file is not mis-marked unreadable
+            # (SEC-09). Only trim when the file has more bytes beyond the limit.
+            if len(raw_bytes) == _FRONTMATTER_READ_LIMIT:
+                try:
+                    peek = f.read(1)
+                except OSError:
+                    peek = b""
+                if peek:
+                    # File is larger than the limit; ensure the slice ends on a character boundary.
+                    while raw_bytes:
+                        try:
+                            raw_bytes.decode("utf-8-sig")
+                            break
+                        except UnicodeDecodeError as e:
+                            if "unexpected end of data" in str(e):
+                                raw_bytes = raw_bytes[:-1]
+                                continue
+                            break
     except OSError:
         return "unknown:unreadable"
-    # Decode with UTF-8-SIG, handling BOM; on failure, try UTF-16 only if BOM or NUL present.
+    # Decode with UTF-8-SIG, handling BOM. NUL bytes are valid UTF-8 but indicate
+    # UTF-16 without BOM or binary corruption — reject a successful decode that
+    # contains NUL and route it into the recovery ladder (API-18/CORR-22).
     text: str | None = None
     try:
         text = raw_bytes.decode("utf-8-sig")
+        if "\x00" in text:
+            raise UnicodeDecodeError("utf-8-sig", raw_bytes, 0, 1, "NUL byte in decoded text")
     except UnicodeDecodeError:
         if raw_bytes.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in raw_bytes:
             for enc in ("utf-16", "utf-16-le", "utf-16-be"):
                 try:
-                    text = raw_bytes.decode(enc)
-                    break
+                    candidate = raw_bytes.decode(enc)
                 except UnicodeDecodeError:
                     continue
+                # Only accept a UTF-16 decode that actually contains a maturity declaration;
+                # otherwise it is mojibake and should be treated as unreadable (API-18).
+                if "maturity:" not in candidate:
+                    continue
+                text = candidate
+                break
         if text is None:
             try:
                 text = raw_bytes.decode("utf-8-sig", errors="replace")
@@ -85,6 +124,10 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
             if "maturity:" not in text:
                 return "unknown:unreadable"
     if text is None:
+        return "unknown:unreadable"
+    # Also reject a successful UTF-8 decode that produced NUL-interleaved text but did not
+    # raise — this is the BOM-less UTF-16 case that decodes as valid UTF-8 with NULs.
+    if "\x00" in text:
         return "unknown:unreadable"
     if not text.startswith("---"):
         # Non-delimited carrier (AU-09): scan the leading block rather than a fixed
@@ -95,14 +138,10 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
         for idx, line in enumerate(lines):
             if idx >= scan_limit:
                 break
-            stripped = line.strip()
-            if stripped.lstrip("-*").strip().startswith("maturity:"):
-                raw = stripped.split(":", 1)[1].strip() if ":" in stripped else ""
-                if "#" in raw:
-                    raw = raw.split("#", 1)[0].strip()
-                raw = raw.strip("\"'").strip()
-                if raw:
-                    return f"unknown:carrier:{raw}"
+            extracted = _extract_declared_maturity_value(line, allow_bullet=True)
+            if extracted is not None:
+                if extracted:
+                    return f"unknown:carrier:{extracted}"
                 return "unknown:carrier:"
         return None
     end = text.find("\n---", 3)
@@ -110,10 +149,12 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
         # Unterminated frontmatter block (API-13/CORR-15): opening delimiter present
         # but no closing delimiter — scan the opened block for a visible maturity
         # declaration and fail closed with a distinct sentinel rather than falling
-        # through to the path rule.
+        # through to the path rule. Both arms share one notion of a declaration line
+        # (accept bullet and indented forms), so no shape can fail closed under one
+        # arm and route live under another.
         frontmatter = text[3:]
         for line in frontmatter.splitlines():
-            extracted = _extract_declared_maturity_value(line)
+            extracted = _extract_declared_maturity_value(line, allow_bullet=True)
             if extracted is not None:
                 if not extracted:
                     return "unknown:unterminated:"

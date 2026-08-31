@@ -125,13 +125,13 @@ def check_helper_ceiling(text: str) -> list[str]:
     violations: list[str] = []
     section = _phase_1_1(text)
     norm = _norm(section)
-    if "at most one read-only repository-grounding scout" not in norm:
+    if "at most one read-only repository-grounding scout" not in norm.lower():
         violations.append("missing at most one grounding scout in Phase 1.1")
     if "at most one independent claim verifier" not in norm:
         violations.append("missing at most one claim verifier in Phase 1.1")
     if "distinct evidence question" not in norm:
         violations.append("missing distinct evidence question in Phase 1.1")
-    if "two helpers on the same question is one helper too many" not in norm:
+    if "two helpers on the same question is one too many" not in norm:
         violations.append("missing two helpers on same question guard in Phase 1.1")
     if "These are ceilings, not required launches" not in norm:
         violations.append("missing ceilings not required launches in Phase 1.1")
@@ -303,7 +303,7 @@ def test_lightweight_helpers_positive_and_mutation_fails() -> None:
 def test_helper_ceiling_negative_and_mutation_fails() -> None:
     text = _read(BRAINSTORM_SKILL)
     assert check_helper_ceiling(text) == [], f"ceiling: {check_helper_ceiling(text)}"
-    mutated = _mutate(text, "two helpers on the same question is one helper too many")
+    mutated = _mutate(text, "two helpers on the same question is one too many")
     assert check_helper_ceiling(mutated) != []
     mutated2 = _mutate(text, "These are ceilings, not required launches")
     assert check_helper_ceiling(mutated2) != []

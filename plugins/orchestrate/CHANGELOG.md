@@ -35,9 +35,11 @@ The ranking is **global across every install root**, and the version is read fro
 directly beneath the plugin's own name. Ranking within each root and then concatenating meant root
 order decided the winner before version did, so a stale copy in the first root beat a newer one in
 the second; and taking the highest dotted-numeric segment anywhere in the path let a marketplace
-directory such as `cache/infiquetra-9.9.9/` outrank every real release. The declared floors are
+directory such as `cache/infiquetra-9.9.9/` outrank every real release. Saga's declared floor is
 now **enforced**, not merely declared: a resolved saga below the `plugin.json` floor is refused
-before any submission is made, naming the install path and the version it found.
+before any submission is made, naming the install path and the version it found. The
+mission-control and agent-launcher floors declared beside it are read by the installer and
+nothing checks them at runtime.
 
 ### Fixed
 

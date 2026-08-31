@@ -106,7 +106,14 @@ def _safe_ledger_name(key: str) -> str:
     safe = key.replace(":", "_").replace("#", "_").replace("/", "_")
     # SHA-1 fallback: 200-char limit covers all realistic keys; non-alnum guard is a
     # belt-and-suspenders check for exotic values (e.g. a future label with spaces).
-    if len(safe) > 200 or not all(c.isalnum() or c in "_-." for c in safe):
+    #
+    # `+` is in the safe set because the composite pair identity (#927) joins the halves with it,
+    # and it was not: EVERY pair key therefore took the SHA-1 fallback, so the ledger a human is
+    # meant to be able to read by filename held an opaque digest for exactly the writes that
+    # matter most. `+` is legal in a filename on every filesystem this runs on, and it is the
+    # separator `normalize_assignments` refuses inside a field or option value, so it cannot
+    # arrive from anywhere else.
+    if len(safe) > 200 or not all(c.isalnum() or c in "_-.+" for c in safe):
         safe = hashlib.sha1(key.encode()).hexdigest()
     return safe + ".json"
 
@@ -166,6 +173,10 @@ def _append_comment_marker(body: str, key: str) -> str:
 # stable and distinct from a single-field key.
 ASSIGNMENT_IDENTITY_SEPARATOR = "+"
 
+# The exact fields a lifecycle pair submission carries. Both an upper and a lower bound: a
+# submission naming fewer is a half-move, and one naming more is not a lifecycle boundary.
+EXPECTED_ASSIGNMENT_FIELDS = ("Stage", "Status")
+
 # Per-assignment budget for one ``flow set-field`` invocation. Each assignment is its own
 # cross-board discovery-and-write pass inside mission-control, so the whole-call budget scales with
 # the count rather than staying at the single-field figure it was set for.
@@ -198,9 +209,18 @@ def normalize_assignments(
     keys, which is why refusing this costs no existing caller anything.
     """
     pay = payload or {}
-    raw = pay.get("assignments")
-    if not raw:
+    if "assignments" not in pay or pay["assignments"] is None:
         return [(str(pay.get("field") or "Status"), str(target_state))]
+    raw = pay["assignments"]
+    if isinstance(raw, (list, tuple)) and not raw:
+        # ABSENT is the single-field fallback; EMPTY is a caller that built a pair payload and put
+        # nothing in it. Treating them alike sent an empty pair down the Status-only path and
+        # reported it as a clean single-field write -- the same "wrong card, clean record" shape
+        # the distinct-field guard below refuses, arriving through the one input that skipped it.
+        raise ValueError(
+            "assignments is present but empty; a submission that opts into the pair API must "
+            "carry both halves. Omit the key entirely for a single-field write."
+        )
     if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
         raise ValueError(f"assignments must be a list of (field, option) pairs, got {raw!r}")
     assignments: list[tuple[str, str]] = []
@@ -224,12 +244,27 @@ def normalize_assignments(
     # ``[["Status", "A"], ["Status", "B"]]`` -- two assignments to one field, which is a half-move
     # wearing a pair's shape and leaves the other field exactly where the single-field write would
     # have.
-    if len({field_name for field_name, _ in assignments}) < 2:
+    names = [field_name for field_name, _ in assignments]
+    if len(set(names)) != len(names):
+        # A DUPLICATE field, not a missing one: `[["Stage","A"],["Stage","B"],["Status","C"]]`
+        # clears the distinct-count check with two distinct names while carrying two conflicting
+        # values for Stage. Mission Control applies assignments in order and does not roll back, so
+        # the card ends on whichever won the race, and the record names both as landed.
+        duplicated = sorted({name for name in names if names.count(name) > 1})
         raise ValueError(
-            f"assignments names {len({f for f, _ in assignments})} distinct field(s); a lifecycle "
-            "submission that opts into the pair API must carry both halves, or the board is left "
-            "half-written with a success-shaped record. Use the field/target_state keys for a "
-            "single-field write."
+            f"assignments names {', '.join(duplicated)} more than once; one field cannot carry two "
+            "options in one submission"
+        )
+    if len(names) != len(EXPECTED_ASSIGNMENT_FIELDS):
+        # An exact count, not a floor. The floor caught the half-move that motivated this guard and
+        # left the other end open: a three-field submission is not a lifecycle boundary at all, and
+        # authorizing it here would put an unreviewed field on the same certificate as the pair.
+        raise ValueError(
+            f"assignments carries {len(names)} field(s) ({', '.join(names)}); a lifecycle "
+            f"submission that opts into the pair API carries exactly "
+            f"{len(EXPECTED_ASSIGNMENT_FIELDS)} "
+            f"({', '.join(EXPECTED_ASSIGNMENT_FIELDS)}), or the board is left half-written with a "
+            "success-shaped record. Use the field/target_state keys for a single-field write."
         )
     return assignments
 
@@ -561,6 +596,16 @@ def _set_field_landed_detail(stdout: str, assignments: list[tuple[str, str]]) ->
         # a board that may be half-moved. Say what was submitted and that the outcome is unknown, so
         # the operator checks both fields instead of assuming neither landed.
         submitted = ", ".join(f"{field}={option}" for field, option in assignments)
+        if len(assignments) < 2:
+            # A single-field write has no halves. `outcome_reconcile.py` still drives
+            # `set-field-status` through the legacy `field`/`target_state` form, so this branch is
+            # live for real callers, and telling them to "check every field" and that "which halves
+            # landed is UNKNOWN" describes a submission they did not make -- it invents a
+            # half-written board out of a write that could only ever land or not.
+            return (
+                f"no outcome report on stdout, so whether the write landed is UNKNOWN; submitted: "
+                f"{submitted or 'none'} — check the field on the board before retrying"
+            )
         return (
             f"no outcome report on stdout, so which halves landed is UNKNOWN; submitted: "
             f"{submitted or 'none'} — check every field on the board before retrying"
@@ -643,7 +688,11 @@ def default_board_writer(
             cert = _cert()
             # One invocation, N assignments (#927). ``flow set-field`` declares --field/--option
             # with action="append" and routes a multi-assignment call through
-            # ``flow_set_fields_bulk``, so the pair costs one discovery pass rather than two calls.
+            # ``flow_set_fields_bulk``. What that saves is one process spawn, one CLI parse and one
+            # authorization pass -- NOT one discovery pass: the bulk path calls
+            # ``_set_lifecycle_field_cross_board`` once per assignment and each does its own
+            # cross-board discovery, which is why the timeout below scales with the assignment
+            # count instead of sharing the single-field budget.
             assignments = normalize_assignments(payload, str(payload.get("target_state", "")))
             for field_name, _option in assignments:
                 if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:

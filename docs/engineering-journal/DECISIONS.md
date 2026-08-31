@@ -5,9 +5,14 @@
 ### Orchestrate's `landed` rung is retired rather than gated or remapped  {#927-landed-rung-retired}
 
 **Decision.** `landed` is removed from `DEFAULT_STATUS_MAP`. It is not gated on the W-D2 condition
-and it is not remapped to another rung. A test pins that **no** rung reaches the `Verify` stage, so
-the violation cannot return through the `codereview` door that carried it before or the `landed`
-door that carried it during.
+and it is not remapped to another rung. Two guards, not one: a test pins that **no** entry in
+`DEFAULT_STATUS_MAP` reaches the `Verify` or `Retro` stage, and `announce_units` refuses any rung
+naming either stage at the submission itself. The second exists because the first cannot see the
+third door — a run file's `status_map` override never passes through the map, and it is validated
+for liveness alone, so `("Verify", "Awaiting verification")` sailed through as a live pair. A unit
+whose prefix names the retired key now produces a failure record naming the retirement rather than
+the silent "no status mapped" skip, so removing the key does not convert a loud error into
+silence.
 **Date:** 2026-08-31 · **Issue:** #927 (F-04, cycle-1 integrated review) · **Origin:** routed to
 human by the review; the operator returned it to this cycle with a derived, reversible ruling.
 **Why gating is infeasible, measured rather than argued.** W-D2 admits `Verify` only after merge
@@ -15,8 +20,10 @@ human by the review; the operator returned it to this cycle with a derived, reve
 published artifact verification. Orchestrate can check neither conjunct. `cmd_land` merges unit
 branches onto the **run** branch `orch/<run-id>`, never the default branch, so a `landed` boundary is
 not a merge in W-D2's sense at all. And `deployment`, `deployed`, `non-production` and `nonprod`
-appear **once combined** across the module — in a comment quoting the rule — so there is no
-deployment or artifact signal to gate on. A gate would be permanently false: a dead key with extra
+appear only inside one comment quoting the rule — four occurrences, no code reading, computing or
+receiving any of them — so there is no deployment or artifact signal to gate on. (The first draft of
+this entry said "once combined" and was simply wrong on the count; the claim that carries the
+argument is that none is a runtime signal, and that one holds.) A gate would be permanently false: a dead key with extra
 code around it, which reads like a safeguard and is not one.
 **Why not remap.** `Active`/`Integrating` would be better behaviour and was considered. Issue #919's
 approved board transition contract carries no `Integrating` row, so adding one **extends** a contract
@@ -96,9 +103,27 @@ than the record the operation itself produced).
 **Decision.** A lifecycle-field submission may carry N assignments as `payload["assignments"]`, a list of `[field, option]` pairs. `board_progression.normalize_assignments` reads it, `assignment_identity` renders the whole submission's replay identity, and both key-minting sites — `authorize_and_write` and `reconcile_controller.reconcile_op` — call the same helper. An absent `assignments` key falls back to today's exact single-field behaviour, argv and ledger key included. `default_board_writer` emits one `--field`/`--option` per assignment in **one** `flow set-field --correction` invocation, and on a non-zero exit parses Mission Control's stdout report to name the landed and the unlanded assignment.
 **Date:** 2026-08-31 · **Issue:** #927 (U5) · **Origin:** operator ruling W-D1, 2026-08-30; plan Decision A.
 **Why.** `Ready` is a valid option on neither live board field, so no single-field write can express the required first move; the pair is the only shape that satisfies the contract. `payload` is `dict[str, Any]` and already flows caller → controller → `authorize_and_write` → writer, so the pair costs **no signature change** on the submission path. Keying the whole submission is correctness, not tidiness: with a single-field key a `(Stage, Status)` pair and a `Status`-only write to the same option mint the identical identity, so whichever runs second is recorded `skipped` as already-applied — a success-shaped record for a move that never landed, silently. Widening only the controller would have left `authorize_and_write` minting the narrow key at its own site.
-**Rejected.** *Widening `_reconcile_call` alone* — the argv is built in `board_progression`, so a one-field writer emits one flag whatever the caller passes. *Two writer calls, one per field* — doubles the discovery pass, widens the half-applied window, and splits one logical move across two ledger keys so a re-drive can re-land one half alone. *Calling `sdlc_manager.py` directly from Orchestrate* — discards the certificate gate, the ledger and the replay key. *A new `set-field-pair` op-kind* — dead API surface needing its own certificate registry entry, reversibility tier and inverse descriptor, the same reasoning that already rejected `set-field-stage` in [`{#812-correction-field-named-identity}`](#812-correction-field-named-identity). *Making the replay key caller-supplied* — `authorize_and_write` has three callers and only one is the controller, so it would break the other two or duplicate the minting logic at three sites, and it would reach into `/outcome`.
+**Rejected.** *Widening `_reconcile_call` alone* — the argv is built in `board_progression`, so a one-field writer emits one flag whatever the caller passes. *Two writer calls, one per field* — widens the half-applied window and splits one logical move across two ledger keys, so a re-drive can re-land one half alone. It was also rejected here for "doubling the discovery pass", and that cost is **retracted**: `flow_set_fields_bulk` calls `_set_lifecycle_field_cross_board` once per assignment and each does its own cross-board discovery, so one invocation saves a process spawn, a CLI parse and an authorization pass — not a discovery pass. The two surviving reasons are sufficient on their own. *Calling `sdlc_manager.py` directly from Orchestrate* — discards the certificate gate, the ledger and the replay key. *A new `set-field-pair` op-kind* — dead API surface needing its own certificate registry entry, reversibility tier and inverse descriptor, the same reasoning that already rejected `set-field-stage` in [`{#812-correction-field-named-identity}`](#812-correction-field-named-identity). *Making the replay key caller-supplied* — `authorize_and_write` has three callers and only one is the controller, so it would break the other two or duplicate the minting logic at three sites, and it would reach into `/outcome`.
 **Revisit when.** A submission needs more than two assignments and the `+`-joined identity becomes hard to read, or Mission Control makes a multi-assignment call atomic — at which point the stdout-parsing half of this decision can be dropped.
 **Refs.** LEARNINGS [`{#927-stale-vocabulary-silent-halt}`](LEARNINGS.md#927-stale-vocabulary-silent-halt); `plugins/saga/scripts/board_progression.py`, `plugins/saga/scripts/reconcile_controller.py`; `tests/test_saga_board_first_move.py`.
+
+### Orchestrate 4.0.0 is a MAJOR bump, following the repository's own observability test  {#927-orchestrate-major-bump}
+
+**Decision.** The Orchestrate release carrying the `(Stage, Status)` pair is **4.0.0**, not 3.1.0.
+**Date:** 2026-08-31 · **Issue:** #927 (G-03, cycle-2 integrated review) · **Origin:** routed to the operator by the review; the operator ruled 4.0.0 and asked that the reasoning be recorded so it can be flipped.
+**Why.** [`{#removed-default-is-breaking}`](#removed-default-is-breaking) sets the test as whether a caller can observe the change; where none can, minor is defensible. Callers can observe four of these independently. An existing run file whose `status_map` holds a pre-pair single string made `land` exit **0** before and exits **2** now. The progress comment's rendered body gained a `board stage:` line, and the announce discriminator's shape changed with it, so a boundary announced under the old shape mints a different key. `STATUS_LADDER` was deleted outright. And `mapped_status` was retyped from `str | None` to `tuple[str, str] | None` and now raises where it returned. The release's own changelog heading already conceded the point in the words "two observable changes for an existing run file". Two hard install obligations — saga 0.151.0, mission-control 2.15.1 — sit on top, and are now enforced rather than merely declared.
+**Rejected.** *Keeping 3.1.0 and writing an exception to the precedent* — an exception to a recorded rule is the operator's to write, and nobody had written one; following the rule is compliance rather than a decision. *Splitting the release so the observable half ships separately* — the observable changes are the repair, not a separable feature.
+**Revisit when.** The precedent itself is revised, or a future release finds the observability test too coarse to be useful.
+**Refs.** `plugins/orchestrate/.claude-plugin/plugin.json`, `plugins/orchestrate/CHANGELOG.md`, `.claude-plugin/marketplace.json`; DECISIONS [`{#removed-default-is-breaking}`](#removed-default-is-breaking).
+
+### The Retro precondition is left as issue #919 approved it  {#927-retro-precondition-unchanged}
+
+**Decision.** `work/SKILL.md`'s `Retro` / `Ready to close` trigger keeps its stated precondition — child closed, repository gate green at the merged commit — with **no** added wait for verification. Considered and declined, not overlooked.
+**Date:** 2026-08-31 · **Issue:** #927 (G-19, cycle-2 integrated review) · **Origin:** routed to the operator by the review; the operator declined the change.
+**Why.** Issue #919's approved board transition contract defines that rung with exactly those two conditions and no wait. Adding one **extends** a contract the operator approved, which is the operator's call rather than a repair's. The review's concern is legitimate — a card can reach the terminal rung before anyone has verified the delivered artifact — and it is recorded here rather than silently dropped so a later reader can weigh it without rediscovering it.
+**Rejected.** *Adding a verification wait as part of this repair* — it would put an unapproved row into an approved contract under the cover of a fix cycle.
+**Revisit when.** Issue #919's transition contract is next amended, or a delivered-terminal move is observed landing on a card whose artifact nobody verified.
+**Refs.** `plugins/saga/skills/work/SKILL.md` §4.4; issue #919.
 
 ### The zero-direct-write guard discriminates on reaching GitHub, not on naming the operation  {#927-guard-discriminates-on-reaching-github}
 

@@ -37,6 +37,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 SAGA_SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
 PLAN_SKILL = ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
@@ -325,7 +327,8 @@ def test_a_one_element_assignments_list_is_refused(tmp_path: Path) -> None:
         payload={"assignments": [["Status", "Implementing"]]},
     )
     assert record["status"] == "gated", record
-    assert "must carry both halves" in record["error"]
+    assert "carries 1 field(s)" in record["error"]
+    assert "must carry both halves" in record["error"] or "exactly 2" in record["error"]
     assert runner.calls == [], "a refused submission reaches no writer at all"
     assert list(ledger.iterdir()) == [], "and leaves no ledger key behind"
 
@@ -592,7 +595,24 @@ def test_a_stage_only_submission_still_refuses_to_judge(tmp_path: Path) -> None:
     )
     # Refused before it can even mint a key: two assignments to one field is not a pair.
     assert record["status"] == "gated"
-    assert "distinct field" in record["halt_reason"]
+    assert "more than once" in record["halt_reason"]
+
+
+def test_a_submission_without_the_readable_field_refuses_to_judge_drift() -> None:
+    """The drift guard's real purpose: no readable half means no verdict, exactly as before.
+
+    Driven through `_expected_live` rather than a whole submission, because `normalize_assignments`
+    now refuses a `Stage`-only list outright and the two guards are independent -- the drift check
+    must still decline to judge a submission that reaches it without a `Status` half, whatever the
+    normalizer would have said about it.
+    """
+    assert RC._expected_live("set-field-status", "Active", [("Stage", "Active")]) == ""
+    assert (
+        RC._expected_live("set-field-status", "Active", [("Stage", "Active"), ("Status", "Impl")])
+        == "Impl"
+    )
+    # A non-lifecycle op is unaffected either way.
+    assert RC._expected_live("issue-progress-comment", "d", None) == ""
 
 
 def test_two_assignments_to_one_field_are_not_a_pair(tmp_path: Path) -> None:
@@ -609,7 +629,7 @@ def test_two_assignments_to_one_field_are_not_a_pair(tmp_path: Path) -> None:
         payload={"assignments": [["Status", "Implementing"], ["Status", "Integrating"]]},
     )
     assert record["status"] == "gated"
-    assert "distinct field" in record["error"]
+    assert "Status more than once" in record["error"]
 
 
 def test_the_identity_separator_is_refused_inside_a_value(tmp_path: Path) -> None:
@@ -688,3 +708,158 @@ def test_the_call_budget_scales_with_the_assignment_count(tmp_path: Path) -> Non
     assert timeouts[0] == 2 * timeouts[1], (
         f"the pair must not silently halve its budget: {timeouts}"
     )
+
+
+# ------------------------------------------------- the pair's own bounds, key and reporting
+
+
+def test_the_pair_ledger_key_stays_readable_rather_than_hashing() -> None:
+    """`+` was not in the safe-character set, so EVERY pair key took the SHA-1 fallback.
+
+    The ledger is meant to be inspectable by filename -- that is what "did this move already
+    land?" is answered with by hand -- and the writes it hid behind a digest were exactly the
+    lifecycle pairs. The fallback itself must survive: a genuinely hostile key still hashes.
+    """
+    pair = BP._safe_ledger_name("set-field-status:o/r#927:Stage+Status:Active+Implementing")
+    assert pair == "set-field-status_o_r_927_Stage+Status_Active+Implementing.json"
+    assert not re.fullmatch(r"[0-9a-f]{40}\.json", pair)
+    # Control: the SHA-1 fallback is still reached for a key the filesystem cannot take.
+    assert re.fullmatch(r"[0-9a-f]{40}\.json", BP._safe_ledger_name("a key with spaces"))
+    assert re.fullmatch(r"[0-9a-f]{40}\.json", BP._safe_ledger_name("x" * 400))
+
+
+def test_an_empty_assignments_list_is_not_a_single_field_write(tmp_path: Path) -> None:
+    """ABSENT is the single-field fallback; EMPTY is a pair payload with nothing in it."""
+    with pytest.raises(ValueError, match="present but empty"):
+        BP.normalize_assignments({"assignments": []}, "Implementing")
+    # Control: absent still falls back, byte-for-byte as before the pair existed.
+    assert BP.normalize_assignments({}, "Implementing") == [("Status", "Implementing")]
+    assert BP.normalize_assignments(None, "Implementing") == [("Status", "Implementing")]
+    assert BP.normalize_assignments({"field": "Stage"}, "Active") == [("Stage", "Active")]
+
+
+def test_the_pair_guard_bounds_the_submission_from_both_ends(tmp_path: Path) -> None:
+    """The floor caught the half-move and left the other end open.
+
+    A three-field submission is not a lifecycle boundary, and authorizing it here would put an
+    unreviewed field on the same certificate as the pair."""
+    with pytest.raises(ValueError, match="carries 3 field"):
+        BP.normalize_assignments(
+            {
+                "assignments": [
+                    ["Stage", "Active"],
+                    ["Status", "Implementing"],
+                    ["Priority", "P0"],
+                ]
+            },
+            "Implementing",
+        )
+    with pytest.raises(ValueError, match="more than once"):
+        BP.normalize_assignments(
+            {"assignments": [["Stage", "Active"], ["Stage", "Verify"], ["Status", "Impl"]]},
+            "Impl",
+        )
+    # Control: the pair itself passes, in either order.
+    assert len(
+        BP.normalize_assignments(
+            {"assignments": [["Status", "Implementing"], ["Stage", "Active"]]}, "Implementing"
+        )
+    ) == len(BP.EXPECTED_ASSIGNMENT_FIELDS)
+
+
+def test_a_single_field_write_is_not_told_it_has_halves() -> None:
+    """`outcome_reconcile.py` still drives single-field `set-field-status`, so this is live.
+
+    Telling that caller that "which halves landed is UNKNOWN" and to "check every field" describes
+    a submission it did not make -- it invents a half-written board out of a write that could only
+    ever land or not."""
+    single = BP._set_field_landed_detail("no json here", [("Status", "Implementing")])
+    assert "whether the write landed is UNKNOWN" in single
+    assert "halves" not in single
+    assert "check the field on the board" in single
+    # Control: a genuine pair still says halves, because it has them.
+    pair = BP._set_field_landed_detail(
+        "no json here", [("Stage", "Active"), ("Status", "Implementing")]
+    )
+    assert "which halves landed is UNKNOWN" in pair
+    assert "check every field" in pair
+
+
+def test_the_stdout_report_parser_survives_a_progress_prefixed_stream() -> None:
+    """The parser is what turns a half-applied pair into "which half landed", and nothing drove it.
+
+    `_out` pretty-prints, so the report's brace starts a line; any progress line printed before it
+    defeats a plain `json.loads`, which is the case this scan exists for."""
+    report = json.dumps(
+        {"updated": [{"field": "Stage"}], "failed": [{"field": "Status"}]}, indent=2
+    )
+    assignments = [("Stage", "Active"), ("Status", "Implementing")]
+    for stream in (report, "resolving project...\n" + report, "noise\n" + report + "\ntrailing"):
+        detail = BP._set_field_landed_detail(stream, assignments)
+        assert "Stage" in detail.split("NOT landed")[0], stream[:20]
+        assert "Status" in detail.split("NOT landed")[1], stream[:20]
+    # The LAST report wins: the result is printed after any interim one.
+    first = json.dumps({"updated": [{"field": "Stage"}], "failed": []}, indent=2)
+    both = BP._set_field_landed_detail(first + "\n" + report, assignments)
+    assert "NOT landed" in both and "Status" in both.split("NOT landed")[1]
+    # Control: unparseable stdout is still the UNKNOWN branch, not a fabricated verdict.
+    assert "UNKNOWN" in BP._set_field_landed_detail("{not json", assignments)
+
+
+def test_every_field_of_a_pair_is_authorized_at_BOTH_layers(tmp_path: Path) -> None:
+    """Two independent certificate checks guard a pair, and only one of them had a test.
+
+    `authorize_and_write` checks the submission's identity field before it mints a key, and
+    `default_board_writer` checks EVERY assignment again before it builds the argv. The second is
+    the one a pair actually needs -- the first sees the composite identity, so an unauthorized
+    SECOND field reaches the writer with nothing having looked at it yet. Mutating that loop to
+    read `assignments[0]` alone left the suite green.
+    """
+    runner = RecordingRunner()
+    writer = BP.default_board_writer(
+        mission_control_root=tmp_path / "mission-control", runner=runner
+    )
+
+    # Layer 2, the writer's own per-assignment loop, driven directly. An unauthorized field in
+    # EITHER position must be refused, which is what a first-element-only check gets wrong.
+    for assignments in (
+        [["Priority", "P0"], ["Status", "Implementing"]],
+        [["Stage", "Active"], ["Priority", "P0"]],
+    ):
+        with pytest.raises(ValueError, match="rejects field 'Priority'"):
+            writer(
+                op_kind="set-field-status",
+                repo="infiquetra/orch",
+                number=927,
+                payload={"assignments": assignments, "target_state": "Implementing"},
+            )
+    assert runner.calls == [], "an unauthorized field must reach no argv at all"
+
+    # Control: the authorized pair passes the same loop and does build an argv.
+    writer(
+        op_kind="set-field-status",
+        repo="infiquetra/orch",
+        number=927,
+        payload={
+            "assignments": [["Stage", "Active"], ["Status", "Implementing"]],
+            "target_state": "Implementing",
+        },
+    )
+    assert len(runner.calls) == 1
+    argv = runner.calls[0]
+    assert argv.count("--field") == 2
+
+    # Layer 1, at the key-minting site, reached through the whole path.
+    ledger = tmp_path / "auth-layer-1"
+    ledger.mkdir()
+    record = BP.authorize_and_write(
+        "set-field-status",
+        "o/r",
+        927,
+        "P0",
+        board_writer=lambda **_kwargs: None,
+        ledger_dir=ledger,
+        payload={"field": "Priority"},
+    )
+    assert record["status"] == "gated", record
+    assert list(ledger.iterdir()) == [], "a gated submission leaves no replay key"

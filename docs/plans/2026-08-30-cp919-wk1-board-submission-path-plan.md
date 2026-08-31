@@ -634,6 +634,12 @@ unresolvable option. **Every Orchestrate board write currently halts.** Three of
    does not map one-to-one onto Orchestrate's six *unit-prefix* keys — it has no `fix` row and two
    Work §4.4 rows. Guessing the remainder is how `landed` ends up on `Retro`. The six keys are:
 
+   > **SUPERSEDED for the `landed` row.** The `landed` rung was RETIRED during the cycle-1 review
+   > repair and is not in the shipped map; see "Revision record — cycle-2 review repair" at the end
+   > of this document for the ruling and its reversal condition. The table below is kept as the
+   > record of what was planned. Read the `landed` row and the paragraph after the table as
+   > historical.
+
    | Orchestrate key | Live pair | Stage index | Why |
    |---|---|---|---|
    | `plan` | `Planning` / `Designing` | 2 | a plan is being designed |
@@ -644,9 +650,11 @@ unresolvable option. **Every Orchestrate board write currently halts.** Three of
    | `landed` | `Verify` / `Awaiting verification` | 4 | post-merge, W-D2's own entry condition |
 
    All six were validated against resolved `stage_statuses`: every pair is live, and the stage
-   indices are monotonic (2, 2, 3, 3, 3, 4), so no rung moves a card backwards.
+   indices are monotonic (2, 2, 3, 3, 3, 4), so no rung moves a card backwards. **As shipped there
+   are five**, the `landed` row having been retired; the shipped indices are (2, 2, 3, 3, 3).
 
-   **`landed` is `Verify`, not `Retro`.** `Retro` / `Ready to close` is the parent's row for *child
+   **`landed` is `Verify`, not `Retro`** — historical, and the reasoning below is why the rung was
+   retired rather than remapped once the same rule was applied to `Verify` itself. `Retro` / `Ready to close` is the parent's row for *child
    closed and gate green*. Orchestrate's `landed` is a unit-landed announce — the post-merge side of
    W-D2, not close-out. Mapping it to `Retro` would move `Stage` past `Verify` and skip the
    merge-plus-deploy-or-artifact rule **this very child is enforcing on Orchestrate**. `Retro` /
@@ -1199,3 +1207,42 @@ plugins' changelogs and in `docs/engineering-journal/`: the pair is verified fro
 record rather than the caller's intent (F-01), the level-triggered drift check is restored for a pair
 submission (F-02), an unresolvable schema fails loud instead of skipping silently (F-03), and the
 five submission blocks state what a record actually proves (F-05, F-17, F-18, F-24).
+
+---
+
+## Revision record — cycle-3 review repair, 2026-08-31
+
+The cycle-2 integrated Saga Code Review returned `repairs_requested` at `a091571d`: 24 of the 40
+cycle-1 findings verified repaired by re-execution, 13 partial, 3 not repaired, plus 50 new findings.
+This is the last full scoring cycle before the review's cap. Two of its requests were resolved by
+the operator and are recorded here so a later reader can flip either.
+
+**Orchestrate ships as 4.0.0, not 3.1.0** (finding G-03). The operator ruled that this repository's
+own recorded precedent, `{#removed-default-is-breaking}` in `DECISIONS.md`, decides it: the test is
+whether a caller can observe the change, and four of these are observable — the run-file exit-code
+change from 0 to 2, the progress comment's new `board stage:` line and the discriminator shape that
+moved with it, the deletion of `STATUS_LADDER`, and `mapped_status` being retyped and now raising.
+Following a recorded rule is compliance; writing an exception to it is the operator's call and
+nobody had written one. **Reversal:** if the operator later writes that exception, the bump returns
+to 3.1.0 and the tri-lock — `plugin.json`, `.claude-plugin/marketplace.json`, `CHANGELOG.md` — moves
+back together with it. See DECISIONS `{#927-orchestrate-major-bump}`.
+
+**The Retro precondition is unchanged** (finding G-19). The review asked for a verification wait
+before `Retro` / `Ready to close`. Issue #919's approved board transition contract defines that rung
+as *child closed, repository gate green at the merged commit* with no wait, so adding one extends a
+contract the operator approved. Considered and declined, not overlooked; the concern is real and is
+recorded in DECISIONS `{#927-retro-precondition-unchanged}` so it can be weighed when #919's
+contract is next amended.
+
+**Four guards that survived their own mutation were rewritten** — a guard that cannot fail is worse
+than no guard, because it reports a safety that does not exist. The tier-dispatch guard's second
+disjunct was a heading the repair itself had added, which is the same defect class inside the very
+file the earlier repair fixed; the version-ordering test restated the resolver's sort key instead of
+calling the resolver; `cmd_announce`'s `return 2` had no test at all; and the change-kinds clause was
+still only a prose grep. Each is now driven against the real thing and paired with a control that
+proves it discriminates.
+
+**The `Verify` restriction moved onto the submission.** Pinning `DEFAULT_STATUS_MAP` alone left a
+second door open: a run file's `status_map` override never passes through the map and is validated
+for liveness only, and `("Verify", "Awaiting verification")` is a live pair. `announce_units` now
+refuses any rung naming `Verify` or `Retro` whatever its source.

@@ -50,7 +50,7 @@ it leaves `lifecycle_phase=work` because `/qa` does not yet advance the phase (s
    backend (`inline` or `team-execution`) with `recommend_execution_backend()`, pre-select that Saga
    backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default
    or automatic Saga backend and never a generic interchangeable execution backend (issue #808
-   NARROW). If the helper recommends it, **do not pre-select** it. Enter a Claude Code Workflow only
+   NARROW); **never pre-select** it. Enter a Claude Code Workflow only
    by **explicit invocation** (plan `backend: cc-workflows-ultracode`, or the operator names it in
    this session). No silent substitute. The recorded value is what the operator picked.
 5. **Coordinate the PR loop, mutate only under confirmation.** Offer PR-open, review-request, and merge
@@ -272,8 +272,8 @@ Offer only when the field is absent, which is every plan written before this con
 Otherwise, offer the default Saga backends per `references/operator-choice.md` (as narrowed by
 issue #808) and the **runnable `recommend_execution_backend()` CLI call** in
 `references/execution-strategy.md`: compute the recommendation from the work shape, then pre-select
-`inline` or `team-execution` only. If `recommended` is `cc-workflows-ultracode`, **do not pre-select**
-it — pre-select `team-execution` when a gated size/risk/consensus trigger fired, otherwise `inline`.
+`inline` or `team-execution` only — **do not pre-select** `cc-workflows-ultracode`; pre-select
+`team-execution` when a gated size/risk/consensus trigger fired, otherwise `inline`.
 The default offer is those two Saga backends. `cc-workflows-ultracode` is never a default/automatic
 backend and never a generic interchangeable execution backend. Enter Phase 1.5 only when the
 operator **explicitly invokes** a Claude Code Workflow in this session (or the plan field already
@@ -324,7 +324,10 @@ git-ignored, machine-local). Never set `next_round` — it is derived from `roun
 When `orchestration_mode == cc-workflows-ultracode`, the recorded backend choice **and** the saved spec
 are the opt-in — ultracode mode is not required to launch a Workflow. `/work` does **not** hand-roll
 sequential subagents as a substitute (that was the campps issue-38 failure: parallel + refute-N silently
-dropped). It either runs the real Workflow tool or halts visibly.
+dropped). It either runs the real Workflow tool or halts visibly. The Workflow protocol itself — lease
+contract, invocation identity, release/renew semantics — lives with its capability in the cc-workflows
+plugin (`plugins/cc-workflows/skills/cc-workflows/references/protocol.md`); this section is the
+driver-side seam.
 
 **Re-emit for freshness (KD3).** Read the saga's `orchestration_ref` to locate the canonical spec JSON
 the plan authored, and gate it mechanically before trusting it (#693):
@@ -344,25 +347,24 @@ trusted `session_id`; HALT if it is absent. Never substitute the saga id.
 test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
 export WORKFLOW_INVOCATION_ID="${WORKFLOW_INVOCATION_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+# Resolve the cc-workflows scripts dir the same way the Python seam does: the env var
+# wins, the repo-relative default is the fallback (review F12 — never hardcode the path).
+CC_WORKFLOWS_SCRIPTS_DIR="${CC_WORKFLOWS_SCRIPTS_DIR:-plugins/cc-workflows/skills/cc-workflows/scripts}"
 mkdir -p .saga
 python3 plugins/saga/scripts/spec_table.py <orchestration_ref_spec.json> --backend <backend>
 python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json> \
-  -o docs/plans/<topic>.workflow.js
+  -o docs/workflows/<topic>.workflow.js
 python3 plugins/saga/scripts/execution_spec.py lease <orchestration_ref_spec.json> \
   --invocation-id "$WORKFLOW_INVOCATION_ID" > "$WORKFLOW_LEASE_METADATA"
-python3 plugins/saga/scripts/workflow_emitter.py reserve "$WORKFLOW_LEASE_METADATA" \
+python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" reserve "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID" > ".saga/workflow-lease-receipt-${WORKFLOW_INVOCATION_ID}.json"
-python3 plugins/saga/scripts/workflow_emitter.py attest "$WORKFLOW_LEASE_METADATA" \
+python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" attest "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
 
-The final `attest` remains the launch gate, but since #677/U4 it is a contract-shape check only:
-any refusal (malformed or not-launch-ready metadata) means **launch none and HALT**. No batch lease
-exists to reserve or attest — admission retired with the lease broker (#677/U4) — so `reserve` and
-`attest` validate the frozen contract and report the retired, broker-free outcome. Since #677/U5
-the lease lifecycle hook is deleted outright: Agent/Task spawns carry no lease admission at all —
-no reservation, no claim, no lifecycle records. Generated JavaScript and children receive neither
-a registry path nor filesystem access.
+The final `attest` remains the launch gate: any refusal (malformed or not-launch-ready metadata)
+means **launch none and HALT** (the lease-contract shape and its broker-free retirement semantics:
+cc-workflows plugin `references/protocol.md`).
 
 Then launch it:
 
@@ -417,23 +419,86 @@ PY
 ```
 
 ```
-Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })
+Workflow({ scriptPath: "docs/workflows/<topic>.workflow.js" })
 ```
 
 After the Workflow returns, or after the host authoritatively confirms cancellation, close the
-protocol with the release command. Since #677/U4 no batch lease exists to settle, so it validates
-the frozen contract and reports an empty result:
+protocol with the release command (semantics: cc-workflows plugin `references/protocol.md`).
+This block runs in a **fresh shell** after the Workflow tool returns, so it re-establishes the
+launch identity itself from the newest lease metadata artifact already written under `.saga/`.
+Never mint a new id here, or the release targets a lease that was never reserved (review A01/U01).
 
 ```bash
-python3 plugins/saga/scripts/workflow_emitter.py release "$WORKFLOW_LEASE_METADATA" \
+WORKFLOW_LEASE_METADATA="$(
+  python3 - <<'PY'
+from pathlib import Path
+
+leases = [
+    path
+    for path in Path(".saga").glob("workflow-lease-*.json")
+    if not path.name.startswith("workflow-lease-receipt-")
+]
+if not leases:
+    raise SystemExit("HALT — no Workflow lease metadata found under .saga")
+print(max(leases, key=lambda path: (path.stat().st_mtime_ns, path.name)))
+PY
+)" || exit 2
+WORKFLOW_INVOCATION_ID="$(
+  python3 - "$WORKFLOW_LEASE_METADATA" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+metadata_path = Path(sys.argv[1])
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+invocation_id = metadata.get("invocation_id")
+if not isinstance(invocation_id, str) or not invocation_id:
+    raise SystemExit(f"HALT — {metadata_path} has no invocation_id")
+print(invocation_id)
+PY
+)" || exit 2
+WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+CC_WORKFLOWS_SCRIPTS_DIR="${CC_WORKFLOWS_SCRIPTS_DIR:-plugins/cc-workflows/skills/cc-workflows/scripts}"
+python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" release "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
 
-For a long driver-side collection step, the boundary renew call stays for protocol continuity;
-since #677/U4 there is no batch lease to renew (plan #677 KTD4), and it reports an empty result:
+For a long driver-side collection step, the boundary renew call stays for protocol continuity
+(semantics: cc-workflows plugin `references/protocol.md`). Fresh shell, same rule as the release
+block: re-establish the launch identity from the newest on-disk lease metadata first.
 
 ```bash
-python3 plugins/saga/scripts/workflow_emitter.py renew "$WORKFLOW_LEASE_METADATA"
+WORKFLOW_LEASE_METADATA="$(
+  python3 - <<'PY'
+from pathlib import Path
+
+leases = [
+    path
+    for path in Path(".saga").glob("workflow-lease-*.json")
+    if not path.name.startswith("workflow-lease-receipt-")
+]
+if not leases:
+    raise SystemExit("HALT — no Workflow lease metadata found under .saga")
+print(max(leases, key=lambda path: (path.stat().st_mtime_ns, path.name)))
+PY
+)" || exit 2
+WORKFLOW_INVOCATION_ID="$(
+  python3 - "$WORKFLOW_LEASE_METADATA" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+metadata_path = Path(sys.argv[1])
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+invocation_id = metadata.get("invocation_id")
+if not isinstance(invocation_id, str) or not invocation_id:
+    raise SystemExit(f"HALT — {metadata_path} has no invocation_id")
+print(invocation_id)
+PY
+)" || exit 2
+WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+CC_WORKFLOWS_SCRIPTS_DIR="${CC_WORKFLOWS_SCRIPTS_DIR:-plugins/cc-workflows/skills/cc-workflows/scripts}"
+python3 "$CC_WORKFLOWS_SCRIPTS_DIR/workflow_emitter.py" renew "$WORKFLOW_LEASE_METADATA"
 ```
 
 The Workflow tool owns execution from this point. `/work` records the returned workflow id in
@@ -468,7 +533,7 @@ On a HALT, surface the reason and one recovery line, e.g.:
   `/work`."
 - `run-id`: "HALT — saga `orchestration_ref` holds a workflow run id, not the spec path (the pre-#693
   clobber). Recovery: re-record the spec path (`saga.py save ... --orchestration-ref
-  docs/plans/<date>-<topic>-spec.json`); the run handle belongs in `--orchestration-run-id`."
+  docs/workflows/<date>-<topic>-spec.json`); the run handle belongs in `--orchestration-run-id`."
 
 This is **explicitly not** the off-host recompile-down path (`recheck_orchestration_capability` in
 `lifecycle_state.py`), which is reserved for `/loop` and `/resume`. A guarantee-bearing ultracode

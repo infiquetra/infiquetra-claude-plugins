@@ -20,6 +20,10 @@ REPO_ROOT = pathlib.Path(__file__).parent.parent
 PLUGINS_ROOT = REPO_ROOT / "plugins"
 SAGA_AGENTS_DIR = PLUGINS_ROOT / "saga" / "agents"
 EXECUTION_SPEC_PATH = PLUGINS_ROOT / "saga" / "scripts" / "execution_spec.py"
+# The emission internals (incl. this constant) moved to the cc-workflows plugin (#925/U4).
+WORKFLOW_EMITTER_PATH = (
+    PLUGINS_ROOT / "cc-workflows" / "skills" / "cc-workflows" / "scripts" / "emitter.py"
+)
 SANDBOX_SPAWN_SITES_PATH = PLUGINS_ROOT / "saga" / "references" / "sandbox-spawn-sites.md"
 CLAUDE_MD_PATH = REPO_ROOT / "CLAUDE.md"
 
@@ -101,9 +105,11 @@ def test_synthetic_name_mismatch_is_flagged() -> None:
 
 
 def test_readonly_verifier_agent_type_constant_matches_disk() -> None:
-    spec_text = EXECUTION_SPEC_PATH.read_text()
+    spec_text = WORKFLOW_EMITTER_PATH.read_text()
     m = re.search(r'READONLY_VERIFIER_AGENT_TYPE\s*=\s*"([^"]+)"', spec_text)
-    assert m, "execution_spec.py no longer defines READONLY_VERIFIER_AGENT_TYPE as a string literal"
+    assert m, (
+        "the cc-workflows emitter no longer defines READONLY_VERIFIER_AGENT_TYPE as a string literal"
+    )
     constant_value = m.group(1)
 
     agent_path = SAGA_AGENTS_DIR / "readonly-verifier.md"
@@ -111,7 +117,7 @@ def test_readonly_verifier_agent_type_constant_matches_disk() -> None:
     fm = _parse_frontmatter(agent_path.read_text())
 
     assert _constant_matches_frontmatter(constant_value, fm), (
-        f"execution_spec.py's READONLY_VERIFIER_AGENT_TYPE={constant_value!r} does not match "
+        f"the cc-workflows emitter's READONLY_VERIFIER_AGENT_TYPE={constant_value!r} does not match "
         f"saga:{fm['name']!r} derived from {agent_path}'s frontmatter."
     )
 

@@ -2,6 +2,33 @@
 
 ## 2026-08-30
 
+### The Claude Code Workflow capability extracts at the typed spec contract, not a clean cut  {#918-extraction-seam-typed-spec-contract}
+
+**Decision.** The workflow-script emission path lives in a fifteenth plugin, `plugins/cc-workflows` (`emitter.py`, the frozen `workflow_emitter.py` lease CLI, and the protocol prose). The seam is the execution spec: the emitter reads Saga's `execution_spec.py` (never a copy) through a resolution shim mirroring `fleet_commons_shim` (env override, repo walk-up, installed registry, cache sibling, loud miss); Saga's `execution_spec.py` delegates `emit`/`settlement`/`lease` back through an owner-aware cache keyed to the calling module instance, because test suites load several `execution_spec` instances per process and `sys.modules` names only one winner. The private surface crossing the boundary is declared in `SUBSTRATE_SURFACE` and pinned both ways.
+**Date:** 2026-08-30 · **Issue:** #918 (U4, #925) · **Origin:** Wave-1 plan KTD6-8; repair cycle 1 (F10a surface pin, F16 shim ladder coverage).
+**Why.** The emitter and the spec schema change together; copying the schema would create two truths. Instance-keyed delegation keeps every loaded engine coherent with its own emitter. A declared surface keeps eleven private names from growing the boundary silently.
+**Rejected.** Moving the spec schema into the plugin; a global `sys.modules`-winner cache (stale bindings across instances); leaving the shim ladder untested (it shipped at twenty percent).
+**Revisit when.** The emitter needs a substrate name not in `SUBSTRATE_SURFACE`, or the plugin ships standalone enough to need version negotiation (F31 deferred to release).
+**Refs.** Issue #925; `plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py`, `saga_spec_shim.py`; `tests/test_cc_workflows_shim.py`, `tests/test_cc_workflows_emitter_surface.py`.
+
+### Generated Workflow artifacts live in docs/workflows/, plan documents stay in docs/plans/  {#918-docs-workflows-convention}
+
+**Decision.** The top-level `docs/plans/*.workflow.js` and `docs/plans/*-spec.json` artifacts (forty-one files) moved to `docs/workflows/` with identical stems; `docs/plans/` retains plan documents and the ideation subtree. Write-path conventions in the plan/work skills, operator-choice, execution-spec, and saga-spec repointed in the same commit, and every live pointer migrated atomically — guarded since repair cycle 1 by a recursive scan of `plugins/**/*.md` (changelogs excluded) plus an inverted stale-pointer check (no `docs/plans/` artifact reference may resolve to a moved artifact).
+**Date:** 2026-08-30 · **Issue:** #918 (U4, #925) · **Origin:** Wave-1 plan sub-part B (P-D3); repair cycle 1 (F09d, F17, F18).
+**Why.** `docs/plans/` was contracting toward "plan documents only" while carrying generated scripts and specs; the conformance check over plan docs had to special-case them. Stems survive so `orchestration_ref` semantics are unchanged on this machine; ticks on other machines are documented as a migration limit (KTD7).
+**Rejected.** Moving the ideation subtree or non-plan markdown (deferred by the review's scope ruling); renaming stems (would break refs); a bulk-rewrite of historical citations in changelogs and the journal.
+**Revisit when.** A new artifact class lands under `docs/plans/`, or the plan-doc conformance pass grows to cover `docs/workflows/`.
+**Refs.** Issue #925; `tests/test_workflow_extraction.py` write-path guard and stale-pointer inversion.
+
+### The pre-answer carrier is versioned, explicit-invocation-gated, and inline-only by default  {#918-pre-answer-carrier-contract}
+
+**Decision.** `plan_pre_answers.v1` admits exactly two decision fields (`backend`, `destination`) plus `caller` metadata. Operator ruling in repair cycle 1, stricter than #808: the carrier applies ONLY `inline` automatically; `team-execution` and `cc-workflows-ultracode` are legal plan values but require explicit operator invocation, so the carrier stops and surfaces rather than applying. Carrier discipline: the fence info string must be exactly `json`; at most one carrier (a second stops); duplicate JSON keys stop; an unparseable `json` block is a malformed carrier and stops (not an absence). Schema tokens follow a two-case rule: a non-v1 token inside the family is refused whole; a foreign family is not a carrier and is ignored. The validator is runnable (`plan_pre_answers.py`, stdin or `--invocation-file`, exit 2 on stop) and Plan's Phase 0.7 names that invocation.
+**Date:** 2026-08-30 · **Issue:** #918 (U3, #924) · **Origin:** Wave-1 plan KTD4-5; repair cycle 1 operator ruling (F03), F02u/F06t runnability.
+**Why.** A carrier that could auto-apply a Workflow-capable backend would bypass the explicit-invocation boundary #808 exists to hold. Silent first-wins, last-value-wins, or absence-on-malformed would each let a conflict resolve itself without the operator.
+**Rejected.** Carrier admission of `team-execution` (ruled); widening `extract_carrier` to any schema-bearing block (the two-case rule narrows prose to code instead); keeping the conformance check and validator test-only (harness substitution).
+**Revisit when.** A v2 carrier schema, a third decision field, or an operator decision to admit richer backends through the carrier.
+**Refs.** Issue #924; `plugins/saga/scripts/plan_pre_answers.py`; `plugins/saga/references/saga-spec.md` §15; `plugins/saga/skills/plan/SKILL.md` §0.7; `tests/test_plan_pre_answers.py`.
+
 ### Retire stale Brainstorm contract data and pin lifecycle order mechanically  {#916-lifecycle-shaping-maintenance}
 
 **Decision.** Brainstorm's `engine_offer.py` / `engine_session_runner.py` / "retired runner" prose is replaced by the behavioural Dialogue ownership rule (synthesis, judgment, private model, operator exchange stay in this session; only bounded read-only helpers delegate; Orchestrate owns cross-vendor transport). Lifecycle ordering is pinned by a mechanical check over the duplicated block in four skills (ideate, loop, office-hours, plan), not by editing any skill's prose. Shaping is stated once in `saga-spec.md` §4 as an Operations board Status, not a Saga phase/command/automatic consequence, cross-referencing plan §0.6 and noting Office Hours' lowercase generic use. The dispatch line count described as volatile has no live target and nothing was removed.

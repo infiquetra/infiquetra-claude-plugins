@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.150.0] - 2026-08-30
+
+### Added
+
+- **Structured pre-answer carrier for `/plan`.** A caller that has already settled the execution
+  backend or the routing destination may hand it to Plan as a fenced JSON block under schema
+  `plan_pre_answers.v1`. A supplied `inline` backend and any valid `destination` are applied and
+  visibly narrated with the caller that supplied them — `team-execution` and
+  `cc-workflows-ultracode` are legal plan values but require explicit operator invocation, so the
+  carrier stops and surfaces them instead of applying; a missing value falls through to the normal
+  adaptive conversation; an invalid or contradictory value stops and surfaces rather than becoming
+  a silent default; and a non-v1 token inside the `plan_pre_answers` family is refused whole while
+  a foreign schema family is not a carrier and is ignored. Validated by
+  `plugins/saga/scripts/plan_pre_answers.py`. Plan's conversation gains no question, checklist, or
+  fixed sequence — the carrier is intake evaluated once at entry, not a phase.
+- **One recursive plan-artifact conformance check**, covering the declared frontmatter fields and
+  the plan marker triple in a single pass and distinguishing legacy documents from newly created
+  ones.
+
+### Changed
+
+- **`backend:` is now required on every newly created plan document.** Legacy plans that lack it
+  stay compatible through `/work`'s attended offer — never rejected, never rewritten, and no bulk
+  corpus rewrite was performed.
+- **The plan-document contract has its own section in the saga spec**, kept clearly separate from
+  the saga tick envelope field table.
+- **The Claude Code Workflow emitter moved to the new `cc-workflows` plugin** at the typed
+  execution-spec boundary. Saga keeps the spec schema, validation, tier resolution, and
+  `team_emitter.py`; the Workflow backend remains runnable and explicit-invocation-only, exactly as
+  settled. Generated workflow artifacts now live under `docs/workflows/`, and `docs/plans/` is
+  reserved for plan documents.
+
+### Fixed
+
+- **`/plan` no longer produces a finished plan that routes back into `/plan`.** Phase 5.3 now emits
+  `--phase-status complete`, so the `/loop` dispatch table routes a completed plan onward to
+  `/doc-review`. Previously the omitted flag resolved to the `pending` default, which the dispatch
+  table sends back to Plan to "finish the plan".
+- **A failed saga save is no longer silent.** A filesystem failure while writing the tick now exits
+  non-zero naming the write that failed — the tick envelope, or the `state.json` index rewrite
+  after the envelope landed (in that second case the tick stays tracked, because `restore` reads
+  the envelope directly) — instead of a bare traceback, so an unreferenced plan cannot be produced
+  unnoticed.
+- **Six counterfactual execution-backend recommendation branches removed** across four documents,
+  without weakening the explicit-invocation pins that guard them.
+
 ## [0.149.0] - 2026-08-30
 
 ### Added
@@ -111,7 +157,6 @@
   staleness gate stays valid. Route decision (Q6): skill-contract change alone — no new registered
   operation kind in `reversibility_certificate.OpKind`, whose registry stays default-deny and off the
   reviewer's paths.
-
 
 ## [0.143.0] - 2026-08-26
 
@@ -370,7 +415,6 @@
   and therefore the only carrier that travels with the work. `/work` reads that field, records it as
   the operator's pick, and does not offer. It offers exactly as before when the field is absent,
   which is every plan written before this contract, so nothing existing changes behaviour.
-
 
 ## [0.135.0] - 2026-08-16
 
@@ -655,7 +699,6 @@
 
 ## [0.125.0] - 2026-08-04
 
-
 ### Fixed
 
 - **`/work` no longer overwrites the saga field it later reads (#693).** `orchestration_ref`
@@ -937,7 +980,6 @@ gate — a false negative on a safety gate, strictly worse than the over-firing 
 The full behavior matrix — 14 forms that must gate, 8 that must not — is pinned in
 `tests/test_pre_push_gate.py` (32 tests).
 
-
 ## [0.118.0] - 2026-07-27
 
 ### Added - `spec_table.py`: the execution-spec approval table, at every backend approval (#668)
@@ -966,7 +1008,6 @@ The full behavior matrix — 14 forms that must gate, 8 that must not — is pin
 - `skills/work/SKILL.md` renders it before emitting and executing.
 - `skills/outcome/SKILL.md` renders it at leaf backend approval. `outcome.py` previously had 25
   `json.dumps` calls and no table at all.
-
 
 ## [0.117.0] - 2026-07-27
 
@@ -1003,7 +1044,6 @@ each claims to produce.
 - `references/adjustment-envelope.md`, `references/sandbox-spawn-sites.md`,
   `references/evidence-write-sites.md`, `references/envelope-token.md`, `skills/work/SKILL.md`, and
   the six gate-declaring skills updated to match.
-
 
 ## [0.116.0] - 2026-07-27
 
@@ -1473,7 +1513,6 @@ exhausted.
   (infiquetra-codex-plugins#34) ports verbatim.
 - Reference: `plugins/saga/references/outcome-cross-runtime.md`; outcome SKILL.md documents the
   new verb surface and the retirement.
-
 
 ## [0.102.0] - 2026-07-18
 

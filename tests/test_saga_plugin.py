@@ -45,8 +45,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.149.0"  # W10 (sdlc#91): office-hours + ideate state and
-    # test the Intake no-issue-creation boundary; successor to W8 c2's (sdlc#89) Verify-precondition 0.147.0
+    assert plugin_json["version"] == "0.150.0"  # issue #918 Wave 1: backend: required on new
+    # plans, the plan-artifact conformance check, the structured pre-answer carrier, the
+    # finished-plan routing repair, the surfaced save failure, and the cc-workflows emitter
+    # extraction; successor to issue #912's Brainstorm release at 0.149.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -74,7 +76,10 @@ def test_fleet_lease_runtime_adapters_are_retired_from_the_package() -> None:
 
 
 def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
-    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    # The "$CC_WORKFLOWS_SCRIPTS_DIR/..." expansions are quoted in the command blocks
+    # (review A01/S05), so match quote-tolerantly: strip double quotes from both the
+    # skill text and the needles. Presence and ordering stay the pinned contract.
+    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md").replace('"', "")
     for required in (
         "execution_spec.py settlement",
         "execution_spec.py lease",
@@ -87,10 +92,12 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
         "A missing structured result is `silent-no-op`",
         "This is at-least-once and preserves the stable idempotency key",
     ):
-        assert required in work_skill
+        assert required.replace('"', "") in work_skill
     reserve = work_skill.index("workflow_emitter.py reserve")
     attest = work_skill.index("workflow_emitter.py attest", reserve)
-    launch = work_skill.index('Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })', attest)
+    launch = work_skill.index(
+        "Workflow({ scriptPath: docs/workflows/<topic>.workflow.js })", attest
+    )
     release = work_skill.index("workflow_emitter.py release", launch)
     assert reserve < attest < launch < release
 

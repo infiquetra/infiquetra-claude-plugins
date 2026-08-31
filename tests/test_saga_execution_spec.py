@@ -35,6 +35,12 @@ def _load(name: str, path: Path) -> ModuleType:
 
 
 ES = _load("execution_spec", EXECUTION_SPEC_SCRIPT)
+# The workflow-emission internals (#925/U4) moved to the cc-workflows plugin; the spec
+# schema stays on ES and the emitter reuses this module's sys.modules entry.
+EMITTER = _load(
+    "cc_workflows_emitter",
+    ROOT / "plugins" / "cc-workflows" / "skills" / "cc-workflows" / "scripts" / "emitter.py",
+)
 _load("lifecycle_state", LIFECYCLE_STATE_SCRIPT)
 DS = _load("dispatch_settlement", SCRIPT_DIR / "dispatch_settlement.py")
 RL = sys.modules["run_ledger"]
@@ -157,7 +163,7 @@ def test_capability_unit_emit_rejects_with_named_actionable_error() -> None:
 
 def test_unhonored_opts_keys_fail_at_emit_naming_the_key() -> None:
     with pytest.raises(ES.SpecError, match="opts key 'dispatch'") as excinfo:
-        ES._reject_unhonored_workflow_agent_opts(
+        EMITTER._reject_unhonored_workflow_agent_opts(
             "unit U1",
             ['dispatch: "external-engine"', 'engine: "codex/gpt-5.5-xhigh"'],
         )
@@ -176,7 +182,7 @@ def test_agent_opts_rejects_engine_route_naming_dispatch() -> None:
         lane_max_concurrent=None,
     )
     with pytest.raises(ES.SpecError, match="opts key 'dispatch'") as excinfo:
-        ES._agent_opts(spec.units[0], route)
+        EMITTER._agent_opts(spec.units[0], route)
     assert "dispatch" in str(excinfo.value)
     assert "engine" in str(excinfo.value)
 
@@ -190,13 +196,13 @@ def test_agent_opts_does_not_silently_fall_back_to_native_model_effort() -> None
         lane_max_concurrent=None,
     )
     with pytest.raises(ES.SpecError, match="opts key 'dispatch'"):
-        ES._agent_opts(spec.units[0], native_looking_route)
+        EMITTER._agent_opts(spec.units[0], native_looking_route)
 
 
 def test_agent_opts_source_does_not_emit_inert_dispatch_opt() -> None:
     import inspect
 
-    src = inspect.getsource(ES._agent_opts)
+    src = inspect.getsource(EMITTER._agent_opts)
     assert 'dispatch: "external-engine"' not in src
     assert "dispatch:" not in src
 
@@ -210,7 +216,7 @@ def test_external_engine_marker_raises_instead_of_emitting_a_comment() -> None:
         lane_max_concurrent=None,
     )
     with pytest.raises(ES.SpecError, match="external-engine dispatch is not honored"):
-        ES._external_engine_marker(spec.units[0], route)
+        EMITTER._external_engine_marker(spec.units[0], route)
 
 
 def test_bare_model_alias_engine_unit_fails_at_emit_via_the_same_reject_path() -> None:
@@ -1206,7 +1212,7 @@ def test_engine_verifiability_round_trips_and_emit_rejects() -> None:
     with pytest.raises(ES.SpecError, match="external-engine unit"):
         ES.emit_workflow_script(spec)
     with pytest.raises(ES.SpecError, match="verifiability") as excinfo:
-        ES._agent_opts(
+        EMITTER._agent_opts(
             spec.units[0],
             ES.UnitRouting(
                 prompt="draft",
@@ -1458,7 +1464,7 @@ def _return_schema_fragment(keys: tuple[str, ...] = ("result",), *, cheap: bool 
 
 
 def _verifier_schema_fragment() -> str:
-    # Hardcoded on purpose (drift guard, #527): building this from ES._verifier_schema() would
+    # Hardcoded on purpose (drift guard, #527): building this from EMITTER._verifier_schema() would
     # make the schema-presence assertions tautological. minLength: 1 on the attribution strings
     # mirrors the runtime reporter predicate's `.length > 0` checks, so tool-boundary-valid
     # verdicts are always counted as reporters.
@@ -1516,8 +1522,8 @@ def test_verifier_agenttype_literal_matches_agent_definition_name() -> None:
     # rather than silently spawning verifiers with an unknown (=> unrestricted) agent type.
     text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
     name = _frontmatter_scalar(text, "name")
-    assert f"saga:{name}" == ES.READONLY_VERIFIER_AGENT_TYPE
-    assert ES.READONLY_VERIFIER_ISOLATION == "worktree"
+    assert f"saga:{name}" == EMITTER.READONLY_VERIFIER_AGENT_TYPE
+    assert EMITTER.READONLY_VERIFIER_ISOLATION == "worktree"
 
 
 def test_verifier_panel_emits_readonly_agenttype_and_isolation() -> None:
@@ -1611,7 +1617,7 @@ def test_schema_valid_verdict_satisfies_verifier_schema_and_prose_fails() -> Non
     # while the wf_ada4ca97-365 failure modes (prose string, missing/empty attribution fields)
     # are rejected AT THE TOOL BOUNDARY -- retried/failed there, never parse-and-hoped.
     jsonschema = pytest.importorskip("jsonschema")
-    schema = ES._verifier_schema()
+    schema = EMITTER._verifier_schema()
     jsonschema.validate(_SCHEMA_VALID_VERDICT, schema)  # must not raise
     refuting = dict(
         _SCHEMA_VALID_VERDICT, refuted_deliverable=["claim X contradicted by file:line"]
@@ -3571,7 +3577,7 @@ def test_panel_tier_emits_effective_tier_while_unit_stays_lower() -> None:
     unit = spec.unit_by_id("U1")
     assert unit is not None
 
-    verifier_opts = ES._verifier_agent_opts(unit)
+    verifier_opts = EMITTER._verifier_agent_opts(unit)
     assert 'model: "opus"' in verifier_opts
     assert 'effort: "high"' in verifier_opts
     # The unit's own tier is untouched.
@@ -3595,7 +3601,7 @@ def test_panel_tier_absent_uses_unit_tier_and_omits_keys() -> None:
     unit = spec.unit_by_id("U1")
     assert unit is not None
 
-    verifier_opts = ES._verifier_agent_opts(unit)
+    verifier_opts = EMITTER._verifier_agent_opts(unit)
     assert 'model: "sonnet"' in verifier_opts
     assert 'effort: "medium"' in verifier_opts
 

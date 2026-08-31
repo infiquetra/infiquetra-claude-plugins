@@ -131,6 +131,57 @@ moves the card to Shaping from that derived state. Do not run a reconcile tick, 
 submission, or any other lifecycle-field write from here. When there is no issue, there is simply
 no card to move; say nothing further.
 
+### 0.7 Structured pre-answers — intake, evaluated once
+
+A caller that has already settled a decision may hand it to `/plan` in the invocation text — a
+fenced JSON block, schema `plan_pre_answers.v1` — instead of letting the conversation re-ask it.
+Contract: `references/saga-spec.md` §15. Evaluate it once, at entry, before the first question,
+with the runnable validator:
+
+```bash
+python3 plugins/saga/scripts/plan_pre_answers.py --invocation-file <invocation-text-file> \
+  --established backend=<already-settled-value> --established destination=<already-settled-value>
+```
+
+Pass one `--established <field>=<value>` for each decision already established in this thread
+(repeatable), so the validator can detect a carrier that contradicts it; omit any flag whose
+decision is not yet settled — on a fresh thread, omit both.
+
+It prints the outcome as JSON and exits 0 when there is no stop (a clean apply, or no carrier) and
+2 with `stop` set otherwise — on 2, surface the `stop` reason exactly; never continue silently.
+Two other failures also exit 2: an unreadable `--invocation-file` prints the same JSON shape with a
+`stop` naming the unreadable path, and a malformed command line prints argparse's usage with no
+JSON at all — treat both as stops, never as a clean apply.
+This is intake, not a phase: its only visible effects are narration of an applied value together
+with the `caller` that supplied it, and the absence of a question that would otherwise have been
+asked. Five rules govern it:
+
+- **Apply and narrate.** A valid `destination` (Phase 5.1's enum) and an `inline` backend are
+  applied to their decisions and visibly narrated together with the `caller` that supplied them. Do
+  not ask the operator to repeat a settled decision. `team-execution` and `cc-workflows-ultracode`
+  are legal plan values, but the carrier never applies them automatically — they require explicit
+  operator invocation, so the validator stops and surfaces them instead of applying.
+- **Absence falls through.** A missing carrier, or a carrier omitting a field, is not an error: the
+  omitted decision follows the normal adaptive conversation exactly as it does today.
+- **Invalid or contradictory stops.** A value outside its enum, or one contradicting a value already
+  established in this thread (supplied to the validator as `--established <field>=<value>`), stops
+  and surfaces the conflict with the validator's reason — never a silent default, never preferring
+  either side.
+- **Unknown schema refused whole, two cases.** A non-v1 token inside the `plan_pre_answers` family
+  is refused in its entirety — no field from that carrier is applied. A foreign schema family is
+  not a carrier at all and is ignored.
+- **A malformed carrier stops.** The carrier's fence info string must be exactly `json` — any other
+  info string is not a carrier and is silently ignored, so a carrier fenced any other way drops
+  without effect. A `json` fenced block whose raw text names the `plan_pre_answers` family and
+  fails to parse, carries duplicate JSON keys, or appears alongside a second carrier stops the run
+  — never resolved silently; an unrelated malformed JSON example (no family token) is ignored. A
+  carrier with an unadmitted key (anything but `backend`, `destination`, `caller`, `schema`) or a
+  non-string `caller` is refused the same way.
+
+Direct `/plan` — an issue, a prompt, or a Brainstorm document, no carrier — is unchanged: nothing
+applied, nothing narrated, nothing stopped. Exactly two decision fields are admitted, `backend` and
+`destination`; `caller` is envelope metadata for the narration, not a decision field.
+
 ## Phase 1 — Ground (HOW)
 
 Read code before asking. This is the moment the operator sees you grounded in their actual repo, not a
@@ -218,10 +269,15 @@ type: <feat|fix|refactor|chore|docs|perf|test>
 status: active
 date: YYYY-MM-DD
 origin: <repo-relative path to the upstream brainstorm/requirements doc, when planning from one>
+backend: <inline|team-execution|cc-workflows-ultracode>
+deepened: <YYYY-MM-DD, optional; added when the confidence pass deepened the plan>
 ---
 ```
 
-`origin:` MUST be emitted so the review phase can trace the plan back to its source. The body MUST use
+`backend:` is required on every newly created plan; a legacy plan that lacks it stays compatible
+through `/work`'s attended offer — never rejected, never rewritten. `origin:` MUST be emitted
+whenever an upstream artifact exists so the review phase can trace the plan back to its source; when
+there is no upstream doc (cold-start ad-hoc), it may be omitted. The body MUST use
 the exact section markers `Implementation Units`, `Key Technical Decisions`, and the `U1` U-ID prefix —
 `/doc-review` parses these to recognize the document as a plan.
 
@@ -262,7 +318,9 @@ further.
 ### 5.1 Ask the destination
 
 Ask the routing intent (`AskUserQuestion`, or channel-inline): **plan-only / pr / merge /
-nonprod-deploy**. This becomes the saga `--destination`.
+nonprod-deploy**. This becomes the saga `--destination`. (If a Phase 0.7 pre-answer carrier
+already applied `destination`, skip this question — the applied value stands, narrated at
+intake.)
 
 **Deploy-autonomy follow-up (only when destination is `nonprod-deploy`).** When — and only when —
 the operator picks `nonprod-deploy`, ask one more question (`AskUserQuestion`, or channel-inline) to
@@ -286,7 +344,13 @@ the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-d
 tick. The tick is untracked local state: it does not survive a worktree boundary, another machine,
 or another vendor, so an executor that did not run in this directory cannot see it. The plan document
 is committed and travels with the work, which makes it the only place a decision made here can
-reliably be read later. `/work` honours that field and does not ask again.
+reliably be read later. `/work` honours that field and does not ask again. (If a Phase 0.7
+pre-answer carrier applied `backend: inline`, skip only the operator-facing offer — still call
+`lifecycle_state.recommend_execution_backend`, still record `--orchestration-recommended` with its
+output and `--orchestration-mode inline`, and still write the plan document's `backend:` field;
+the carrier never applies the other two backends, they remain explicit invocations. Skipping the
+offer must never skip the recommend call: Phase 5.3's save demands its output, and passing an
+empty value aborts the save — cycle-2 U06.)
 
 The recorded enum still has three values — `inline` ("inline") | `team-execution` ("team execution") |
 `cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
@@ -301,9 +365,8 @@ ruling). Never pre-select `cc-workflows-ultracode`. Never launch a Workflow beca
 Offer the default Saga backends per `references/operator-choice.md` (the decision contract, as
 narrowed by #808). Read the work shape, **recommend the cheapest-correct Saga backend** (`inline` or
 `team-execution`) and pre-select it. Call `lifecycle_state.recommend_execution_backend` so the tick
-can record `--orchestration-recommended` (R12 telemetry). If `recommended` is `cc-workflows-ultracode`,
-**do not pre-select** it — pre-select `team-execution` when a gated size/risk/consensus trigger fired,
-otherwise `inline`. Confirm with the operator and record what they picked via `--orchestration-mode`.
+can record `--orchestration-recommended` (R12 telemetry). Confirm with the operator and record what
+they picked via `--orchestration-mode`.
 
 **Before an explicit Workflow invocation, probe Workflow-tool availability with `ToolSearch`** (not
 an assumption) and pass the result as `--workflow-availability-source probed`; only fall back to the
@@ -491,78 +554,19 @@ Weights are ordinal/relative, not dollar prices — the cost-weighted spend-*del
   (absent → `sonnet/high`) makes any premium tier `ask` and everything at/below `silent` — the
   configurable home for the cheap-silent/expensive-asks rule.
 
-**Step 2 — Author thin per-unit prompts (KTD2).** Each unit's prompt is a **thin pointer**, not a prose
-transcription of the plan:
+**Steps 2–5 — Author the spec into a runnable workflow (lives with the capability, #925/U4).**
+Follow the cc-workflows authoring protocol — `plugins/cc-workflows/skills/cc-workflows/SKILL.md` —
+for the thin per-unit prompts (KTD2), `depends_on` barriers and `verify` panels, `validate` (HARD
+BLOCK on failure), `emit` + the `spec_table.py` approval table, and concurrent-writer safety
+(#671). Saga keeps this entry guard, the tier/spend authoring above, and the tick write below. The
+runnable commands are unchanged — `execution_spec.py validate` / `emit` still exist and delegate
+emission to the extracted emitter; artifacts land in `docs/workflows/`. The operator must
+explicitly confirm the tier assignments and the control-flow structure before `/work` runs it (R8
+"approved"); a rejection means revising the spec and re-running validate + emit + table.
 
-```
-<unit-id>: <one-line goal>. Read the plan at <repo-relative plan path> as your authoritative spec.
-```
-
-The emitter appends fan-out reconciliation, budget riders, and return contracts automatically — do not
-duplicate them in the prompt. Depth comes from the agent reading the plan; the prompt is control flow.
-
-**Step 3 — Wire depends_on barriers and optional verify panels.** Set `depends_on` from the plan's
-dependency order. For units with an **explicit** adversarial-confidence request, add a `verify` panel:
-default `n=3`, `pass_rule=majority` (KTD3 — a finding survives unless ≥⌈3/2⌉=2 of 3 verifiers refute
-it). Override N per-unit when the operator requests a different panel size; N is capped at 7
-(VERIFY_N_CAP) — above the cap, `validate` will hard-block.
-
-**Step 4 — Validate the spec (HARD BLOCK on failure).** Run the validator:
-
-```bash
-python3 plugins/saga/scripts/execution_spec.py validate docs/plans/<name>-spec.json
-```
-
-A non-zero exit means the spec is malformed. **Do NOT proceed to emit or persist an invalid spec** — fix
-the `SpecError` and re-validate. Common failures: `depends_on` cycle, fan-out unit with no `targets`,
-pilot tier mismatch (R3), N above VERIFY_N_CAP.
-
-**Step 5 — Emit the workflow script and surface for operator confirmation.** Once `validate` exits 0:
-
-```bash
-python3 plugins/saga/scripts/execution_spec.py emit docs/plans/<name>-spec.json \
-  -o docs/plans/<name>.workflow.js
-```
-
-**Then render the approval table — this is the artifact the operator approves, not the JSON:**
-
-```bash
-python3 plugins/saga/scripts/spec_table.py docs/plans/<name>-spec.json --backend <backend>
-```
-
-Paste that table into your reply verbatim. It reports every unit's tier, the dependency waves
-(what actually runs in parallel), spend against budget, and — the decision-relevant part — **what
-the chosen backend can and cannot enforce**. A spec declaring a restrictive sandbox axis the
-backend cannot enforce will HALT at emit rather than silently downgrade, and the table says so
-*before* the operator approves rather than after the run fails.
-
-Do **not** hand-build this table, and do **not** dump the spec JSON instead. Never ask an operator
-to approve a backend without showing its enforceability rows: `cc-workflows-ultracode` enforces
-read-only and disposable-worktree and reaches every model; `team-execution` enforces neither axis
-and cannot reach `fable`. That asymmetry is invisible in the spec itself.
-
-**Split the work so concurrent units never share a file (#671).** The table's
-*Concurrent-writer safety* section reports any two units that would run in the same wave while
-declaring the same path, and `emit` HALTs on one — no backend can enforce its way out of a
-collision, because concurrent agents share one working tree and Claude Code has no cross-agent file
-lock. Get this right while authoring the units, not at emit:
-
-- Different repositories, or disjoint files → safe to run in parallel.
-- Same file → **one unit**, not two. Merging beats sequencing: a single agent making both edits
-  keeps the file's context warm and reuses the prompt cache, where splitting pays to load the same
-  file into two agents and then risks losing one of their writes.
-- Only reach for `depends_on` when the two really are separate pieces of work that happen to touch
-  a shared path.
-
-Bias toward fewer, longer-lived units generally. Parallel width is not free — it costs cache
-reuse, and the fleet's own history is 88 of 92 waves running a single unit.
-
-The operator must explicitly confirm the tier assignments and the control-flow structure before
-`/work` runs it (R8 "approved"). A rejection means revising the spec and re-running validate +
-emit + table.
-
-**Spec naming convention:** `docs/plans/<YYYY-MM-DD>-<topic>-spec.json` beside the plan doc. The
-`.workflow.js` shares the same stem: `docs/plans/<YYYY-MM-DD>-<topic>.workflow.js`.
+**Spec naming convention:** `docs/workflows/<YYYY-MM-DD>-<topic>-spec.json` — the plan doc stays in
+`docs/plans/`; generated Workflow artifacts live in `docs/workflows/`. The `.workflow.js`
+shares the same stem: `docs/workflows/<YYYY-MM-DD>-<topic>.workflow.js`.
 
 ### 5.3 Write the saga tick
 
@@ -574,6 +578,7 @@ python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
   --id <issue-number-or-task-slug> \
   --lifecycle-phase plan \
+  --phase-status complete \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --deploy-autonomy <gate|auto>   # ONLY when --destination nonprod-deploy (Phase 5.1); else omit \
@@ -591,13 +596,14 @@ python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
   --id <issue-number-or-task-slug> \
   --lifecycle-phase plan \
+  --phase-status complete \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --adr-refs "ADR-NNNN|ADR-MMMM" \
   --decisions "KTD1: rationale. KTD2: rationale." \
   --orchestration-mode cc-workflows-ultracode \
   --orchestration-recommended <recommend_execution_backend() output> \
-  --orchestration-ref docs/plans/YYYY-MM-DD-<topic>-spec.json
+  --orchestration-ref docs/workflows/YYYY-MM-DD-<topic>-spec.json
 ```
 
 The `.workflow.js` is regenerable at any time from the spec (`execution_spec.py emit`); the spec JSON is
@@ -609,12 +615,27 @@ recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestra
 auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.
 
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc work pass
-`--kind task --id <slug>`. `--lifecycle-phase plan`, `--plan-path`, `--destination`,
-`--deploy-autonomy` (only when `--destination nonprod-deploy` — Phase 5.1), `--adr-refs`,
-`--decisions` (the KTD mirror), `--orchestration-mode`, `--orchestration-recommended`, and (for
-ultracode) `--orchestration-ref` carry the `/plan` consumer row from `references/saga-spec.md` §11.
+`--kind task --id <slug>`. `--lifecycle-phase plan`, `--phase-status complete`, `--plan-path`,
+`--destination`, `--deploy-autonomy` (only when `--destination nonprod-deploy` — Phase 5.1),
+`--adr-refs`, `--decisions` (the KTD mirror), `--orchestration-mode`,
+`--orchestration-recommended`, and (for ultracode) `--orchestration-ref` carry the `/plan`
+consumer row from `references/saga-spec.md` §11. `--phase-status complete` is what the `/loop`
+dispatch table routes on: a finished plan goes onward to `/doc-review`, and omitting it leaves the
+tick at the `pending` default, which routes the already-finished plan right back into `/plan`.
 When resuming (Phase 0.3 matched), this appends a tick to the existing saga directory rather than
 minting a new one.
+
+**Check the save's exit status.** A non-zero exit means the save failed, and the error message
+names which write did. If the tick envelope was never written and the full tick chain contains no
+reference to the same normalized plan path, the plan document named in the error is on disk with
+no saga state referencing it, so `/work` and `/loop` cannot see it; when any earlier tick already
+records the plan path, the document is tracked and only this save's tick is missing. If the envelope
+landed but the `state.json` index rewrite failed, the tick IS tracked — `restore` reads the envelope
+directly —
+and re-running the same save once the write failure is cleared rebuilds the index and appends one
+additional tick carrying the same state (harmless to `restore`, visible to `saga.py ticks`).
+Either way, STOP and surface the error to the operator — do not continue to Phase 5.4 on a
+failed save.
 
 ### 5.4 Route
 

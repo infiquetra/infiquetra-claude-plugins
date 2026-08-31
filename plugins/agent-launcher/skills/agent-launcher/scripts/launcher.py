@@ -13,6 +13,7 @@ duplicate the canonical ``herdr`` skill.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -24,6 +25,29 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+def _load_composer_module() -> Any:
+    """Load the sibling parser in both standalone and Orchestrate-ingested layouts."""
+    source = Path(globals().get("_AGENT_LAUNCHER_SOURCE", __file__))
+    path = source.with_name("composer.py")
+    module_name = f"_agent_launcher_composer_{abs(hash(path))}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"cannot load agent-launcher composer parser from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_COMPOSER = _load_composer_module()
+COMPOSER_GLYPH_BY_VENDOR = _COMPOSER.COMPOSER_GLYPH_BY_VENDOR
+COMPOSER_MARKERS = _COMPOSER.COMPOSER_MARKERS
+ComposerInspection = _COMPOSER.ComposerInspection
+ComposerState = _COMPOSER.ComposerState
+composer_staged_text = _COMPOSER.composer_staged_text
+inspect_composer = _COMPOSER.inspect_composer
 
 TASK_DIR = Path(".orchestrate/tasks")
 
@@ -110,20 +134,39 @@ def record_wrapper_identity(
     unit.reused = reused
     owned = tab_was_created(unit.tab_id, preexisting)
     unit.owned = owned
-    receipt: dict[str, Any] = {
+    receipt = launch_receipt_shape(unit)
+    receipt.update(
+        {
+            "unit_name": unit.name,
+            "vendor": unit.vendor,
+            "tab_id": unit.tab_id,
+            "pane": unit.pane_id,
+            "agent_name": unit.agent_name,
+            "reused": reused,
+            "owned": owned,
+            "permission": getattr(unit, "permission", None),
+            "verified": False,
+            "prompt_delivered": None,
+        }
+    )
+    unit.launch_receipt = receipt
+    return receipt
+
+
+def launch_receipt_shape(unit: Any) -> dict[str, Any]:
+    """The single owning shape for a launch receipt, completed in place as proof arrives."""
+    return {
         "unit_name": unit.name,
         "vendor": unit.vendor,
-        "tab_id": unit.tab_id,
-        "pane": unit.pane_id,
-        "agent_name": unit.agent_name,
-        "reused": reused,
-        "owned": owned,
+        "tab_id": getattr(unit, "tab_id", None),
+        "pane": getattr(unit, "pane_id", None),
+        "agent_name": getattr(unit, "agent_name", None),
+        "reused": wrapper_reused(getattr(unit, "reused", False)),
+        "owned": session_owned(unit),
         "permission": getattr(unit, "permission", None),
         "verified": False,
         "prompt_delivered": None,
     }
-    unit.launch_receipt = receipt
-    return receipt
 
 
 def normalize_task(
@@ -152,6 +195,13 @@ VENDOR_FLAGS: dict[str, dict[str, str]] = {
     # rejected at startup with "Invalid model format".
     "opencode": {"model": "-m {value}"},
 }
+
+SUPPORTED_VENDORS = frozenset(VENDOR_FLAGS)
+
+if set(COMPOSER_GLYPH_BY_VENDOR) != SUPPORTED_VENDORS:
+    missing = sorted(SUPPORTED_VENDORS - set(COMPOSER_GLYPH_BY_VENDOR))
+    extra = sorted(set(COMPOSER_GLYPH_BY_VENDOR) - SUPPORTED_VENDORS)
+    raise RuntimeError(f"composer vendor roster drift: missing={missing}, extra={extra}")
 
 # Where a tool has no launch flag for something, the session is told after it starts. Every agent
 # here takes slash commands, so tier is always settable -- through the command line where one
@@ -256,6 +306,9 @@ VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
     "qwen": {"auto": [], "bypass": ["--yolo"]},
 }
 
+if set(VENDOR_PERMISSION) != SUPPORTED_VENDORS:
+    raise RuntimeError("permission vendor roster drift from VENDOR_FLAGS")
+
 
 def resolve_permission(vendor: str, permission: str) -> list[str]:
     """The flags this vendor takes for this posture, or a stop naming what was asked for.
@@ -276,8 +329,21 @@ def resolve_permission(vendor: str, permission: str) -> list[str]:
     return list(modes[permission])
 
 
+def _extend_permission_argv(argv: list[str], vendor: str, permission: str) -> None:
+    """Append only a successfully resolved permission posture to ``argv``."""
+    argv.extend(resolve_permission(vendor, permission))
+
+
 class AccountMismatchError(SystemExit):
     """A worker launched under an account that does not match the requested plan account."""
+
+
+class StagedInputError(SystemExit):
+    """An unowned or resend-target pane contains operator-staged input."""
+
+
+class TimedOutProcess(subprocess.CompletedProcess[str]):
+    """A process result synthesized specifically from ``subprocess.TimeoutExpired``."""
 
 
 def run(
@@ -301,10 +367,21 @@ def run(
     """
     try:
         proc = subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         if check:
-            raise SystemExit(f"timed out after {timeout}s: {' '.join(cmd)}") from None
-        return subprocess.CompletedProcess(cmd, returncode=124, stdout="", stderr="timed out")
+            raise SystemExit(f"timed out after {timeout}s while running {cmd[0]!r}") from None
+        stdout = (
+            exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
+        )
+        stderr = (
+            exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        )
+        return TimedOutProcess(
+            cmd,
+            returncode=124,
+            stdout=stdout or "",
+            stderr=stderr or f"timed out after {timeout}s while running {cmd[0]!r}",
+        )
     except OSError as exc:
         if check:
             raise SystemExit(f"cannot run {cmd[0]!r}: {exc}") from None
@@ -313,7 +390,7 @@ def run(
         return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr=str(exc))
     if check and proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()
-        raise SystemExit(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{err}")
+        raise SystemExit(f"command failed ({proc.returncode}) while running {cmd[0]!r}\n{err}")
     return proc
 
 
@@ -472,7 +549,7 @@ def agent_argv(
     if workspace:
         argv.extend(["--workspace", workspace])
     argv.append(unit.vendor)
-    argv.extend(resolve_permission(unit.vendor, unit.permission))
+    _extend_permission_argv(argv, unit.vendor, unit.permission)
     flags = VENDOR_FLAGS.get(unit.vendor, {})
     for key, value in (("model", unit.model), ("effort", unit.effort)):
         template = flags.get(key)
@@ -524,6 +601,7 @@ DELIVERY_WARNING = (
 # How long to give one pane read before the input-box inspection gives up. A pane read is a
 # local socket round trip, so this is a bound on a wedged herdr rather than a wait for work.
 PANE_INPUT_READ_SECONDS = 5.0
+TAB_CLOSE_SECONDS = 10.0
 
 # A transcript written during the create is legitimate evidence; one left by an earlier run is
 # minutes or hours old. One second absorbs filesystem mtime granularity without admitting a
@@ -666,169 +744,80 @@ def read_pane(pane_id: str, lines: int = 120) -> str:
     proc = run(
         ["herdr", "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)],
         check=False,
+        timeout=PANE_INPUT_READ_SECONDS,
     )
     if proc.returncode == 0 and proc.stdout.strip():
         return proc.stdout
-    proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
+    proc = run(
+        ["herdr", "pane", "read", pane_id, "--source", "visible"],
+        check=False,
+        timeout=PANE_INPUT_READ_SECONDS,
+    )
     return proc.stdout if proc.returncode == 0 else ""
 
 
-# The glyph each vendor's composer draws at the start of its input line. Verified live on
-# 2026-08-30: claude draws U+276F between two dim rules, codex draws U+203A. A plain ">" is
-# included for a vendor that draws no decorated marker.
-COMPOSER_MARKERS = ("❯", "›", ">")
-
-# A pane runs one client, so the box carries that client's glyph and every other marker glyph
-# in the pane is content: scrollback quoting, diff hunks, picker rows, or another client's
-# echoed output. Claude draws U+276F, codex U+203A; a vendor with no decorated glyph prompts
-# with a plain ">".
-_COMPOSER_GLYPH_BY_VENDOR = {"claude": "❯", "codex": "›"}
-_DEFAULT_COMPOSER_GLYPH = ">"
-
-# Attribute-off codes per ECMA-48: intensity, italic, underline, blink, inverse, conceal,
-# strikethrough off, and default foreground/background. A parameter list ending in any of these
-# (and nothing else) ends a styled span; 0 resets outright.
-_STYLE_OFF_SGR_CODES = frozenset({21, 22, 23, 24, 27, 28, 29, 39, 49})
-
-
-def _sgr_ends_styled_span(params: str) -> bool:
-    """Whether an SGR parameter list ends a styled span under the terminal's own rules.
-
-    An empty list is a full reset, and a list containing 0 resets before any later code applies.
-    Otherwise the span ends only when every code is one of the attribute-off codes.
-    """
-    if params == "":
-        return True
-    codes = [int(code) for code in params.split(";") if code]
-    if not codes or 0 in codes:
-        return True
-    return all(code in _STYLE_OFF_SGR_CODES for code in codes)
-
-
-def _strip_marker_glyph(text: str) -> str:
-    """The block's text once its first line's leading marker glyph is removed."""
-    lines = text.splitlines()
-    if lines:
-        first = lines[0].lstrip()
-        if first[:1] in COMPOSER_MARKERS:
-            lines[0] = first[1:]
-    return "\n".join(lines)
-
-
-def _block_staged_text(block_lines: list[str]) -> str | None:
-    """One composer block's staged text under the extractor's single definition of emptiness.
-
-    Returns the staged text, "" for a block that is cleanly empty, and None when the block
-    cannot be classified at all: styling that closes before the block ends is byte-identical
-    between a vendor placeholder and a draft, and this read cannot tell them apart.
-    """
-    block_text = "\n".join(block_lines)
-    unstyled: list[str] = []
-    styled = False
-    cursor = 0
-    for sgr in re.finditer(r"\x1b\[[0-9;]*m", block_text):
-        if not styled:
-            unstyled.append(block_text[cursor : sgr.start()])
-        styled = not _sgr_ends_styled_span(sgr.group(0)[2:-1])
-        cursor = sgr.end()
-    if not styled:
-        unstyled.append(block_text[cursor:])
-    staged = _strip_marker_glyph(strip_ansi("".join(unstyled))).strip()
-    if staged:
-        return staged
-    if styled:
-        # A span still open at the end of the block: nothing distinguishes the client's
-        # decoration from typed text, whatever resets appeared earlier. The block counts as
-        # staged rather than being discarded.
-        return _strip_marker_glyph(strip_ansi(block_text)).strip()
-    if re.search(r"\x1b\[[0-9;]*m", block_text):
-        return None
-    return ""
-
-
-def composer_staged_text(ansi_text: str, *, vendor: str) -> str | None:
-    """Text a human staged in the input box, or None when the box cannot be read or classified.
-
-    A client's own placeholder is drawn inside a styled run -- codex's "Ask Codex to do
-    anything" arrives wrapped in a dim foreground SGR, and claude's hints the same way --
-    while text somebody typed carries no styling, so only unstyled runs count as staged.
-
-    The box is decided positionally. Only the pane's own glyph names a box; lines carrying any
-    other marker glyph are content. Marker lines group with the plain, unmarked lines that
-    follow them, because a wrapped draft continues on unmarked rows. The last CLASSIFIED block
-    is the box: the box is drawn at the bottom of the pane, so a scrollback echo of the glyph
-    above it is not the box, and its emptiness is the answer. An unclassifiable block -- a
-    closed styled span -- is a decoration, never a box, and never shadows a classified one;
-    when nothing in the pane classifies, the box is reported unreadable rather than silently
-    claimed empty.
-    """
-    glyph = _COMPOSER_GLYPH_BY_VENDOR.get(vendor, _DEFAULT_COMPOSER_GLYPH)
-    blocks: list[list[str]] = []
-    current: list[str] | None = None
-    for line in ansi_text.splitlines():
-        # The marker itself can sit inside a styled run, so find it with styling stripped.
-        first = strip_ansi(line).lstrip()[:1]
-        if first == glyph:
-            current = [line]
-            blocks.append(current)
-        elif current is not None and "\x1b" not in line and first not in COMPOSER_MARKERS:
-            # A wrapped draft continues on unmarked rows; a row starting with ANY marker glyph
-            # -- even another client's -- is visibly delimited content, not a continuation.
-            current.append(line)
-    classified = [text for text in map(_block_staged_text, blocks) if text is not None]
-    if classified:
-        return classified[-1]
-    return None
-
-
-def pane_input_text(pane_id: str, *, vendor: str) -> str | None:
-    """Staged text in a pane's input box, or None when the box cannot be read or classified.
-
-    Reads the visible pane with its styling intact, because the staged-versus-placeholder
-    distinction lives in the styling. A failed or timed-out read is None -- unreadable -- rather
-    than an empty box, so the two cannot be confused downstream.
-    """
+def pane_input_inspection(pane_id: str, *, vendor: str) -> Any:
+    """Classify the visible input box while preserving distinct read and parse failures."""
     proc = run(
         ["herdr", "pane", "read", pane_id, "--source", "visible", "--format", "ansi"],
         check=False,
         timeout=PANE_INPUT_READ_SECONDS,
     )
+    if isinstance(proc, TimedOutProcess):
+        return ComposerInspection(ComposerState.READ_TIMEOUT)
     if proc.returncode != 0:
-        return None
-    return composer_staged_text(proc.stdout, vendor=vendor)
+        return ComposerInspection(ComposerState.READ_FAILED)
+    return inspect_composer(proc.stdout, vendor=vendor)
 
 
-def guard_reused_pane(unit: Any, pane_id: str) -> None:
-    """Inspect a pane this launch did not create before anything is prompted into it.
+def pane_input_text(pane_id: str, *, vendor: str) -> str | None:
+    """Compatibility view of :func:`pane_input_inspection`."""
+    inspection = pane_input_inspection(pane_id, vendor=vendor)
+    if inspection.state is ComposerState.STAGED:
+        return inspection.text
+    if inspection.state is ComposerState.EMPTY:
+        return ""
+    return None
+
+
+def guard_pane_before_write(unit: Any, pane_id: str) -> None:
+    """Inspect a pane before a write that could concatenate with staged input.
 
     A tab the launcher did not create may hold text somebody staged earlier, and a prompt sent
     behind it concatenates onto that text and can submit it. Staged text is therefore a stop:
     the box is proved non-empty by a characterisation -- its length -- never by its content. An
     input box holds whatever a person last typed and did not submit, so the text itself reaches
     no receipt, no note, no stop message, and no run record those feed; nothing is cleared,
-    which is the strongest reading of "never silently discarded". A box that cannot be read is
-    noted on the unit and in the receipt and prompted as today -- visible, not silent.
+    which is the strongest reading of "never silently discarded". Every inconclusive cause is
+    recorded distinctly and prompted under the documented accepted trade, never claimed empty.
     """
-    staged = pane_input_text(pane_id, vendor=unit.vendor)
+    inspection = pane_input_inspection(pane_id, vendor=unit.vendor)
     receipt = unit.launch_receipt if isinstance(unit.launch_receipt, dict) else None
-    if staged is None:
-        append_unit_note(unit, "input box not readable; prompted without inspection")
+    if inspection.state not in (ComposerState.EMPTY, ComposerState.STAGED):
+        state = inspection.state.value
+        append_unit_note(unit, f"input box {state}, prompted without a conclusive inspection")
         if receipt is not None:
-            receipt["input_box"] = "unreadable"
+            receipt["input_box"] = state
         return
-    if staged == "":
+    if inspection.state is ComposerState.EMPTY:
         if receipt is not None:
             receipt["input_box"] = "empty"
         return
+    staged = inspection.text or ""
     if receipt is not None:
         receipt["input_box"] = "staged"
         receipt["input_box_text_chars"] = len(staged)
     append_unit_note(unit, f"staged input withheld: {len(staged)} chars, not cleared")
-    raise SystemExit(
+    raise StagedInputError(
         f"{unit.name}: pane {pane_id} already holds staged input ({len(staged)} chars, "
         "withheld from the record); refusing to prompt so the dispatched task cannot be "
         "concatenated onto it"
     )
+
+
+# Compatibility for existing external imports. New call sites use the ownership-accurate name.
+guard_unowned_pane = guard_pane_before_write
+guard_reused_pane = guard_pane_before_write
 
 
 def confirm_opencode_variant_selected(unit: Any, pane_id: str, selected: str) -> None:
@@ -897,19 +886,32 @@ def drive_opencode_variant_selection(
 def close_run_session(unit: Any) -> subprocess.CompletedProcess[str] | None:
     """Close only the tab this launch created, leaving every other session alone.
 
-    Returns the close result, or None when there was nothing owned to close. A failure is
-    recorded rather than raised: every internal caller is already unwinding a different stop,
-    and replacing that stop with this one loses the reason the session was being closed.
+    Returns the close result, or None when there was nothing owned to close. This low-level helper
+    records failures so unwind callers retain their original stop; the explicit close command
+    turns that recorded result into its own named stop.
     """
     if not session_owned(unit):
         return None
     if not unit.tab_id:
         return None
-    proc = run(["herdr", "tab", "close", unit.tab_id], check=False)
+    proc = run(
+        ["herdr", "tab", "close", unit.tab_id],
+        check=False,
+        timeout=TAB_CLOSE_SECONDS,
+    )
     if proc.returncode != 0:
+        workspace_id = str(unit.tab_id).partition(":")[0] or None
+        remaining = list_tab_ids(workspace_id)
+        if remaining is not None and unit.tab_id not in remaining:
+            return subprocess.CompletedProcess(proc.args, 0, proc.stdout, proc.stderr)
         err = (proc.stderr or proc.stdout or "").strip()
-        append_unit_note(unit, f"tab close failed ({proc.returncode}) for {unit.tab_id}: {err}")
+        append_unit_note(unit, tab_close_failure(unit.tab_id, proc.returncode, err))
     return proc
+
+
+def tab_close_failure(tab_id: str, returncode: int, detail: str) -> str:
+    """One stable error shape shared by cleanup notes and the explicit close command."""
+    return f"tab close failed ({returncode}) for {tab_id}: {detail}"
 
 
 def same_directory(reported: str, expected: str) -> bool:
@@ -996,11 +998,18 @@ def transcript_account(unit: Any, *, since: float | None = None) -> str | None:
     newest: list[tuple[float, str]] = []
     for label, root in (("personal", personal_root), ("company", company_root)):
         files = find_claude_transcripts(root, unit.worktree)
-        if since is not None:
-            floor = since - TRANSCRIPT_MTIME_SLACK_SECONDS
-            files = [f for f in files if f.stat().st_mtime >= floor]
-        if files:
-            newest.append((max(f.stat().st_mtime for f in files), label))
+        mtimes: list[float] = []
+        for file in files:
+            try:
+                mtime = file.stat().st_mtime
+            except OSError:
+                # A transcript can be rotated between glob and stat; that is no evidence rather
+                # than an exceptional launch failure.
+                continue
+            if since is None or mtime >= since - TRANSCRIPT_MTIME_SLACK_SECONDS:
+                mtimes.append(mtime)
+        if mtimes:
+            newest.append((max(mtimes), label))
     if not newest:
         return None
     return max(newest)[1]
@@ -1021,7 +1030,11 @@ def pane_account_label(pane_id: str | None) -> str | None:
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
     if not user:
         return None
-    proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
+    proc = run(
+        ["herdr", "pane", "read", pane_id, "--source", "visible"],
+        check=False,
+        timeout=PANE_INPUT_READ_SECONDS,
+    )
     if proc.returncode != 0:
         return None
     text = strip_ansi(proc.stdout)
@@ -1038,9 +1051,10 @@ def observed_account(
 ) -> tuple[str | None, str]:
     """The account the launched session is actually on, and where the answer came from.
 
-    The statusline answers first because it is painted at startup; the transcript root answers
-    for a session whose statusline this machine does not print. Neither is instant, so the window
-    is spent before the question is given up on. The evidence is ``"statusline"``,
+    The statusline answers first because it is painted at startup. At the production preflight,
+    the transcript root can answer only when the wrapper writes a same-instant create-time file;
+    ordinary transcripts start after the first prompt and are intentionally too late. Neither
+    source is instant, so the window is spent before the question is given up on. The evidence is ``"statusline"``,
     ``"transcript"`` or ``"none"`` -- the receipt records which, because the two proofs are not
     equal: a transcript only certifies this launch when its recency is tied to it.
     """
@@ -1126,30 +1140,16 @@ def verify_unit_account(
     return confirmed, evidence
 
 
-def verify_unit_preflight(
-    unit: Any,
-    pane_id: str | None,
-    *,
-    ready: bool | None = None,
-    argv: list[str] | None = None,
-    since: float | None = None,
-) -> dict[str, Any]:
-    """Verify the session against herdr before the task is submitted, and record what was checked.
-
-    Only what herdr publishes can be checked. A row in ``herdr agent list`` carries ``cwd``,
-    ``workspace_id`` and ``interactive_ready``; it carries no model at all, and its workspace is an
-    id where the plan holds a name. So the receipt separates what was confirmed against herdr from
-    what is only the request the unit was launched with. A single ``verified: true`` covering both
-    would be a claim this script is not in a position to make, and a run record that says a model
-    was verified when nothing could read it is worse than one that says it was not.
-    """
+def verify_unit_identity(
+    unit: Any, pane_id: str | None, *, ready: bool | None = None
+) -> tuple[list[str], list[str], str, bool]:
+    """Verify the Herdr identity before any guard or picker diagnostic can mask a mismatch."""
     if not pane_id:
         raise SystemExit(f"{unit.name}: session was not assigned a valid pane_id")
 
-    confirmed: list[str] = ["pane"]
-    unconfirmed: list[str] = ["model", "permission"]  # herdr publishes neither
+    confirmed = ["pane"]
+    unconfirmed = ["model", "permission"]
     row = agent_row(unit)
-
     if row is None:
         raise SystemExit(f"{unit.name}: herdr did not list the session; cannot verify agent kind")
 
@@ -1190,6 +1190,32 @@ def verify_unit_preflight(
 
     observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
     confirmed.append("readiness")
+    return confirmed, unconfirmed, str(reported_kind), observed_ready
+
+
+def verify_unit_preflight(
+    unit: Any,
+    pane_id: str | None,
+    *,
+    ready: bool | None = None,
+    argv: list[str] | None = None,
+    since: float | None = None,
+    identity: tuple[list[str], list[str], str, bool] | None = None,
+) -> dict[str, Any]:
+    """Verify the session against herdr before the task is submitted, and record what was checked.
+
+    Only what herdr publishes can be checked. A row in ``herdr agent list`` carries ``cwd``,
+    ``workspace_id`` and ``interactive_ready``; it carries no model at all, and its workspace is an
+    id where the plan holds a name. So the receipt separates what was confirmed against herdr from
+    what is only the request the unit was launched with. A single ``verified: true`` covering both
+    would be a claim this script is not in a position to make, and a run record that says a model
+    was verified when nothing could read it is worse than one that says it was not.
+    """
+    confirmed, unconfirmed, reported_kind, observed_ready = identity or verify_unit_identity(
+        unit, pane_id, ready=ready
+    )
+    if ready is not None:
+        observed_ready = bool(ready)
 
     # Herdr publishes no permission, so the launch argv is the only outside witness that the
     # session came up in the posture it declared: the declared mode's tokens must appear in it
@@ -1213,9 +1239,13 @@ def verify_unit_preflight(
     # checked. Every other vendor has no account to read, so a unit that names one anyway is
     # recorded as having asked rather than as having been confirmed.
     account_confirmed, account_evidence = verify_unit_account(unit, pane_id, since=since)
+    confirmed_outside_herdr: list[str] = []
     if unit.account:
         if account_confirmed:
-            confirmed.append("account")
+            if account_evidence == "statusline":
+                confirmed.append("account")
+            else:
+                confirmed_outside_herdr.append("account")
         else:
             unconfirmed.append("account")
 
@@ -1231,70 +1261,112 @@ def verify_unit_preflight(
     else:
         unconfirmed.append("variant")
 
-    receipt: dict[str, Any] = {
-        "unit_name": unit.name,
-        "vendor": unit.vendor,
-        "provider": effective_provider,
-        "model": unit.model,
-        "variant": effective_variant,
-        "account": unit.account,
-        # The requested-versus-resolved shape applied to the account: ``account`` above stays the
-        # requested selection, and this records which proof confirmed it -- "statusline",
-        # "transcript", or "none" when no account was asked for or nothing could be read.
-        "account_evidence": account_evidence,
-        "permission": getattr(unit, "permission", None),
-        # The requested-versus-resolved shape: ``permission`` above stays what was asked for,
-        # and this records what the launch actually carried. Herdr publishes neither, so an
-        # argv-derived fact lives in its own channel, never inside ``confirmed_against_herdr``.
-        "permission_resolved": {
-            "mode": getattr(unit, "permission", None),
-            "tokens": permission_tokens,
-            "confirmed_from": "launch_argv" if argv is not None else None,
-        },
-        "kind": str(reported_kind),
-        "agent_name": getattr(unit, "agent_name", None),
-        "reused": wrapper_reused(getattr(unit, "reused", False)),
-        "owned": session_owned(unit),
-        "working_directory": unit.worktree,
-        "worktree": unit.worktree,
-        "workspace": unit.workspace,
-        "pane": pane_id,
-        "tab_id": unit.tab_id,
-        "readiness": observed_ready,
-        "confirmed_against_herdr": confirmed,
-        "requested_only": unconfirmed,
-        # True by construction: every check that can fail raises above this point, so it reads
-        # "preflight passed", and ``confirmed_against_herdr`` is what that passing actually covered.
-        "verified": True,
-        "prompt_delivered": (getattr(unit, "launch_receipt", {}) or {}).get("prompt_delivered"),
-    }
-    # The guard annotates this same receipt just before this rebuild on the branches where it
-    # lets the launch continue. Carry its keys forward the way prompt_delivered is carried, or
-    # the emitted receipt no longer says the box was inspected or what was found.
     carried = getattr(unit, "launch_receipt", None)
-    if isinstance(carried, dict):
-        for key in ("input_box", "input_box_text_chars"):
-            if key in carried:
-                receipt[key] = carried[key]
+    receipt = carried if isinstance(carried, dict) else launch_receipt_shape(unit)
+    receipt.update(
+        {
+            "unit_name": unit.name,
+            "vendor": unit.vendor,
+            "provider": effective_provider,
+            "model": unit.model,
+            "variant": effective_variant,
+            "account": unit.account,
+            # The requested-versus-resolved shape applied to the account: ``account`` above stays the
+            # requested selection, and this records which proof confirmed it -- "statusline",
+            # "transcript", or "none" when no account was asked for or nothing could be read.
+            "account_evidence": account_evidence,
+            "permission": getattr(unit, "permission", None),
+            # The requested-versus-resolved shape: ``permission`` above stays what was asked for,
+            # and this records what the launch actually carried. Herdr publishes neither, so an
+            # argv-derived fact lives in its own channel, never inside ``confirmed_against_herdr``.
+            "permission_resolved": {
+                "mode": getattr(unit, "permission", None),
+                "tokens": permission_tokens,
+                "confirmed_from": "launch_argv" if argv is not None and permission_tokens else None,
+            },
+            "kind": str(reported_kind),
+            "agent_name": getattr(unit, "agent_name", None),
+            "reused": wrapper_reused(getattr(unit, "reused", False)),
+            "owned": session_owned(unit),
+            "working_directory": unit.worktree,
+            "worktree": unit.worktree,
+            "workspace": unit.workspace,
+            "pane": pane_id,
+            "tab_id": unit.tab_id,
+            "readiness": observed_ready,
+            "confirmed_against_herdr": confirmed,
+            "confirmed_outside_herdr": confirmed_outside_herdr,
+            "requested_only": unconfirmed,
+            # True by construction: every check that can fail raises above this point, so it reads
+            # "preflight passed", and ``confirmed_against_herdr`` is what that passing actually covered.
+            "verified": True,
+            "prompt_delivered": receipt.get("prompt_delivered"),
+        }
+    )
     unit.launch_receipt = receipt
     return receipt
 
 
+def _receipt_from_output(stdout: str) -> dict[str, Any] | None:
+    """Return a wrapper receipt from its last output line, if one was completed."""
+    try:
+        loaded = json.loads(stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _record_create_timeout(
+    unit: Any,
+    *,
+    preexisting: frozenset[str] | None,
+    workspace_id: str | None,
+) -> str:
+    """Reconcile tabs after an expired wrapper call and retain any recoverable identity."""
+    current = list_tab_ids(workspace_id)
+    if preexisting is None or current is None:
+        return "the target workspace tab set could not be reconciled"
+    created = sorted(current - preexisting)
+    if not created:
+        return "no new target-workspace tab was found"
+    unit.tab_id = created[0] if len(created) == 1 else None
+    unit.owned = len(created) == 1
+    unit.launch_receipt = launch_receipt_shape(unit)
+    unit.launch_receipt["create_timeout_new_tabs"] = created
+    unit.launch_receipt["workspace_id"] = workspace_id
+    if len(created) == 1:
+        unit.launch_receipt["tab_id"] = created[0]
+        return f"new tab {created[0]} was retained in the receipt for explicit cleanup"
+    return f"new tabs after the create attempt: {created}"
+
+
 def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
-    preexisting = list_tab_ids()
+    target_workspace_id = workspace_id_for_name(unit.workspace) if unit.workspace else None
+    preexisting = (
+        list_tab_ids(target_workspace_id) if target_workspace_id or not unit.workspace else None
+    )
     # Wall clock, not time.monotonic: it is compared against transcript filesystem mtimes as the
     # recency floor that keeps a stale transcript from certifying this launch.
     created_at = time.time()
     argv = agent_argv(unit)
     proc = run(argv, check=False, timeout=LAUNCH_CREATE_SECONDS)
-    if proc.returncode == 124:
+    if isinstance(proc, TimedOutProcess):
+        reconciliation = _record_create_timeout(
+            unit, preexisting=preexisting, workspace_id=target_workspace_id
+        )
         raise SystemExit(
             f"{unit.name}: session create timed out after {LAUNCH_CREATE_SECONDS}s; "
-            "no session was confirmed created"
+            f"{reconciliation}"
         )
     if proc.returncode != 0:
+        failure_receipt = _receipt_from_output(proc.stdout)
+        if failure_receipt is not None:
+            record_wrapper_identity(unit, failure_receipt, preexisting=preexisting)
         err = (proc.stderr or proc.stdout or "").strip()
-        raise SystemExit(f"command failed ({proc.returncode}): {' '.join(argv)}\n{err}")
+        raise SystemExit(
+            f"command failed ({proc.returncode}) while running {argv[0]!r} with "
+            f"{len(argv) - 1} argument(s)\n{err}"
+        )
     pane_id = None
     try:
         info = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -1309,15 +1381,24 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
         raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
 
     ready = await_ready(unit)
+    identity = None
     # The guard reads before any vendor-specific path types into the pane: the OpenCode picker
     # submits through the same door the prompt uses, so it must not run ahead of the inspection.
     if not session_owned(unit):
-        guard_reused_pane(unit, pane_id)
+        identity = verify_unit_identity(unit, pane_id, ready=ready)
+        guard_pane_before_write(unit, pane_id)
     if unit.vendor == "opencode":
         _, ready = drive_opencode_variant_selection(unit, pane_id)
-    verify_unit_preflight(unit, pane_id, ready=ready, argv=argv, since=created_at)
+    verify_unit_preflight(
+        unit,
+        pane_id,
+        ready=ready,
+        argv=argv,
+        since=created_at,
+        identity=identity,
+    )
 
-    send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+    used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     accepted = took_the_task(unit)
     if not accepted:
         # Resend only into a session that has still never left idle. A resend risks giving a unit
@@ -1328,7 +1409,9 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
             row = agent_row(unit)
             if row is None or row.get("agent_status") != "idle":
                 break
-            send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+            if used_pane:
+                guard_pane_before_write(unit, pane_id)
+            used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere) or used_pane
             accepted = took_the_task(unit)
             if accepted:
                 break
@@ -1379,7 +1462,7 @@ def pane_text(unit: Any, text: str) -> str:
     ).strip()
 
 
-def say(unit: Any, pane_id: str | None, text: str) -> None:
+def say(unit: Any, pane_id: str | None, text: str) -> bool:
     """Put one line into the session.
 
     ``herdr agent prompt`` is the right door, but it refuses any agent that never reports
@@ -1390,7 +1473,7 @@ def say(unit: Any, pane_id: str | None, text: str) -> None:
     handle = unit.agent_name or unit.name
     attempt = run(["herdr", "agent", "prompt", handle, text], check=False)
     if attempt.returncode == 0:
-        return
+        return False
     if not pane_id:
         raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
     typed = pane_text(unit, text)
@@ -1398,23 +1481,29 @@ def say(unit: Any, pane_id: str | None, text: str) -> None:
     fallback_note = "prompted through its pane; this agent does not report interactive readiness"
     if fallback_note not in unit.note.split("; "):
         append_unit_note(unit, fallback_note)
+    return True
 
 
 def send(
     unit: Any, pane_id: str | None, backend: str = "inline", *, review_elsewhere: bool = False
-) -> None:
+) -> bool:
     """Set the session up, then give it its task.
 
     Setup goes first and separately: a tier has to be in force before the work starts, and a slash
     command bundled into the same message as the task is just text the agent reads.
     """
+    used_pane = False
     for line in unit.setup:
-        say(unit, pane_id, line)
-    say(
-        unit,
-        pane_id,
-        normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere),
+        used_pane = say(unit, pane_id, line) or used_pane
+    used_pane = (
+        say(
+            unit,
+            pane_id,
+            normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere),
+        )
+        or used_pane
     )
+    return used_pane
 
 
 def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
@@ -1543,7 +1632,7 @@ def close_owned_session(unit: Any, *, receipt: dict[str, Any] | None = None) -> 
     proc = close_run_session(unit)
     if proc is not None and proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()
-        raise SystemExit(f"tab close failed ({proc.returncode}) for {unit.tab_id}: {err}")
+        raise SystemExit(tab_close_failure(unit.tab_id, proc.returncode, err))
 
 
 def _request_from_args(args: argparse.Namespace) -> LaunchRequest:
@@ -1574,7 +1663,11 @@ def _add_launch_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--account", default=None, choices=("company", "personal"))
     parser.add_argument("--workspace", default=None, help="Herdr workspace NAME, not an id")
     parser.add_argument("--variant", default=None)
-    parser.add_argument("--prompt", default="", help="Optional first prompt after verification")
+    parser.add_argument(
+        "--prompt",
+        default="",
+        help="First prompt; omitting it leaves the session idle and makes launch exit nonzero",
+    )
     parser.add_argument(
         "--launch-arg",
         action="append",
@@ -1610,8 +1703,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _load_receipt(raw: str) -> dict[str, Any]:
     path = Path(raw)
-    if path.is_file():
-        text = path.read_text(encoding="utf-8")
+    from_file = path.is_file()
+    if from_file:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise SystemExit(f"cannot read receipt file {path}: {exc}") from None
     elif raw.lstrip()[:1] in ("{", "["):
         text = raw
     else:
@@ -1620,7 +1717,15 @@ def _load_receipt(raw: str) -> dict[str, Any]:
             "receipt file and pass that file: "
             "python3 launcher.py launch ... > receipt.json, then close --receipt-json receipt.json"
         )
-    loaded = json.loads(text)
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError as exc:
+        if not from_file:
+            raise
+        raise SystemExit(
+            f"receipt file {path} is empty or unparseable JSON: {exc.msg}; "
+            "rerun launch with stdout redirected to a fresh receipt file"
+        ) from None
     if not isinstance(loaded, dict):
         raise SystemExit("receipt must be a JSON object")
     return loaded

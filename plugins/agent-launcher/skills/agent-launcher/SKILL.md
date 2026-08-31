@@ -31,16 +31,21 @@ python3 "$S" close --receipt-json receipt.json
 
 The launch line carries a real prompt: without one, the session never leaves idle, delivery is recorded as failed, and the command exits nonzero.
 
-`launch` always dry-runs first. It writes one JSON receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr state (kind, pane, cwd, workspace, readiness) before any prompt is sent. Model stays `requested_only` because `herdr agent list` does not publish it; Herdr publishes no permission either, so the declared posture is confirmed against the launch argv instead and recorded under `permission_resolved` in the receipt, distinctly from the requested `permission` value. `close` reads `tab_id` and `owned` from that file. `owned` is true only when the receipt `tab_id` was **not** in the Herdr workspace tab set snapshotted immediately before the wrapper ran. The wrapper's `reused` bit means the *workspace* already existed, which is the common case inside Herdr, and is not tab ownership.
+`launch` always dry-runs first. It writes one JSON receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr state (kind, pane, cwd, workspace, readiness) before any prompt is sent. Model stays `requested_only` because `herdr agent list` does not publish it. Herdr publishes no permission either, so a non-empty permission flag sequence is confirmed against the launch argv and recorded under `permission_resolved`; vendors whose selected posture has no distinguishing tokens record `confirmed_from: null`. `close` reads `tab_id` and `owned` from that file. `owned` is true only when the receipt `tab_id` was **not** in the target Herdr workspace tab set snapshotted immediately before the wrapper ran. The wrapper's `reused` bit means the *workspace* already existed, which is the common case inside Herdr, and is not tab ownership. Closing an owned tab is idempotent: if the tab is already absent from that workspace, cleanup succeeds.
 
-Permission is granted at launch and is not correctable in place: cycling a live session's permission control moves only through manual, accept-edits, plan and back to auto, so a session that came up in `auto` cannot be promoted to `bypass` afterwards and must be torn down and relaunched.
+Permission is granted at launch and is not assumed correctable in place. Claude's live permission
+control cycles through manual, accept-edits, plan, and auto; it cannot promote an `auto` session to
+`bypass`, so relaunch Claude when the requested posture differs. Other vendors have their own
+controls and must not inherit Claude's four-name ladder.
 
-A session whose tab the launcher did not create (`owned` false in the receipt) has its input box inspected before any prompt is sent — and before any vendor picker types into the pane — because a prompt typed behind staged text concatenates onto it and can submit it. Staged text is a stop, not a clear: the launch refuses to prompt and records a redacted characterisation of the box — the staged text's length, never its content — in the receipt and the unit note, naming that the text itself was withheld; nothing typed by an operator is persisted, and nothing in the box is discarded. The box is the last marker block the pane's own client glyph draws, so a scrollback echo of the glyph above an empty box is not the box and does not stop the launch. Two shapes this read cannot classify are never claimed either way: a line fully styled with its span closing at end of line is byte-identical between a client's placeholder and a draft, and a box that cannot be read at all is the other — both are recorded as `unreadable` in the receipt and prompted as today.
+A session whose tab the launcher did not create (`owned` false in the receipt) has its input box inspected before any prompt is sent — and before any vendor picker types into the pane — because a prompt typed behind staged text concatenates onto it and can submit it. Staged text is a stop, not a clear: the launch refuses to prompt and records a redacted characterisation of the box — the staged text's length, never its content — in the receipt and the unit note, naming that the text itself was withheld; nothing typed by an operator is persisted, and nothing in the box is discarded. The box is the last marker block positionally, so an earlier scrollback echo never stands in for a lower live box. Composer markers are characterised for Claude, Codex, Grok, Agy, and Qwen. Muse and OpenCode have explicit unsupported entries because no stable marker was available in the verified captures.
+
+The receipt keeps inconclusive causes separate: `unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`, and `read_timeout`. These launches remain fail-open. In particular, a real operator draft rendered entirely inside the client's styling is byte-identical to a styled placeholder, so it is recorded `unclassifiable` and the prompt proceeds. A stronger guarantee needs an independent signal such as cursor position or a vendor-published composer state; the launcher does not guess.
 
 **Stop conditions (verbatim):**
 
 - Stop before launch if the wrapper dry run does not resolve the requested working directory and current Herdr workspace.
-- Stop before prompting if Herdr cannot verify the requested agent kind, model, effort, permissions, pane, and readiness. Fields Herdr does not publish are recorded as `requested_only` rather than invented; a disagreement on a field Herdr does publish is a stop.
+- Stop before prompting if Herdr cannot verify the requested agent kind, pane, working directory, workspace, and readiness. Model and effort stay requested-only except for OpenCode's read-back variant. Permission is checked against distinguishing launch tokens when the vendor has them, and account proof exists only for Claude. A disagreement on any published or discriminating field is a stop.
 - Stop rather than silently substituting an unavailable agent or launch setting.
 - Stop cleanup if ownership of the target session cannot be proven (no `tab_id`, `tab_id` disagrees with the launch receipt, or `owned` is not true — the tab already existed in the pre-launch snapshot).
 
@@ -54,7 +59,7 @@ agents --recipes     # every recipe and layout name
 agents --crews       # crews as they resolve on THIS machine
 ```
 
-`--dry-run` previews any launch without executing it: it confirms the resolved working directory, the resolved Herdr workspace, the flag ordering, and the exact command that would run. It does not validate the model, the reasoning effort, or the account — each is passed through unchecked, and a nonexistent value still exits 0. It is therefore a preview, not a preflight, and must not be the only check before dispatching a fleet.
+`--dry-run` previews any launch without executing it: it confirms the resolved working directory, the resolved Herdr workspace, the flag ordering, and the exact command that would run. It does not validate the model, the reasoning effort, or the account; a wrapper or client may still reject a nonexistent value. It is therefore a preview, not a preflight, and must not be the only check before dispatching a fleet. Continue to the bounded live preflight below before dispatching work.
 
 Some real flags are absent from `--help`. `--herdr-control-only` is one of them — it is implemented in the wrapper and is the correct flag for the common case below. Do not "fix" it away because help does not list it.
 
@@ -68,20 +73,20 @@ A dry run cannot catch an unanswerable launch; only a live launch can. Launch on
 
 Safeguards that apply to every route, whichever step it reached:
 
-- Inspect only this allowlist of launch arguments when reading a session back: model, reasoning effort, permission posture, account or route, working directory, workspace. Never inspect argv wholesale — argv is not guaranteed free of credentials, and the allowlist contains no credential-bearing entry.
+- Inspect only this allowlist of launch arguments when reading a session back: model, reasoning effort, permission posture, account or route, working directory, workspace. Never inspect argv wholesale — argv is not guaranteed free of credentials, and the allowlist contains no credential-bearing entry. The safe receipt bookkeeping fields are `confirmed_against_herdr`, `confirmed_outside_herdr`, `requested_only`, `account_evidence`, `permission_resolved`, and `variant`.
 - Never dump an environment: no `env`, no `printenv`, no `os.environ` dump, and no diff of two environments, since a diff prints values as surely as a dump.
 - Never read, hash, copy, truncate, fingerprint, or persist a credential value. Hashing is not a safe compromise: a hash of a short secret is attackable, and a hash in a transcript is still durable proof of possession.
 - Redact inside the producing command, before output exists. Piping output through a redacting filter is not sufficient — by then the value has been produced and buffered and may already be in a transcript, a log, or a failure path that bypasses the filter.
 
-The read-back shape, using only allowlisted non-secret arguments. The probe takes a real prompt and, when the run names an account, the account flag: without a prompt the launch delivers nothing and exits nonzero on its ordinary path, and without the flag the read-back's account is null. Delivered, the probe exits 0 and writes the receipt.
+The read-back shape uses only allowlisted non-secret arguments. The probe takes a real prompt. For Claude only, include `--account <selection>` when the run names an account; other vendors have no account proof in this launcher. Without a prompt the launch delivers nothing and exits nonzero on its ordinary path. A delivered prompt exits 0 only when creation, identity, preflight, and delivery all succeed; every stop exits nonzero and may still write a partial receipt.
 
 ```bash
-python3 "$S" launch --vendor <tool> --task <probe-name> --cwd "$PWD" --model <model> --effort <effort> --account <selection> --prompt <probe-task> > receipt.json
-jq '{confirmed_against_herdr, requested_only, account, account_evidence, permission_resolved, variant}' receipt.json
+python3 "$S" launch --vendor claude --task <probe-name> --cwd "$PWD" --model <model> --effort <effort> --account <selection> --prompt <probe-task> > receipt.json
+jq '{confirmed_against_herdr, confirmed_outside_herdr, requested_only, account, account_evidence, permission_resolved, variant}' receipt.json
 python3 "$S" close --receipt-json receipt.json
 ```
 
-Read back only what the receipt can supply: `confirmed_against_herdr` against `requested_only`, the account evidence, and the argv record of the permission posture. `model` in the receipt is the requested string echoed back, not a read-back — do not treat it as confirmed. The reasoning effort is recorded under the `variant` key: for OpenCode it is confirmed against the live session and listed in `confirmed_against_herdr` — the strongest read-back the preflight produces — and for every other vendor it is the request echoed back and listed under `requested_only`.
+Read back only what the receipt can supply: `confirmed_against_herdr` against `requested_only`, the account evidence, and the argv record of a permission posture only when `confirmed_from` is `launch_argv`. `model` in the receipt is the requested string echoed back, not a read-back — do not treat it as confirmed. The reasoning effort is recorded under the `variant` key: for OpenCode it is confirmed against the live session and listed in `confirmed_against_herdr` — the strongest read-back the preflight produces — and for every other vendor it is the request echoed back and listed under `requested_only`. OpenCode's `auto` posture currently resolves to the client's `--dangerously-skip-permissions` bypass flag; request `bypass` explicitly when that posture is intended rather than reading `auto` as sandboxed.
 
 Whatever the read-back reports as missing or wrong is a stop: tear the probe session down using the receipt and resolve it before anything else launches.
 
@@ -127,7 +132,7 @@ Re-running a crew adds only the tabs its workspace is missing — that is how yo
 
 ## The common case: one named tab, no focus change
 
-This is the workflow to reach for when the user says "add an agent" or "start a reviewer". Prefer the verified-launch script above. The equivalent wrapper command is:
+This is the workflow to reach for when the user says "add an agent" or "start a reviewer". Prefer the verified-launch script above, and complete its bounded live preflight before using the equivalent wrapper command below:
 
 1. **Inspect the current workspace first** with the `herdr` skill. Choose a task name that is not already a tab label there. If the label exists, the wrapper splits a new pane inside that existing tab instead of creating a tab — correct only when the user explicitly asked for a split.
 

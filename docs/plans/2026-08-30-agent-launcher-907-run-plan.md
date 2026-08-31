@@ -1379,3 +1379,13 @@ that comes closest — the validation it wants genuinely cannot be added here �
 resolves that by recording itself as a documentation defect in this repository rather than a launcher
 product defect. L2 reads Herdr through `herdr pane read`, a command that already exists and was
 verified live; it changes nothing about pane splitting, name suffixing, or prompt queueing.
+# Amendment — 2026-08-30 final residual repair
+
+The implementation reviewed at base `a7ba2995d06f276c9629bc78c411bc9da873505d` supersedes the
+composer examples below. `composer_staged_text` and the typed `inspect_composer` entry point require
+the keyword-only `vendor` argument. A staged-input stop records `input_box: staged` plus
+`input_box_text_chars`; it never records or interpolates the operator's text. A closed-span,
+non-empty placeholder and a fully styled operator draft are byte-indistinguishable and therefore
+produce `unclassifiable`, not `empty`. The final repair also selects the lowest composer block
+positionally and keeps read failure, read timeout, missing block, unsupported vendor, and
+unclassifiable content as separate outcomes.

@@ -752,6 +752,41 @@ def test_clean_merged_keeps_a_landed_worker_with_an_outstanding_fix(
     assert worktree.exists()
 
 
+def test_clean_keeps_worktree_when_owned_tab_close_fails(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _commit(repo, "base.txt")
+    worktree = tmp_path / "worker"
+    worktree.mkdir()
+    unit = orchestrate.Unit(
+        name="worker",
+        vendor="claude",
+        task="work",
+        worktree=str(worktree),
+        tab_id="w1:t1",
+        launch_receipt={"tab_id": "w1:t1", "owned": True},
+        status="done",
+    )
+    run_record = orchestrate.Run(run_id="review-run", source="test", base="main", units=[unit])
+    failed = subprocess.CompletedProcess(["herdr"], 1, "", "multiplexer unavailable")
+    monkeypatch.setattr(orchestrate, "close_run_session", lambda _unit: failed)
+    monkeypatch.chdir(repo)
+
+    closed, kept = orchestrate.reap(run_record, merged_only=False)
+
+    assert closed == []
+    assert kept == ["worker"]
+    assert worktree.exists()
+    assert "cleanup kept worktree" in unit.note
+
+
 @pytest.mark.parametrize(
     ("review_resubmit_pending", "operator_request"),
     [

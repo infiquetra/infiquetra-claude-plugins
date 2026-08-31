@@ -304,3 +304,12 @@ empty); the only untracked files are this evidence file and the coordinator's de
    is how the one-pane-per-tab deviation on `wEY:t2` arose; the incident-shaped handback in row 5
    therefore needed the declared identity stub. Both are recorded in the coordinator's deviation
    file alongside the preserved pane captures.
+# Supersession note — 2026-08-30 final residual repair
+
+The receipt and cross-vendor conclusions below describe the pre-repair checkpoint, not the final
+issue 907 parser. The shipped receipt removed verbatim `input_box_text` and records only
+`input_box: staged` with `input_box_text_chars`. Composer selection is now vendor-keyed and
+position-first: Claude, Codex, Grok, Agy, and Qwen have verified glyphs; Muse and OpenCode are
+explicit unsupported outcomes. A closed-span non-empty Codex placeholder is `unclassifiable`, not
+empty. These statements supersede the empty-receipt row, staged-input row, and cross-vendor pass
+table without rewriting their historical evidence.

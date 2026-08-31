@@ -423,6 +423,34 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
         assert seen == ["child-9"]
 
+    def test_staged_input_stop_returns_the_unit_to_retryable_pending(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+
+        def stopped_launch(unit: Any, *_args: Any, **_kwargs: Any) -> None:
+            unit.tab_id = "w1:t-existing"
+            unit.pane_id = "w1:p-existing"
+            unit.agent_name = "alpha-2"
+            unit.launch_receipt = {"input_box": "staged", "owned": False}
+            raise orchestrate.StagedInputError("operator draft withheld")
+
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+        monkeypatch.setattr(orchestrate, "launch", stopped_launch)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.PENDING
+        assert saved.note == "operator draft withheld"
+        assert saved.tab_id is None
+        assert saved.pane_id is None
+        assert saved.agent_name is None
+        assert saved.launch_receipt == {}
+
 
 def _git_branch_exists(repo: Path, branch: str) -> bool:
     res = subprocess.run(["git", "rev-parse", "--verify", branch], cwd=repo, capture_output=True)

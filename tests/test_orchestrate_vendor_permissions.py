@@ -9,7 +9,6 @@ command line rather than the presence of a flag.
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
 import os
 import sys
@@ -222,30 +221,17 @@ class TestADeclaredPermissionIsHonouredNotSilentlyDowngraded:
     def test_unknown_permission_does_not_receive_the_auto_flag_set(
         self, orchestrate: ModuleType
     ) -> None:
-        """A guard that warns and then falls back to auto anyway is still the silent fallback.
-
-        The argv and the resolved tokens are captured OUTSIDE the raises block, so every
-        assertion below is reachable whether or not the guard raises: a silent fallback does
-        not raise, it returns the auto flag set, and the assertions catch it on the way out.
-        """
-        unit = orchestrate.Unit(name="u", vendor="claude", task="x", permission="bypasss")
+        """A typo must stop before any automatic-permission flags enter the command."""
         auto_flag_set = ["--permission-mode", "auto"]
+        recorded: list[str] = []
 
-        argv: list[str] | None = None
-        try:
-            argv = orchestrate.agent_argv(unit)
-        except SystemExit as exc:
-            assert "unknown permission" in str(exc)
-        assert argv is None or auto_flag_set not in [
-            argv[index : index + 2] for index in range(len(argv) - 1)
-        ], "the auto flag set was appended before the stop"
+        with pytest.raises(SystemExit, match="unknown permission"):
+            orchestrate._extend_permission_argv(recorded, "claude", "bypasss")
 
-        tokens: list[str] | None = None
-        with contextlib.suppress(SystemExit):
-            tokens = orchestrate.resolve_permission("claude", "bypasss")
-        assert tokens is None or tokens != auto_flag_set, (
-            "resolve_permission fell back to the auto flag set"
-        )
+        assert recorded == [], f"permission flags entered argv before the stop: {recorded}"
+        assert auto_flag_set not in [
+            recorded[index : index + 2] for index in range(len(recorded) - 1)
+        ]
 
     @pytest.mark.parametrize("vendor", sorted(BYPASS_TAILS))
     def test_every_vendor_bypass_still_emits_its_documented_flag(

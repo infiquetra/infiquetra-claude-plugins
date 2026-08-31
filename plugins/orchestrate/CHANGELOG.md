@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.2.0] - 2026-08-30
+
+### Fixed
+
+- **Unowned-pane stops are retryable and cleanup retains evidence on close failure (#907).** A
+  staged-input stop returns its unit to pending after clearing stale session identity. Cleanup now
+  keeps the worktree when an owned tab cannot be closed instead of force-removing the evidence.
+- **The Agent Launcher dependency floor is enforced, not only declared (#907).** Orchestrate
+  requires Agent Launcher 1.2.0 at runtime and chooses cached versions numerically, matching the
+  skill's `sort -V` lookup.
+
 ## [3.1.0] - 2026-08-30
 
 ### Added

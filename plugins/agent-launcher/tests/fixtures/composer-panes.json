@@ -1,0 +1,4 @@
+{
+  "claude_echo_above_empty": "\u001b[0m\u001b[38;2;80;80;80m\u001b[48;2;55;55;55m❯ \u001b[0m\u001b[38;2;255;255;255m\u001b[48;2;55;55;55mStop before running U5 with Grok and Agy blocked. Direct host verification found both real executables. Use \u001b[0m\u001b[48;2;55;55;55m                                                          \u001b[0m\nordinary output terminates the echo\n\u001b[0m\u001b[38;2;153;153;153m❯ \u001b[0m",
+  "codex_closed_placeholder": "\u001b[0m\u001b[1m\u001b[48;2;30;30;30m›\u001b[0m\u001b[48;2;30;30;30m \u001b[0m\u001b[2m\u001b[48;2;30;30;30mAsk Codex to do anything\u001b[0m\u001b[48;2;30;30;30m \u001b[0m"
+}

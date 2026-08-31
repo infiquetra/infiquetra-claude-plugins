@@ -19,8 +19,8 @@ S="$CLAUDE_PLUGIN_ROOT/skills/agent-launcher/scripts/launcher.py"
 
 python3 "$S" roster
 python3 "$S" preview --vendor codex --task reviewer --cwd "$PWD" --model gpt-5.4 --effort xhigh
-python3 "$S" launch  --vendor codex --task reviewer --cwd "$PWD" --model gpt-5.4 --effort xhigh --prompt "review the diff"
-python3 "$S" close --tab-id <tab> --receipt-json <receipt.json>
+python3 "$S" launch  --vendor codex --task reviewer --cwd "$PWD" --model gpt-5.4 --effort xhigh --prompt "review the diff" > receipt.json
+python3 "$S" close --receipt-json receipt.json
 ```
 
 The launch line carries a real prompt: without one, the session never leaves idle and the command exits nonzero.
@@ -29,7 +29,7 @@ Standard library only, so `python3` — not `uv run`.
 
 ## Boundaries
 
-- Preview with `--dry-run` before every creation. It confirms `cwd` and `herdr_workspace`; it does not confirm model, effort, or account. Stop if either is wrong.
+- Preview with `--dry-run` before every creation. It confirms `cwd` and `herdr_workspace`; it does not confirm model, effort, or account. Stop if the working directory or Herdr workspace is wrong.
 - Launch is no-focus. Do not steal the operator's pane.
 - Do not silently substitute an unavailable vendor, model, effort, or topology.
 - Close only a session whose `tab_id` matches the launch receipt.

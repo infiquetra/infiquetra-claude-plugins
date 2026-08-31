@@ -489,3 +489,8 @@ an operator's terminal draft into repository content.
 
 The seven-lens selection is recorded against this commit and this cycle. Reuse it on a repair cycle
 unless applicability changes; if it does, ask once about only the delta.
+# Supersession note — 2026-08-30 final residual repair
+
+The verbatim `input_box_text` receipt discussed below belongs to the reviewed pre-repair revision.
+The final issue 907 guard records `input_box: staged` plus `input_box_text_chars` and never persists
+the operator's draft. The historical finding text remains unchanged as review evidence.

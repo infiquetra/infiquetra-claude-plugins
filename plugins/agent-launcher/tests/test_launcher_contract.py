@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -102,6 +103,28 @@ def test_orchestrate_ingests_this_script() -> None:
     assert Path(orch.agent_argv.__code__.co_filename).resolve() == LAUNCHER.resolve()
     assert Path(orch.launch.__code__.co_filename).resolve() == LAUNCHER.resolve()
     assert orch.agent_argv is not None
+
+
+def test_orchestrate_sorts_launcher_cache_versions_numerically() -> None:
+    orch = _load(ORCHESTRATE, "_orchestrate_version_sort_proof")
+    older = Path("/cache/agent-launcher/1.9.0/skills/agent-launcher/scripts/launcher.py")
+    newer = Path("/cache/agent-launcher/1.10.0/skills/agent-launcher/scripts/launcher.py")
+    assert orch._launcher_cache_version(newer) > orch._launcher_cache_version(older)
+
+
+def test_orchestrate_rejects_a_launcher_below_its_declared_floor(
+    tmp_path: Path,
+) -> None:
+    orch = _load(ORCHESTRATE, "_orchestrate_version_floor_proof")
+    root = tmp_path / "agent-launcher" / "1.1.9"
+    script = root / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# old launcher\n", encoding="utf-8")
+    manifest = root / ".claude-plugin" / "plugin.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"version":"1.1.9"}', encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"requires >=1\.2\.0"):
+        orch._validated_agent_launcher(script)
 
 
 @pytest.mark.usefixtures("launcher_on_path")
@@ -259,6 +282,47 @@ def test_launch_create_deadline_is_a_named_constant(launcher: ModuleType) -> Non
     assert 0 < launcher.LAUNCH_CREATE_SECONDS <= 300
 
 
+def test_pane_read_and_transcript_slack_bounds_are_pinned(launcher: ModuleType) -> None:
+    assert 0 < launcher.PANE_INPUT_READ_SECONDS <= 10
+    assert 0 <= launcher.TRANSCRIPT_MTIME_SLACK_SECONDS <= 2
+
+
+def test_create_timeout_reconciles_one_new_target_workspace_tab(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda _workspace=None: frozenset({"w1:t-new"}))
+    unit = launcher.LaunchRequest(name="timed", vendor="codex")
+    detail = launcher._record_create_timeout(
+        unit,
+        preexisting=frozenset(),
+        workspace_id="w1",
+    )
+    assert "w1:t-new" in detail
+    assert unit.tab_id == "w1:t-new"
+    assert unit.launch_receipt["create_timeout_new_tabs"] == ["w1:t-new"]
+    assert unit.launch_receipt["owned"] is True
+
+
+def test_genuine_wrapper_exit_124_preserves_its_receipt(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = {
+        "tab_id": "tab-124",
+        "agent_name": "worker-124",
+        "pane_id": "pane-124",
+        "reused": False,
+    }
+    wrapper = tmp_path / "agents"
+    wrapper.write_text("#!/bin/sh\nprintf '%s\\n' '" + json.dumps(receipt) + "'\nexit 124\n")
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", worktree=str(tmp_path))
+    with pytest.raises(SystemExit, match=r"command failed \(124\)"):
+        launcher.launch(unit)
+    assert unit.tab_id == "tab-124"
+    assert unit.launch_receipt["agent_name"] == "worker-124"
+
+
 def test_create_within_the_deadline_is_unaffected(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -284,8 +348,49 @@ def test_create_within_the_deadline_is_unaffected(
     assert unit.tab_id == "tab-1"
 
 
+def test_ownership_snapshot_uses_the_unit_target_workspace(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listed: list[str | None] = []
+    receipt = {
+        "tab_id": "w9:t-new",
+        "agent_name": "reviewer-2",
+        "pane_id": "w9:p1",
+        "reused": True,
+    }
+    monkeypatch.setattr(launcher, "workspace_id_for_name", lambda name: "w9")
+
+    def list_target_tabs(workspace: str | None = None) -> frozenset[str]:
+        listed.append(workspace)
+        return frozenset({"w9:t-old"})
+
+    monkeypatch.setattr(launcher, "list_tab_ids", list_target_tabs)
+    monkeypatch.setattr(
+        launcher,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), ""),
+    )
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        launcher,
+        "verify_unit_preflight",
+        lambda *a, **k: (_ for _ in ()).throw(SystemExit("stop after snapshot")),
+    )
+    unit = launcher.LaunchRequest(
+        name="reviewer", vendor="codex", workspace="target", worktree="/tmp/wt"
+    )
+    with pytest.raises(SystemExit, match="stop after snapshot"):
+        launcher.launch(unit)
+    assert listed == ["w9"]
+    assert unit.owned is True
+
+
 CODEX_PLACEHOLDER = "\x1b[38;2;153;153;153m› Ask Codex to do anything\x1b[0m"
 STAGED_SLASH_COMMAND = "/saga:doc-review docs/plans/x.md"
+CAPTURED_COMPOSERS = json.loads(
+    (Path(__file__).parent / "fixtures" / "composer-panes.json").read_text(encoding="utf-8")
+)
 
 
 def _claude_pane(composer_line: str) -> str:
@@ -322,6 +427,7 @@ def _prepare_guard_launch(
     pane_dump: str,
     receipt_tab: str,
     existing_tabs: tuple[str, ...],
+    vendor: str = "claude",
 ) -> tuple[Any, list[list[str]], list[tuple[Any, ...]]]:
     recorded: list[list[str]] = []
     sends: list[tuple[Any, ...]] = []
@@ -350,14 +456,12 @@ def _prepare_guard_launch(
             "cwd": "/tmp/wt",
             "workspace_id": "w80",
             "interactive_ready": True,
-            "agent": "claude",
+            "agent": vendor,
         },
     )
     monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
-    # The unit's vendor keys the composer glyph the scan looks for; the ❯ dumps below are a
-    # claude pane's shape.
-    unit = launcher.LaunchRequest(name="reviewer", vendor="claude", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="reviewer", vendor=vendor, worktree="/tmp/wt")
     return unit, recorded, sends
 
 
@@ -365,7 +469,8 @@ def test_a_closed_placeholder_reads_unreadable_not_empty(launcher: ModuleType) -
     """A line fully styled with its span closing at end of line is byte-identical between a
     vendor placeholder and a draft, so it must never be claimed empty: the honest answer is
     unreadable, and the guard takes the unreadable branch rather than prompting on a claim."""
-    assert launcher.composer_staged_text(CODEX_PLACEHOLDER, vendor="codex") is None
+    captured = CAPTURED_COMPOSERS["codex_closed_placeholder"]
+    assert launcher.composer_staged_text(captured, vendor="codex") is None
 
 
 def test_composer_typed_text_is_staged(launcher: ModuleType) -> None:
@@ -373,9 +478,46 @@ def test_composer_typed_text_is_staged(launcher: ModuleType) -> None:
     assert staged == STAGED_SLASH_COMMAND
 
 
+def test_composer_glyph_table_covers_the_launcher_vendor_roster(launcher: ModuleType) -> None:
+    assert launcher.COMPOSER_GLYPH_BY_VENDOR == {
+        "claude": "❯",
+        "codex": "›",
+        "grok": "❯",
+        "agy": ">",
+        "qwen": ">",
+        "muse": None,
+        "opencode": None,
+    }
+    assert set(launcher.COMPOSER_GLYPH_BY_VENDOR) == set(launcher.VENDOR_FLAGS)
+
+
+@pytest.mark.parametrize(
+    ("vendor", "glyph"),
+    [("claude", "❯"), ("codex", "›"), ("grok", "❯"), ("agy", ">"), ("qwen", ">")],
+)
+def test_every_characterised_vendor_stops_on_its_own_draft(
+    launcher: ModuleType, vendor: str, glyph: str
+) -> None:
+    result = launcher.inspect_composer(f"{glyph} destructive draft", vendor=vendor)
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "destructive draft"
+
+
+def test_bordered_composer_matches_after_the_border(launcher: ModuleType) -> None:
+    result = launcher.inspect_composer("│ ❯ destructive draft", vendor="grok")
+    assert result.state is launcher.ComposerState.STAGED
+
+
 def test_composer_absent_reads_as_unreadable(launcher: ModuleType) -> None:
     dump = "some session output\na second line of plain output\n"
     assert launcher.composer_staged_text(dump, vendor="claude") is None
+
+
+def test_codex_placeholder_is_distinct_from_no_composer(launcher: ModuleType) -> None:
+    placeholder = launcher.inspect_composer(CODEX_PLACEHOLDER, vendor="codex")
+    absent = launcher.inspect_composer("ordinary output", vendor="codex")
+    assert placeholder.state is launcher.ComposerState.UNCLASSIFIABLE
+    assert absent.state is launcher.ComposerState.NOT_FOUND
 
 
 def test_reused_pane_holding_a_slash_command_is_not_prompted(
@@ -447,7 +589,7 @@ def test_freshly_created_pane_takes_no_inspection_path(
     assert ansi_reads == []
 
 
-@pytest.mark.parametrize("reset_code", ["00", "39", "22", "0;10"])
+@pytest.mark.parametrize("reset_code", ["00", "22", "0;10"])
 def test_reset_codes_after_a_styled_marker_return_the_staged_text(
     launcher: ModuleType, reset_code: str
 ) -> None:
@@ -456,12 +598,10 @@ def test_reset_codes_after_a_styled_marker_return_the_staged_text(
     assert launcher.composer_staged_text(line, vendor="claude") == "/deploy prod --force"
 
 
-def test_marker_styled_and_never_reset_counts_as_staged(launcher: ModuleType) -> None:
-    """Styling that spans the whole line and never ends cannot be a placeholder signal."""
-    assert (
-        launcher.composer_staged_text("\x1b[2m❯ /deploy prod --force", vendor="claude")
-        == "/deploy prod --force"
-    )
+def test_marker_styled_and_never_reset_is_unclassifiable(launcher: ModuleType) -> None:
+    """A fully styled draft and a fully styled placeholder are byte-indistinguishable."""
+    result = launcher.inspect_composer("\x1b[2m❯ /deploy prod --force", vendor="claude")
+    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
 
 
 def test_a_bare_marker_row_below_staged_text_is_a_decoy(launcher: ModuleType) -> None:
@@ -494,46 +634,23 @@ def test_escapes_inside_staged_text_are_stripped(launcher: ModuleType) -> None:
     )
 
 
-# The style-reset predicate, unit-tested directly over the attribute-off code set AND its
-# complement: emptying the set or reducing the predicate to a literal-zero test must fail
-# these, not survive behind the never-reset fallback.
-ATTRIBUTE_OFF_CODES = ("21", "22", "23", "24", "27", "28", "29", "39", "49")
-ATTRIBUTE_ON_CODES = (
-    "1",
-    "3",
-    "4",
-    "5",
-    "7",
-    "8",
-    "9",
-    "31",
-    "38",
-    "44",
-    "90",
-    "101",
-    "38;2;153;153;153",
-)
+def test_colour_reset_does_not_clear_dim_intensity(launcher: ModuleType) -> None:
+    """Select Graphic Rendition code 39 resets foreground only, never intensity."""
+    line = "\x1b[2;31m❯\x1b[39m fully styled draft"
+    assert launcher.inspect_composer(line, vendor="claude").state is (
+        launcher.ComposerState.UNCLASSIFIABLE
+    )
 
 
-@pytest.mark.parametrize("code", ATTRIBUTE_OFF_CODES)
-def test_every_attribute_off_code_ends_a_styled_span(launcher: ModuleType, code: str) -> None:
-    assert launcher._sgr_ends_styled_span(code) is True
-    assert launcher._sgr_ends_styled_span(f"0;{code}") is True
+def test_intensity_reset_exposes_plain_staged_text(launcher: ModuleType) -> None:
+    line = "\x1b[2;31m❯\x1b[39;22m plain draft"
+    result = launcher.inspect_composer(line, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "plain draft"
 
 
-@pytest.mark.parametrize("code", ATTRIBUTE_ON_CODES)
-def test_attribute_on_codes_do_not_end_a_styled_span(launcher: ModuleType, code: str) -> None:
-    assert launcher._sgr_ends_styled_span(code) is False
-
-
-@pytest.mark.parametrize("params", ["", "0", "00", "0;10", "0;38;2;1;2;3"])
-def test_reset_forms_end_a_styled_span(launcher: ModuleType, params: str) -> None:
-    assert launcher._sgr_ends_styled_span(params) is True
-
-
-# The marker scan: the box is the last classified block of the pane's own glyph. Lines carrying
-# another glyph are content, a blank marker row groups with the unmarked rows that continue its
-# draft, and a closed styled span is a decoration that never shadows a classified block.
+# The marker scan: the box is the last block of the pane's own glyph. Lines carrying another glyph
+# are content, and an inconclusive live block never lets an earlier scrollback block decide.
 def test_menu_rows_below_the_box_are_content_not_the_box(launcher: ModuleType) -> None:
     dump = "❯ deploy now\n> Option A\n> Option B"
     assert launcher.composer_staged_text(dump, vendor="claude") == "deploy now"
@@ -554,49 +671,41 @@ def test_a_plain_marker_vendor_reads_its_own_box(launcher: ModuleType) -> None:
 def test_a_blank_marker_row_with_continuation_rows_is_one_block(launcher: ModuleType) -> None:
     """A wrapped draft continues on unmarked rows; reading only the marker row reports the
     first wrapped line and drops the rest."""
-    dump = "❯\nwrapped draft continuation"
+    dump = "❯\n  wrapped draft continuation"
     assert launcher.composer_staged_text(dump, vendor="claude") == "wrapped draft continuation"
 
 
-def test_a_draft_above_a_closed_placeholder_row_is_staged(launcher: ModuleType) -> None:
-    """The cycle-2 probe: the decorated draft block classifies, the closed placeholder row does
-    not, and the decoration never shadows the box -- the guard must stop, not record empty."""
-    dump = f"❯ deploy the prod key now\n{CODEX_PLACEHOLDER}"
-    assert launcher.composer_staged_text(dump, vendor="claude") == "deploy the prod key now"
+def test_styled_wrapped_row_stays_in_a_proven_staged_block(launcher: ModuleType) -> None:
+    dump = "❯ deploy the\n  \x1b[31mfleet\x1b[0m"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "deploy thefleet"
 
 
-def test_styled_draft_reopened_after_a_close_is_staged(launcher: ModuleType) -> None:
-    assert (
-        launcher.composer_staged_text("\x1b[2m❯\x1b[0m\x1b[2m draft text", vendor="claude")
-        == "draft text"
-    )
+def test_first_noncontinuation_terminates_the_composer_block(launcher: ModuleType) -> None:
+    dump = "❯ draft\nordinary output\n  unrelated indented output"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "draft"
 
 
-# The never-reset fallback: a span still open at end of line triggers it, whatever resets
-# appeared earlier on the row.
-def test_leading_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("\x1b[0m\x1b[2m❯ /deploy prod", vendor="claude") == (
-        "/deploy prod"
-    )
+def test_menu_marker_terminates_the_composer_block(launcher: ModuleType) -> None:
+    dump = "❯ draft\n  continuation\n> menu choice\n  menu detail"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "draftcontinuation"
 
 
-def test_bare_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("\x1b[m\x1b[2m❯ /deploy prod", vendor="claude") == (
-        "/deploy prod"
-    )
+def test_a_draft_above_a_closed_placeholder_row_is_unclassifiable(launcher: ModuleType) -> None:
+    """The live closed-span box wins positionally over an earlier scrollback draft."""
+    dump = '❯ deploy the prod key now\n\x1b[2m❯ Try "fix it"\x1b[0m'
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
 
 
-def test_lone_colour_reset_does_not_disable_the_fallback(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("\x1b[39m\x1b[2m❯ /deploy prod", vendor="claude") == (
-        "/deploy prod"
-    )
+@pytest.mark.parametrize("prefix", ["\x1b[0m", "\x1b[m", "\x1b[39m"])
+def test_open_fully_styled_content_is_unclassifiable(launcher: ModuleType, prefix: str) -> None:
+    result = launcher.inspect_composer(f"{prefix}\x1b[2m❯ /deploy prod", vendor="claude")
+    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
 
 
-def test_closed_hint_then_reopened_span_keeps_the_draft(launcher: ModuleType) -> None:
-    assert (
-        launcher.composer_staged_text("\x1b[2m❯ \x1b[0m\x1b[2mdeploy prod", vendor="claude")
-        == "deploy prod"
-    )
+def test_closed_hint_then_reopened_span_is_unclassifiable(launcher: ModuleType) -> None:
+    result = launcher.inspect_composer("\x1b[2m❯ \x1b[0m\x1b[2mdeploy prod", vendor="claude")
+    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
 
 
 def test_unreadable_box_is_marked_and_the_prompt_still_goes(
@@ -648,10 +757,25 @@ def test_unreadable_box_is_marked_and_the_prompt_still_goes(
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
     unit = launcher.LaunchRequest(name="reader", vendor="codex", worktree="/tmp/wt")
     launcher.launch(unit)
-    assert unit.launch_receipt["input_box"] == "unreadable"
-    assert "input box not readable" in unit.note
+    assert unit.launch_receipt["input_box"] == "read_failed"
+    assert "input box read_failed" in unit.note
     assert len(sends) == 1
     assert pane_read_timeouts == [launcher.PANE_INPUT_READ_SECONDS]
+
+
+def test_pane_read_timeout_is_distinct_from_a_failed_read(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timed_out = launcher.TimedOutProcess(["herdr"], 124, "", "timed out")
+    monkeypatch.setattr(launcher, "run", lambda *a, **k: timed_out)
+    assert launcher.pane_input_inspection("w1:p1", vendor="claude").state is (
+        launcher.ComposerState.READ_TIMEOUT
+    )
+    failed = subprocess.CompletedProcess(["herdr"], 124, "", "vendor returned 124")
+    monkeypatch.setattr(launcher, "run", lambda *a, **k: failed)
+    assert launcher.pane_input_inspection("w1:p1", vendor="claude").state is (
+        launcher.ComposerState.READ_FAILED
+    )
 
 
 def test_staged_text_reaches_no_sink_verbatim(
@@ -680,8 +804,7 @@ def test_staged_text_reaches_no_sink_verbatim(
 def test_opencode_guard_reads_before_the_picker_types(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An unowned OpenCode pane holding staged text: the guard must stop the launch before the
-    variant picker has typed anything into the pane through the same door prompts use."""
+    """The input guard runs before the OpenCode picker writes into an unowned pane."""
     typed: list[list[str]] = []
     # An opencode pane's own glyph is ">": the menu rows and the staged draft all carry it, and
     # the last classified block is the box.
@@ -710,10 +833,27 @@ def test_opencode_guard_reads_before_the_picker_types(
     monkeypatch.setattr(launcher, "run", fake_run)
     monkeypatch.setattr(launcher, "launcher", lambda: "agents")
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    order: list[str] = []
+    monkeypatch.setattr(
+        launcher, "verify_unit_identity", lambda *a, **k: ([], [], "opencode", True)
+    )
+    monkeypatch.setattr(launcher, "guard_pane_before_write", lambda *a, **k: order.append("guard"))
+
+    def select_variant(*_args: object, **_kwargs: object) -> tuple[str, bool]:
+        order.append("picker")
+        return "high", True
+
+    monkeypatch.setattr(
+        launcher,
+        "drive_opencode_variant_selection",
+        select_variant,
+    )
     monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    monkeypatch.setattr(launcher, "send", lambda *a, **k: False)
+    monkeypatch.setattr(launcher, "took_the_task", lambda *a, **k: True)
     unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt", effort="high")
-    with pytest.raises(SystemExit, match="already holds staged input"):
-        launcher.launch(unit)
+    launcher.launch(unit)
+    assert order == ["guard", "picker"]
     assert typed == []
 
 
@@ -734,30 +874,62 @@ def test_a_reused_pane_with_an_empty_box_below_an_echo_is_not_stopped(
     assert unit.launch_receipt["input_box"] == "empty"
 
 
-def test_the_cycle_2_mixed_glyph_probe_stops_and_never_claims_empty(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(("vendor", "glyph"), [("codex", "›"), ("grok", "❯"), ("agy", ">")])
+def test_non_claude_guard_stops_on_the_vendor_composer_draft(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    vendor: str,
+    glyph: str,
 ) -> None:
-    """The cycle-2 probe end to end: a draft above the captured codex placeholder row stops the
-    launch and is recorded staged. The box is never claimed empty over operator text."""
     unit, _recorded, sends = _prepare_guard_launch(
         launcher,
         monkeypatch,
-        pane_dump=f"❯ deploy the prod key now\n{CODEX_PLACEHOLDER}",
+        pane_dump=f"scrollback\n{glyph} destructive draft",
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        vendor=vendor,
     )
-    with pytest.raises(SystemExit, match="already holds staged input"):
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.launch(unit)
     assert sends == []
     assert unit.launch_receipt["input_box"] == "staged"
 
 
-def test_a_closed_styled_box_is_recorded_unreadable_not_empty(
+def test_echo_above_a_closed_span_placeholder_does_not_false_stop(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B5 end to end: styling that closes at end of line cannot be classified as placeholder or
-    draft, so the guard takes the unreadable branch and prompts as today -- it never records a
-    silent empty claim it cannot justify."""
+    """A closed-span live box wins over a classified scrollback echo positionally."""
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=CAPTURED_COMPOSERS["claude_echo_above_empty"],
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    launcher.launch(unit)
+    assert len(sends) == 1
+    assert unit.launch_receipt["input_box"] == "empty"
+
+
+def test_echo_above_closed_span_hint_does_not_fall_back_to_the_echo(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump='❯ earlier submitted prompt\noutput\n\x1b[2m❯ Try "fix it"\x1b[0m',
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    launcher.launch(unit)
+    assert len(sends) == 1
+    assert unit.launch_receipt["input_box"] == "unclassifiable"
+
+
+def test_closed_styled_operator_draft_is_knowingly_unclassifiable_and_prompted(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accepted trade: a fully styled operator draft is unclassifiable and prompts fail-open."""
     unit, _recorded, sends = _prepare_guard_launch(
         launcher,
         monkeypatch,
@@ -767,10 +939,12 @@ def test_a_closed_styled_box_is_recorded_unreadable_not_empty(
     )
     launcher.launch(unit)
     assert len(sends) == 1
-    assert unit.launch_receipt["input_box"] == "unreadable"
+    assert unit.launch_receipt["input_box"] == "unclassifiable"
 
 
-def _preflight_stubs(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def _preflight_stubs(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, vendor: str = "claude"
+) -> list[str]:
     closed: list[str] = []
     monkeypatch.setattr(
         launcher,
@@ -780,7 +954,7 @@ def _preflight_stubs(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> l
             "cwd": "/tmp/wt",
             "workspace_id": "w1",
             "interactive_ready": True,
-            "agent": "claude",
+            "agent": vendor,
         },
     )
     monkeypatch.setattr(launcher, "workspace_id_for_name", lambda name: None)
@@ -854,6 +1028,22 @@ def test_no_argv_leaves_permission_unconfirmed(
     receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True)
     assert receipt["permission_resolved"]["confirmed_from"] is None
     assert "permission" in receipt["requested_only"]
+
+
+@pytest.mark.parametrize("vendor", ["agy", "qwen"])
+def test_empty_permission_token_list_never_claims_an_argv_confirmation(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, vendor: str
+) -> None:
+    _preflight_stubs(launcher, monkeypatch, vendor=vendor)
+    unit = launcher.LaunchRequest(
+        name="worker", vendor=vendor, worktree="/tmp/wt", pane_id="pane-1", tab_id="tab-1"
+    )
+    receipt = launcher.verify_unit_preflight(
+        unit, "pane-1", ready=True, argv=[*LAUNCH_ARGV_HEAD, vendor]
+    )
+    assert receipt["permission_resolved"]["tokens"] == []
+    assert receipt["permission_resolved"]["confirmed_from"] is None
+    assert receipt["account_evidence"] == "none"
 
 
 def test_skill_no_longer_calls_permission_herdr_requested_only() -> None:
@@ -931,6 +1121,16 @@ def test_stale_transcript_does_not_confirm_a_silent_statusline(
     assert error is not None and "unverified" in error
 
 
+def test_vanished_transcript_between_glob_and_stat_is_skipped(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vanished = tmp_path / "vanished.jsonl"
+    monkeypatch.setattr(launcher, "claude_transcript_roots", lambda: (tmp_path, tmp_path))
+    monkeypatch.setattr(launcher, "find_claude_transcripts", lambda *_a: [vanished])
+    unit = launcher.LaunchRequest(name="acct", vendor="claude", worktree="/tmp/wt")
+    assert launcher.transcript_account(unit, since=time.time()) is None
+
+
 def test_fresh_transcript_confirms_when_recency_is_provable(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -946,7 +1146,8 @@ def test_fresh_transcript_confirms_when_recency_is_provable(
     assert launcher.observed_account(unit, "pane-1", 0, since=since) == ("company", "transcript")
     receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True, since=since)
     assert receipt["account_evidence"] == "transcript"
-    assert "account" in receipt["confirmed_against_herdr"]
+    assert "account" not in receipt["confirmed_against_herdr"]
+    assert receipt["confirmed_outside_herdr"] == ["account"]
 
 
 def test_transcript_written_during_the_create_still_confirms(
@@ -1074,8 +1275,15 @@ def test_account_mismatch_still_raises_unchanged(
 
 def test_startup_timeout_is_a_result_not_a_crash(launcher: ModuleType) -> None:
     result = launcher.run(["sleep", "2"], check=False, timeout=0.1)
+    assert isinstance(result, launcher.TimedOutProcess)
     assert result.returncode == 124
-    assert result.stderr == "timed out"
+    assert "timed out after 0.1s" in result.stderr
+
+
+def test_genuine_exit_124_is_not_a_synthesized_timeout(launcher: ModuleType) -> None:
+    result = launcher.run(["sh", "-c", "exit 124"], check=False, timeout=2)
+    assert result.returncode == 124
+    assert not isinstance(result, launcher.TimedOutProcess)
 
 
 def test_prompt_delivery_failure_records_undelivered(
@@ -1092,10 +1300,19 @@ def test_prompt_delivery_failure_records_undelivered(
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
-    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
     monkeypatch.setattr(launcher, "send", lambda *a, **k: None)
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: False)
-    monkeypatch.setattr(launcher, "agent_row", lambda *_a, **_k: {"agent_status": "idle"})
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": "idle",
+            "pane_id": "pane-1",
+            "cwd": str(tmp_path),
+            "interactive_ready": True,
+            "agent": "codex",
+        },
+    )
     monkeypatch.setattr(launcher.time, "sleep", lambda *_a, **_k: None)
     unit = launcher.LaunchRequest(name="reviewer", vendor="codex", worktree=str(tmp_path))
     launcher.launch(unit)
@@ -1104,6 +1321,44 @@ def test_prompt_delivery_failure_records_undelivered(
     assert unit.launch_receipt["prompt_delivered"] is False
     assert unit.launch_receipt["agent_name"] == "reviewer-2"
     assert unit.tab_id == "tab-1"
+
+
+def test_pane_fallback_resend_rechecks_for_staged_input(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = {
+        "tab_id": "w1:t-new",
+        "agent_name": "worker-2",
+        "pane_id": "w1:p1",
+        "reused": False,
+    }
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda _workspace=None: frozenset())
+    monkeypatch.setattr(
+        launcher,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), ""),
+    )
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    sends: list[str] = []
+
+    def pane_send(*_args: object, **_kwargs: object) -> bool:
+        sends.append("send")
+        return True
+
+    monkeypatch.setattr(launcher, "send", pane_send)
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: False)
+    monkeypatch.setattr(launcher, "agent_row", lambda *_a, **_k: {"agent_status": "idle"})
+
+    def stop_resend(*_args: object, **_kwargs: object) -> None:
+        raise launcher.StagedInputError("resend target now contains staged input")
+
+    monkeypatch.setattr(launcher, "guard_pane_before_write", stop_resend)
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", worktree="/tmp/wt")
+    with pytest.raises(launcher.StagedInputError, match="resend target"):
+        launcher.launch(unit)
+    assert sends == ["send"]
 
 
 def test_close_without_receipt_tab_id_stops(launcher: ModuleType) -> None:
@@ -1185,6 +1440,25 @@ def test_successful_close_adds_no_note(
     assert unit.note == ""
 
 
+def test_already_absent_owned_tab_is_an_idempotent_success(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((cmd, kwargs))
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            return subprocess.CompletedProcess(cmd, 0, '{"result":{"tabs":[]}}', "")
+        return subprocess.CompletedProcess(cmd, 1, "", "tab not found")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="w1:t-gone", owned=True)
+    result = launcher.close_run_session(unit)
+    assert result is not None and result.returncode == 0
+    assert unit.note == ""
+    assert calls[0][1]["timeout"] == launcher.TAB_CLOSE_SECONDS
+
+
 def test_unowned_session_closes_nothing_and_reports_nothing(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1223,6 +1497,20 @@ def test_missing_receipt_path_through_the_cli_exits_without_a_traceback() -> Non
 def test_inline_malformed_json_keeps_its_existing_stop_shape(launcher: ModuleType) -> None:
     with pytest.raises(json.JSONDecodeError):
         launcher._load_receipt('{"a":')
+
+
+@pytest.mark.parametrize("contents", ["", '{"tab_id":'])
+def test_malformed_receipt_file_has_a_named_recovery_stop(
+    launcher: ModuleType, tmp_path: Path, contents: str
+) -> None:
+    path = tmp_path / "receipt.json"
+    path.write_text(contents, encoding="utf-8")
+    with pytest.raises(SystemExit) as exc_info:
+        launcher._load_receipt(str(path))
+    message = str(exc_info.value)
+    assert str(path) in message
+    assert "empty or unparseable JSON" in message
+    assert "fresh receipt file" in message
 
 
 def test_valid_receipt_file_is_unchanged(launcher: ModuleType, tmp_path: Path) -> None:
@@ -1596,7 +1884,7 @@ def test_orchestrate_declares_agent_launcher_dependency_and_breaking_version() -
         f"dependencies must be an array, got {type(declared).__name__}"
     )
     floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
-    assert floors.get("agent-launcher") == ">=1.1.0", declared
+    assert floors.get("agent-launcher") == ">=1.2.0", declared
 
 
 def test_skill_cleanup_example_redirects_receipt() -> None:
@@ -1806,7 +2094,7 @@ def test_downstream_only_redaction_would_fail_its_guard() -> None:
     assert _downstream_redaction_violations(fixture) != []
 
 
-def test_the_documented_preflight_recipe_is_runnable() -> None:
+def test_the_documented_preflight_recipe_is_runnable(launcher: ModuleType) -> None:
     """The probe recipe must actually run: a prompt (and the account flag when an account is
     named) on the launch line, an exit-status statement, and a read-back that selects only keys
     the receipt can supply -- never the model, which is the request echoed back."""
@@ -1817,10 +2105,59 @@ def test_the_documented_preflight_recipe_is_runnable() -> None:
     launch_lines = [line for line in section.splitlines() if "launch --vendor" in line]
     assert launch_lines
     probe = launch_lines[-1]
-    assert "--prompt <probe-task>" in probe
-    assert "--account <selection>" in probe
-    assert "exits 0" in section
+    command = probe.removesuffix(" > receipt.json")
+    tokens = shlex.split(command)
+    assert tokens[:2] == ["python3", "$S"]
+    replacements = {
+        "<probe-name>": "probe",
+        "$PWD": "/tmp/worktree",
+        "<model>": "model",
+        "<effort>": "high",
+        "<selection>": "company",
+        "<probe-task>": "verify readiness",
+    }
+    parsed = launcher._build_parser().parse_args(
+        [replacements.get(token, token) for token in tokens[2:]]
+    )
+    assert parsed.cmd == "launch"
+    assert parsed.vendor == "claude"
+    assert parsed.prompt == "verify readiness"
+    assert parsed.account == "company"
+    assert "only when creation, identity, preflight, and delivery all succeed" in section
     jq_lines = [line for line in section.splitlines() if line.startswith("jq ")]
     assert jq_lines
     assert "model" not in jq_lines[-1]
     assert "confirmed_against_herdr" in jq_lines[-1]
+
+
+def test_every_documented_launcher_fence_carries_a_prompt_and_nonzero_caveat() -> None:
+    for path in (SKILL_MD, LAUNCHER_README):
+        surface = path.read_text(encoding="utf-8")
+        launch_lines = [line for line in surface.splitlines() if 'python3 "$S" launch' in line]
+        assert launch_lines, path
+        assert all("--prompt" in line for line in launch_lines), path
+        assert "without one" in surface.lower(), path
+        assert "exits nonzero" in surface.lower(), path
+
+
+def test_launcher_failure_messages_do_not_interpolate_whole_argv() -> None:
+    source = LAUNCHER.read_text(encoding="utf-8")
+    assert "' '.join(cmd)" not in source
+    assert '" ".join(cmd)' not in source
+    assert "' '.join(argv)" not in source
+    assert '" ".join(argv)' not in source
+
+
+def test_release_and_journal_record_the_composer_contract() -> None:
+    changelog = (REPO / "plugins" / "agent-launcher" / "CHANGELOG.md").read_text(encoding="utf-8")
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    learnings = (REPO / "docs" / "engineering-journal" / "LEARNINGS.md").read_text(encoding="utf-8")
+    decisions = (REPO / "docs" / "engineering-journal" / "DECISIONS.md").read_text(encoding="utf-8")
+    assert "## [1.2.0] - 2026-08-30" in changelog
+    assert "selects the last block positionally" in changelog
+    assert "`unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`" in changelog
+    normalized_changelog = " ".join(changelog.split())
+    assert "distinguishes a client's own placeholder from staged text" not in normalized_changelog
+    assert "Claude, Codex, Grok, Agy, and Qwen" in skill
+    assert "#907-composer-position-before-classification" in learnings
+    assert "#907-styled-composer-trade" in decisions

@@ -1497,6 +1497,40 @@ def _resubmit_one(
     return True
 
 
+AGENT_LAUNCHER_MIN_VERSION = (1, 2, 0)
+
+
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    """Parse the numeric three-part plugin versions used by this repository."""
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
+    if match is None:
+        raise SystemExit(f"agent-launcher has unsupported version {value!r}")
+    return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
+
+
+def _launcher_cache_version(path: Path) -> tuple[int, int, int]:
+    """Sort cache entries numerically, matching ``sort -V`` rather than lexical ordering."""
+    try:
+        return _version_tuple(path.parents[3].name)
+    except SystemExit:
+        return (0, 0, 0)
+
+
+def _validated_agent_launcher(path: Path) -> Path:
+    """Enforce Orchestrate's declared companion-plugin version floor at runtime."""
+    manifest = path.parents[3] / ".claude-plugin" / "plugin.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        version = _version_tuple(str(payload["version"]))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise SystemExit(f"cannot verify agent-launcher manifest {manifest}: {exc}") from None
+    if version < AGENT_LAUNCHER_MIN_VERSION:
+        required = ".".join(str(part) for part in AGENT_LAUNCHER_MIN_VERSION)
+        actual = ".".join(str(part) for part in version)
+        raise SystemExit(f"agent-launcher {actual} is installed; Orchestrate requires >={required}")
+    return path
+
+
 def _agent_launcher_script() -> Path | None:
     """Locate ``plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py``."""
     override = os.environ.get("AGENT_LAUNCHER_ROOT")
@@ -1507,32 +1541,38 @@ def _agent_launcher_script() -> Path | None:
                 f"AGENT_LAUNCHER_ROOT={override!r} does not contain "
                 "skills/agent-launcher/scripts/launcher.py"
             )
-        return candidate
+        return _validated_agent_launcher(candidate)
     here = Path(__file__).resolve()
     repo_candidate = (
         here.parents[4] / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
     )
     if repo_candidate.is_file():
-        return repo_candidate
+        return _validated_agent_launcher(repo_candidate)
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
         root = Path(plugin_root).resolve()
         for sibling in (root.parent / "agent-launcher", root.parent.parent / "agent-launcher"):
             direct = sibling / "skills" / "agent-launcher" / "scripts" / "launcher.py"
             if direct.is_file():
-                return direct
-            matches = sorted(sibling.glob("*/skills/agent-launcher/scripts/launcher.py"))
+                return _validated_agent_launcher(direct)
+            matches = sorted(
+                sibling.glob("*/skills/agent-launcher/scripts/launcher.py"),
+                key=_launcher_cache_version,
+            )
             if matches:
-                return matches[-1]
+                return _validated_agent_launcher(matches[-1])
     for parent in here.parents:
         if parent.name == "orchestrate":
             sibling = parent.parent / "agent-launcher"
             direct = sibling / "skills" / "agent-launcher" / "scripts" / "launcher.py"
             if direct.is_file():
-                return direct
-            matches = sorted(sibling.glob("*/skills/agent-launcher/scripts/launcher.py"))
+                return _validated_agent_launcher(direct)
+            matches = sorted(
+                sibling.glob("*/skills/agent-launcher/scripts/launcher.py"),
+                key=_launcher_cache_version,
+            )
             if matches:
-                return matches[-1]
+                return _validated_agent_launcher(matches[-1])
     return None
 
 
@@ -1591,6 +1631,7 @@ def _ingest_agent_launcher() -> bool:
     # ingest would otherwise run that CLI against orchestrate's argv (``wait``,
     # ``clean``, …) and exit. The flag is this module's globals, not the environment.
     globals()["_AGENT_LAUNCHER_INGESTING"] = True
+    globals()["_AGENT_LAUNCHER_SOURCE"] = str(script)
     exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
     return True
 
@@ -1617,6 +1658,9 @@ if not _ingest_agent_launcher():
     VENDOR_NOTES = {}
 
     class AccountMismatchError(Exception):
+        pass
+
+    class StagedInputError(Exception):
         pass
 else:
     _AGENT_LAUNCHER_AVAILABLE = True
@@ -2601,6 +2645,16 @@ def cmd_go(args: argparse.Namespace) -> int:
         print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
         try:
             launch(unit, r.backend, review_elsewhere=r.reviews_separately())
+        except StagedInputError as exc:
+            unit.status = PENDING
+            unit.note = str(exc)
+            unit.tab_id = None
+            unit.pane_id = None
+            unit.agent_name = None
+            unit.reused = False
+            unit.owned = False
+            unit.launch_receipt = {}
+            print(f"  {unit.name} PENDING: {exc}")
         except AccountMismatchError as exc:
             unit.status = ACCOUNT_MISMATCH
             unit.note = str(exc)
@@ -4027,7 +4081,16 @@ def reap(
             kept.append(unit.name)
             continue
         if unit.tab_id:
-            close_run_session(unit)
+            close_result = close_run_session(unit)
+            if close_result is not None and close_result.returncode != 0:
+                detail = (close_result.stderr or close_result.stdout or "").strip()
+                append_unit_note(
+                    unit,
+                    f"cleanup kept worktree because tab close failed "
+                    f"({close_result.returncode}): {detail}",
+                )
+                kept.append(unit.name)
+                continue
         if unit.worktree and Path(unit.worktree).exists():
             run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
         if branches and unit.branch:

@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.0] - 2026-08-30
+
+### Fixed
+
+- **The unowned-pane guard no longer mistakes scrollback for the live composer (#907).** Composer
+  parsing now lives in a bounded terminal parser, selects the last block positionally, terminates
+  it at the first non-continuation row, understands bordered composers and per-attribute terminal
+  resets, and covers the complete vendor roster. Claude, Codex, Grok, Agy, and Qwen have verified
+  glyphs; Muse and OpenCode are explicit unsupported cases. Receipts distinguish
+  `unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`, and `read_timeout`; an
+  unambiguous staged draft still stops with only `input_box_text_chars`, never the text.
+- **Launch and teardown failures retain recoverable session identity (#907).** A create timeout
+  reconciles the target workspace's tab set into a minimal receipt, a genuine wrapper exit 124 is
+  no longer confused with a synthesized timeout, and an already-absent owned tab is an idempotent
+  successful close. Pane reads and close calls are bounded.
+- **Receipt evidence now says exactly which checks ran (#907).** One receipt shape is completed in
+  place, empty permission-token lists no longer claim argv confirmation, malformed receipt files
+  produce a named recovery stop, and transcript files removed during preflight are skipped.
+
 ## [1.1.0] - 2026-08-30
 
 ### Fixed
@@ -10,10 +29,11 @@
   a named message when the create times out or exits nonzero, instead of blocking without bound.
 - **A pane this launch did not create is inspected before it is prompted (#897).** A session
   whose tab already existed may hold text somebody staged in its input box, and a prompt typed
-  behind it can submit that text. The guard reads the box with styling intact, distinguishes a
-  client's own placeholder from staged text, and treats staged text as a stop — recorded in the
-  receipt and the unit note, never cleared. The guard keys on tab ownership, not the wrapper's
-  `reused` bit, which names the workspace and would inspect the ordinary create path.
+  behind it can submit that text. The guard reads the box with styling intact and stops on
+  unambiguous staged text, recorded only by character count and never cleared. Fully styled text
+  can be byte-indistinguishable from a placeholder; version 1.2.0 records that case separately
+  instead of claiming a distinction. The guard keys on tab ownership, not the wrapper's `reused`
+  bit, which names the workspace and would inspect the ordinary create path.
 - **A declared permission is honoured and confirmed, never silently downgraded (#896).** A
   permission value outside the vendor's map stops with a named message instead of falling back to
   the auto flags, and preflight confirms the declared posture against the launch argv, recording

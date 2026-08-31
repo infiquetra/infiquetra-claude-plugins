@@ -344,7 +344,8 @@ class TestPostLaunchAccountVerification:
         )
 
         receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=True)
-        assert "account" in receipt["confirmed_against_herdr"]
+        assert "account" not in receipt["confirmed_against_herdr"]
+        assert receipt["confirmed_outside_herdr"] == ["account"]
         assert receipt["account"] == "company"
 
     def test_mismatch_worker_transcript_under_personal_root_raises_and_closes_session(

@@ -2,6 +2,18 @@
 
 ## 2026-08-30
 
+### Fail open on a fully styled composer until an independent authorship signal exists  {#907-styled-composer-trade}
+
+**Decision.** The unowned-pane guard stops only on unambiguous, unstyled staged text. A non-empty live composer rendered entirely inside client styling is recorded as `unclassifiable` and the launch proceeds. Read failure, read timeout, missing composer, and unsupported vendor remain distinct receipt outcomes. The vendor glyph registry is complete against the launcher's vendor roster: Claude, Codex, Grok, Agy, and Qwen carry verified markers; Muse and OpenCode carry explicit `None` exemptions with their evidence rather than inheriting a guessed fallback.
+
+**Date:** 2026-08-30 · **Issue:** #907 · **Origin:** Terminal cycle-3 Code Review reliability finding and the operator-authorized final residual repair.
+
+**Why.** A viewport can render an operator draft and a client placeholder with byte-identical Select Graphic Rendition spans. Fail-closed would stop ordinary working launches, which the 43-pane capture harness measured directly. Claiming the box empty would be false. A distinct inconclusive outcome preserves the evidence without inventing certainty.
+
+**Rejected.** Selecting the last classifiable block, because scrollback can replace the live box; treating every styled row as empty, because it prompts into real drafts; treating every styled row as staged, because it hard-stops idle panes; assigning an unverified plain-marker fallback to every vendor.
+
+**Revisit when.** Herdr exposes cursor position or composer state, a vendor publishes a stable placeholder protocol, or a live capture verifies a stable Muse or OpenCode marker.
+
 ### Prepared-issue readiness accepts any Stage-configured Status plus Blocked; the entry option is a default, not a closed set (sdlc#91)  {#w10-readiness-stage-scoped-r91}
 
 **Decision.** For the prepared-issue path (mission-control `issue prepare` / `issue create-prepared`), readiness accepts any Status configured within the declared Stage's `stage_statuses` list plus the cross-cutting statuses (`Blocked`). It continues to refuse retired (`Idea`, `Shaping`, `Done`), unknown, and out-of-Stage values, and refuses a declared Stage outside the schema's `stage_flow` block altogether. Preparation may default an omitted Status to the declared Stage's FIRST configured option (the R49 entry option); on a draft re-read, a declared Stage with an empty Status receives that default before readiness evaluates. Preparation itself never defaults the Stage — Stage stays author-supplied per the OQ1 ruling.

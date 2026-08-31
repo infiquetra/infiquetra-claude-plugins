@@ -21,13 +21,32 @@
 
 ## 2026-08-30
 
+### A terminal composer is positional structure, not the last text a heuristic can classify  {#907-composer-position-before-classification}
+
+**Context.** Issue 907's first repair grouped composer rows but selected the last block it could classify. Real Claude panes draw the live placeholder in a closed styled span, so the live block dropped out and an earlier scrollback echo became the answer.
+**Evidence.** The cycle-3 reliability capture set contains 43 real pane viewports. The old guard produced three false hard stops in one sweep and four in another, with only one genuine staged-input stop; the repaired parser produces zero false stops on the same bytes. Focused fixtures cover a classified echo above a closed-span live box, Codex and Grok glyphs, bordered composers, wrapped styled rows, and block termination.
+**Mechanism.** Classification and selection were in the wrong order. A composer is the lowest contiguous block carrying that client's verified marker. Whether its contents are empty, staged, or unclassifiable is a property of that already-selected block; classification cannot be used to choose a different block. Stubbing preflight in the first end-to-end tests also hid receipt reconstruction, so collaborator stubs must stay below the behavior-owning function.
+**Fix (or queued).** `composer.py` owns a bounded positional parser; `launcher.py` owns reads and prompt decisions. The last block always decides, rows stop at the first structural non-continuation, and one receipt object is updated in place.
+**Validation.** `test_echo_above_a_closed_span_placeholder_does_not_false_stop` and the external 43-pane harness pin the original false-stop shape. Reverting positional selection makes the focused regression fail.
+**Generalizable rule.** When screen state has a location-defined authority, select by position first and classify second. In tests, stub the input source, not the function that rebuilds or persists the result.
+**Refs.** Issue #907; DECISIONS `{#907-styled-composer-trade}`.
+
+### Terminal styling cannot prove authorship when client and operator bytes are identical  {#907-styled-composer-undecidable}
+
+**Context.** A fully styled placeholder and an operator draft can have the same Select Graphic Rendition byte shape. Treating “styled” as synonymous with “client-owned placeholder” silently prompts into real operator text; treating it as staged hard-stops ordinary idle panes.
+**Evidence.** The cycle-3 captures include fourteen truth-labelled non-empty boxes that remain unclassifiable from styling alone, while the focused closed-span placeholder fixture has the same observable form. Colour-reset mutation coverage also showed that terminal code 39 resets foreground colour but does not clear dim intensity.
+**Mechanism.** ANSI styling describes presentation, not who typed the characters. No parser of the viewport alone can recover missing authorship. Attribute state must still be tracked accurately so plain characters exposed by a real style reset remain detectable.
+**Fix (or queued).** The parser reports `unclassifiable` and the launcher records the accepted fail-open trade without claiming the box empty. A stronger policy is queued behind an independent signal such as cursor position or vendor-published composer state.
+**Generalizable rule.** If two semantic states are byte-identical at the observation boundary, expose uncertainty explicitly; do not convert presentation heuristics into an authorship guarantee.
+**Refs.** Issue #907; DECISIONS `{#907-styled-composer-trade}`.
+
 ### The wrapper's `reused` bit names the workspace, not the pane — a guard keyed on it inspects the ordinary create path  {#907-reused-is-a-workspace-bit}
 
 **Context.** Run 907 closed seven session-contract defects in the Agent Launcher. Issue 897's literal acceptance said a pane "recorded `reused=true`" must be inspected before prompting, while the same issue's out-of-scope clause forbade reading the pane on the ordinary create path. Inside Herdr nearly every launch joins a workspace that already exists, so the two demands could not both be honoured.
 **Evidence.** `wrapper_reused` at `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py:54-63`: "Whether the wrapper said the *workspace* already existed. This is not tab ownership." Issue 897; the operator's amendment is quoted at https://github.com/infiquetra/infiquetra-claude-plugins/issues/897#issuecomment-5469528122.
 **Mechanism.** The receipt carries two facts that read alike: `reused` (the wrapper joined a pre-existing workspace — the common case) and `owned` (the receipt `tab_id` was absent from the workspace tab set snapshotted immediately before the wrapper ran). A guard keyed on `reused` fires on the ordinary create path — exactly the path the issue says must stay untouched — and a guard keyed on ownership is the only one that names "a session this launch did not create".
 **Fix (or queued).** The shipped guard keys on `session_owned(unit)` being false (unit L2 of 907, commit `b97a3226`). Mutation proof: keying the guard on `reused` fails `test_freshly_created_pane_takes_no_inspection_path`.
-**Second finding, same run.** The module named after the plugin — `tests/test_agent_launcher_plugin.py` — holds only its release surfaces (manifest version, marketplace registration, packaged files); every behaviour test lives in `plugins/agent-launcher/tests/test_launcher_contract.py` and the orchestrate test files. Reading only the plugin-named module says the plugin is untested; reading only the plugin directory misses the drift guards.
+**Second finding, same run.** The module named after the plugin — `tests/test_agent_launcher_plugin.py` — holds release surfaces (manifest version, marketplace registration, packaged files) plus installed-layout fail-fast subprocess tests; direct launcher behavior tests live in `plugins/agent-launcher/tests/test_launcher_contract.py` and the orchestrate test files. Reading only the plugin-named module understates behavior coverage; reading only the plugin directory misses the installed-layout and drift guards.
 **Generalizable rule.** When a receipt carries two booleans with adjacent meanings, read each one's docstring before keying a guard on either — the bit whose name matches your intuition is not always the bit that names your case; and a test file named for the thing it tests is a claim about location, not coverage.
 **Refs.** Issues #897, #907; run plan `docs/plans/2026-08-30-agent-launcher-907-run-plan.md`, Findings 1 and 3.
 

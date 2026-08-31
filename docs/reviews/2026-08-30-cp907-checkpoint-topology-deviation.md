@@ -135,3 +135,8 @@ rather than assumed, per the row's own instruction. `opencode` fell to the allow
 **Pre-L4 gate: PASSES.** `pane_account_label('wEY:p2')` returned `"personal"`, not `None`. This host
 paints an account statusline, so L4 does not convert a previously succeeding launch into a hard
 stop here. L4 is released.
+# Supersession note — 2026-08-30 final residual repair
+
+The staged composer text quoted below is historical probe evidence, not a field the shipped receipt
+retains. The final issue 907 guard records only the staged category and character count, and its
+stop message withholds the text itself.

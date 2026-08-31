@@ -1858,12 +1858,24 @@ STATUS_LADDER = ("Idea", "Shaping", "Ready", "Active", "Verify", "Done")
 # capabilities a unit runs, so ``fix-52-claude`` is a fix phase exactly like ``work-52-build`` is a
 # work phase -- matching is at the first dash, never a bare string prefix, so ``planner-notes``
 # does not count as a plan.
+#
+# ``docreview`` is the plan-complete boundary: that is where the plan has been written *and*
+# reviewed, which is what makes the card ready to build -- the same trigger /plan's Phase 5.0 uses
+# on a standalone run. ``plan`` stays on the plan-in-progress rung, because a plan being written is
+# still being designed. This follows the existing semantics of this map, which records where a
+# unit's boundary *lands* the card, not where it started.
+#
+# ``codereview`` carried "Verify" until #927. Closed infiquetra-sdlc #89 (W8), requirement R69,
+# puts pre-merge continuous integration, tests, code review and merge readiness all in the Active
+# stage: Verify begins only after merge plus the applicable non-production deployment, or after
+# installed/published artifact verification when nothing deploys. The Saga half of that repair
+# shipped and the Orchestrate half did not, because the guard test that enforces it scanned
+# plugins/saga/ only.
 DEFAULT_STATUS_MAP: dict[str, str] = {
     "plan": "Shaping",
     "docreview": "Shaping",
     "work": "Active",
     "fix": "Active",
-    "codereview": "Verify",
     "landed": "Done",
 }
 

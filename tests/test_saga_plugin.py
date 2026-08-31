@@ -4052,6 +4052,23 @@ def test_handoff_and_loop_skills_use_positive_routable_vocabulary_gate() -> None
     assert "two fail-closed states" in handoff_skill
 
 
+def test_parse_issue_collapses_unrecognized_to_empty() -> None:
+    """fix-6d7c2083c11c TEST-19: issue parser collapses unrecognized Handoff maturity to empty."""
+    mod = _load_module("parse_issue.py")
+    body = "### Handoff maturity\nnot-a-real-maturity\n\n### Source context\n- Source: docs/brainstorms/x.md\n"
+    parsed = mod.extract(body)
+    assert parsed["handoff"]["maturity"] == "", (
+        "unrecognized Handoff maturity must collapse to empty string, not a sentinel"
+    )
+    assert parsed["handoff"]["can_plan"] is False
+    assert parsed["handoff"]["can_work"] is False
+    # Also verify empty vs unrecognized are indistinguishable (both collapse to empty)
+    body_blank = "### Objective\nNo handoff here\n"
+    parsed_blank = mod.extract(body_blank)
+    assert parsed_blank["handoff"]["maturity"] == ""
+    assert parsed["handoff"]["maturity"] == parsed_blank["handoff"]["maturity"]
+
+
 def test_unrecognized_maturity_fails_closed_and_vocabularies_synced(tmp_path: Path) -> None:
     """fix-13e628f20af7: unrecognized maturity fails closed with no signal, vocabularies in sync."""
     handoff = _load_module("handoff_envelope.py")

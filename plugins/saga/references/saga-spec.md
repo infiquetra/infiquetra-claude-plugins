@@ -313,11 +313,15 @@ unindented top-level `maturity:` key inside YAML delimited by `---` lines; inden
 ignored. An unrecognized non-empty, empty, non-delimited carrier, unterminated block, or unreadable
 file fails closed with no durable route and a diagnostic, rather than falling through to the path rule.
 The field's runtime domain is consequently NOT closed at the six values: `infer_maturity` may also
-return the empty string, an `unknown:<raw>` sentinel carrying an unrecognized raw value, a
-`unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared outside a delimited
+return the empty string, an `unknown:unrecognized:<raw>` sentinel carrying an unrecognized raw value
+(reserved namespace `unrecognized:` that no vocabulary value contains, so author text cannot forge it),
+a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared outside a delimited
 block), a `unknown:unterminated:<raw>` sentinel for an unterminated block (opening `---` without
-closing `---`), or `unknown:unreadable` for a read/decode failure (all bounded to 120 characters
-after the `unknown:` prefix), the fail-closed shapes recorded in `DECISIONS.md`
+closing `---`), or `unknown:unreadable` for a read/decode failure; the envelope's published
+`handoff_maturity` field is bounded to 120 characters after the `unknown:` prefix (the helper may
+return the full raw value, but the published field is truncated; the `unknown:` prefix plus its
+discriminator segment is reserved and never appears in author-declared values), the fail-closed shapes
+recorded in `DECISIONS.md`
 `{#913-maturity-unknown-sentinel}` and specified for consumers in §9. Consumers MUST route on the
 vocabulary values only and stop on the sentinel shapes.
 
@@ -494,23 +498,20 @@ directory. (The cached `branch`/`head_sha` may be stale — that is fine, git is
   parseable.
 - The plugin's own SemVer (`plugin.json` / `marketplace.json`) tracks the capability; `schema_version`
   tracks the on-disk envelope contract. They move independently.
-- The handoff envelope built by `handoff_envelope.py` carries its own `schema_version` (currently
-  `"1.1"`) under the same rule: bump it on any breaking change to a field's meaning or layout, even
-  when the JSON type is stable. (1.0 → 1.1 is the precedent: `suggested_command` changed from a field
-  that always holds a runnable slash command to one that can hold a non-routable prose diagnostic when
-  `handoff_maturity` is `pending-confirmation` or unrecognized — consumers must branch on
-  `handoff_maturity` before trusting `suggested_command`.)
+- The handoff envelope built by `handoff_envelope.py` carries its own `schema_version` (currently `"1.1"`) under the same rule: bump it on any breaking change to a field's meaning or layout, even when the JSON type is stable. (1.0 → 1.1 is the precedent: `suggested_command` changed from a field that always holds a runnable slash command to one that can hold a non-routable prose diagnostic when `handoff_maturity` is `pending-confirmation` or unrecognized — consumers must branch on `handoff_maturity` before trusting `suggested_command`.)
 - **Handoff-maturity field contract (part of the envelope surface).** `handoff_maturity` holds one of
   the six `HANDOFF_MATURITIES` values (§4), the empty string (frontmatter declared the key but left it
-  blank), an `unknown:<raw>` sentinel for an unrecognized value, a `unknown:carrier:<raw>` sentinel
-  for a non-delimited carrier (maturity declared outside a delimited `---` block), a
-  `unknown:unterminated:<raw>` sentinel for an unterminated block (opening `---` without closing
-  `---`), or `unknown:unreadable` for a read/decode failure (all bounded to 120 characters after the
-  `unknown:` prefix; design record: `DECISIONS.md` `{#913-maturity-unknown-sentinel}`). For all
-  non-vocabulary shapes `suggested_command` is non-routable prose; the process still exits zero, so a
-  consumer typed against the closed vocabulary MUST detect the sentinel shapes by prefix/value, not by
-  exit code. Routing `suggested_command` while the value is empty, `unknown:`-prefixed, or
-  `pending-confirmation` is an error — stop and fix the declaring artifact's frontmatter instead.
+  blank), an `unknown:unrecognized:<raw>` sentinel for an unrecognized value (reserved namespace
+  `unrecognized:`), a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared
+  outside a delimited `---` block), a `unknown:unterminated:<raw>` sentinel for an unterminated block
+  (opening `---` without closing `---`), or `unknown:unreadable` for a read/decode failure (all
+  bounded to 120 characters after the `unknown:` prefix; the `unknown:` prefix and its discriminator
+  segment are reserved and never appear in author-declared values; design record: `DECISIONS.md`
+  `{#913-maturity-unknown-sentinel}`). For all non-vocabulary shapes `suggested_command` is
+  non-routable prose; the process still exits zero, so a consumer typed against the closed vocabulary
+  MUST detect the sentinel shapes by prefix/value, not by exit code. Routing `suggested_command` while
+  the value is empty, `unknown:`-prefixed, or `pending-confirmation` is an error — stop and fix the
+  declaring artifact's frontmatter instead.
 
 ---
 

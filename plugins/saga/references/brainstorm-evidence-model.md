@@ -78,10 +78,10 @@ blocks U3.
 carry a synthesized transcript labelled `captured`. That is the
 harness-substitution failure this constraint prevents.
 
-No aggregate number is computed, stored, or reported. The result object
-exposes no `score`, `total`, `aggregate`, `overall`, or `quality` key at
-any level, and no consumer computes one (R19). Reporting is per
-dimension only.
+No aggregate number is computed, stored, or reported. The data files expose no
+`score`, `total`, `aggregate`, `overall`, or `quality` key at any level and no consumer
+computes one — an AST walk over the test sources proves no assignment target with a banned
+name — and reporting is per dimension only.
 
 ## Layer 3 — Evaluator trust and safeguard-phrase drift guard
 

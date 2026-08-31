@@ -116,7 +116,9 @@ is read-only — Brainstorm still writes no Saga state. Classify the run:
 - **matched-brainstorm** — the document scan found exactly one unambiguous
   `docs/brainstorms/*-requirements.md` candidate, no saga matches the thread, and the input names no
   resolvable GitHub issue (an input naming an issue with a matching artifact is `resolvable-issue`
-  below, not this class). Route directly to `/brainstorm`, bypassing Phases 1 through 5. State the
+  below, not this class). Route directly to `/brainstorm`, bypassing Phases 1 through 5. For a
+  `pending-confirmation` artifact re-enter at Phase 2.5 confirmation; for a `requirements-ready`
+  artifact re-enter at Phase 4 with durable routes already available. State the
   restored boundary and its declared `maturity`, and continue
   from it without re-presenting settled decisions.
 - **resolvable-issue** — no matching saga, but the input names a GitHub issue (or one resolves via

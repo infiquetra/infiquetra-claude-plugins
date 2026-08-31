@@ -120,7 +120,7 @@ def test_out_of_domain_declared_value_falls_through(tmp_path: Path) -> None:
     target = ideation / "2026-06-19-plugin-grooming-next-steps.md"
     target.write_text("---\nmaturity: ready-to-execute\n---\n\nBody\n", encoding="utf-8")
     # Unrecognized non-empty declared maturity now fails closed (API-03), not fall-through
-    assert HE.infer_maturity(str(target)) == "unknown:ready-to-execute"
+    assert HE.infer_maturity(str(target)) == "unknown:unrecognized:ready-to-execute"
     envelope = HE.build_handoff_envelope(
         "docs/ideation/2026-06-19-plugin-grooming-next-steps.md", root=tmp_path
     )
@@ -148,7 +148,7 @@ def test_shell_shaped_value_rejected(tmp_path: Path) -> None:
     brainstorms.mkdir(parents=True)
     target = brainstorms / "2026-08-30-topic-requirements.md"
     target.write_text("---\nmaturity: ; rm -rf ~\n---\n\nBody\n", encoding="utf-8")
-    assert HE.infer_maturity(str(target)) == "unknown:; rm -rf ~"
+    assert HE.infer_maturity(str(target)) == "unknown:unrecognized:; rm -rf ~"
     envelope = HE.build_handoff_envelope(
         "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
     )
@@ -379,8 +379,16 @@ def test_envelope_schema_version_pinned(tmp_path: Path) -> None:
     )
     assert envelope["schema_version"] == "1.1"
     spec_text = (ROOT / "plugins/saga/references/saga-spec.md").read_text(encoding="utf-8")
-    assert "1.1" in spec_text
-    assert "handoff envelope" in spec_text.lower()
+    # Spec half must be the envelope versioning rule, not just any heading containing the substring.
+    import re
+
+    assert re.search(
+        r"handoff_envelope\.py.*1\.1|handoff envelope.*1\.1", spec_text, re.IGNORECASE
+    ), (
+        "spec must contain the envelope versioning rule naming handoff_envelope.py and 1.1 on the same line"
+    )
+    # Ensure the version appears in the section 9 bullet, not just a heading
+    assert "schema_version" in spec_text and "1.1" in spec_text
 
 
 def test_carrier_diagnostic_names_delimiters_not_vocabulary(tmp_path: Path) -> None:
@@ -439,9 +447,9 @@ def test_sentinel_length_bound(tmp_path: Path) -> None:
     long_value = "x" * 300
     target.write_text(f"---\nmaturity: {long_value}\n---\n\nBody\n", encoding="utf-8")
     maturity = HE.infer_maturity(str(target))
-    assert maturity.startswith("unknown:")
+    assert maturity.startswith("unknown:unrecognized:")
     # infer returns full raw; envelope truncates to 120 chars after prefix (API-12)
-    assert len(maturity) == len("unknown:") + 300
+    assert len(maturity) == len("unknown:unrecognized:") + 300
     envelope = HE.build_handoff_envelope(
         "docs/brainstorms/2026-08-30-long-requirements.md", root=tmp_path
     )

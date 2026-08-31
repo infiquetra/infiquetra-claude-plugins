@@ -71,6 +71,7 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 | (none) | — | `idea-ready` / `requirements-ready` | `/plan` |
 | `ideation` | any | — | `/plan` (settle HOW) |
 | (none) | — | `pending-confirmation` | `/brainstorm` |
+| `brainstorm` | any | `pending-confirmation` | `/brainstorm` |
 | `brainstorm` | any | `requirements-ready` | `/plan` (settle HOW) |
 | `plan` | `complete` | `plan-ready` | `/doc-review` (readiness) |
 | `plan` | `pending` / `in_progress` | — | `/plan` (finish the plan) |

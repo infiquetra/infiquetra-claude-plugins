@@ -297,10 +297,8 @@ def test_state_readiness_table_matches_model() -> None:
     for _source, maturity, consumed in rows:
         assert maturity in expected_maturities, f"table maturity {maturity!r} not in model"
         expected_consumers = set(model["maturity"]["values"][maturity]["consumed_by"])
-        # The consumed cell may contain extra annotation like " (no durable route)"
-        # or " or /handoff" for specs — check that at least one expected consumer appears
-        # and that no unexpected /command appears.
-        found = [c for c in expected_consumers if c in consumed]
-        assert found, (
-            f"table row for {maturity!r} has consumer {consumed!r} not in model's {expected_consumers!r}"
+        consumed_tokens = set(re.findall(r"/[a-z-]+", consumed))
+        assert consumed_tokens == expected_consumers, (
+            f"table row for {maturity!r} has consumers {consumed_tokens!r} != model's {expected_consumers!r} "
+            f"from cell {consumed!r}"
         )

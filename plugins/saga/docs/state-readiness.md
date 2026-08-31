@@ -25,7 +25,7 @@ Stored saga ticks live under git-ignored `.claude/saga/`. The append-only tick l
 | `docs/ideation/` | `idea-ready` | `/plan` |
 | `docs/brainstorms/` | `requirements-ready` | `/plan` |
 | `docs/brainstorms/` frontmatter `pending-confirmation` | `pending-confirmation` | `/brainstorm` (no durable route) |
-| `docs/specs/` | `requirements-ready` | `/plan` or `/handoff` |
+| `docs/specs/` | `requirements-ready` | `/plan` |
 | `docs/plans/` | `plan-ready` | `/work` |
 | `docs/reviews/` | `plan-ready` | `/work` |
 | `docs/work-sessions/` | `resume-ready` | `/work` |

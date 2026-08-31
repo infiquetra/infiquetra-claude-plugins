@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -69,15 +70,38 @@ def _options_of(argv: list[str]) -> dict[str, str]:
     return opts
 
 
+def _assignments_of(argv: list[str]) -> list[tuple[str, str]]:
+    """The ``(field, option)`` assignments one captured controller argv submits.
+
+    Absent an ``assignments`` payload this is the single ``Status`` write the path made before the
+    pair existed, which is the same fallback ``board_progression.normalize_assignments`` applies."""
+    opts = _options_of(argv)
+    raw = json.loads(opts.get("--payload", "{}")).get("assignments")
+    if not raw:
+        return [("Status", opts["--target-state"])]
+    return [(str(field), str(option)) for field, option in raw]
+
+
 def _key_of(argv: list[str]) -> str:
     """The idempotency key these arguments produce -- the certificate's recipe, rebuilt here.
 
-    ``reversibility_certificate.idempotency_key`` is ``{op}:{repo}#{number}:{target_state}``.
+    ``reversibility_certificate.idempotency_key`` is ``{op}:{repo}#{number}:{target_state}``, and
+    for ``set-field-status`` it carries the field name too. Since #927 the field and the value are
+    the WHOLE submission's identity (``board_progression.assignment_identity``), so a
+    ``(Stage, Status)`` pair and a ``Status``-only write to the same option get different keys
+    instead of colliding on one and skipping the second as already-applied.
+
     Keying the fake's ledger on this means a second call with the same arguments skips, and any
     drift in what orchestrate passes -- a timestamp in the discriminator, a renamed flag -- turns
     into a second write the tests would see."""
     opts = _options_of(argv)
-    return f"{opts['--op']}:{opts['--repo']}#{opts['--number']}:{opts['--target-state']}"
+    stem = f"{opts['--op']}:{opts['--repo']}#{opts['--number']}"
+    if opts["--op"] != "set-field-status":
+        return f"{stem}:{opts['--target-state']}"
+    assignments = _assignments_of(argv)
+    fields = "+".join(field for field, _ in assignments)
+    options = "+".join(option for _, option in assignments)
+    return f"{stem}:{fields}:{options}"
 
 
 class FakeReconcileController:
@@ -113,8 +137,11 @@ class FakeReconcileController:
             record = {"status": "written", "key": key}
             repo, number = opts["--repo"], int(opts["--number"])
             if opts["--op"] == "set-field-status":
+                # BOTH assignments are recorded, not just the target-state. A test that reads one
+                # field passes on a half-write: `Ready for Active` is a legal Status on its own, so
+                # a Status-only submission looks like success while Stage stays where it was.
                 self.status_writes.append(
-                    {"repo": repo, "number": number, "status": opts["--target-state"]}
+                    {"repo": repo, "number": number, "assignments": _assignments_of(argv)}
                 )
             elif opts["--op"] == "issue-progress-comment":
                 body = json.loads(opts.get("--payload", "{}")).get("body", "")
@@ -166,7 +193,7 @@ def _write_run(
     repo: Path,
     units: list[dict[str, Any]],
     issues: dict[str, str] | None = None,
-    status_map: dict[str, str] | None = None,
+    status_map: dict[str, Any] | None = None,
 ) -> None:
     base = subprocess.run(
         ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
@@ -209,18 +236,18 @@ def _on(repo: Path, branch: str, path: str) -> bool:
 
 
 class TestStatusMapping:
-    """A unit's name prefix lands its card on the ladder; the run's map overrides key by key."""
+    """A unit's name prefix lands its card on a live rung; the run's map overrides key by key."""
 
     def test_the_default_prefixes(self, orchestrate: ModuleType) -> None:
-        assert orchestrate.mapped_status("plan-interview") == "Shaping"
-        assert orchestrate.mapped_status("docreview-pass") == "Shaping"
-        assert orchestrate.mapped_status("work-52-build") == "Active"
-        assert orchestrate.mapped_status("fix-52-claude") == "Active"
-        assert orchestrate.mapped_status("codereview-52") == "Verify"
-        assert orchestrate.mapped_status("landed-52") == "Done"
+        assert orchestrate.mapped_status("plan-interview") == ("Planning", "Designing")
+        assert orchestrate.mapped_status("docreview-pass") == ("Planning", "Ready for Active")
+        assert orchestrate.mapped_status("work-52-build") == ("Active", "Implementing")
+        assert orchestrate.mapped_status("fix-52-claude") == ("Active", "Implementing")
+        assert orchestrate.mapped_status("codereview-52") == ("Active", "Code review")
+        assert orchestrate.mapped_status("landed-52") == ("Verify", "Awaiting verification")
 
     def test_the_bare_prefix_is_a_unit_name_too(self, orchestrate: ModuleType) -> None:
-        assert orchestrate.mapped_status("plan") == "Shaping"
+        assert orchestrate.mapped_status("plan") == ("Planning", "Designing")
 
     def test_matching_stops_at_a_word_boundary(self, orchestrate: ModuleType) -> None:
         """A bare string prefix would make ``planner-notes`` a plan phase; it is not."""
@@ -228,16 +255,60 @@ class TestStatusMapping:
         assert orchestrate.mapped_status("settle-debounce") is None
 
     def test_the_status_map_overrides_key_by_key(self, orchestrate: ModuleType) -> None:
-        overrides = {"work": "Ready"}
-        assert orchestrate.mapped_status("work-52-build", overrides) == "Ready"
-        assert orchestrate.mapped_status("plan-interview", overrides) == "Shaping"
+        overrides = {"work": ["Active", "Integrating"]}
+        assert orchestrate.mapped_status("work-52-build", overrides) == ("Active", "Integrating")
+        assert orchestrate.mapped_status("plan-interview", overrides) == ("Planning", "Designing")
 
     def test_a_specific_name_beats_a_shorter_prefix(self, orchestrate: ModuleType) -> None:
-        overrides = {"work-52-build": "Done", "work": "Verify"}
-        assert orchestrate.mapped_status("work-52-build", overrides) == "Done"
+        overrides = {
+            "work-52-build": ["Active", "Ready to merge"],
+            "work": ["Active", "Integrating"],
+        }
+        assert orchestrate.mapped_status("work-52-build", overrides) == ("Active", "Ready to merge")
 
-    def test_the_defaults_never_leave_the_ladder(self, orchestrate: ModuleType) -> None:
-        assert set(orchestrate.DEFAULT_STATUS_MAP.values()) <= set(orchestrate.STATUS_LADDER)
+    def test_a_pre_pair_string_override_fails_loud(self, orchestrate: ModuleType) -> None:
+        """A run file written before #927 holds a bare Status string. That is not a rung, and
+        returning None for it would turn a stale configuration into a silent no-announce."""
+        with pytest.raises(ValueError, match="not a \\(Stage, Status\\) pair"):
+            orchestrate.mapped_status("work-52-build", {"work": "Ready"})
+
+    def test_the_defaults_never_leave_the_live_vocabulary(self, orchestrate: ModuleType) -> None:
+        """Re-aimed from the hard-coded ladder at the board's own authority. The assertion is not
+        weaker -- it still fails on an invented rung -- it now fails on a STALE one too, which the
+        ladder could not, because the ladder was itself the stale copy."""
+        live = orchestrate.live_rungs()
+        assert live, "mission-control's schema must resolve from this checkout"
+        off = [
+            (key, rung)
+            for key, rung in orchestrate.DEFAULT_STATUS_MAP.items()
+            if tuple(rung) not in live
+        ]
+        assert off == [], f"rungs the board does not carry: {off}"
+
+    def test_the_rungs_never_move_a_card_backwards(self, orchestrate: ModuleType) -> None:
+        """Ladder order plan -> docreview -> work -> fix -> codereview -> landed must be
+        non-decreasing in the schema's own stage order, or a boundary un-advances the card."""
+        stages = list(orchestrate.stage_statuses())
+        order = ["plan", "docreview", "work", "fix", "codereview", "landed"]
+        indices = [stages.index(orchestrate.DEFAULT_STATUS_MAP[key][0]) for key in order]
+        assert indices == sorted(indices), (
+            f"a rung moves the card backwards: {dict(zip(order, indices, strict=True))}"
+        )
+
+    def test_landed_never_resolves_to_retro(self, orchestrate: ModuleType) -> None:
+        """``landed`` is the post-merge unit announce, not close-out. Retro would move Stage past
+        Verify and skip the merge-plus-deploy-or-artifact rule this file exists to respect."""
+        assert orchestrate.DEFAULT_STATUS_MAP["landed"][0] == "Verify"
+
+    def test_no_retired_token_survives_in_the_module(self, orchestrate: ModuleType) -> None:
+        """``Idea``, ``Ready`` and ``Done`` are options on neither live field."""
+        source = Path(orchestrate.__file__ or SCRIPT).read_text()
+        assert not re.search(r'"(Idea|Ready|Done)"', source), (
+            "a retired board token survives in orchestrate.py"
+        )
+        assert not hasattr(orchestrate, "STATUS_LADDER"), (
+            "the hard-coded ladder is replaced by the resolved vocabulary, not kept beside it"
+        )
 
     def test_issue_refs_split_into_repo_and_number(self, orchestrate: ModuleType) -> None:
         assert orchestrate.parse_issue_ref("infiquetra/orch#52") == ("infiquetra/orch", 52)
@@ -310,16 +381,18 @@ class TestALandedUnitAnnounces:
         assert fake_controller.status_writes[0] == {
             "repo": "infiquetra/orch",
             "number": 52,
-            "status": "Active",
+            "assignments": [("Stage", "Active"), ("Status", "Implementing")],
         }
         assert len(fake_controller.comment_writes) == 1
         comment = fake_controller.comment_writes[0]
         assert comment["repo"] == "infiquetra/orch"
         assert comment["number"] == 52
         assert "work-alpha" in comment["body"], "the comment must name what happened"
-        assert "board writeback work-alpha -> Active" in capsys.readouterr().out
+        assert "board stage: Active" in comment["body"]
+        assert "board status: Implementing" in comment["body"]
+        assert "board writeback work-alpha -> Active/Implementing" in capsys.readouterr().out
 
-    def test_the_arguments_carry_the_issue_and_the_ladder_status(
+    def test_the_arguments_carry_the_issue_and_both_halves_of_the_rung(
         self,
         orchestrate: ModuleType,
         repo: Path,
@@ -335,13 +408,19 @@ class TestALandedUnitAnnounces:
         assert status_opts["--op"] == "set-field-status"
         assert status_opts["--repo"] == "infiquetra/orch"
         assert status_opts["--number"] == "52"
-        assert status_opts["--target-state"] == "Active"
+        # --target-state names the Status half, because that is the field the controller can read
+        # back for its drift check; the payload carries the whole pair.
+        assert status_opts["--target-state"] == "Implementing"
+        assert json.loads(status_opts["--payload"])["assignments"] == [
+            ["Stage", "Active"],
+            ["Status", "Implementing"],
+        ]
         assert Path(status_opts["--repo-root"]).resolve() == repo.resolve()
 
         comment_opts = _options_of(fake_controller.calls[1])
         assert comment_opts["--op"] == "issue-progress-comment"
         # A stable discriminator, so a re-driven boundary meets the key it already wrote.
-        assert comment_opts["--target-state"] == "orchestrate:r1:work-alpha:Active"
+        assert comment_opts["--target-state"] == "orchestrate:r1:work-alpha:Active/Implementing"
         assert "work-alpha" in json.loads(comment_opts["--payload"])["body"]
 
     def test_the_status_map_overrides_what_lands(
@@ -355,13 +434,84 @@ class TestALandedUnitAnnounces:
             repo,
             [_unit("work-alpha")],
             issues={"work-alpha": "infiquetra/orch#52"},
-            status_map={"work": "Ready"},
+            status_map={"work": ["Active", "Integrating"]},
         )
         monkeypatch.chdir(repo)
         assert orchestrate.cmd_land(argparse.Namespace()) == 0
         assert fake_controller.status_writes == [
-            {"repo": "infiquetra/orch", "number": 52, "status": "Ready"}
+            {
+                "repo": "infiquetra/orch",
+                "number": 52,
+                "assignments": [("Stage", "Active"), ("Status", "Integrating")],
+            }
         ]
+
+    def test_a_rung_the_board_does_not_carry_fails_loud(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_controller: FakeReconcileController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unresolvable rung is a FAILURE record, never a skip.
+
+        Skipping is how six stale rungs stayed invisible: every board write this file made halted
+        in front of mission-control's writer and the run said nothing about it."""
+        _write_run(
+            repo,
+            [_unit("work-alpha")],
+            issues={"work-alpha": "infiquetra/orch#52"},
+            status_map={"work": ["Active", "Invented status"]},
+        )
+        monkeypatch.chdir(repo)
+        r = orchestrate.Run.load()
+        records = orchestrate.announce_units(r, ["work-alpha"])
+        assert fake_controller.calls == [], "an unresolvable rung must not reach the controller"
+        assert "skipped" not in records[0]
+        assert records[0]["writes"][0]["status"] == "failed"
+        assert (
+            "is not a live (Stage, Status) option combination" in records[0]["writes"][0]["error"]
+        )
+        assert orchestrate._failed_writebacks(records) == records
+
+    def test_a_pre_pair_override_fails_loud_rather_than_half_writing(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_controller: FakeReconcileController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A run file carrying the pre-#927 single-string override submits nothing at all."""
+        _write_run(
+            repo,
+            [_unit("work-alpha")],
+            issues={"work-alpha": "infiquetra/orch#52"},
+            status_map={"work": "Ready"},
+        )
+        monkeypatch.chdir(repo)
+        r = orchestrate.Run.load()
+        records = orchestrate.announce_units(r, ["work-alpha"])
+        assert fake_controller.calls == []
+        assert records[0]["writes"][0]["status"] == "failed"
+        assert "not a (Stage, Status) pair" in records[0]["writes"][0]["error"]
+
+    def test_an_unresolvable_schema_skips_rather_than_guesses(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_controller: FakeReconcileController,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """No schema means no way to tell a live rung from an invented one -- the same class of
+        designed no-op as a machine without saga, reported rather than guessed around."""
+        monkeypatch.setenv("ORCHESTRATE_SDLC_SCHEMA", str(tmp_path / "no-such-schema.json"))
+        _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
+        monkeypatch.chdir(repo)
+        r = orchestrate.Run.load()
+        records = orchestrate.announce_units(r, ["work-alpha"])
+        assert fake_controller.calls == []
+        assert "sdlc-schema.json is not resolvable" in records[0]["skipped"]
 
     def test_an_unmapped_prefix_announces_nothing(
         self,

@@ -417,12 +417,15 @@ class Run:
     whole connection between a phase boundary and the card it happened for -- the observed 75-unit
     run for issue 52 crossed nine phases while its card never left `Idea`, not because the write was
     missing but because nothing ever called it. See ``announce_units``."""
-    status_map: dict[str, str] = field(default_factory=dict)
-    """Unit-name prefix -> board Status overrides, replacing the default one key at a time.
+    status_map: dict[str, Any] = field(default_factory=dict)
+    """Unit-name prefix -> board rung overrides, replacing the default one key at a time.
 
     A key present here wins over ``DEFAULT_STATUS_MAP`` for that prefix; every other prefix keeps
-    the default. Values are still checked against the board's Status ladder -- an override is a way
-    to re-route a phase, not a way to invent a status. See ``mapped_status``."""
+    the default. A rung is a ``(Stage, Status)`` pair -- stored in a run file as a two-element JSON
+    array -- and is still checked against the board's own resolved ``stage_statuses``: an override
+    is a way to re-route a phase, not a way to invent a rung. A pre-#927 override holding a single
+    Status string is no longer a rung and fails loud rather than being half-submitted. See
+    ``mapped_status``."""
     review_result: str | None = None
     """The latest typed Code Review result, stored verbatim and never normalized."""
     review_outcome: str | None = None
@@ -1848,10 +1851,93 @@ def discover_unrecorded(r: Run) -> list[tuple[str, str]]:
 
 # ------------------------------------------------- board writeback (via saga's reconcile_controller)
 
-# The board's closed Status vocabulary. These are the values the card can hold and nothing else --
-# a mapped status outside this ladder is a typo or an invention, and both are refused here rather
-# than sent to GitHub to fail in front of the board writer.
-STATUS_LADDER = ("Idea", "Shaping", "Ready", "Active", "Verify", "Done")
+# Name of the environment variable that points straight at mission-control's sdlc-schema.json.
+SDLC_SCHEMA_ENV = "ORCHESTRATE_SDLC_SCHEMA"
+
+
+def _schema_candidates() -> list[Path]:
+    """Where mission-control's ``sdlc-schema.json`` can live, in order of trust.
+
+    The same shape as ``_controller_candidates``: the repo layout first -- this file ships beside
+    the mission-control plugin in the same checkout -- then each vendor's install cache."""
+    here = Path(__file__).resolve()
+    paths = [here.parents[4] / "mission-control" / "config" / "sdlc-schema.json"]
+    for pattern in (
+        "~/.claude/plugins/cache/*/mission-control/*/config/sdlc-schema.json",
+        "~/.codex/plugins/cache/*/mission-control/*/config/sdlc-schema.json",
+        "~/.grok/marketplace-cache/*/plugins/mission-control/config/sdlc-schema.json",
+        "~/.qwen/extensions/mission-control/config/sdlc-schema.json",
+        "~/.gemini/config/plugins/mission-control/config/sdlc-schema.json",
+    ):
+        paths.extend(Path(hit) for hit in sorted(glob.glob(str(Path(pattern).expanduser()))))
+    return paths
+
+
+def stage_statuses() -> dict[str, tuple[str, ...]]:
+    """The board's live ``Stage -> Status`` vocabulary, resolved from mission-control's schema.
+
+    Orchestrate keeps no vocabulary of its own. Until #927 it carried a hard-coded six-value
+    ``STATUS_LADDER`` -- Idea, Shaping, Ready, Active, Verify, Done -- and submitted those values as
+    ``Status``; not one of the six is a live ``Status`` option, so every board write this file made
+    halted before it reached a card. A second copy of a vocabulary goes stale silently, and this
+    one had.
+
+    This reads the same versioned ``workflows.stage_flow.stage_statuses`` block mission-control's
+    own ``_stage_flow_rules()`` resolves, out of the schema document mission-control ships.
+    Deliberately the document rather than an import of ``sdlc_manager``: that module's resolver
+    tries GitHub first through a ``gh`` child, and board writeback is a guest of the run -- it must
+    never make a land wait on a network call, and it must work offline. The shipped document is
+    mission-control's own offline rung, so the vocabulary still has exactly one source.
+
+    Returns ``{}`` when no schema resolves, which the caller reports rather than guessing around.
+    """
+    override = os.environ.get(SDLC_SCHEMA_ENV, "")
+    candidates = [Path(override).expanduser()] if override else _schema_candidates()
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        block = raw.get("workflows", {}).get("stage_flow", {}).get("stage_statuses", {})
+        if isinstance(block, dict) and block:
+            return {
+                str(stage): tuple(str(status) for status in options)
+                for stage, options in block.items()
+                if isinstance(options, list)
+            }
+    return {}
+
+
+def live_rungs(vocabulary: dict[str, tuple[str, ...]] | None = None) -> set[tuple[str, str]]:
+    """Every ``(Stage, Status)`` combination the board actually carries."""
+    resolved = stage_statuses() if vocabulary is None else vocabulary
+    return {(stage, status) for stage, options in resolved.items() for status in options}
+
+
+def normalize_rung(value: Any) -> tuple[str, str] | None:
+    """The ``(Stage, Status)`` pair a configured rung denotes, or None when it is not one.
+
+    A run file stores a rung as a two-element JSON array, so this also absorbs the list-versus-tuple
+    difference between what was written and what the defaults hold. A leftover single string from a
+    pre-#927 run file is NOT a rung and returns None -- the caller fails loud on it rather than
+    submitting half a move."""
+    if isinstance(value, str) or not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    stage, status = value
+    if not isinstance(stage, str) or not isinstance(status, str):
+        return None
+    return (stage, status)
+
+
+def render_rung(rung: tuple[str, str]) -> str:
+    """One stable rendering of a rung, for the announce discriminator and the operator's line.
+
+    Pinned deliberately. The progress comment's idempotency discriminator interpolates this, so a
+    change of shape changes every key and re-posts every comment that was already posted."""
+    return f"{rung[0]}/{rung[1]}"
+
 
 # Where a unit's phase boundary lands its issue's card, read off the unit name's prefix. This is
 # the default only: ``Run.status_map`` replaces it one key at a time. The prefixes are the saga
@@ -1865,18 +1951,27 @@ STATUS_LADDER = ("Idea", "Shaping", "Ready", "Active", "Verify", "Done")
 # still being designed. This follows the existing semantics of this map, which records where a
 # unit's boundary *lands* the card, not where it started.
 #
-# ``codereview`` carried "Verify" until #927. Closed infiquetra-sdlc #89 (W8), requirement R69,
-# puts pre-merge continuous integration, tests, code review and merge readiness all in the Active
-# stage: Verify begins only after merge plus the applicable non-production deployment, or after
-# installed/published artifact verification when nothing deploys. The Saga half of that repair
-# shipped and the Orchestrate half did not, because the guard test that enforces it scanned
-# plugins/saga/ only.
-DEFAULT_STATUS_MAP: dict[str, str] = {
-    "plan": "Shaping",
-    "docreview": "Shaping",
-    "work": "Active",
-    "fix": "Active",
-    "landed": "Done",
+# ``codereview`` carried "Verify" until #927, and is REMAPPED rather than deleted. Closed
+# infiquetra-sdlc #89 (W8), requirement R69, puts pre-merge continuous integration, tests, code
+# review and merge readiness all in the Active stage: Verify begins only after merge plus the
+# applicable non-production deployment, or after installed/published artifact verification when
+# nothing deploys. The Saga half of that repair shipped and the Orchestrate half did not, because
+# the guard test that enforces it scanned plugins/saga/ only. Deleting the key outright would
+# silently stop announcing at a boundary that announces today, and ``mapped_status`` would report
+# that as "no status mapped for this unit's prefix" rather than as the regression it is.
+#
+# Every value is a live ``(Stage, Status)`` pair present in the schema's own ``stage_statuses``,
+# and the stage indices are non-decreasing across this order (2, 2, 3, 3, 3, 4) so no rung moves a
+# card backwards. ``landed`` is Verify, never Retro: it is a unit-landed announce -- the post-merge
+# side of the rule -- not close-out, and mapping it to Retro would move Stage past Verify and skip
+# the merge-plus-deploy-or-artifact condition this file is being corrected to respect.
+DEFAULT_STATUS_MAP: dict[str, tuple[str, str]] = {
+    "plan": ("Planning", "Designing"),
+    "docreview": ("Planning", "Ready for Active"),
+    "work": ("Active", "Implementing"),
+    "fix": ("Active", "Implementing"),
+    "codereview": ("Active", "Code review"),
+    "landed": ("Verify", "Awaiting verification"),
 }
 
 # Name of the environment variable that points straight at saga's reconcile_controller, for a
@@ -1928,20 +2023,32 @@ def parse_issue_ref(ref: str) -> tuple[str, int] | None:
     return match.group(1), int(match.group(2))
 
 
-def mapped_status(unit_name: str, overrides: dict[str, str] | None = None) -> str | None:
-    """The board Status a unit's phase boundary lands its card on, or None when nothing applies.
+def mapped_status(
+    unit_name: str, overrides: dict[str, Any] | None = None
+) -> tuple[str, str] | None:
+    """The live ``(Stage, Status)`` pair a unit's boundary lands its card on, or None if none does.
 
     The run's ``status_map`` overrides ``DEFAULT_STATUS_MAP`` key by key. Longest key wins so a
     specific override cannot be shadowed by a shorter default. Matching is at a dash boundary: the
-    unit name is the key itself or starts with the key and a dash."""
-    merged = {**DEFAULT_STATUS_MAP, **(overrides or {})}
+    unit name is the key itself or starts with the key and a dash.
+
+    Raises ``ValueError`` when the key that matched carries something that is not a pair -- a
+    pre-#927 run file's single string, say. An override is a way to re-route a phase, not a way to
+    invent a rung, and returning None for a malformed one would turn a configuration mistake into a
+    silent no-announce."""
+    merged: dict[str, Any] = {**DEFAULT_STATUS_MAP, **(overrides or {})}
     for key in sorted(merged, key=len, reverse=True):
         if unit_name == key or unit_name.startswith(key + "-"):
-            return merged[key]
+            rung = normalize_rung(merged[key])
+            if rung is None:
+                raise ValueError(
+                    f"status_map entry for {key!r} is {merged[key]!r}, not a (Stage, Status) pair"
+                )
+            return rung
     return None
 
 
-def announce_comment_body(r: Run, unit: Unit, status: str) -> str:
+def announce_comment_body(r: Run, unit: Unit, rung: tuple[str, str]) -> str:
     """The one progress comment a boundary posts, naming what actually happened."""
     return (
         "\n".join(
@@ -1951,7 +2058,8 @@ def announce_comment_body(r: Run, unit: Unit, status: str) -> str:
                 f"- run: {r.run_id}",
                 f"- unit: {unit.name} ({unit.vendor})",
                 f"- landed on: {r.branch}",
-                f"- board status: {status}",
+                f"- board stage: {rung[0]}",
+                f"- board status: {rung[1]}",
             ]
         )
         + "\n"
@@ -1965,7 +2073,7 @@ def _reconcile_call(
     number: int,
     target_state: str,
     *,
-    payload: dict[str, str] | None,
+    payload: dict[str, Any] | None,
     root: Path,
 ) -> dict[str, Any]:
     """Drive ONE write through saga's reconcile_controller and hand back its record.
@@ -2006,11 +2114,29 @@ def _reconcile_call(
     return {str(key): value for key, value in parsed.items()}
 
 
+def _writeback_failure(
+    unit_name: str, issue: str, rung: tuple[str, str] | None, reason: str
+) -> dict[str, Any]:
+    """A writeback record for a rung that cannot be submitted at all.
+
+    Shaped like a real record rather than a ``skipped`` one on purpose: ``_failed_writebacks``
+    ignores skips (no issue mapped, a malformed ref, no saga here -- all designed no-ops) and this
+    is not one. A rung the board does not carry is a defect in the run's configuration, and the
+    land's exit code says so."""
+    return {
+        "unit": unit_name,
+        "issue": issue,
+        "status": render_rung(rung) if rung is not None else "unresolved",
+        "writes": [{"status": "failed", "op_kind": "set-field-status", "error": reason}],
+    }
+
+
 def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
     """Write each named unit's just-passed boundary back to its issue's board card.
 
-    Two writes per unit, both through ``reconcile_controller``: set the card's Status field to the
-    unit's mapped status, then post one progress comment naming what happened. The comment is
+    Two writes per unit, both through ``reconcile_controller``: submit the unit's mapped
+    ``(Stage, Status)`` pair as one two-assignment ``set-field-status`` op, then post one progress
+    comment naming what happened. The comment is
     attempted only when the status write converged: it says ``board status: {status}``, and a
     comment describing a write that did not happen is worse than one not attempted -- the retry
     door is ``announce``, whose idempotency keys make a repeat safe. The comment's idempotency
@@ -2026,7 +2152,8 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
     if not r.issues:
         return []
 
-    todo: list[tuple[Unit, str, int, str]] = []
+    live = live_rungs()
+    todo: list[tuple[Unit, str, int, tuple[str, str]]] = []
     records: list[dict[str, Any]] = []
     for name in names:
         unit = r.unit(name)
@@ -2039,20 +2166,38 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
             records.append({"unit": name, "skipped": f"malformed issue reference {ref!r}"})
             continue
         repo, number = parsed
-        status = mapped_status(name, r.status_map)
-        if status is None:
+        try:
+            rung = mapped_status(name, r.status_map)
+        except ValueError as exc:
+            records.append(_writeback_failure(name, f"{repo}#{number}", None, str(exc)))
+            continue
+        if rung is None:
             records.append({"unit": name, "skipped": "no status mapped for this unit's prefix"})
             continue
-        if status not in STATUS_LADDER:
+        if not live:
+            # No schema, so no way to tell a live rung from an invented one. This is the same class
+            # of no-op as a machine without saga -- report it and carry on, never guess.
             records.append(
                 {
                     "unit": name,
-                    "skipped": f"status {status!r} is not on the ladder: "
-                    f"{', '.join(STATUS_LADDER)}",
+                    "skipped": "mission-control's sdlc-schema.json is not resolvable here",
                 }
             )
             continue
-        todo.append((unit, repo, number, status))
+        if rung not in live:
+            # FAIL LOUD, never skip. A rung the board does not carry used to be dropped with a
+            # `skipped` record, which is exactly how six stale rungs stayed invisible while every
+            # board write this file made halted in front of the writer.
+            records.append(
+                _writeback_failure(
+                    name,
+                    f"{repo}#{number}",
+                    rung,
+                    f"rung {render_rung(rung)} is not a live (Stage, Status) option combination",
+                )
+            )
+            continue
+        todo.append((unit, repo, number, rung))
 
     if not todo:
         return records
@@ -2071,16 +2216,29 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
         return records
 
     root = repo_root()
-    for unit, repo, number, status in todo:
+    for unit, repo, number, rung in todo:
+        stage, status = rung
+        # One invocation carrying BOTH assignments. `--target-state` names the Status half because
+        # that is the field the controller can read back for its drift check; the payload carries
+        # the pair, which is what the writer turns into two --field/--option flags. Submitting the
+        # Status half alone would be a legal write and a wrong card: `Ready for Active` is a valid
+        # Status on its own, so the half-write looks like success while Stage stays put.
         status_write = _reconcile_call(
-            controller, "set-field-status", repo, number, status, payload=None, root=root
+            controller,
+            "set-field-status",
+            repo,
+            number,
+            status,
+            payload={"assignments": [["Stage", stage], ["Status", status]]},
+            root=root,
         )
         writes = [status_write]
         # One failure is a failure; two writes half-done is worse than one not attempted. A
         # failed write leaves no ledger key, so the retry door -- `announce` -- re-drives both
-        # writes cleanly.
+        # writes cleanly. The pair is not atomic either: mission-control writes one assignment at a
+        # time and does not roll the first back, so a `failed` record here names which half landed.
         if _write_converged(status_write):
-            discriminator = f"orchestrate:{r.run_id}:{unit.name}:{status}"
+            discriminator = f"orchestrate:{r.run_id}:{unit.name}:{render_rung(rung)}"
             writes.append(
                 _reconcile_call(
                     controller,
@@ -2088,12 +2246,17 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
                     repo,
                     number,
                     discriminator,
-                    payload={"body": announce_comment_body(r, unit, status)},
+                    payload={"body": announce_comment_body(r, unit, rung)},
                     root=root,
                 )
             )
         records.append(
-            {"unit": unit.name, "issue": f"{repo}#{number}", "status": status, "writes": writes}
+            {
+                "unit": unit.name,
+                "issue": f"{repo}#{number}",
+                "status": render_rung(rung),
+                "writes": writes,
+            }
         )
     return records
 

@@ -257,7 +257,7 @@ class TestAConflictCannotUnannounceAnEarlierMerge:
         assert fake_controller.ops() == ["set-field-status", "issue-progress-comment"]
         assert fake_controller.numbers() == ["101", "101"]
         comment_opts = _options_of(fake_controller.calls[1])
-        assert comment_opts["--target-state"] == "orchestrate:r1:work-alpha:Active"
+        assert comment_opts["--target-state"] == "orchestrate:r1:work-alpha:Active/Implementing"
         assert "work-alpha" in json.loads(comment_opts["--payload"])["body"]
 
     def test_the_announcement_survives_the_nonzero_return(
@@ -450,8 +450,8 @@ class TestANormalLandAnnouncesOncePerLandedUnit:
             if _options_of(call)["--op"] == "issue-progress-comment"
         ]
         assert comment_states == [
-            "orchestrate:r1:work-alpha:Active",
-            "orchestrate:r1:work-beta:Active",
+            "orchestrate:r1:work-alpha:Active/Implementing",
+            "orchestrate:r1:work-beta:Active/Implementing",
         ]
         assert _on(repo, "orch/r1", "work-alpha.txt")
         assert _on(repo, "orch/r1", "work-beta.txt")

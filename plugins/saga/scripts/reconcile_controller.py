@@ -229,25 +229,51 @@ def reconcile_op(
         }
 
     field_kw: str | None = None
+    state_kw = target_state
+    assignments: list[tuple[str, str]] = []
     if op_kind == "set-field-status":
-        field_kw = str((payload or {}).get("field") or "Status")
-        base["field"] = field_kw
-        if cert.authorize_correction_field(field_kw) != cert.AUTHORIZED:
+        # #927: the op may carry a whole ``(Stage, Status)`` pair in its payload. Absent
+        # ``assignments`` this normalizes to exactly the single ``field`` (default ``Status``)
+        # this controller lifted before, so every pre-#927 caller is byte-unchanged.
+        try:
+            assignments = bp.normalize_assignments(payload, target_state)
+        except ValueError as exc:
             return {
                 "status": "gated",
                 "halt": True,
-                "halt_reason": f"certificate-gate:correction-field:{field_kw}",
+                "halt_reason": f"malformed-assignments:{exc}",
                 "verdict": "GATE",
                 **base,
             }
+        # EVERY field in the submission is authorized, not just the first: a pair whose second half
+        # names an unauthorized field must gate whole rather than land one legal half.
+        for field_name, _option in assignments:
+            if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
+                base["field"] = field_name
+                return {
+                    "status": "gated",
+                    "halt": True,
+                    "halt_reason": f"certificate-gate:correction-field:{field_name}",
+                    "verdict": "GATE",
+                    **base,
+                }
+        # Both key-minting sites (here and ``board_progression.authorize_and_write``) derive the
+        # identity from the same helper, so a re-announce meets the key the first write left and a
+        # pair can never collide with a Status-only write to the same option.
+        field_kw, state_kw = bp.assignment_identity(assignments)
+        base["field"] = field_kw
 
-    key = cert.idempotency_key(op_kind, repo, number, target_state, field=field_kw)
+    key = cert.idempotency_key(op_kind, repo, number, state_kw, field=field_kw)
     ledger_file = ledger_dir / bp._safe_ledger_name(key)  # noqa: SLF001
 
     # (2) Absent key → normal idempotent write / crash-safe resume, via the shared write mechanism.
     if not ledger_file.exists():
         pay: dict[str, Any] = dict(payload or {})
-        if field_kw is not None:
+        if len(assignments) > 1:
+            # Carry the whole pair, never the composite identity: ``field`` names one field and
+            # ``Stage+Status`` is not one. The writer reads ``assignments``.
+            pay["assignments"] = [[name, option] for name, option in assignments]
+        elif field_kw is not None:
             pay.setdefault("field", field_kw)
         return bp.authorize_and_write(
             op_kind,

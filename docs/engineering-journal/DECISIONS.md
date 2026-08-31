@@ -47,7 +47,7 @@
 **Revisit when.** A consumer needs machine-readable error fields (then add a structured error object rather than parsing prose), or a second sentinel consumer appears (then extract the prefix into a shared constant), or mission-control adds `pending-confirmation` to its prepare vocabulary.
 **Refs.** Issue #912 review; `plugins/saga/references/saga-spec.md` §4/§9; `plugins/saga/CHANGELOG.md` 0.150.0; `tests/test_handoff_envelope_maturity.py`.
 
-### Prepared-issue readiness accepts any Stage-configured Status plus Blocked; the entry option is a default, not a closed set (sdlc#91)  {#w10-readiness-stage-scoped-r91}  {#w10-readiness-stage-scoped-r91}
+### Prepared-issue readiness accepts any Stage-configured Status plus Blocked; the entry option is a default, not a closed set (sdlc#91)  {#w10-readiness-stage-scoped-r91}
 
 **Decision.** For the prepared-issue path (mission-control `issue prepare` / `issue create-prepared`), readiness accepts any Status configured within the declared Stage's `stage_statuses` list plus the cross-cutting statuses (`Blocked`). It continues to refuse retired (`Idea`, `Shaping`, `Done`), unknown, and out-of-Stage values, and refuses a declared Stage outside the schema's `stage_flow` block altogether. Preparation may default an omitted Status to the declared Stage's FIRST configured option (the R49 entry option); on a draft re-read, a declared Stage with an empty Status receives that default before readiness evaluates. Preparation itself never defaults the Stage — Stage stays author-supplied per the OQ1 ruling.
 

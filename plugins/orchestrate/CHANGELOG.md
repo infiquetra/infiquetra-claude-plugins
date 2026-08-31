@@ -1,5 +1,27 @@
 # Changelog
 
+## [4.0.1] - 2026-08-31
+
+### Fixed
+
+- **A reconcile-controller timeout now actually reports itself as unretryable.** 4.0.0 added a
+  safety record for this case and it could never execute. The branch was written as
+  `except subprocess.TimeoutExpired` around the controller call, but the runner catches the timeout
+  itself and, under `check=False`, returns `CompletedProcess(returncode=124)` rather than raising —
+  so nothing crossed that frame and a real timeout fell through to a bare `failed` record with no
+  `retryable` key, which every reader defaults to retryable. That is the one failure where a retry
+  is worst: `subprocess` kills the direct child only, so the Mission Control process saga launched
+  survives and may still be writing the card. The case is now detected on the return code, and a
+  test drives a real timeout rather than asserting about one.
+
+### Documentation
+
+- **Stop claiming all three dependency floors are enforced.** `plugin.json` declares floors for
+  saga, mission-control and agent-launcher; only saga's is checked at runtime. `README.md`,
+  `commands/orchestrate.md` and the 4.0.0 note above each said or implied otherwise. They now name
+  saga's as the enforced one and say plainly that the other two are read by the installer and
+  checked by nothing.
+
 ## [4.0.0] - 2026-08-31
 
 ### Why this is a MAJOR bump

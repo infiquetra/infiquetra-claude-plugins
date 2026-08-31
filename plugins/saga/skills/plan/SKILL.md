@@ -122,9 +122,16 @@ If depth is unclear, ask one targeted question, then continue.
 
 ### 0.6 Submit the card's move to `Planning` / `Designing` — Mission Control executes it
 
-**Actor:** this skill. **Trigger:** planning has started for a real issue — the saga tick is minted
-(`lifecycle_phase=plan`) and the plan artifact's path is settled. **Move:** the live pair
-`Stage` = `Planning`, `Status` = `Designing`.
+**Actor:** this skill. **Trigger:** planning has started for a real issue — §0.4 judged a plan
+document warranted and the issue reference is known. **Move:** the live pair `Stage` = `Planning`,
+`Status` = `Designing`.
+
+**The trigger names only what exists at §0.6.** An earlier form required the saga tick to be minted
+and "the plan artifact's path is settled": the tick is minted in §5.3 and the artifact in
+Phase 3, so neither condition can be true where the move is placed. An agent reading the section
+literally would either never submit the move or submit it from the wrong phase, and the card would
+sit in the stage before. A board move's trigger must be observable at the point the move is made —
+which is the whole point of moving the card *early*, when planning starts rather than when it ends.
 
 **Deciding and submitting is not writing.** Mission Control remains the only executor of a `Stage`
 or `Status` write; this skill submits the move and never composes or executes one itself. The

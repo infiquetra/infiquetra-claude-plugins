@@ -249,9 +249,16 @@ resume.
 Work is starting. Until the card moves, it reads exactly as it did before anyone picked it up,
 which on a wide run means a card sitting untouched while several units build against it.
 
-**Actor:** this skill. **Trigger:** work is starting for a real issue — the saga tick minted below,
-the work branch, and the work-session path all exist. **Move:** the live pair `Stage` = `Active`,
-`Status` = `Implementing`.
+**Actor:** this skill. **Trigger:** work is starting for a real issue — the doc-review gate in
+§1.3 has passed, the work branch exists, and the issue reference is known. **Move:** the live pair
+`Stage` = `Active`, `Status` = `Implementing`.
+
+**The trigger names only what exists at §1.3b.** An earlier form required "the saga tick minted
+below, the work branch, and the work-session path" — the tick is minted in §1.4 and the work-session
+writeup in Phase 4, so two of the three conditions are produced *after* the move they are supposed
+to gate. An agent reading the section literally would defer the move to Phase 4 or skip it, leaving
+the card in the previous stage for the whole of the work. A board move's trigger must be observable
+at the point the move is made.
 
 **Deciding and submitting is not writing.** Mission Control remains the only executor of a `Stage`
 or `Status` write; this skill submits the move through the reconcile controller and composes no
@@ -889,10 +896,16 @@ prints a record JSON:
   Status-field edit — is surfaced with its named reason, never silently overwritten or
   auto-corrected. Surface the `halt_reason` to the operator and fall back to the operator-prompted
   `mission-control` path.
-- `{"status":"gated"}` — which merge/deploy and any op outside the **closed** (empty since W7)
-  auto-correct allowlist returns, because the certificate lives in `reversibility_certificate` —
-  fall back to the operator-prompted `mission-control` path unchanged. A `gated`/`halt` result is
-  the controller correctly withholding an action that needs a human, never a failure.
+- `{"status":"gated"}` — the certificate in `reversibility_certificate` declining the op: merge and
+  deploy, anything outside the **closed** (empty since W7) auto-correct allowlist, and a submission
+  whose fields it does not authorize. Fall back to the operator-prompted `mission-control` path
+  unchanged.
+
+`gated` and `halt` are the two withholding outcomes and they are **not the same decision**. `gated`
+is the certificate refusing the op before anything is attempted; `halt` is the drift check finding
+the live board somewhere else and declining to overwrite it. Both are the controller correctly
+withholding an action that needs a human, never a failure — and neither is cleared by re-running the
+same call, which is why a caller must not offer a retry for either.
 
 **Reading a lifecycle record — what proves a pair moved, and what does not.**
 
@@ -908,12 +921,24 @@ Mission Control exposes **no read-back for the `Stage` field**: `board view` gro
 So "check both halves" is not a board read — it is these three, in order:
 
 1. the record's `field` names both halves;
-2. its `status` is `written` (or a `skipped` with no `note`);
+2. its `status` is `written`, or a `skipped` carrying **both** a `key` and no `note` — the `key` is
+   what distinguishes "this exact submission is already on disk" from a record that simply lacks a
+   note because the saga that wrote it is too old to emit one, and a note-free keyless `skipped` is
+   not evidence of anything;
 3. on a `failed`, the message's *landed / NOT landed* detail names which assignment to repair.
 
 When all three cannot be satisfied — an `error`, or a `failed` with no report — say so and open the
 card in a browser rather than asserting the move. Do not report a lifecycle move as complete on the
 strength of a `status` word alone.
+
+**The controller's exit code is coarser than its record; read the record.** `reconcile_controller.py
+reconcile` exits **0** for `written`, `skipped`, `corrected`, `gated` and `halt` — convergence and
+both withholding outcomes share one code, deliberately, because a gate is expected rather than a
+crash. It exits **1** for `failed` and for `error`, so those two are indistinguishable by exit code
+even though they are opposites: `failed` wrote nothing and the next tick retries, while `error`
+means the board write **did** commit and only the replay key is missing. `detect` exits 0 for every
+observation. An unknown subcommand exits **2**. A caller that branches on the exit code alone will
+treat a committed write as a failure and retry a move that already landed.
 
 `/work` still does **not** merge or deploy autonomously (permanently gated), and the controller
 never widens the autonomously-writable set beyond what `board_progression`/`reversibility_certificate`

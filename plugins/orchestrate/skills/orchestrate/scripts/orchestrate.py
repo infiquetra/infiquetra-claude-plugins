@@ -379,6 +379,18 @@ class RunBranchResolutionError(RuntimeError):
     """A branch-dependent predicate was asked about an unresolvable run branch."""
 
 
+# The run-file shape this Orchestrate writes and understands. Bumped when a key changes meaning in
+# a way an older Orchestrate would misread rather than ignore -- `status_map` becoming a
+# (Stage, Status) pair in 4.0.0 is exactly that: an older version reads the pair as an unmapped
+# prefix and announces nothing, silently.
+RUN_FILE_CONTRACT = "2026-08-31.stage-status-pair"
+KNOWN_RUN_FILE_CONTRACTS = frozenset({"", RUN_FILE_CONTRACT})
+
+
+class RunFileContractError(RuntimeError):
+    """A run file written under a contract this Orchestrate does not know."""
+
+
 @dataclass
 class Run:
     run_id: str
@@ -443,11 +455,32 @@ class Run:
     controller's outcome, resubmit flag, or unresolved fix requests can never be read as another's
     (#877)."""
     review_controller_ceiling: int | None = None
+    # Units whose merge landed but whose board writeback did not, unit name -> reason. Persisted
+    # because the failure OUTLIVES the invocation that saw it: `land` announces only the units it
+    # merged this time, so a second `land` after a failed writeback merged nothing, announced
+    # nothing, found no failures and exited 0 -- while the card was still wrong and the exit code
+    # said it was not. Cleared per unit as soon as a later round converges that unit.
+    writeback_failed: dict[str, str] = field(default_factory=dict)
     """Most Code Review controllers this run may have running at once, when declared."""
 
     @classmethod
     def load(cls, path: Path = RUN_FILE) -> Run:
         raw = json.loads(path.read_text())
+        contract = str(raw.get("contract", ""))
+        if contract and contract not in KNOWN_RUN_FILE_CONTRACTS:
+            # A run file written by a NEWER Orchestrate, opened by this one. Refuse rather than
+            # read it: a `status_map` whose values this version cannot interpret resolves to "no
+            # status mapped for this unit's prefix" -- a designed no-op -- so a downgrade turns a
+            # board write into silence, which is the same failure shape everywhere else in this
+            # change. This can only protect run files written from here on: an Orchestrate older
+            # than 4.0.0 does not read this key and will still open a 4.0.0 run file blind, which
+            # is why the changelog carries the downgrade as an install obligation rather than a
+            # note.
+            raise RunFileContractError(
+                f"{path} was written under run-file contract {contract!r}, which this Orchestrate "
+                f"does not know (it knows {', '.join(sorted(c for c in KNOWN_RUN_FILE_CONTRACTS if c))}). "
+                f"Update the orchestrate plugin rather than running this run file with an older one"
+            )
         loaded = cls(
             run_id=raw["run_id"],
             source=raw["source"],
@@ -466,6 +499,7 @@ class Run:
             operator_fix_requests=raw.get("operator_fix_requests", []),
             review_states=raw.get("review_states", {}),
             review_controller_ceiling=review_ceiling_from_plan(raw),
+            writeback_failed=raw.get("writeback_failed", {}),
         )
         # engine_prefs was retired with #776; ignore it on load so older run files still open.
         loaded.resolve_branch_once()
@@ -548,6 +582,8 @@ class Run:
             "operator_fix_requests": self.operator_fix_requests,
             "review_states": self.review_states,
             "review_controller_ceiling": self.review_controller_ceiling,
+            "writeback_failed": self.writeback_failed,
+            "contract": RUN_FILE_CONTRACT,
             "units": unit_rows,
         }
         _atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
@@ -1857,28 +1893,50 @@ SDLC_SCHEMA_ENV = "ORCHESTRATE_SDLC_SCHEMA"
 _VERSION_SEGMENT_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
 
 
-def _version_rank(path: Path) -> tuple[int, ...]:
-    """The highest dotted-numeric path segment, parsed, so installs sort by VERSION not by string.
+def _version_rank(path: Path, plugin: str) -> tuple[int, ...]:
+    """The parsed version of the install directory ``plugin`` sits in, or ``()`` when there is none.
 
     An install cache keeps one directory per version, and `sorted()` over the raw glob hits is
     lexicographic: it puts `0.10.0` before `0.9.0` and `0.136.0` before every later release. With
     sixty saga copies installed across two plugin roots on this machine, that made the resolver
-    select 0.136.0 -- a saga that predates every contract this file depends on. A path carrying no
-    version segment ranks lowest, so a hand-placed checkout never outranks a real install."""
-    best: tuple[int, ...] = ()
-    for part in path.parts:
-        match = _VERSION_SEGMENT_RE.match(part)
-        if match:
-            parsed = tuple(int(number) for number in match.group(1).split("."))
-            best = max(best, parsed)
-    return best
+    select 0.136.0 -- a saga that predates every contract this file depends on.
+
+    Only the segment DIRECTLY AFTER the plugin's own name is read. An earlier form took the highest
+    dotted-numeric segment anywhere in the path, so a marketplace checkout at
+    ``cache/infiquetra-9.9.9/saga/0.1.0/`` outranked every real release: the version it sorted on
+    belonged to a different thing entirely. A path carrying no version directory ranks lowest, so a
+    hand-placed checkout never outranks a real install."""
+    parts = path.parts
+    for index, part in enumerate(parts[:-1]):
+        if part == plugin:
+            match = _VERSION_SEGMENT_RE.match(parts[index + 1])
+            if not match:
+                return ()
+            return tuple(int(number) for number in match.group(1).split("."))
+    return ()
 
 
-def _newest_first(pattern: str) -> list[Path]:
+def _newest_first(pattern: str, plugin: str) -> list[Path]:
     """Every install matching ``pattern``, newest version first, ties broken by path."""
     hits = [Path(hit) for hit in glob.glob(str(Path(pattern).expanduser()))]
-    return sorted(hits, key=lambda path: (_version_rank(path), str(path)), reverse=True)
+    return sorted(hits, key=lambda path: (_version_rank(path, plugin), str(path)), reverse=True)
 
+
+# ---------------------------------------------------------------------------------------------
+# WHY THIS RESOLVER IS HAND-ROLLED, AND WHAT IT DUPLICATES
+#
+# saga carries `fleet_commons_shim`, a five-rung resolution ladder (env override, repo walk-up,
+# installed registry, cache sibling, loud miss) that does this job better than the loop below. This
+# file cannot use it, and the reason is structural rather than incidental: the thing being resolved
+# IS saga. Importing saga's ladder to find saga is circular, and an Orchestrate on a machine with no
+# saga installed -- an ordinary state, which the missing-controller branch below is written for --
+# would fail at import rather than degrade.
+#
+# So this is a deliberate duplicate with a narrower job: find one file inside one plugin's install
+# tree, newest version first, with no registry read and no repo walk. What must be kept in step with
+# the fleet ladder is the ROOT LIST -- `~/.claude-company` was missing here for exactly as long as
+# nobody was comparing the two. If a sixth root is added to the shim, add it here too.
+# ---------------------------------------------------------------------------------------------
 
 # The vendor install roots, as `{plugin}` templates. `~/.claude-company` is a SECOND, separate
 # plugin tree beside `~/.claude` -- not a symlink to it -- and omitting it made every company-account
@@ -1894,11 +1952,19 @@ _INSTALL_PATTERNS = (
 
 
 def _install_candidates(plugin: str, tail: str) -> list[Path]:
-    """Installed copies of ``plugin``'s ``tail`` file, each vendor's newest first."""
+    """Installed copies of ``plugin``'s ``tail`` file, newest version first ACROSS every root.
+
+    The ranking is global, not per-root. Ranking inside each pattern and then concatenating meant
+    root order decided the winner before version did: every copy under ``~/.claude`` outranked
+    every copy under ``~/.claude-company``, so a stale saga in the first root beat a newer one in
+    the second -- which is the same "an old saga executed the write" failure the version ordering
+    exists to prevent, reached by a different door. Ties (equal versions, or none) fall back to
+    path order, which keeps root precedence as the tiebreak it should have been all along."""
     found: list[Path] = []
     for pattern in _INSTALL_PATTERNS:
-        found.extend(_newest_first(pattern.format(plugin=plugin, tail=tail)))
-    return found
+        expanded = str(Path(pattern.format(plugin=plugin, tail=tail)).expanduser())
+        found.extend(Path(hit) for hit in glob.glob(expanded))
+    return sorted(found, key=lambda path: (_version_rank(path, plugin), str(path)), reverse=True)
 
 
 def _schema_candidates() -> list[Path]:
@@ -2015,9 +2081,12 @@ def render_rung(rung: tuple[str, str]) -> str:
 #
 #   * `cmd_land` merges unit branches onto the RUN branch, `orch/<run-id>` -- never the default
 #     branch -- so a `landed` boundary is not a merge in W-D2's sense at all; and
-#   * the whole module contains exactly one occurrence of `deployment` / `deployed` /
-#     `non-production` / `nonprod`, and it is the sentence above. There is no deployment or
-#     artifact-verification signal here to gate on.
+#   * every occurrence of `deployment` / `deployed` / `non-production` / `nonprod` in this module
+#     is prose inside this comment -- there is no code that reads, computes or receives any of
+#     them. So there is no deployment or artifact-verification signal here to gate on. (An earlier
+#     form of this comment said "exactly one occurrence" and was simply wrong: there are four, all
+#     of them in these paragraphs. The claim that matters is that none is a runtime signal, and
+#     that one holds; the count was decoration that failed on its first check.)
 #
 # So a gate would be permanently false: a dead key with extra code around it rather than a
 # safeguard. Remapping to `Active`/`Integrating` would be better behaviour, and it is not this
@@ -2133,6 +2202,151 @@ def announce_comment_body(r: Run, unit: Unit, rung: tuple[str, str]) -> str:
     )
 
 
+# saga's own budget, restated so the outer cap is DERIVED from it rather than guessed. Both are
+# read off `board_progression`: the writer takes `_TIMEOUT_SECONDS_PER_ASSIGNMENT * n` per attempt
+# and `record_board_progression` takes `max_attempts=3`. A pair is therefore 60*2*3 = 360 seconds
+# in the worst case, and the outer cap was a flat 180 -- so a slow board truncated the controller
+# mid-retry. That is not merely a lost write: `subprocess` kills the direct child only, so the
+# mission-control process saga launched keeps running and keeps writing the card while this call
+# reports a failure and the operator is told to retry.
+SAGA_SECONDS_PER_ASSIGNMENT = 60
+SAGA_MAX_ATTEMPTS = 3
+RECONCILE_TIMEOUT_SLACK_SECONDS = 30
+
+# Controller record statuses a retry cannot clear on its own, whatever the record's own
+# `retryable` flag says (or fails to say). `halt` is the certificate refusing the op and `gated` is
+# the reversibility gate declining it; both are decisions about the op, not transient conditions,
+# and both arrive from saga with no `retryable` key at all -- so a `.get("retryable", True)`
+# default sent the operator to a door that reproduces the identical answer.
+NON_RETRYABLE_WRITE_STATUSES = ("halt", "gated")
+
+# Stages no orchestrate boundary may submit, whatever door the rung arrived through (W-D2, closed
+# infiquetra-sdlc #89 requirement R69). `Verify` begins only after merge PLUS the applicable
+# non-production deployment or artifact verification; `Retro` after that. Neither is a condition
+# `land` or `announce` can observe. `DEFAULT_STATUS_MAP` is pinned against both by test -- but a
+# run file's `status_map` override never passes through that pin: an override is validated for
+# LIVENESS alone, and `("Verify", "Awaiting verification")` is a perfectly live pair. So the
+# restriction belongs HERE, on the submission itself, which every rung reaches by every door.
+UNSUBMITTABLE_STAGES = ("Verify", "Retro")
+
+# Prefixes that used to name a rung and deliberately no longer do. Retiring `landed` (#927) turned
+# its loud "not a live rung" failure into `mapped_status` returning None, which `announce_units`
+# records as a designed no-op and `land` exits 0 on -- so a run file still carrying `landed-*`
+# units would go from a visible error to silence, which is the opposite of what the retirement was
+# for. Naming the retirement keeps the signal and says why.
+RETIRED_STATUS_MAP_KEYS: dict[str, str] = {
+    "landed": (
+        "the `landed` rung was retired in Orchestrate 4.0.0: the boundary it announced is W-D2's "
+        "post-merge Verify, whose two conditions (merge to the default branch, plus non-production "
+        "deployment or artifact verification) Orchestrate can observe neither of. There is no "
+        "replacement rung; remove the unit prefix or map it explicitly in the run file"
+    ),
+}
+
+
+def retired_status_key(unit_name: str, overrides: dict[str, Any] | None = None) -> str | None:
+    """The retirement note for a unit whose prefix names a retired rung, or None.
+
+    An explicit `status_map` override for the same key wins: the operator has said what they want
+    and the liveness and stage checks below still judge it."""
+    for key, note in RETIRED_STATUS_MAP_KEYS.items():
+        if key in (overrides or {}):
+            continue
+        if unit_name == key or unit_name.startswith(key + "-"):
+            return note
+    return None
+
+
+def reconcile_timeout(payload: dict[str, Any] | None) -> int:
+    """The outer subprocess budget for one controller call, derived from saga's own inner budget."""
+    assignments = (payload or {}).get("assignments") or []
+    count = max(1, len(assignments) if isinstance(assignments, (list, tuple)) else 1)
+    return SAGA_SECONDS_PER_ASSIGNMENT * count * SAGA_MAX_ATTEMPTS + RECONCILE_TIMEOUT_SLACK_SECONDS
+
+
+def _write_is_retryable(write: dict[str, Any]) -> bool:
+    """True when re-running `announce` could plausibly clear this unconverged write."""
+    if str(write.get("status")) in NON_RETRYABLE_WRITE_STATUSES:
+        return False
+    return bool(write.get("retryable", True))
+
+
+PLUGIN_MANIFEST = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+
+_VERSION_FLOOR_RE = re.compile(r">=\s*v?(\d+(?:\.\d+)*)")
+
+
+def declared_dependency_floors() -> dict[str, tuple[int, ...]]:
+    """The `>=` floors Orchestrate's own plugin.json declares, parsed, keyed by plugin name.
+
+    The manifest is the single source: a floor declared there and restated here would be two
+    copies to drift, which is the failure this whole change exists to stop one layer down."""
+    try:
+        raw = json.loads(PLUGIN_MANIFEST.read_text())
+    except (OSError, ValueError):
+        return {}
+    floors: dict[str, tuple[int, ...]] = {}
+    for entry in raw.get("dependencies", []):
+        if not isinstance(entry, dict):
+            continue
+        match = _VERSION_FLOOR_RE.search(str(entry.get("version", "")))
+        if match:
+            floors[str(entry.get("name", ""))] = tuple(
+                int(number) for number in match.group(1).split(".")
+            )
+    return floors
+
+
+def dependency_floor_violation(plugin: str, path: Path) -> str | None:
+    """Why the resolved ``plugin`` install is too old to satisfy the declared floor, or None.
+
+    A DECLARED floor that nothing checks is a comment. `plugin.json` has said
+    ``saga >= 0.151.0`` since the pair contract shipped, and the only thing that reads it is a
+    human -- so the exact install this file then shells out to was never compared against it, and
+    the P0 this floor exists to prevent could recur through a machine that simply had an older
+    saga installed.
+
+    An install whose path carries no version directory (a repository checkout, or a hand-placed
+    copy) returns None: its version is genuinely unknown here, and refusing local development to
+    enforce a floor that cannot be read would cost more than it buys. That case is named in the
+    provenance line instead of being passed over."""
+    floor = declared_dependency_floors().get(plugin)
+    if floor is None:
+        return None
+    found = _version_rank(path, plugin)
+    if not found or found >= floor:
+        return None
+    rendered = ".".join(str(part) for part in found)
+    required = ".".join(str(part) for part in floor)
+    return (
+        f"the {plugin} install that resolved here is {rendered}, below the {required} floor "
+        f"Orchestrate's plugin.json declares. It is at {path}. Update the {plugin} plugin"
+    )
+
+
+def resolved_schema_path() -> Path | None:
+    """Which `sdlc-schema.json` `stage_statuses()` actually reads here, or None.
+
+    Provenance, not behaviour. Sixty saga copies and several mission-control copies are installed
+    across two plugin roots on this machine, and until now a run's output named neither the schema
+    it validated against nor the controller it executed through -- so "the board write failed" was
+    unactionable, and worse, a run that silently resolved a stale copy looked exactly like one that
+    resolved the right one."""
+    override = os.environ.get(SDLC_SCHEMA_ENV, "")
+    candidates = [Path(override).expanduser()] if override else _schema_candidates()
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        block = raw.get("workflows", {}).get("stage_flow", {}).get("stage_statuses", {})
+        if isinstance(block, dict) and block:
+            return path
+    return None
+
+
 def _reconcile_call(
     controller: Path,
     op: str,
@@ -2168,7 +2382,24 @@ def _reconcile_call(
     ]
     if payload is not None:
         argv += ["--payload", json.dumps(payload)]
-    proc = run(argv, check=False, timeout=180)
+    budget = reconcile_timeout(payload)
+    try:
+        proc = run(argv, check=False, timeout=budget)
+    except subprocess.TimeoutExpired:
+        # A subprocess timeout kills the DIRECT child only. saga's controller shells out to
+        # mission-control, so the grandchild survives and may still be writing the card while this
+        # returns. Say so: an operator told to "retry" here can race a live writer, and the honest
+        # instruction is to look at the board first.
+        return {
+            "status": "failed",
+            "op_kind": op,
+            "retryable": False,
+            "error": (
+                f"the reconcile controller did not finish within {budget}s. Killing it does not "
+                "kill the mission-control process it launched, so a write may still be in flight: "
+                "read the card before doing anything else"
+            ),
+        }
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip()
         return {"status": "failed", "op_kind": op, "error": tail}
@@ -2181,17 +2412,23 @@ def _reconcile_call(
     return {str(key): value for key, value in parsed.items()}
 
 
-def pair_identity(rung: tuple[str, str]) -> str:
-    """The composite ``field`` identity a pair-aware saga records for this rung's submission.
+def pair_identity() -> str:
+    """The composite ``field`` identity a pair-aware saga records for a lifecycle submission.
 
     Mirrors ``board_progression.assignment_identity``, which joins the submission's field names,
     sorted, with ``+``. Orchestrate cannot import that module -- saga is a separate plugin resolved
     at runtime, and may be absent entirely -- so the shape is restated here and pinned by a test
-    that drives the real function."""
+    that drives the real function.
+
+    It takes no rung, because it does not depend on one: every lifecycle submission this file makes
+    names the same two FIELDS, and the identity is built from field names alone -- the options ride
+    in the record's ``state``. An earlier form took a ``rung`` argument and never read it, which
+    advertised a dependence on the rung that does not exist and invited a caller to believe
+    different rungs mint different identities."""
     return "+".join(sorted(("Stage", "Status")))
 
 
-def _pair_was_executed(write: dict[str, Any], rung: tuple[str, str]) -> bool:
+def _pair_was_executed(write: dict[str, Any]) -> bool:
     """True when the controller's own record proves BOTH halves of the pair were submitted.
 
     Orchestrate shells out to whichever saga ``reconcile_controller.py`` resolves on this machine,
@@ -2205,7 +2442,7 @@ def _pair_was_executed(write: dict[str, Any], rung: tuple[str, str]) -> bool:
 
     The record already carries the discriminator and nothing was reading it: ``field`` is the
     composite identity from a pair-aware saga and the bare readable field from an older one."""
-    return str(write.get("field", "")) == pair_identity(rung)
+    return str(write.get("field", "")) == pair_identity()
 
 
 def _stale_saga_failure(write: dict[str, Any], rung: tuple[str, str]) -> dict[str, Any]:
@@ -2216,7 +2453,7 @@ def _stale_saga_failure(write: dict[str, Any], rung: tuple[str, str]) -> dict[st
         "retryable": False,
         "error": (
             f"the saga that executed this submission recorded field "
-            f"{str(write.get('field', '')) or '<none>'!r}, not {pair_identity(rung)!r}: it predates "
+            f"{str(write.get('field', '')) or '<none>'!r}, not {pair_identity()!r}: it predates "
             f"the (Stage, Status) pair contract and wrote only the {rung[1]!r} half, leaving Stage "
             f"at whatever it was. Update the installed saga plugin to 0.151.0 or later, then re-run "
             f"`announce` -- the board was half-written, so check both fields on the card"
@@ -2284,7 +2521,21 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
             continue
         parsed = parse_issue_ref(ref)
         if parsed is None:
-            records.append({"unit": name, "skipped": f"malformed issue reference {ref!r}"})
+            # FAIL LOUD. A malformed ref was a `skipped`, and a skip is reported only under
+            # `verbose` and excluded from `_failed_writebacks` by design -- so a typo in the run
+            # file's `issues` mapping meant the card was never written, nothing said so, and the
+            # land exited 0. A designed no-op is "this unit has no issue"; "this unit HAS an issue
+            # and the reference to it is broken" is a configuration defect, and reads the same way
+            # to the operator only because the code used to conflate them.
+            records.append(
+                _writeback_failure(
+                    name,
+                    str(ref),
+                    None,
+                    f"issue reference {ref!r} is not in owner/repo#N form, so no card could be "
+                    f"identified for this unit; fix the run file's `issues` mapping",
+                )
+            )
             continue
         repo, number = parsed
         try:
@@ -2293,6 +2544,10 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
             records.append(_writeback_failure(name, f"{repo}#{number}", None, str(exc)))
             continue
         if rung is None:
+            retired = retired_status_key(name, r.status_map)
+            if retired is not None:
+                records.append(_writeback_failure(name, f"{repo}#{number}", None, retired))
+                continue
             records.append({"unit": name, "skipped": "no status mapped for this unit's prefix"})
             continue
         if not live:
@@ -2320,6 +2575,24 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
                     rung,
                     "mission-control's sdlc-schema.json is not resolvable here, so the rung could "
                     "not be validated against the board's own vocabulary",
+                )
+            )
+            continue
+        if rung[0] in UNSUBMITTABLE_STAGES:
+            # Checked on the SUBMISSION, not on the map, because the run file's `status_map` is a
+            # second door into this code and it does not pass through the map's pin. `landed` was
+            # retired for naming `Verify`; an override naming `Verify` is the same rule violation
+            # wearing a run file's clothes, and it validates as live because it IS live.
+            records.append(
+                _writeback_failure(
+                    name,
+                    f"{repo}#{number}",
+                    rung,
+                    f"rung {render_rung(rung)} names the {rung[0]} stage, which no orchestrate "
+                    f"boundary may submit: {rung[0]} begins only after conditions this run cannot "
+                    f"observe (merge to the default branch, plus the applicable non-production "
+                    f"deployment or artifact verification). Remove it from the run file's "
+                    f"`status_map`",
                 )
             )
             continue
@@ -2354,7 +2627,32 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
         )
         return records
 
+    violation = dependency_floor_violation("saga", controller)
+    if violation is not None:
+        # Refuse rather than submit. Below the floor is exactly the machine where the pair payload
+        # is dropped and a Status-only write comes back looking converged -- the cycle-1 P0. The
+        # runtime `field` check catches that one after the fact; this catches it before the write.
+        print(f"orchestrate: {violation}", file=sys.stderr)
+        records.extend(
+            _writeback_failure(unit.name, f"{repo}#{number}", rung, violation)
+            for unit, repo, number, rung in todo
+        )
+        return records
+
     root = repo_root()
+    # PROVENANCE, printed once per round and carried on every record. Which saga executed the
+    # write and which mission-control schema validated the rung are the two facts that decide
+    # whether a run's board writes were correct, and neither appeared anywhere in the output: sixty
+    # saga copies and several mission-control copies are installed across two plugin roots here, so
+    # "board writeback failed" and "board writeback succeeded against a stale contract" printed the
+    # same thing. The install ranking below it is only as good as its inputs; this is how an
+    # operator checks the inputs.
+    schema = resolved_schema_path()
+    provenance = {"controller": str(controller), "schema": str(schema) if schema else "none"}
+    print(
+        f"orchestrate: board writeback via saga {controller}, schema {provenance['schema']}",
+        file=sys.stderr,
+    )
     for unit, repo, number, rung in todo:
         stage, status = rung
         # One invocation carrying BOTH assignments. `--target-state` names the Status half because
@@ -2374,7 +2672,7 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
         # Verify the pair was actually EXECUTED, not merely submitted: the saga that ran it is
         # resolved at runtime and may predate the pair contract. Done before `_write_converged` so
         # a half-write can never gate the comment open.
-        if _write_converged(status_write) and not _pair_was_executed(status_write, rung):
+        if _write_converged(status_write) and not _pair_was_executed(status_write):
             status_write = _stale_saga_failure(status_write, rung)
         writes = [status_write]
         # One failure is a failure; two writes half-done is worse than one not attempted. A
@@ -2400,6 +2698,7 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
                 "issue": f"{repo}#{number}",
                 "status": render_rung(rung),
                 "writes": writes,
+                "provenance": provenance,
             }
         )
     return records
@@ -2427,6 +2726,10 @@ def report_announcements(records: list[dict[str, Any]], *, verbose: bool = False
         print(f"  board writeback {name} -> {record.get('status', '?')}: {', '.join(parts)}")
         for reason in reasons:
             print(f"      {reason}")
+        source = record.get("provenance")
+        if verbose and isinstance(source, dict):
+            print(f"      via saga {source.get('controller', '?')}")
+            print(f"      schema  {source.get('schema', '?')}")
 
 
 # Controller record statuses that mean the board converged: the write happened (``written``), had
@@ -2471,7 +2774,7 @@ def _report_failed_writebacks(failures: Sequence[dict[str, Any]]) -> None:
         issue = str(record.get("issue", "?"))
         writes = record.get("writes", [])
         blocking = [write for write in writes if not _write_converged(write)]
-        retryable = all(write.get("retryable", True) for write in blocking)
+        retryable = all(_write_is_retryable(write) for write in blocking)
         print(
             f"BOARD WRITEBACK FAILED: {name} ({issue}) -- the merge landed, but its card was not updated"
         )
@@ -2483,6 +2786,44 @@ def _report_failed_writebacks(failures: Sequence[dict[str, Any]]) -> None:
             print(f"  retry with `orchestrate.py announce {name}`")
         else:
             print("  a retry cannot clear this on its own -- fix the cause named above first")
+
+
+def record_writeback_outcome(r: Run, records: Sequence[dict[str, Any]]) -> None:
+    """Fold one round's writeback records into the run file's outstanding-failure ledger.
+
+    Converged units are cleared, failed units are recorded with their reason. The ledger is what
+    makes a failure survive the invocation that produced it: `land` only ever announces the units
+    it merged in THAT invocation, so without this a second `land` sees no failures because it
+    attempted no writes, and exits 0 over a card that is still wrong."""
+    failed = {str(record.get("unit", "?")) for record in _failed_writebacks(records)}
+    for record in records:
+        name = str(record.get("unit", "?"))
+        if name in failed:
+            blocking = [write for write in record.get("writes", []) if not _write_converged(write)]
+            reason = ""
+            for write in blocking:
+                reason = str(
+                    write.get("error") or write.get("halt_reason") or write.get("note") or ""
+                )
+                if reason:
+                    break
+            r.writeback_failed[name] = reason or "the board write did not converge"
+        elif "skipped" not in record:
+            r.writeback_failed.pop(name, None)
+
+
+def _report_outstanding_writebacks(r: Run, announced: Sequence[str]) -> list[str]:
+    """Name every unit carrying a writeback failure from an EARLIER invocation, and return them.
+
+    Units announced in this invocation are excluded -- they were just reported first-hand."""
+    outstanding = sorted(set(r.writeback_failed) - set(announced))
+    for name in outstanding:
+        print(
+            f"BOARD WRITEBACK STILL OUTSTANDING: {name} -- a previous land or announce failed to "
+            f"update its card and nothing has since: {r.writeback_failed[name]}"
+        )
+        print(f"  retry with `orchestrate.py announce {name}`")
+    return outstanding
 
 
 def _report_landing_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> None:
@@ -3671,6 +4012,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     landed_names: list[str] = []
     completed_fix_ids: list[str] = []
     writeback_failures: list[dict[str, Any]] = []
+    announced_units: list[str] = []
     cleanup_failures: list[tuple[Path, str]] = []
     preserved_landing_paths: list[tuple[Path, str]] = []
     canonical_unavailable = False
@@ -3745,6 +4087,9 @@ def cmd_land(args: argparse.Namespace) -> int:
                     records = announce_units(r, [unit.name])
                     report_announcements(records)
                     writeback_failures.extend(_failed_writebacks(records))
+                    announced_units.append(unit.name)
+                    record_writeback_outcome(r, records)
+                    r.save()
                 else:
                     # A clean exact retained merge already in run-branch history is published. This
                     # closes records written by the older cleanup ordering without republishing it.
@@ -3922,6 +4267,9 @@ def cmd_land(args: argparse.Namespace) -> int:
             records = announce_units(r, [unit.name])
             report_announcements(records)
             writeback_failures.extend(_failed_writebacks(records))
+            announced_units.append(unit.name)
+            record_writeback_outcome(r, records)
+            r.save()
     finally:
         if not keep_land_worktree:
             # Safe by construction: this invocation created `landing_worktree` with
@@ -3994,6 +4342,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
     _report_failed_writebacks(writeback_failures)
+    outstanding_writebacks = _report_outstanding_writebacks(r, announced_units)
     if cleanup_failures:
         _report_landing_cleanup_failures(cleanup_failures)
         return 3
@@ -4011,7 +4360,7 @@ def cmd_land(args: argparse.Namespace) -> int:
             print("nothing to reap: this land merged nothing")
     if resubmit_failed:
         return 4
-    return 2 if writeback_failures else 0
+    return 2 if (writeback_failures or outstanding_writebacks) else 0
 
 
 def cmd_announce(args: argparse.Namespace) -> int:
@@ -4028,6 +4377,8 @@ def cmd_announce(args: argparse.Namespace) -> int:
         return 0
     records = announce_units(r, args.units)
     report_announcements(records, verbose=True)
+    record_writeback_outcome(r, records)
+    r.save()
     failures = _failed_writebacks(records)
     if failures:
         # `land` has always exited 2 on this; `announce` exited 0, which is worse here than there.

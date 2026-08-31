@@ -1,6 +1,18 @@
 # Changelog
 
-## [3.1.0] - 2026-08-31
+## [4.0.0] - 2026-08-31
+
+### Why this is a MAJOR bump
+
+`{#removed-default-is-breaking}` in this repository's `DECISIONS.md` sets the test as whether a
+caller can observe the change; where none can, a minor bump is defensible. Callers **can** observe
+several of these, so the precedent points the other way and this release follows it. Four
+independently qualify: an existing run file whose `status_map` holds a pre-pair single string made
+`land` exit 0 before and exits 2 now; the progress comment's rendered body gained a `board stage:`
+line; `STATUS_LADDER` was deleted outright; and `mapped_status` was retyped from `str | None` to
+`tuple[str, str] | None` and now raises where it used to return. Two hard install obligations are
+added on top. Downgrading is now refused rather than silently misread — see the run-file contract
+below.
 
 ### Upgrade order — read this before relying on board writeback
 
@@ -18,6 +30,14 @@ the glob's raw strings is lexicographic, which put `0.136.0` ahead of every late
 machine with sixty installed saga copies across two plugin roots it selected a saga from well before
 any of this existed. `~/.claude-company` is searched too — it is a second plugin tree beside
 `~/.claude`, not a symlink to it, and it had been omitted.
+
+The ranking is **global across every install root**, and the version is read from the directory
+directly beneath the plugin's own name. Ranking within each root and then concatenating meant root
+order decided the winner before version did, so a stale copy in the first root beat a newer one in
+the second; and taking the highest dotted-numeric segment anywhere in the path let a marketplace
+directory such as `cache/infiquetra-9.9.9/` outrank every real release. The declared floors are
+now **enforced**, not merely declared: a resolved saga below the `plugin.json` floor is refused
+before any submission is made, naming the install path and the version it found.
 
 ### Fixed
 
@@ -44,6 +64,36 @@ any of this existed. `~/.claude-company` is searched too — it is a second plug
 - **`announce` exits 2 on a hard writeback failure**, as `land` already did. It is the retry door,
   so a green exit from it was a direct claim that the card is now right — read by an operator who
   ran it precisely because the card was wrong.
+- **No rung reaches `Verify` or `Retro`, from any source.** The default map is pinned against both
+  stages by test, and a run file's `status_map` override never passed through that pin — an
+  override is validated for liveness alone, and `("Verify", "Awaiting verification")` is a
+  perfectly live pair, so the rule had one door closed and a second open. The restriction now sits
+  on the submission itself, which every rung reaches by every door.
+- **A malformed `issues` reference is a failure, not a skip.** A reference that is not
+  `owner/repo#N` recorded a skip, which prints only under `verbose` and is excluded from the
+  failure report by design — so a typo meant the card was never written, nothing said so, and
+  `land` exited 0. "This unit has no issue" is a designed no-op; "this unit has an issue and the
+  reference to it is broken" is a configuration defect, and the two are no longer conflated.
+- **A failed writeback outlives the invocation that saw it.** `land` announces only the units it
+  merged in that invocation, so a second `land` merged nothing, attempted no write, found no
+  failure and exited 0 while the card was still wrong. Outstanding units are recorded in the run
+  file, reported by every later `land`, and cleared when an `announce` converges them.
+- **The controller's timeout is derived from saga's own budget rather than guessed.** saga takes up
+  to `60s x assignments x 3 attempts` — 360 seconds for a pair — and the outer cap was a flat 180,
+  so a slow board truncated the controller mid-retry. `subprocess` kills only the direct child, so
+  that left the Mission Control process saga had launched still writing the card while the operator
+  was told the write failed and to retry. The timeout is now computed from the same constants, and
+  a genuine timeout says explicitly that a write may still be in flight.
+- **Every writeback names its provenance.** Which saga executed the submission and which Mission
+  Control schema validated the rung are printed on stderr and carried on every record. Several
+  copies of each are typically installed; without this, a write executed against a stale one was
+  indistinguishable from a correct one.
+- **A run file names the contract it was written under.** `status_map` becoming a `(Stage, Status)`
+  pair is exactly the kind of change an older Orchestrate misreads rather than ignores — it sees an
+  unmapped prefix and announces nothing, silently. A run file carrying a contract this version does
+  not know is now refused rather than read. This protects run files written from here on; an
+  Orchestrate older than 4.0.0 does not read the key, which is why the upgrade order above is an
+  obligation rather than a note.
 - **The retry door is named only when a retry can clear the failure.** `announce` is
   idempotency-keyed and safe to repeat, but repeating it cannot fix a stale install, an unresolvable
   schema, or a run file whose override is not a pair. Those now report their cause instead.
@@ -51,17 +101,22 @@ any of this existed. `~/.claude-company` is searched too — it is a second plug
   entered only after merge plus the applicable non-production deployment — or, when nothing deploys,
   after installed or published artifact verification. Orchestrate can check **neither** conjunct:
   `land` merges unit branches onto the run branch `orch/<run-id>` rather than the default branch, so
-  a `landed` boundary is not a merge in that rule's sense at all; and the whole module carries
-  exactly one occurrence of `deployment` / `deployed` / `non-production` / `nonprod`, in a comment.
-  A gate would therefore be permanently false — a dead key with extra code around it rather than a
+  a `landed` boundary is not a merge in that rule's sense at all; and every occurrence of
+  `deployment` / `deployed` / `non-production` / `nonprod` in the module is prose inside one
+  comment, with no code reading, computing or receiving any of them, so there is no signal to gate
+  on. A gate would therefore be permanently false — a dead key with extra code around it rather than a
   safeguard — so the key is removed instead. Remapping it to `Active`/`Integrating` would be better
   behaviour and was considered: it is not made here because issue #919's approved board transition
   contract carries no `Integrating` row, and adding one extends a contract the operator approved,
   whereas retiring only removes a violation. **Nothing that ever worked is lost:** before this
   change `landed` mapped to `Done`, which is not a live `Status` option, so every write it made
   halted before reaching a card, and no unit in the repository is named `landed-*`. A `landed` unit
-  now takes the ordinary "no status mapped for this unit's prefix" skip. **Reversible: the operator
-  may restore it as a remap at any time before merge.**
+  now produces a **failure record naming the retirement**, not a skip: retiring the key without
+  that would have converted its loud "not a live rung" failure into `mapped_status` returning
+  `None`, which is a designed no-op that `land` exits 0 on — turning a visible error into silence,
+  which is the opposite of the point. An operator who maps `landed` explicitly in the run file gets
+  the ordinary rules instead. **Reversible: the operator may restore it as a remap at any time
+  before merge.**
 
 ### Changed
 
@@ -69,9 +124,8 @@ any of this existed. `~/.claude-company` is searched too — it is a second plug
   returns that pair, the announce discriminator renders it as `Stage/Status`, and the progress
   comment names both halves. The six rungs are `plan` → `Planning`/`Designing`, `docreview` →
   `Planning`/`Ready for Active`, `work` and `fix` → `Active`/`Implementing`, `codereview` →
-  `Active`/`Code review`, `landed` → `Verify`/`Awaiting verification`; all six are live and
-  stage-monotonic, and `landed` is deliberately `Verify` rather than `Retro` — it is the post-merge
-  unit announce, not close-out.
+  `Active`/`Code review`. All five are live and stage-monotonic. There is no sixth: `landed` is
+  retired, as described above.
 - **A `status_map` override is a pair and is validated against the resolved vocabulary.** A run
   file carrying the older single-string override fails loud rather than half-submitting.
 - **Two observable changes for an existing run file, stated rather than implied.** A run file whose
@@ -80,10 +134,14 @@ any of this existed. `~/.claude-company` is searched too — it is a second plug
   none of the retired ladder's values was a live option and every such write was already halting at
   Mission Control. And the progress comment now carries a `board stage:` line above its
   `board status:` line, so its rendered body differs from the pre-3.1.0 shape.
-- **The announce path is unchanged in what it announces and how it dedups** — one progress comment
-  per boundary, the same idempotency discriminator shape, and the same silent degradation when
-  saga's reconcile controller is absent. Two things about it did change and are listed above: the
-  exit code on a hard failure, and the reporting of a failure's reason. The drift half of the
+- **The announce path is unchanged in what it announces and in that it dedups** — one progress
+  comment per boundary, and the same silent degradation when saga's reconcile controller is absent.
+  **The discriminator's shape did change**, and an earlier draft of this entry said it had not: it
+  renders the rung, so `orchestrate:{run}:{unit}:{status}` became
+  `orchestrate:{run}:{unit}:{Stage}/{Status}`. A boundary announced under the old shape and
+  re-announced under the new one therefore mints a different key and posts a second comment. Two
+  other things changed and are listed above: the exit code on a hard failure, and the reporting of
+  a failure's reason. The drift half of the
   submission path also changed, in saga rather than here (see saga 0.151.0).
 - **Where the vocabulary comes from, precisely.** Orchestrate keeps no board vocabulary of its own,
   which is the property that matters: a value that stops being live stops validating here as soon as

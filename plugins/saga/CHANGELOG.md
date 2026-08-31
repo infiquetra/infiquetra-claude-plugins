@@ -4,6 +4,34 @@
 
 ### Fixed
 
+- **The pair guard is bounded at both ends, and an empty list is not a single-field write.** The
+  guard refused fewer than two *distinct* fields and accepted anything above: three fields is not a
+  lifecycle boundary, and authorizing one here would put an unreviewed field on the same
+  certificate as the pair. Two assignments to the same field cleared the distinct-count check while
+  carrying conflicting values for it. And an `assignments` key present but **empty** fell through
+  to the single-field fallback and reported a clean `Status`-only write — absent is the fallback,
+  empty is a caller that built a pair payload and put nothing in it.
+- **A pair's replay key is readable again.** `+` — the identity separator — was not in
+  `_safe_ledger_name`'s safe-character set, so every pair key took the SHA-1 fallback and the
+  ledger held an opaque digest for exactly the writes it most needs to be inspectable for. The
+  hostile-key fallback is unchanged.
+- **A single-field write is no longer told it has halves.** `outcome_reconcile.py` still drives
+  single-field `set-field-status`, and the no-report message told those callers that "which halves
+  landed is UNKNOWN" and to check every field — inventing a half-written board out of a write that
+  could only land or not.
+- **Both board-move triggers name conditions that exist where the move is made.** Plan §0.6
+  required the plan artifact's path (Phase 3) and Work §1.3b required the saga tick (§1.4) and the
+  work-session writeup (Phase 4) — conditions produced *after* the move they gate, so an agent
+  following either literally would defer the move or skip it and leave the card a stage behind.
+- **The reconcile controller's exit codes are documented, including where they are coarser than the
+  record.** `failed` and `error` share exit 1 and are opposites: `failed` wrote nothing, while
+  `error` means the board write committed and only the replay key is missing. A caller branching on
+  the exit code alone retries a move that already landed.
+- **`gated` and `halt` are stated as different decisions**, and the record contract no longer
+  accepts a note-free `skipped` as proof: a `skipped` proves convergence only when it also carries
+  its replay `key`, which is what distinguishes "already on disk" from a saga too old to emit a
+  note.
+
 - **Plan and Work submit their five lifecycle board moves again, as live `(Stage, Status)` pairs
   (#927).** Since the 0.145.0 change Saga made none of the project-board moves: the submission
   mechanism shipped and the caller never did, so a card sat exactly as it was picked up while

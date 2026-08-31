@@ -21,6 +21,25 @@
 
 ## 2026-08-31
 
+### Three guard tests could not fail, and each failed the same way: the assertion named its own subject  {#927-unfailable-guard-tests}
+
+**Context.** The cycle-1 integrated Saga Code Review on run cp919 found three separate tests whose whole job was to forbid something, and which could not report it. All three were green on every possible tree.
+**Evidence.** `tests/test_work_build_unit_tier.py` asserted `'"sonnet"' not in text or '"medium"' not in text or "resolve_build_unit_tier" in text` — the third disjunct greps for the name of the function the file under test *defines*, so the disjunction is always true; the review proved it by hard-coding the tier pair at the spawn site and watching the file stay green at nine passed. The same file's no-inheritance test passed a `host_tier` argument that `resolve_build_unit_tier` accepted and discarded by construction. `tests/test_work_gate_integrity.py` reduced a single-sourcing contract to `assert "same" in collapsed.lower()`.
+**Mechanism.** Each assertion was written against a property the author could see, then loosened until it passed, and the loosening happened to reference something guaranteed present — the subject's own name, a discarded parameter, an ordinary English word. An absence assertion has no natural failing case to check it against, so nothing pushes back when the pattern stops discriminating. The tier test is the sharpest: the disjunct that made it unfailable was added to stop a false positive, and it worked by naming the file's own definition.
+**Fix.** All three re-aimed, and each now ships with a **control test that proves the pattern discriminates** — a positive sample it must match and a negative it must not. The dead `host_tier` parameter was deleted and non-inheritance re-proved from the signature and from a hostile environment. Commit on `work/cp919-wk2-4-gate-integrity`, saga 0.155.0.
+**What surprised.** Two of the three were written in the same change as the feature they guard, by an author who had the failing case in hand minutes earlier.
+**Generalizable rule.** A test that asserts an absence needs a companion that asserts the detector fires. Without it you have not tested the property, you have tested that your pattern found nothing — and those are the same observation. Be especially suspicious of a disjunct added to silence a false positive: check what it is guaranteed to match.
+**Refs.** `tests/test_work_build_unit_tier.py`, `tests/test_work_gate_integrity.py`, `tests/test_orchestrate_status_map_contract.py`; issues #927, #929, #930.
+
+### A caller that hands work to a runtime-resolved executor must verify from what the executor emitted  {#927-verify-the-executor-not-the-intent-learning}
+
+**Context.** Orchestrate 3.1.0 submits a `(Stage, Status)` board pair by shelling out to whichever saga `reconcile_controller.py` resolves on the machine. The pair contract was built, tested end to end, and mutation-proved — in the saga in the checkout.
+**Evidence.** The review's reliability lens executed the *base* saga against the exact payload Orchestrate sends and captured the argv with the `Stage` assignment absent; the deployment lens ran the resolver's own glob and found it selected saga 0.136.0 out of sixty installed copies, because the candidate list sorted lexicographically. A pre-pair saga ignores `payload["assignments"]`, writes `--field Status` alone, and returns `written`.
+**Mechanism.** Every test proved the contract inside one process tree. The seam that breaks it is a *version* seam across a subprocess boundary, and nothing in the caller looked at what came back — `_write_converged` read only `status`. The discriminator was in the record the whole time (`field` is the composite identity from a pair-aware saga, a bare `Status` from an older one) and no code read it.
+**Fix.** Three answers, all needed: verify the returned `field` identity, order candidate installs by parsed version rather than string, and declare the dependency in `plugin.json`. A declaration alone is advisory; version ordering alone still trusts the callee.
+**Generalizable rule.** When a caller cannot version its callee, it must verify from something the callee *emitted*, not from what it sent. In-process tests cannot see this class at all, so look for it wherever a plugin shells out to another plugin.
+**Refs.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`; DECISIONS [`{#927-verify-the-executor-not-the-intent}`](DECISIONS.md#927-verify-the-executor-not-the-intent); issue #927.
+
 ### A guard whose assertion is a disjunction is only as strong as its weakest operand  {#927-disjunction-weakest-operand}
 
 **Evidence.** Four guards in run cp919 survived the mutation of the very thing they were written to

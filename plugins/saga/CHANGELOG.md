@@ -1,5 +1,139 @@
 # Changelog
 
+## [0.155.0] - 2026-08-31
+
+### Fixed
+
+- **Two more guard tests could not fail, and now can.** The tier-dispatch question guard read
+  `assert "AskUserQuestion" not in phase2 or "Build-unit tier" in phase2` — and the repair itself
+  added that heading to Phase 2, so the second operand was unconditionally true and a
+  questionnaire seeded into the dispatch passed. That is the same defect class the tier repair
+  fixed, recurring inside the file that fixed it, and what it let through is exactly what issue
+  #929 forbids. Two Phase-4.4 prose assertions carried dead disjuncts that subsumed their own
+  stricter operands. Each is now paired with a control proving it discriminates.
+- **The change-kinds gate has a behavioural test.** The single-sourcing clause was pinned by prose
+  grep alone and the derivation behind it was never called, so emptying its risky set left the
+  suite green. `requires_hard_test_gate` is now driven per kind, with controls for the empty list
+  and for safe-only kinds.
+- **An explicit build-unit tier is checked for RUNNABILITY, not just membership.** Every effort is
+  a legal effort and every model a legal model, but not every pairing runs — `haiku` tops out below
+  `xhigh` — so an explicit plan tier could name a combination no host can execute while its sibling
+  path, which resolves through the registry, could never produce one. The ceiling is read from
+  `fleet_commons.tier_palette` rather than restated, and the guard is driven across the palette's
+  whole product so both arms are exercised. (This one is recorded twice over: the first attempt at
+  it shipped the fix with no test, and its own mutation proof caught that — the check could be
+  deleted and the module stayed green.)
+- **`resolve-build-unit-tier` follows the fleet's CLI error contract.** A rejected argument printed
+  a bare `SystemExit` string at exit 1, and a bad tier raised through to a traceback; both are read
+  as JSON on stdout by an agent following the skill document. Both now print `{"error": ...}` on
+  stderr and exit 2.
+- **`/loop` no longer equates a `skipped` detect record with convergence.** A `skipped` carrying a
+  `note` means `detect` could not judge — it could not read the live board, or the submission had
+  no readable field — and says nothing about where the card is.
+- **Four false claims in shipped prose are corrected.** The changelog's "264 of 267 modules" is
+  210, measured; its `gated`/`halt` attribution was reversed (`gated` is the certificate declining
+  the op, which is what the empty allowlist produces; `halt` is the drift check); it credited an
+  `_override_line` refusal the source itself calls unreachable from that path; and Work §5.5 still
+  said the `qa` advance "is deferred to the `/qa` rebuild" while the same document's preamble — and
+  `plugins/saga/skills/qa/` — say it is `/qa`'s to make on a PASS.
+
+- **`/work`'s `/qa` preamble said the opposite of what `/qa` does (#930).** It read "`/qa` does not
+  yet advance the phase". `/qa` advances `lifecycle_phase` from `work` to `qa` on a PASS and keeps
+  it at `work` on a FAIL — its own skill says so and the saga specification's consumer table agrees.
+  The saga legitimately sits at `work` from merge until `/qa` runs and passes, which is the true
+  reason and is now what the sentence says.
+- **`halt` was attributed to an allowlist no conditional reads (#930).** Phase 4.4 said any op
+  "outside the closed auto-correct allowlist" returns `halt`. `AUTO_CORRECT_OP_KINDS` is
+  `frozenset()` and nothing anywhere branches on membership in it. `halt` is what an outside DRIFT
+  returns; what the empty allowlist means is that the auto-correct branch was deleted, leaving
+  `halt` as a drift's only outcome.
+- **The certificate's own comment named a mechanism retired by W7.** The idempotency-key recipe note
+  justified not migrating orphaned keys partly because `set-field-status` "is in
+  `AUTO_CORRECT_OP_KINDS`, which re-drives the asserted value on drift anyway". Nothing re-drives
+  anything. The conclusion stands; the reason given for it did not, and the note now says what
+  actually happens.
+- **The build-unit tier instructions named a function with no way to run it (#928/#929).** Both the
+  skill and its execution-strategy reference told an agent to resolve a tier "via
+  `lifecycle_state.py:resolve_build_unit_tier`" — a Python symbol with no CLI entry point. A
+  `resolve-build-unit-tier` subcommand now exists and prints `{"model": ..., "effort": ...}`, and
+  both documents name the runnable form.
+- **An explicit plan tier bypassed the validation its sibling path enforces (#929).** It was
+  returned after a key-presence check alone, so a plan naming a model or effort the shared registry
+  does not carry reached a spawn, while the shape path could only ever produce a registry value.
+  "Explicit wins" is about precedence, not about skipping the check that the value exists.
+- **A bare `artifact_pointer.py` reference survived outside the guard's scope (#930).** The guard
+  was scoped to `plugins/saga/skills`, and `plugins/saga/references/liveness-consumer-sites.md`
+  named the module bare. The module lives in team-execution, so a bare filename in saga prose points
+  at a file that is not there wherever in saga it appears; the guard now covers saga's prose and the
+  reference carries the full path.
+- **The `/loop` first-move sentence was left a verbless fragment (#930).** Rewritten as prose that
+  states the boundary it is about: `/loop` makes no first-time forward move, that move belongs to
+  `/plan` and `/work`, and since W7 the `detect` tick enforces it mechanically rather than by
+  convention.
+
+### Changed
+
+- **Three guard tests could not fail, and now can.** The tier test's literal check ended in
+  `or "resolve_build_unit_tier" in text` — the name of the function the file under test defines, so
+  the disjunction was true on every possible tree; proved by a mutation that hard-coded the pair at
+  the spawn site and left it green. The no-inheritance test passed a `host_tier` argument the
+  resolver accepted and discarded, so it asserted that discarding works; non-inheritance is now
+  proved from the signature and from a hostile environment, and the dead parameter is gone. The
+  change-kinds single-sourcing test was `assert "same" in collapsed.lower()`, which ordinary prose
+  satisfies; it now matches the clause itself, with a control proving the pattern discriminates.
+- **Two test modules import their subject by path**, like 210 of this suite's 267 modules. The
+  package form resolves against whichever `plugins` package is found first, which is the primary
+  checkout when the worktree under test is nested beneath it — so the module under test was not
+  necessarily the module in the tree under test.
+
+## [0.154.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work maintenance sweep (#930).** Work's post-merge ceremony now names all five calls
+  including `teardown` as the terminal reclamation gate; the expected five are derived as the
+  post-merge slice of `ship_ceremony.TRANSITIONS`. `/loop` no longer claims the first-time board
+  move belongs to `/work` and describes the submission path Work submits through Mission Control
+  (built in 0.151.0). The Phase-4.4 gated/allowlist conflation is separated: **`gated` is the
+  certificate declining the op** — which is what the empty auto-correct allowlist produces, along
+  with merge, deploy and any unauthorized field — and **`halt` is the drift check finding the live
+  board somewhere else** and declining to overwrite it. An earlier form of this entry attributed
+  the allowlist to `halt`, which reverses the two. The orphaned `skip silently` line is made
+  explicit. Every bare `artifact_pointer.py` under `plugins/saga/skills` now uses its full
+  repository-relative path `plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py`.
+
+## [0.153.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work build-unit tier resolution (#929).** Work's direct build-unit dispatch now resolves
+  its `{model, effort}` via `lifecycle_state.py:resolve_build_unit_tier` — an explicit plan tier
+  wins unchanged, otherwise the work shape (default `mechanical` when undeclared) is resolved
+  through the shared `tier_policy.json` registry via `tier_resolver` / `tier_defaults`, never a
+  literal at the spawn site and never by consulting the host session's tier. The seam takes **no
+  host or session input at all**, which is what makes that guarantee real: it cannot read a tier it
+  is never given. A malformed `.saga/tier-defaults.json` still raises `TierDefaultsError` through
+  the seam.
+
+## [0.152.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work merge-gate integrity: validate verdicts, record inputs, name the waived gate (#928).**
+  `plugins/saga/scripts/saga.py save` now validates every `--gate-verdict` through the existing
+  `parse_gate_verdict` parser and refuses the whole save with `error: <message>` at exit 2 on a
+  non-canonical state or malformed entry, writing neither the tick envelope nor the `state.json`
+  index — a malformed verdict is surfaced where the operator can see it rather than becoming a
+  stored fact a later gate trusts. `change_kinds` that decides the hard test gate is now recorded
+  verbatim in the Phase-4 work-session writeup, and that same list is the one passed to
+  `requires_hard_test_gate`. The dual-purpose `--doc-review-override` flag is split: the doc-review
+  gate keeps `--doc-review-override` and the review gate uses new `--review-gate-override`; both
+  route through a single `issue_progress.py:_override_line` helper, and the issue comment now
+  renders `doc review override` vs `review gate override` so the waived gate is unambiguous. The
+  helper does carry a refusal for a rationale naming an unknown gate, but it is a guard for a
+  direct caller and **unreachable from the flag path** — the split itself is what makes the waived
+  gate unambiguous, and crediting the refusal reads as a runtime check that never runs.
+
 ## [0.151.0] - 2026-08-31
 
 ### Fixed

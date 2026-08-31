@@ -30,8 +30,10 @@ gate, not a saga round-trip.
 - `/qa` answers: "Does the shipped thing actually work?" (`/work` routes here advisorily after merge)
 
 `/work` consumes what `/plan` produced (the plan doc + the plan saga) and advances that same saga
-through `work`. It calls `/code-review` before opening a PR. After merge it routes to `/qa` advisorily —
-it leaves `lifecycle_phase=work` because `/qa` does not yet advance the phase (see Phase 5).
+through `work`. It calls `/code-review` before opening a PR. After merge it routes to `/qa`
+advisorily and leaves `lifecycle_phase=work`, because the advance to `qa` is **`/qa`'s to make and
+only on a PASS** — on a FAIL `/qa` keeps the phase at `work` and records the evidence. So the saga
+legitimately sits at `work` from merge until `/qa` runs and passes (see Phase 5).
 
 ## Core principles
 
@@ -278,7 +280,8 @@ proof the move happened and an installed saga older than the pair contract repor
 writing the `Status` half only. `halt`/`gated` falls back to the operator-prompted Mission Control
 path. Say in the phase header that work is starting.
 
-Skip silently when there is no issue -- a unit with no card has no lifecycle field to move.
+When there is no issue, no board move is submitted — a unit with no card has no lifecycle field
+to move, so this step is a no-op (not a silent skip of a required write).
 
 ### 1.4 Offer the backend, then mint/advance the saga
 
@@ -669,6 +672,25 @@ lease preflight retires with U6.
   isolation, or downgrade to serial when isolation is unavailable). Subagent dispatch passes each unit's
   Goal / Files / Approach / Execution note / Patterns / Test scenarios / Verification and **preserves the
   U-ID**.
+- **Build-unit tier** — When directly launching a build unit, resolve its `{model, effort}` by
+  running the resolver, not by reading it:
+
+  ```bash
+  # explicit plan tier
+  python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+    --plan-model <model> --plan-effort <effort>
+  # or, with no explicit tier, from the work shape (default: mechanical)
+  python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --work-shape <shape>
+  ```
+
+  It prints `{"model": ..., "effort": ...}` as JSON. An explicit plan tier wins on **precedence**,
+  and is still validated against the same vocabulary the shape path resolves from — a model or
+  effort the registry does not carry is refused rather than passed through to a spawn. Otherwise the
+  work shape (default `mechanical` when undeclared per `references/execution-strategy.md`) resolves
+  through the shared `tier_policy.json` registry via `tier_resolver` / `tier_defaults`. **The
+  resolver takes no host or session input at all**, so the dispatch never consults the host
+  session's tier — it cannot read one it is never given. Record the resolved tier in the Phase-4
+  work-session execution evidence.
 - **Follow existing patterns** — read the plan's referenced code first; match naming and conventions;
   grep for similar implementations before inventing.
 - **Already shipped → verify, don't reimplement.** If a unit's `Verification` is already satisfied by the
@@ -722,8 +744,12 @@ After each meaningful phase:
 ### 4.1 Work-session writeup
 
 Write a concise `docs/work-sessions/YYYY-MM-DD-<topic>.md` for the phase: what was built (by U-ID), the
-key decisions, files modified, checks run, and the single next step. This is the canonical, durable home
-(`handoff_envelope.py` classifies it resume-ready) — no new directory.
+key decisions, files modified, `change_kinds` (the derived list that decides which tests the hard gate
+demands), checks run, and the single next step. Record the derived `change_kinds` value verbatim in the
+writeup and pass that same recorded list to `requires_hard_test_gate` at
+`plugins/saga/scripts/lifecycle_state.py:111` to decide whether the hard test gate applies — the writeup
+field and the gate input are the same list, not two separate derivations. This is the canonical, durable
+home (`handoff_envelope.py` classifies it resume-ready) — no new directory.
 
 ### 4.2 Save a saga tick
 
@@ -744,13 +770,16 @@ python3 plugins/saga/scripts/saga.py save \
 
 The `--gate-verdict` state MUST be one of the six canonical gate states (`done` / `in-progress` /
 `blocked` / `failed` / `halted` / `not-reached`) — the same wire vocabulary `status_card.py` renders.
-A passing test gate is `tests:done:<ref>`, a failure is `tests:failed:<ref>`, still-running is
-`tests:in-progress:<ref>`; a non-canonical value (e.g. `pass`/`skip`) parses to *unknown* and the card
-renders the Tests cell as not-reached, silently dropping the verdict.
+`plugins/saga/scripts/saga.py save` validates every `--gate-verdict` value through `parse_gate_verdict`
+at save time and refuses the whole save with `error: <message>` at exit 2 when the parser rejects it,
+writing neither the tick envelope nor the `state.json` entry; the parser's message naming the six
+canonical states is surfaced verbatim. A passing test gate is `tests:done:<ref>`, a failure is
+`tests:failed:<ref>`, still-running is `tests:in-progress:<ref>`.
 
 List fields are full-snapshot (saga-spec §6) — pass the complete current set each tick, not a delta.
 
-When a team-execution run stored Layer-2 artifacts (`artifact_pointer.py store`), record their typed
+When a team-execution run stored Layer-2 artifacts
+(`plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py store`), record their typed
 pointers on the tick via `--artifact-pointers "<pointer-json>|<pointer-json>"` (pipe-separated, omit =
 carry forward) so a resuming thread can `deref` the exact bytes instead of re-inlining them.
 
@@ -769,8 +798,17 @@ python3 plugins/saga/scripts/issue_progress.py \
   --checks-run "pytest|ruff|mypy" \
   --blockers "<none or text>" \
   --doc-review-artifact docs/reviews/<artifact>.md \
-  --doc-review-override "<rationale if overridden>"
+  --doc-review-override "<rationale if doc-review gate waived>" \
+  --review-gate-override "<rationale if review gate waived>"
 ```
+
+An override must name which gate it waives: `--doc-review-override` for the doc-review gate and
+`--review-gate-override` for the review gate. What makes that unambiguous is the **split itself** —
+two flags, each hard-wired to one gate, so a rationale cannot arrive without a gate through this
+path at all, and the rendered issue comment labels the two waivers `doc review override` and
+`review gate override`. `issue_progress.py:_override_line` does carry a refusal for an unknown gate
+name, but the source itself records that it is unreachable from here: it is a guard for a direct
+caller, and describing it as what enforces the property reads as a runtime check that never runs.
 
 Then **post it**, through the same reconcile controller Phase 4.4 uses. Rendering is not posting, and
 "hand it to `mission-control`" was for a long time the only instruction here — so nothing ran, and no
@@ -896,16 +934,21 @@ prints a record JSON:
   Status-field edit — is surfaced with its named reason, never silently overwritten or
   auto-corrected. Surface the `halt_reason` to the operator and fall back to the operator-prompted
   `mission-control` path.
-- `{"status":"gated"}` — the certificate in `reversibility_certificate` declining the op: merge and
-  deploy, anything outside the **closed** (empty since W7) auto-correct allowlist, and a submission
-  whose fields it does not authorize. Fall back to the operator-prompted `mission-control` path
-  unchanged.
+- `{"status":"gated"}` — the reversibility certificate declining the op before anything is
+  attempted: an unauthorized merge or deploy, an unauthorized correction field, or a malformed
+  submission. Fall back to the operator-prompted `mission-control` path unchanged.
 
 `gated` and `halt` are the two withholding outcomes and they are **not the same decision**. `gated`
-is the certificate refusing the op before anything is attempted; `halt` is the drift check finding
-the live board somewhere else and declining to overwrite it. Both are the controller correctly
-withholding an action that needs a human, never a failure — and neither is cleared by re-running the
-same call, which is why a caller must not offer a retry for either.
+is the certificate refusing the op; `halt` is the drift check finding the live board somewhere else
+and declining to overwrite it. Both are the controller correctly withholding an action that needs a
+human, never a failure — and **neither is cleared by re-running the same call**, which is why a
+caller must not offer a retry for either.
+
+`halt` is **not** an allowlist verdict, and the empty allowlist is easy to misread as one:
+`AUTO_CORRECT_OP_KINDS` is `frozenset()` and no conditional anywhere reads it, so nothing is
+classified by membership in it. What the empty allowlist records is that the auto-correct branch was
+**deleted**, leaving `halt` as the only outcome a drift can have — the controller holds no
+autonomous lifecycle-field write authority at all (W7).
 
 **Reading a lifecycle record — what proves a pair moved, and what does not.**
 
@@ -1006,7 +1049,9 @@ A count `> 0` means commits landed since the review: keep PR-ready blocked and r
 capturing a fresh `REVIEWED_SHA`, before any PR/merge offer.
 
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
-via `--doc-review-override` / the work-session). Never a silent skip.
+via `--review-gate-override` for the review gate and `--doc-review-override` for the doc-review gate,
+each rendered through `issue_progress.py:_override_line` under its own gate's label, plus the
+work-session). Never a silent skip.
 
 ### 5.4 Reach PR-ready and present continuation routing
 
@@ -1028,14 +1073,16 @@ On a clean gate (or recorded override):
    `next_step="await review on PR #N"`; comment the PR status to the issue via the extended
    `issue_progress.py` CLI (`--pr-url`, `--review-status`).
 4. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
-   transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
-   approved + clean + fresh, **offer to run the rest of the ceremony** — four separate
-   `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
-   a bare `run` for `checkout_main`, a bare `run` for `pull`, then
-   `run --operator-confirmed branch_delete:<target>` naming the resolved head branch (issue
-   #635/KTD6) — each explicitly confirmed, never silent; merge is a
-   git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
-   On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
+    transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
+    approved + clean + fresh, **offer to run the rest of the ceremony** — five separate
+    `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
+    a bare `run` for `checkout_main`, a bare `run` for `pull`,
+    `run --operator-confirmed branch_delete:<target>` naming the resolved head branch (issue
+    #635/KTD6), then a bare `run` for `teardown` (issue #347 — the terminal reclamation gate that
+    closes the opened-resource manifest; `teardown` is `CeremonyTier.REVERSIBLE` and structurally
+    required) — each explicitly confirmed, never silent; merge is a
+    git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
+    On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
    See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.
    When the destination includes deploy, route the merged item's ownership transfer through the
    offer step in `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept
@@ -1049,8 +1096,12 @@ At thread completion set `status=done`.
 GitHub (PR-open, review-request, and merge are each explicitly confirmed; merge is a git op `/work` owns
 only under confirmation). It does **NOT** own deploy or canary (`deploy` owns deployment
 mutation and production-health revert). It does **NOT** file SDLC issues (`mission-control` owns issue
-creation). It does **NOT** advance `lifecycle_phase` past `work` — the `qa` advance is deferred to the
-`/qa` rebuild, so the saga legitimately sits at `work` post-merge and `/qa` routing is advisory. Build,
+creation). It does **NOT** advance `lifecycle_phase` past `work` — the advance to `qa` is **`/qa`'s
+to make, and only on a PASS**; on a FAIL `/qa` keeps the phase at `work` and records the evidence.
+So the saga legitimately sits at `work` from merge until `/qa` runs and passes, and `/work`'s
+post-merge routing to `/qa` is advisory. (This is not a deferral awaiting a rebuild: the `/qa` skill
+exists at `plugins/saga/skills/qa/`. The advance is withheld because it is another skill's to make,
+which is a different claim and the one the preamble at the top of this document states.) Build,
 gate, record, coordinate the PR loop under confirmation — then stop.
 
 ---

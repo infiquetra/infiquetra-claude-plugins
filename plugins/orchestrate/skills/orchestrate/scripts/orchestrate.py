@@ -2213,6 +2213,15 @@ SAGA_SECONDS_PER_ASSIGNMENT = 60
 SAGA_MAX_ATTEMPTS = 3
 RECONCILE_TIMEOUT_SLACK_SECONDS = 30
 
+# What BOTH available runners return for a timed-out child under `check=False`: neither raises.
+# `run` is not `_subprocess_run` -- `_ingest_agent_launcher()` execs launcher.py into this module's
+# globals immediately after the fallback is bound, and that file defines its own `run`, which
+# shadows it. The two are byte-identical in this path, so the code below is correct either way, but
+# an `except subprocess.TimeoutExpired` around the call was not: nothing raises, so that branch
+# never ran and the safety record it existed to emit was never emitted. 124 does not collide with
+# anything the controller itself returns -- `reconcile_controller.py` exits 0, 1 or 2.
+RUNNER_TIMEOUT_RETURNCODE = 124
+
 # Controller record statuses a retry cannot clear on its own, whatever the record's own
 # `retryable` flag says (or fails to say). `halt` is the certificate refusing the op and `gated` is
 # the reversibility gate declining it; both are decisions about the op, not transient conditions,
@@ -2383,13 +2392,19 @@ def _reconcile_call(
     if payload is not None:
         argv += ["--payload", json.dumps(payload)]
     budget = reconcile_timeout(payload)
-    try:
-        proc = run(argv, check=False, timeout=budget)
-    except subprocess.TimeoutExpired:
+    proc = run(argv, check=False, timeout=budget)
+    if proc.returncode == RUNNER_TIMEOUT_RETURNCODE:
         # A subprocess timeout kills the DIRECT child only. saga's controller shells out to
         # mission-control, so the grandchild survives and may still be writing the card while this
         # returns. Say so: an operator told to "retry" here can race a live writer, and the honest
         # instruction is to look at the board first.
+        #
+        # Checked on the RETURN CODE, not with `except subprocess.TimeoutExpired`. The runner
+        # catches the timeout itself and reports it as a result, so the exception never crosses
+        # this frame: written as a handler, this branch was unreachable and the record below --
+        # a bare `failed` with no `retryable` key, which defaults to retryable -- was what an
+        # operator actually got. That is the one case where a retry is worst: it races a writer
+        # that may still be live.
         return {
             "status": "failed",
             "op_kind": op,

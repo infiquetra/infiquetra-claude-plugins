@@ -420,9 +420,17 @@ class TestAFailedWritebackIsVisibleInLandsResult:
 
 
 class TestALaterLandDoesNotSilentlyRedriveAFailedWriteback:
-    """The retry door is `announce`, named at the failure: a next land owes nothing."""
+    """The retry door is `announce`, named at the failure: a next land re-drives nothing.
 
-    def test_a_second_land_calls_nothing_and_succeeds(
+    It does not follow that a next land owes NOTHING, which is what this class asserted before.
+    `land` announces only the units it merged in that invocation, so a second land merged nothing,
+    attempted no write, found no failure and exited **0** — over a card that was still wrong, with
+    the wrongness now invisible because the invocation that saw it had ended. Reporting is not
+    re-driving: the run file carries the outstanding unit, every later land names it, and the exit
+    code keeps saying so until an `announce` actually clears it.
+    """
+
+    def test_a_second_land_re_drives_nothing_but_still_reports_the_failure(
         self,
         orchestrate: ModuleType,
         repo: Path,
@@ -437,9 +445,26 @@ class TestALaterLandDoesNotSilentlyRedriveAFailedWriteback:
         assert len(fake_controller.calls) == 1
 
         capsys.readouterr()
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_land(argparse.Namespace()) == 2
+        # THE ORIGINAL PURPOSE, unchanged: no second controller call was made.
         assert len(fake_controller.calls) == 1, "the failed writeback is announced, not re-driven"
-        assert "already there: work-alpha" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "already there: work-alpha" in out
+        assert "BOARD WRITEBACK STILL OUTSTANDING: work-alpha" in out
+        assert "retry with `orchestrate.py announce work-alpha`" in out
+
+    def test_a_land_with_no_outstanding_failure_still_exits_zero(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_controller: FakeReconcileController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Control: exit 2 must discriminate, not be what a second land always returns."""
+        _write_run(repo, [_unit("work-alpha")], {"work-alpha": "infiquetra/orch#101"})
+        monkeypatch.chdir(repo)
+        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_land(argparse.Namespace()) == 0
 
 
 # ----------------------------------------------------------------- the unchanged happy paths

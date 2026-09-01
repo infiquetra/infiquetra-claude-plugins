@@ -87,7 +87,7 @@ uses this ack contract.
 
 ## Maturity
 
-A declared frontmatter `maturity` wins over path inference when it is the top-level `maturity:` key of the YAML mapping inside a closed delimited `---` block, decided by parsing that block as YAML. Any other appearance inside the block — a sequence item at any column, a key nested under another mapping key, or a flow-style `{maturity: ...}` — does not declare and fails closed as `unknown:carrier:`. A source the containment rules refuse to read, including an absolute path outside the declared root whose path carries no marker directory, is never consulted and resolves by path inference instead.
+A declared frontmatter `maturity` wins over path inference when it is the top-level `maturity:` key of the YAML mapping inside a closed delimited `---` block, decided by parsing that block as YAML. Any other appearance inside the block — a sequence item at any column, a key nested under another mapping key, or a flow-style `{maturity: ...}` — does not declare and fails closed as `unknown:carrier:`. A source outside the declared root is read only when its path carries a marker directory (`docs/brainstorms/` and the like) and the file declares a maturity; that declaration is honoured. Every other out-of-root source — a marker-less absolute path whatever it declares, or a marker-bearing one that declares nothing — is never consulted and fails closed with an `unknown:out-of-root:` sentinel rather than resolving by path inference.
 
 - `docs/ideation/` -> `idea-ready`
 - `docs/brainstorms/` -> `requirements-ready`

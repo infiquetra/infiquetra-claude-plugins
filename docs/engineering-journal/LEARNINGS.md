@@ -21,6 +21,32 @@
 
 ## 2026-09-01
 
+### A regression probe must be sized to the regime that showed the defect  {#probe-sized-to-the-defect}
+
+**Context.** Cycle 8 of the issue 912 review fixed a denial of service in
+`handoff_envelope._read_frontmatter_maturity`: YAML expands anchors into SHARED objects, so a
+naive recursive walk revisits them and costs about 9x per anchor level. The verification step
+re-ran the probe that had originally demonstrated the hang and reported it green.
+
+**Evidence.** The re-run probe used a 230-byte payload. Run against the PRE-fix module that
+payload completes in **0.054s** — it passes on the broken code, so the green result proved
+nothing. Escalating the same generator against pre-fix source: 294 B/0.055s, 340 B/0.475s,
+386 B/4.253s, 432 B/**38.271s**, 478 B did not finish in 77s. Post-fix, every size from 294 B
+to 696 B completes in 0.003s or less. The test the repair added
+(`test_alias_shared_frontmatter_does_not_blow_up`) sits at nine anchor levels and, run against
+the pre-fix module, did not complete in 200 seconds — so it does pin the fix.
+
+**Mechanism.** A super-linear defect is invisible below its knee. Any payload in the flat part
+of the curve exercises the same code path and returns the same value, so the probe looks like a
+reproduction while testing nothing. Unlike a wrong-value defect, where any input in the failing
+class reproduces it, a complexity defect reproduces only above a threshold — and a probe rebuilt
+from a description rather than re-run byte-for-byte silently lands below it.
+
+**Generalizable rule.** For a performance or complexity defect, a regression probe is only
+evidence if the same probe has been run against the unfixed code and observed to fail; record
+the size and timing that made it fail, and size the committed test above that knee.
+
+
 ### A test that agrees with the defect makes a green suite evidence of nothing  {#tests-that-pin-fail-opens}
 
 **Context.** Saga's handoff envelope decides whether a document may route live. Five review cycles ran against it; the suite was green at every one. The sixth review found three fail-opens in the same file, each of which had been present the whole time.

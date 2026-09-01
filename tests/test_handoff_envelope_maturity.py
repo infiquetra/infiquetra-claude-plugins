@@ -836,3 +836,51 @@ def test_reanchored_candidate_escaping_root_is_refused(tmp_path: Path) -> None:
     result = HE.infer_maturity(source, root=root)
     assert result != "plan-ready", "an out-of-root declaration must not leak in"
     assert result.startswith("unknown:out-of-root:")
+
+
+def test_alias_shared_frontmatter_does_not_blow_up(tmp_path: Path) -> None:
+    """SEC-2: YAML anchors expand into SHARED objects; a naive walk is exponential.
+
+    At eight anchor levels this took 39 seconds before memoisation, growing about 9x per
+    level. A wall-clock bound is the only assertion that catches a re-introduction.
+    """
+    import time
+
+    levels, fan = 8, 9
+    rows = ["---", "l0: &l0 [" + ",".join(['"x"'] * fan) + "]"]
+    for i in range(1, levels):
+        rows.append(f"l{i}: &l{i} [" + ",".join([f"*l{i - 1}"] * fan) + "]")
+    rows += ["top: [" + ",".join([f"*l{levels - 1}"] * fan) + "]", "---", "", "Body"]
+    started = time.monotonic()
+    got = _infer(tmp_path, "\n".join(rows) + "\n")
+    elapsed = time.monotonic() - started
+    assert elapsed < 5.0, f"alias-shared frontmatter took {elapsed:.1f}s — the walk is unbounded"
+    assert got == "requirements-ready"
+
+
+def test_duplicate_top_level_maturity_fails_closed(tmp_path: Path) -> None:
+    """SEC-4: YAML last-key-wins let the hidden second value route live."""
+    got = _infer(
+        tmp_path, "---\nmaturity: pending-confirmation\nmaturity: plan-ready\n---\n\nBody\n"
+    )
+    assert got != "plan-ready", "the hidden duplicate must not decide the route"
+    assert got.startswith("unknown:")
+
+
+def test_marker_less_out_of_root_declaration_is_never_read(tmp_path: Path) -> None:
+    """The one out-of-root case the prose got wrong in both directions.
+
+    Every other out-of-root test uses a marker-bearing path. A path carrying no marker
+    directory never enters the re-anchor branch at all, so the containment check refuses it
+    before anything is read — its declaration cannot be honoured however emphatic it is. The
+    release note first claimed every out-of-root source is refused, then claimed a declaring
+    one is honoured; both readings are wrong here, and nothing pinned which was true.
+    """
+    root = tmp_path / "root"
+    (root / "docs" / "brainstorms").mkdir(parents=True)
+    stray = tmp_path / "elsewhere" / "notes.md"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("---\nmaturity: plan-ready\n---\n\nBody\n", encoding="utf-8")
+    got = HE.infer_maturity(str(stray), root=root)
+    assert got != "plan-ready", "a marker-less out-of-root file must not be read"
+    assert got.startswith("unknown:out-of-root:")

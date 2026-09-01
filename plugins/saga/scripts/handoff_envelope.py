@@ -9,8 +9,34 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
+
+
+class _StrictMappingLoader(yaml.SafeLoader):
+    """SafeLoader that refuses duplicate mapping keys.
+
+    ``yaml.safe_load`` applies last-key-wins silently, so a frontmatter whose first visible
+    ``maturity:`` says ``pending-confirmation`` and whose second says ``plan-ready`` parsed as
+    ``plan-ready`` and routed live (SEC-4). Raising here routes the document into the same
+    fail-closed path a malformed block already takes.
+    """
+
+
+def _no_duplicate_keys(loader: _StrictMappingLoader, node: Any) -> dict[Any, Any]:
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=False)
+        if key in mapping:
+            raise yaml.YAMLError(f"duplicate key {key!r} in frontmatter")
+        mapping[key] = loader.construct_object(value_node, deep=False)
+    return mapping
+
+
+_StrictMappingLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys
+)
 
 STATE_DIR = Path(".claude/saga")
 SOURCE_DIRS = (
@@ -185,15 +211,26 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
     def _carrier(value: str | None) -> str:
         return f"unknown:carrier:{value}" if value else "unknown:carrier:"
 
-    def _has_nested_maturity(node: object) -> bool:
+    def _has_nested_maturity(node: object, seen: set[int] | None = None) -> bool:
+        # Alias-shared containers make a naive walk exponential: YAML expands anchors into
+        # SHARED objects, so a 425-byte frontmatter costs 39 seconds and grows about 9x per
+        # anchor level (SEC-2). Track container identities so each shared node is walked once.
+        if seen is None:
+            seen = set()
+        if isinstance(node, (dict, list)):
+            if id(node) in seen:
+                return False
+            seen.add(id(node))
         if isinstance(node, dict):
-            return any(key == "maturity" or _has_nested_maturity(val) for key, val in node.items())
+            return any(
+                key == "maturity" or _has_nested_maturity(val, seen) for key, val in node.items()
+            )
         if isinstance(node, list):
-            return any(_has_nested_maturity(item) for item in node)
+            return any(_has_nested_maturity(item, seen) for item in node)
         return False
 
     try:
-        parsed = yaml.safe_load(frontmatter)
+        parsed = yaml.load(frontmatter, Loader=_StrictMappingLoader)  # noqa: S506 — strict SafeLoader subclass
     except yaml.YAMLError:
         scanned = _scanned_maturity_line()
         return None if scanned is None else _carrier(scanned)
@@ -251,9 +288,9 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
     # `base`; accept the re-anchored candidate ONLY when it is an existing file —
     # otherwise read the original absolute path directly. Three outcomes are possible:
     # the re-anchored file is read, the original absolute file is read, or the source is
-    # refused. A
-    # path carrying no marker directory never enters this branch at all and always
-    # resolves by the path rule.
+    # refused. A path carrying no marker directory never enters this branch at all; the
+    # containment check below then refuses it, so it is never read and never reaches the
+    # path rule, whatever it declares.
     base = root or Path.cwd()
     absolute = Path(normalized).is_absolute()
     if absolute and root is not None and not _is_within(Path(normalized), base):
@@ -276,8 +313,8 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
             else:
                 # Re-anchored subpath does not exist or not contained — read the
                 # original absolute file directly (the file the caller named). When
-                # that file also declares nothing, control DOES reach the path rule
-                # below and can route live; the release note states this.
+                # that file also declares nothing, the source is refused below rather
+                # than falling through: control never reaches the path rule from here.
                 original_candidate = Path(normalized)
                 if original_candidate.is_file():
                     declared = _read_frontmatter_maturity(original_candidate)

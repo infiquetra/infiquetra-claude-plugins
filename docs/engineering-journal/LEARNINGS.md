@@ -19,7 +19,26 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
-## 2026-08-31
+## 2026-09-01
+
+### A test that agrees with the defect makes a green suite evidence of nothing  {#tests-that-pin-fail-opens}
+
+**Context.** Saga's handoff envelope decides whether a document may route live. Five review cycles ran against it; the suite was green at every one. The sixth review found three fail-opens in the same file, each of which had been present the whole time.
+**Evidence.** At `3995ae18`, three assertions pinned the defective behaviour rather than the intended behaviour. `tests/test_handoff_envelope_maturity.py` asserted that a frontmatter reading `  maturity: pending-confirmation` was "nested, therefore ignored" and must route live as `requirements-ready`; `tests/test_saga_plugin.py` asserted the same thing in a second copy; and `TEST-31` asserted a containment escape must return `requirements-ready`, with a comment conceding "which is a live route — recorded as a residual, not asserted here as desirable". Findings `AM-35`, `SEC-15` and `CORR-28` are the three the sixth review filed against exactly those shapes.
+**Mechanism.** A test encodes a claim about what the code should do. When the claim is wrong, the test does not merely fail to catch the defect — it actively defends it, because any correct fix now breaks a green suite and reads as a regression. That is the opposite of the signal a suite exists to give, and it is invisible to every technique that trusts the suite: coverage was 85%, mutation testing of the *production* line would show the test failing as designed, and a reviewer reading the diff sees an assertion with a plausible comment. The first case compounded it — under a real YAML reading, a uniformly indented block is a top-level mapping, so the word "nested" in the comment was simply false, and nobody re-derived it because a passing test looked like proof.
+**Fix.** Replaced the line scanner with `yaml.safe_load` so the contract is decided by a parser rather than by string prefixes, inverted all three assertions to the fail-closed behaviour, and mutation-proved every new guard by removing it and confirming a specific test fails. Nine regression tests, each pinned to one guard.
+**Generalizable rule.** When a defect survives several reviews of code that has tests, suspect the tests before suspecting the reviewers — read what the assertions claim, not whether they pass. An assertion whose comment concedes the behaviour is undesirable is a defect report someone filed against themselves and then pinned; treat it as a finding, not as a contract.
+**Refs.** Issue #912 cycle-7 repairs; findings `AM-35`, `SEC-15`, `CORR-28`, `TEST-31`; `plugins/saga/scripts/handoff_envelope.py`; `tests/test_handoff_envelope_maturity.py`. Related: [[guard-inside-the-except-that-never-runs]], the same file's cycle-5 defect where a guard sat in an exception handler that never fired.
+
+### Repairing a finding without reading its second implementation leaves the hole open  {#fix-the-copy-you-did-not-read}
+
+**Context.** Cycle 7 fixed `SEC-16`, a lexical containment check that let a parent segment spell its way past the declared root, in `infer_maturity`. Two units later, reproducing an unrelated finding surfaced the same lexical check still live in `build_handoff_envelope`.
+**Evidence.** `plugins/saga/scripts/handoff_envelope.py` at `0c4ea7a4`: `infer_maturity` used the new `_is_within` helper resolving both sides, while `build_handoff_envelope` still ran `Path(selected_source).is_relative_to(root.resolve())` with no `.resolve()` on the left. The finding named one location. The function still carrying the hole is the one that publishes the route the operator acts on.
+**Mechanism.** A review finding names where a defect was *observed*, not everywhere it *exists*. Fixing the named line and moving on is a plausible-looking repair that leaves the vulnerable path intact, and the gate stays green because no test covered the second copy. It surfaced only because a different finding, `AM-28`, forced a read of the duplicated logic.
+**Fix.** Both functions now consume one `_reanchor_to_marker` owner and one `_is_within` containment test.
+**Generalizable rule.** Before closing a finding, grep for the pattern it describes rather than the line it cites. If the same decision is implemented twice, fixing one copy is not a fix — and duplicated logic is itself the finding to raise.
+**Refs.** Issue #912 findings `SEC-16` and `AM-28`; commits `0c4ea7a4` and `3300e510`.
+
 
 ### A guard placed inside the exception handler for a decode that never fails cannot run  {#guard-inside-the-except-that-never-runs}
 

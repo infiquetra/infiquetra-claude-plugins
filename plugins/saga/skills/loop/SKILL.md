@@ -175,7 +175,13 @@ python3 plugins/saga/scripts/reconcile_controller.py detect \
 drive a write. It does not widen `/loop`'s autonomy or make it execute phase work (#450 non-goal).
 It emits one record:
 
-- `{"status":"skipped"}` — converged: the board already holds the asserted value.
+- `{"status":"skipped"}` — **converged, or unjudged; the two are told apart by the `note`.** With
+  no `note`, the board already holds the asserted value and this is genuine convergence. With a
+  `note`, `detect` could not judge — it could not read the live board, or the submission carried no
+  field this controller can read back — and the record says nothing at all about where the card is.
+  Treating a noted `skipped` as convergence reports a card as settled that nobody looked at, which
+  is the same success-shaped silence the drift check exists to end. Surface the `note` and check
+  the card by hand.
 - `{"status":"drift", ...}` — a reversible outside edit to the Status field. **Submit the
   correction through the Mission Control mutation contract, with the operator's confirmation**:
   surface the drift record (`drift_kind`, `drift_id`, `board_value`, prepared `saga_value`), and
@@ -190,11 +196,16 @@ It emits one record:
 
 The same shared drift vocabulary and idempotency writer sit underneath (`/outcome` composes the
 same `board_progression` + drift-vocabulary primitives underneath, but its `advance` loop is not
-yet a controller consumer — tracked in #593). The no-new-forward-progression boundary (a
-first-time forward move belongs to `/work`, and the field move to Mission Control) is now
-mechanically enforced for this tick — `detect` cannot write — in addition to being documented
-convention: pass a `--target-state` only for a Status `/loop` has already asserted, and never run
-a writing `reconcile` tick for a lifecycle field from this skill.
+yet a controller consumer — tracked in #593).
+
+**`/loop` makes no first-time forward move.** That move belongs to `/plan` and `/work`, which submit
+it through the reconcile controller for Mission Control to execute — the submission path built in
+0.151.0 as the board-submission plan's first child. `/loop` only *detects* drift against a value the
+lifecycle has already asserted, and since W7 that boundary is mechanically enforced here rather than
+merely documented: this tick drives `detect`, which builds no writer and mints no ledger key, so it
+cannot write at all. Two conventions still hold on top of the mechanism: pass a `--target-state`
+only for a Status `/loop` has already asserted, and never run a writing `reconcile` tick for a
+lifecycle field from this skill.
 
 ---
 

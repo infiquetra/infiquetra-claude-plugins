@@ -510,10 +510,14 @@ def idempotency_key(
         # computes a key that does not match the file on disk and takes the write branch
         # instead of the drift-check branch. Deliberately NOT migrated: the board-sync ledger
         # is machine-local and regenerable, the write is idempotent (same option → same board
-        # state), and `set-field-status` is in `reconcile_controller.AUTO_CORRECT_OP_KINDS`,
-        # which re-drives the asserted value on drift anyway. The bounded cost is one tick of
-        # lost drift telemetry per pre-existing key (`status: corrected`, `drift_id`,
-        # `board_value_was` are not emitted that once), never a divergent board state.
+        # state). The original note also said `set-field-status` sits in
+        # `reconcile_controller.AUTO_CORRECT_OP_KINDS`, "which re-drives the asserted value on
+        # drift anyway" — that has been false since W7: the set is `frozenset()` and no conditional
+        # anywhere reads it, so nothing re-drives anything. What actually happens on an orphaned
+        # key is one tick of lost drift telemetry (`status: corrected`, `drift_id`,
+        # `board_value_was` are not emitted that once) and then a re-write of the same option to
+        # the same value, which is a board no-op. The conclusion stands; the reason given for it
+        # did not.
         field_name = field if field else "Status"
         return f"{op_str}:{repo}#{issue_number}:{field_name}:{target_state}"
     return f"{op_str}:{repo}#{issue_number}:{target_state}"

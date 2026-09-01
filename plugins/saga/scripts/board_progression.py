@@ -106,7 +106,14 @@ def _safe_ledger_name(key: str) -> str:
     safe = key.replace(":", "_").replace("#", "_").replace("/", "_")
     # SHA-1 fallback: 200-char limit covers all realistic keys; non-alnum guard is a
     # belt-and-suspenders check for exotic values (e.g. a future label with spaces).
-    if len(safe) > 200 or not all(c.isalnum() or c in "_-." for c in safe):
+    #
+    # `+` is in the safe set because the composite pair identity (#927) joins the halves with it,
+    # and it was not: EVERY pair key therefore took the SHA-1 fallback, so the ledger a human is
+    # meant to be able to read by filename held an opaque digest for exactly the writes that
+    # matter most. `+` is legal in a filename on every filesystem this runs on, and it is the
+    # separator `normalize_assignments` refuses inside a field or option value, so it cannot
+    # arrive from anywhere else.
+    if len(safe) > 200 or not all(c.isalnum() or c in "_-.+" for c in safe):
         safe = hashlib.sha1(key.encode()).hexdigest()
     return safe + ".json"
 
@@ -155,6 +162,141 @@ def _append_comment_marker(body: str, key: str) -> str:
     if marker in body:
         return body
     return f"{body.rstrip()}\n\n{marker}" if body.strip() else marker
+
+
+# ---------------------------------------------------------------------------
+# The assignment shape a lifecycle-field submission carries (#927)
+# ---------------------------------------------------------------------------
+
+# How a multi-assignment submission renders itself inside one idempotency key. It is a separator,
+# not a delimiter anyone parses back: the key is an opaque identity string, and this only has to be
+# stable and distinct from a single-field key.
+ASSIGNMENT_IDENTITY_SEPARATOR = "+"
+
+# The exact fields a lifecycle pair submission carries. Both an upper and a lower bound: a
+# submission naming fewer is a half-move, and one naming more is not a lifecycle boundary.
+EXPECTED_ASSIGNMENT_FIELDS = ("Stage", "Status")
+
+# Per-assignment budget for one ``flow set-field`` invocation. Each assignment is its own
+# cross-board discovery-and-write pass inside mission-control, so the whole-call budget scales with
+# the count rather than staying at the single-field figure it was set for.
+_TIMEOUT_SECONDS_PER_ASSIGNMENT = 60
+
+
+def normalize_assignments(
+    payload: dict[str, Any] | None, target_state: str
+) -> list[tuple[str, str]]:
+    """The ordered ``(field, option)`` assignments one ``set-field-status`` op carries (#927).
+
+    ``payload["assignments"]`` — a list of two-element ``[field, option]`` sequences — is the pair
+    form the board-submission path gained with #927. It rides the existing ``payload`` dict, so no
+    signature on the caller → controller → writer path changed.
+
+    Absent, the result is exactly the single assignment this path built before the pair existed:
+    ``payload["field"]`` (defaulting to ``Status``) set to ``target_state``. That fallback is what
+    keeps every pre-#927 caller byte-identical, ledger key included.
+
+    A malformed SHAPE raises ``ValueError`` rather than being coerced: a submission that cannot say
+    which field it writes must fail at the seam, never reach GitHub as a guess. (The field and
+    option values themselves are stringified — a run file round-trips them through JSON anyway.)
+
+    **A one-element ``assignments`` list is refused, deliberately, even though the equivalent
+    single-field submission through ``field``/``target_state`` is legal.** The asymmetry is the
+    point: ``assignments`` is the pair API a lifecycle boundary opts into, so one element there is a
+    boundary that dropped half its move — the "wrong card with a clean record" failure, since
+    ``Ready for Active`` is a legal ``Status`` on its own and a Status-only write reports success
+    while ``Stage`` stays put. A caller that genuinely wants a one-field write uses the legacy
+    keys, which is why refusing this costs no existing caller anything.
+    """
+    pay = payload or {}
+    if "assignments" not in pay or pay["assignments"] is None:
+        return [(str(pay.get("field") or "Status"), str(target_state))]
+    raw = pay["assignments"]
+    if isinstance(raw, (list, tuple)) and not raw:
+        # ABSENT is the single-field fallback; EMPTY is a caller that built a pair payload and put
+        # nothing in it. Treating them alike sent an empty pair down the Status-only path and
+        # reported it as a clean single-field write -- the same "wrong card, clean record" shape
+        # the distinct-field guard below refuses, arriving through the one input that skipped it.
+        raise ValueError(
+            "assignments is present but empty; a submission that opts into the pair API must "
+            "carry both halves. Omit the key entirely for a single-field write."
+        )
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        raise ValueError(f"assignments must be a list of (field, option) pairs, got {raw!r}")
+    assignments: list[tuple[str, str]] = []
+    for item in raw:
+        if isinstance(item, str) or not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ValueError(f"assignment {item!r} is not a (field, option) pair")
+        field_name, option_name = item
+        if ASSIGNMENT_IDENTITY_SEPARATOR in str(field_name) or (
+            ASSIGNMENT_IDENTITY_SEPARATOR in str(option_name)
+        ):
+            # The replay identity joins the halves with this separator, so a value containing it
+            # could make two different submissions mint one key -- the exact collision the composite
+            # identity exists to prevent. Unreachable against today's board (no live Stage or Status
+            # option contains it), and refused rather than left to become reachable quietly.
+            raise ValueError(
+                f"assignment {item!r} contains {ASSIGNMENT_IDENTITY_SEPARATOR!r}, which the replay "
+                "identity uses as its separator"
+            )
+        assignments.append((str(field_name), str(option_name)))
+    # DISTINCT fields, not element count. Counting elements accepts
+    # ``[["Status", "A"], ["Status", "B"]]`` -- two assignments to one field, which is a half-move
+    # wearing a pair's shape and leaves the other field exactly where the single-field write would
+    # have.
+    names = [field_name for field_name, _ in assignments]
+    if len(set(names)) != len(names):
+        # A DUPLICATE field, not a missing one: `[["Stage","A"],["Stage","B"],["Status","C"]]`
+        # clears the distinct-count check with two distinct names while carrying two conflicting
+        # values for Stage. Mission Control applies assignments in order and does not roll back, so
+        # the card ends on whichever won the race, and the record names both as landed.
+        duplicated = sorted({name for name in names if names.count(name) > 1})
+        raise ValueError(
+            f"assignments names {', '.join(duplicated)} more than once; one field cannot carry two "
+            "options in one submission"
+        )
+    if len(names) != len(EXPECTED_ASSIGNMENT_FIELDS):
+        # An exact count, not a floor. The floor caught the half-move that motivated this guard and
+        # left the other end open: a three-field submission is not a lifecycle boundary at all, and
+        # authorizing it here would put an unreviewed field on the same certificate as the pair.
+        raise ValueError(
+            f"assignments carries {len(names)} field(s) ({', '.join(names)}); a lifecycle "
+            f"submission that opts into the pair API carries exactly "
+            f"{len(EXPECTED_ASSIGNMENT_FIELDS)} "
+            f"({', '.join(EXPECTED_ASSIGNMENT_FIELDS)}), or the board is left half-written with a "
+            "success-shaped record. Use the field/target_state keys for a single-field write."
+        )
+    return assignments
+
+
+def assignment_identity(assignments: list[tuple[str, str]]) -> tuple[str, str]:
+    """The ``(field, state)`` an idempotency key names for a WHOLE submission (#927).
+
+    A single assignment renders exactly as it did before the pair existed, so every ledger key a
+    pre-#927 tick wrote still resolves and nothing is orphaned.
+
+    A pair renders BOTH halves, and that is the property that matters. Without it a
+    ``(Stage, Status)`` pair and a ``Status``-only write to the same option mint the identical key
+    — ``set-field-status:{repo}#{n}:Status:{value}`` — so whichever runs second is recorded
+    ``skipped`` as already-applied. A pair whose ``Stage`` half never landed would then carry a
+    success-shaped record for a move that did not happen, silently: no error, no drift record. Two
+    semantically different operations sharing one replay identity is precisely what #812's
+    named-field identity exists to prevent.
+
+    Both key-minting sites — :func:`authorize_and_write` and the reconcile controller — call this,
+    so a re-announce always meets the key the first write left.
+    """
+    if len(assignments) == 1:
+        return assignments[0]
+    # SORTED by field name, so the identity names the move rather than the order it was typed in.
+    # Submission order is preserved in the argv and is a real property of the write; it is NOT a
+    # property of the logical move, and leaving it in the key would let the same move re-drive
+    # itself under a second identity simply because a caller listed Status before Stage.
+    ordered = sorted(assignments, key=lambda pair: pair[0])
+    return (
+        ASSIGNMENT_IDENTITY_SEPARATOR.join(field_name for field_name, _ in ordered),
+        ASSIGNMENT_IDENTITY_SEPARATOR.join(option_name for _, option_name in ordered),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -213,16 +355,30 @@ def authorize_and_write(
         pay["target_state"] = target_state
 
     field_kw: str | None = None
+    state_kw = target_state
+    assignments: list[tuple[str, str]] = []
     if op_kind == str(cert.OpKind.SET_FIELD_STATUS):
-        field_name = str(pay.get("field") or "Status")
-        pay["field"] = field_name
-        field_kw = field_name
-        base["field"] = field_name
-        # Field name is part of authorization (#812): Status/Stage only.
-        if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
-            return {"status": "gated", **base, "verdict": "GATE"}
+        try:
+            assignments = normalize_assignments(pay, target_state)
+        except ValueError as exc:
+            # A submission that cannot say which field it writes is refused here, not guessed at.
+            return {"status": "gated", **base, "verdict": "GATE", "error": str(exc)}
+        # Field name is part of authorization (#812): Status/Stage only — and EVERY field in the
+        # submission, not just the first. A pair whose second half names an unauthorized field
+        # must gate as a whole, or the write lands one legal half and leaves the card inconsistent.
+        for field_name, _option in assignments:
+            if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
+                return {"status": "gated", **base, "field": field_name, "verdict": "GATE"}
+        # The replay identity names the whole submission (#927): see ``assignment_identity``.
+        field_kw, state_kw = assignment_identity(assignments)
+        base["field"] = field_kw
+        if len(assignments) == 1:
+            # Byte-identical to the pre-#927 payload for every single-field caller.
+            pay["field"] = assignments[0][0]
+        else:
+            pay["assignments"] = [[name, option] for name, option in assignments]
 
-    key = cert.idempotency_key(op_kind, repo, number, target_state, field=field_kw)
+    key = cert.idempotency_key(op_kind, repo, number, state_kw, field=field_kw)
     ledger_file = ledger_dir / _safe_ledger_name(key)
 
     # (i) Key present → idempotent no-op (crash/retry safety, coalescing).
@@ -266,6 +422,15 @@ def authorize_and_write(
                 "number": number,
                 "target_state": target_state,
                 **({"field": field_kw} if field_kw is not None else {}),
+                # Additive (#927), and only for a multi-assignment submission: readers use ``.get``
+                # so a single-field record stays byte-identical to every pre-#927 entry, while a
+                # pair's record says which fields it actually covered rather than only the
+                # composite identity.
+                **(
+                    {"assignments": [[name, option] for name, option in assignments]}
+                    if len(assignments) > 1
+                    else {}
+                ),
                 "ts": now(),
                 # #620 R7: persist the tick's mission-control provenance so a stale resolution is
                 # diagnosable from the durable ledger. Empty for every consumer that passes none.
@@ -378,6 +543,79 @@ def record_envelope_authorized_merge(
 # ---------------------------------------------------------------------------
 
 
+def _describe_rows(rows: Any) -> str:
+    """Render mission-control's ``updated``/``failed`` rows as ``Field=Option`` pairs."""
+    if not isinstance(rows, list):
+        return ""
+    described = [
+        f"{row.get('field')}={row.get('option')}"
+        for row in rows
+        if isinstance(row, dict) and row.get("field")
+    ]
+    return ", ".join(described)
+
+
+def _set_field_landed_detail(stdout: str, assignments: list[tuple[str, str]]) -> str:
+    """Name which assignments landed and which did not, from Mission Control's own report (#927).
+
+    ``flow_set_fields_bulk`` prints its ``updated`` / ``failed`` / ``identity`` result to STDOUT and
+    only *then* raises on a non-empty ``failed``. So detection of a half-applied pair was never
+    missing — the exit code is already non-zero and the caller's ``if returncode != 0: raise``
+    already catches it. What was thrown away is the *evidence*: the error carried ``stderr`` while
+    the record of which half landed sat on the discarded stdout, leaving the board half-written with
+    nothing to say which field to repair.
+
+    A half-applied pair is reachable, not theoretical: ``flow_set_fields_bulk`` calls
+    ``_set_lifecycle_field_cross_board`` once per assignment, each all-or-none across boards but
+    independent of the others, and only a ``LifecycleMutationHaltError`` propagates — a
+    ``RuntimeError`` on the second assignment appends a ``failed`` row and leaves the first written.
+
+    Returns ``""`` when stdout carries no parseable report, so the caller's message degrades to
+    exactly what it said before rather than inventing a claim about the board.
+    """
+    text = stdout or ""
+    decoder = json.JSONDecoder()
+    # ``_out`` pretty-prints with indent=2, so the report's opening brace is at the start of a line.
+    # Scan those positions rather than the whole string: any progress line printed before the report
+    # would otherwise defeat a plain ``json.loads``. Later reports win — the result is printed last.
+    starts = [0] if text.startswith("{") else []
+    starts += [match.end() for match in re.finditer(r"\n(?=\{)", text)]
+    report: dict[str, Any] | None = None
+    for start in starts:
+        try:
+            parsed, _end = decoder.raw_decode(text, start)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict) and ("updated" in parsed or "failed" in parsed):
+            report = parsed
+    if report is None:
+        # No report at all, which is NOT the same as nothing having landed. ``_out`` runs before the
+        # ``failed`` raise, so an absent report means the run died before it -- a
+        # ``LifecycleMutationHaltError`` propagating out of the SECOND assignment is exactly that
+        # shape, and it leaves the FIRST one written. Returning "" here reported a total failure for
+        # a board that may be half-moved. Say what was submitted and that the outcome is unknown, so
+        # the operator checks both fields instead of assuming neither landed.
+        submitted = ", ".join(f"{field}={option}" for field, option in assignments)
+        if len(assignments) < 2:
+            # A single-field write has no halves. `outcome_reconcile.py` still drives
+            # `set-field-status` through the legacy `field`/`target_state` form, so this branch is
+            # live for real callers, and telling them to "check every field" and that "which halves
+            # landed is UNKNOWN" describes a submission they did not make -- it invents a
+            # half-written board out of a write that could only ever land or not.
+            return (
+                f"no outcome report on stdout, so whether the write landed is UNKNOWN; submitted: "
+                f"{submitted or 'none'} — check the field on the board before retrying"
+            )
+        return (
+            f"no outcome report on stdout, so which halves landed is UNKNOWN; submitted: "
+            f"{submitted or 'none'} — check every field on the board before retrying"
+        )
+    landed = _describe_rows(report.get("updated"))
+    unlanded = _describe_rows(report.get("failed"))
+    parts = [f"landed: {landed or 'none'}", f"NOT landed: {unlanded or 'none'}"]
+    return "; ".join(parts)
+
+
 def default_board_writer(
     *,
     mission_control_root: Path,
@@ -390,6 +628,12 @@ def default_board_writer(
     fake (or the ``--runner`` seam) instead; the nested ``gh`` child runs ONLY under a real
     ``--autonomous`` campaign. A non-zero exit raises so the consumer's bounded-retry / fail-loud
     path engages.
+
+    This is the ONLY place the ``sdlc_manager.py`` argv is built, which is why #927's pair rides
+    through here: a ``set-field-status`` op emits one ``--field``/``--option`` per assignment in
+    ``payload["assignments"]`` (one assignment, and therefore one flag pair, when it is absent).
+    On a non-zero exit the raised error also names which assignments landed and which did not,
+    read out of Mission Control's own stdout report — see :func:`_set_field_landed_detail`.
 
     ``mission_control_root`` is an ALREADY-RESOLVED install root (``resolve_mission_control_root``),
     not a repo root — pre-#620 this derived the path from ``repo_root``, which only held inside the
@@ -437,14 +681,25 @@ def default_board_writer(
         # idempotency-key namespace; strip the owner here so the REST path is not doubled.
         repo = repo.rsplit("/", 1)[-1]
         owner_repo = f"infiquetra/{repo}"
+        # Empty for every op but the lifecycle write; the timeout and the failure detail below both
+        # read it, and both must behave exactly as they did for the other verbs.
+        assignments: list[tuple[str, str]] = []
         if op_kind == "set-field-status":
             cert = _cert()
-            field_name = str(payload.get("field") or "Status")
-            if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
-                allowed = ", ".join(sorted(cert.CORRECTION_FIELDS))
-                raise ValueError(
-                    f"set-field submission rejects field {field_name!r}; allowed: {allowed}"
-                )
+            # One invocation, N assignments (#927). ``flow set-field`` declares --field/--option
+            # with action="append" and routes a multi-assignment call through
+            # ``flow_set_fields_bulk``. What that saves is one process spawn, one CLI parse and one
+            # authorization pass -- NOT one discovery pass: the bulk path calls
+            # ``_set_lifecycle_field_cross_board`` once per assignment and each does its own
+            # cross-board discovery, which is why the timeout below scales with the assignment
+            # count instead of sharing the single-field budget.
+            assignments = normalize_assignments(payload, str(payload.get("target_state", "")))
+            for field_name, _option in assignments:
+                if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
+                    allowed = ", ".join(sorted(cert.CORRECTION_FIELDS))
+                    raise ValueError(
+                        f"set-field submission rejects field {field_name!r}; allowed: {allowed}"
+                    )
             cmd = base + [
                 "flow",
                 "set-field",
@@ -454,12 +709,10 @@ def default_board_writer(
                 repo,
                 "--number",
                 n,
-                "--field",
-                field_name,
-                "--option",
-                str(payload.get("target_state", "")),
-                "--correction",
             ]
+            for field_name, option_name in assignments:
+                cmd += ["--field", field_name, "--option", option_name]
+            cmd += ["--correction"]
         elif op_kind == "sub-issue-close":
             cmd = base + ["issue", "close", "--repo", repo, "--number", n]
         elif op_kind == "sub-issue-reopen":
@@ -504,10 +757,23 @@ def default_board_writer(
             ]
         else:
             raise ValueError(f"no mission-control verb mapping for op_kind {op_kind!r}")
-        result = run(cmd, capture_output=True, text=True, timeout=60)
+        # One assignment is one cross-board discovery-and-write pass inside mission-control, so a
+        # pair does roughly twice the work of the single-field write this budget was set for.
+        # Scaling by the assignment count keeps the per-assignment budget the same rather than
+        # halving it silently the moment the pair shipped.
+        timeout = _TIMEOUT_SECONDS_PER_ASSIGNMENT * max(1, len(assignments)) if assignments else 60
+        result = run(cmd, capture_output=True, text=True, timeout=timeout)
         if getattr(result, "returncode", 0) != 0:
+            detail = ""
+            if op_kind == "set-field-status":
+                landed = _set_field_landed_detail(
+                    str(getattr(result, "stdout", "") or ""), assignments
+                )
+                if landed:
+                    detail = f"; {landed}"
             raise RuntimeError(
-                f"board write {op_kind} on {repo}#{number} failed: {getattr(result, 'stderr', '')!r}"
+                f"board write {op_kind} on {repo}#{number} failed: "
+                f"{getattr(result, 'stderr', '')!r}{detail}"
             )
 
     return _writer

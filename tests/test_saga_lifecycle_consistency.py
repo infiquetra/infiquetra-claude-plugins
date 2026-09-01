@@ -226,10 +226,13 @@ def test_shaping_positive() -> None:
 
 
 def test_shaping_pre_existing_mentions_positive() -> None:
-    # All three pre-existing files still carry their hits
+    # /plan's Phase 0.6 no longer names Shaping, and that is the correction, not a regression
+    # (#927): a plan being written puts the card on the live pair `Planning` / `Designing`, and
+    # `Shaping` is the stage BEFORE planning starts. What is pinned here is that the boundary still
+    # exists and names a live rung, so the section cannot quietly lose its move again.
     plan_text = (ROOT / "plugins/saga/skills/plan/SKILL.md").read_text(encoding="utf-8")
-    assert "### 0.6 The card moves to Shaping" in plan_text
-    assert "moves the card to Shaping" in plan_text
+    assert "### 0.6 Submit the card's move to `Planning` / `Designing`" in plan_text
+    assert "--op set-field-status" in plan_text
     office_text = (ROOT / "plugins/saga/skills/office-hours/SKILL.md").read_text(encoding="utf-8")
     assert (
         "discovery/shaping" in office_text.lower() or "discovery / shaping" in office_text.lower()

@@ -231,7 +231,7 @@ phase_status: in_progress
 status: active
 next_step: "wire /resume to call saga.restore"
 orchestration_mode: cc-workflows-ultracode
-orchestration_ref: "docs/plans/2026-06-02-saga-foundation-spec.json"
+orchestration_ref: "docs/workflows/2026-07-01-evidence-provenance-manifests-spec.json"
 orchestration_run_id: "wf_7dbd5245-def"
 orchestration_recommended: cc-workflows-ultracode
 orchestration_operator_choice: cc-workflows-ultracode
@@ -541,7 +541,7 @@ this table is the wiring contract for their own queued items.
 
 | Command | Reads | Writes (`save`) |
 |---|---|---|
-| **/plan** | `scan` (offer "resume existing?" before minting — §2.3) | `lifecycle_phase=plan`, `plan_path`, `destination`, `deploy_autonomy` (Phase 5.1 follow-up, only when `destination=nonprod-deploy`), `adr_refs`; `## Decisions` = KTDs. |
+| **/plan** | `scan` (offer "resume existing?" before minting — §2.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (Phase 5.1 follow-up, only when `destination=nonprod-deploy`), `adr_refs`; `## Decisions` = KTDs. |
 | **/work** | `restore` (rehydrate `round`/`phase`/`checks_run`/`next_step`) | primary writer: per-phase ticks, round bump (`rounds_seen`), `checks_run`, `work_session_paths`, `issue_ref` adoption, `status=done` at completion. |
 | **/code-review** | the diff + `scan`/`restore` (the existing work-thread) | review-track consumer: appends `review_paths` (append-only, never mints); **never advances `lifecycle_phase`** (preserves it). |
 | **/qa** | `restore` (the work-thread) | qa-track consumer: writes `qa_paths`; on PASS advances `lifecycle_phase` `work`→`qa`; on FAIL keeps `lifecycle_phase=work`. Never mints. |
@@ -660,7 +660,118 @@ scheduled, not the field itself.
 
 ---
 
-## 14. References
+### 13.6 Proof-integrity bridge fields (#388)
+
+`Disposition.PROOF_INTEGRITY` is the manifest disposition for a schema-valid bridge receipt whose
+stronger proof contract fails: missing output attestation, empty required output, hash mismatch,
+zero external tokens, or producer/consumer liveness contradiction. It is distinct from `UNPROVEN`
+(no schema-valid base receipt) and from `DELEGATION_INTEGRITY` (engine self-report contradicts the
+independent observer signal).
+
+`Manifest.bridge_run_key` is optional and additive in `saga.manifest.v1`. When present it carries the
+stable bridge run key from `bridge_receipt.run_id` or a canonical receipt hash fallback. Consumers use
+it to join producer launch evidence to manifest consumption and to de-duplicate run-ledger token facts.
+
+---
+
+## 14. Plan-document contract (distinct from the tick envelope)
+
+The plan document under `docs/plans/` is a separate artifact from the saga tick envelope of section 3,
+with its own contract and its own consumers. Nothing in this section belongs in the envelope field
+table (§3.1), and no tick field is a plan-doc field — the two schemas never merge.
+
+**Frontmatter.** Every plan carries YAML frontmatter; the required-field set and the field-by-field
+contract live in `../skills/plan/references/plan-sections.md` (Plan-doc frontmatter contract), pinned
+by `tests/test_plan_artifact_conformance.py`. `backend` takes a value from `ORCHESTRATION_MODES`
+(section 4), as narrowed by #808 — `inline` or `team-execution` are the defaults,
+`cc-workflows-ultracode` only after explicit invocation. `origin` MUST be emitted whenever an
+upstream artifact exists and may be omitted on a cold start; `deepened` is optional.
+
+**Legacy rule.** Legacy is the absence of `backend`, and nothing else. A document without the field is
+legacy, reported, and non-failing; a document with it is new-contract and is held to the full
+frontmatter and marker contract. There is no bulk rewrite of the legacy corpus — `/work` honours the
+field when present and offers only when it is absent.
+
+**Marker triple.** The body MUST use the exact section markers `Implementation Units`,
+`Key Technical Decisions`, and the `U1` U-ID prefix; `/doc-review` parses these to recognize the
+document as a plan. The definition is pinned by `tests/test_plan_artifact_conformance.py`.
+
+**Consumers.** Saga Work reads `backend`; Document Review recognizes the document by the marker
+triple; `/loop` routes on the saga tick, which stays in the envelope of section 3.
+
+**Conformance.** One recursive pass over `docs/plans/` evaluates the declared frontmatter fields and
+the marker triple together — shipped as `../scripts/plan_artifact_conformance.py` (runnable; pinned
+by `tests/test_plan_artifact_conformance.py`) — so a document cannot satisfy one contract and
+silently fail the other. Legacy findings are reported without failing the run.
+
+---
+
+## 15. Plan pre-answer carrier (`plan_pre_answers.v1`)
+
+A caller that has already settled a decision may hand it to `/plan` rather than letting the
+conversation re-ask it. The carrier is **intake, not a phase** (KTD4): it is evaluated once, before
+the conversation begins, and its only visible effects are the narration of an applied value together
+with its caller, and the absence of a question that would otherwise have been asked.
+
+**Transport.** A fenced JSON block inside the `/plan` invocation text — the same seam callers
+already write prose into. No file, no CLI flag, no daemon, no state.
+
+**Shape.**
+
+```json
+{
+  "schema": "plan_pre_answers.v1",
+  "caller": "orchestrate",
+  "backend": "inline",
+  "destination": "plan-only"
+}
+```
+
+- `schema` — the version token `plan_pre_answers.v1`. Two cases, stated as the code performs them:
+  a non-v1 token INSIDE the `plan_pre_answers` family (case-insensitive, token boundary) is refused
+  whole — no field from that carrier is applied; a FOREIGN schema family is not a carrier at all and
+  is ignored.
+- `backend` — decision field, from `inline | team-execution | cc-workflows-ultracode`
+  (`ORCHESTRATION_MODES`, section 4). Optional. Operator ruling (review F03, stricter than #808):
+  the carrier applies ONLY `inline` automatically, recorded in the plan-doc `backend:` field
+  without re-offering; `team-execution` and `cc-workflows-ultracode` are legal plan values but
+  require explicit operator invocation, so the carrier stops and surfaces instead of applying.
+- `destination` — decision field, from `plan-only | pr | merge | nonprod-deploy` (`DESTINATIONS`,
+  section 4). Optional; applied as Phase 5.1's answer and the tick's `--destination` without
+  re-asking.
+- `caller` — envelope metadata naming the supplying capability for the narration. NOT a decision
+  field: exactly two decision fields are admitted (`backend`, `destination`), and anything beyond
+  them is rejected rather than ignored. Both decision fields omitted is a valid empty carrier.
+
+**Carrier discipline.** The fence info string must be exactly `json`; at most one carrier is
+admitted — a second carrier stops the run rather than letting the first win silently; duplicate JSON
+keys stop the run rather than applying the last value; and a `json` block that fails to parse or
+repeats a key is a malformed carrier — a stop — only when it is carrier-shaped (its raw text names
+the `plan_pre_answers` family). An unrelated malformed JSON example is ignored, exactly as a foreign
+schema is, so invocation text that carries no carrier stops nothing (cycle-2 C03/P02/S01).
+
+**Evaluation rules** (validator: `../scripts/plan_pre_answers.py` — runnable; reads the text it is
+given, writes nothing, reads no file; pass `--established FIELD=VALUE`, repeatable, for each
+decision already established in the thread, so rule 3's contradiction check can run — cycle-2
+C04/U04):
+
+1. A valid supplied value — an `inline` backend, or any valid `destination` — is applied and
+   visibly narrated together with its `caller`.
+2. A missing carrier, or a carrier omitting a field, follows the normal adaptive conversation;
+   absence is not an error.
+3. An invalid value, or one contradicting an already-established value, stops and surfaces the
+   conflict; it never becomes a silent default and never prefers either side.
+4. A non-v1 token inside the family is refused whole; a foreign family is ignored (two cases, as
+   above).
+5. A malformed carrier — a carrier-shaped `json` block that fails to parse or repeats a
+   key, or a second carrier — stops the run; an unrelated malformed JSON example is
+   ignored.
+
+Direct `/plan` — an issue, a prompt, or a Brainstorm document, no carrier — applies nothing,
+narrates nothing, and stops nothing. The carrier is never rendered as a questionnaire, checklist, or
+fixed sequence; Phase 0.7 of `../skills/plan/SKILL.md` carries the skill-side intake prose.
+
+## 16. References
 
 - Engine: [`../scripts/saga.py`](../scripts/saga.py)
 - Wrappers (delegate to the engine): `../scripts/scaffold_checkpoint.py`,
@@ -673,15 +784,3 @@ scheduled, not the field itself.
 - Provenance manifests: `../scripts/provenance_manifest.py`, `../scripts/manifest_store.py`,
   `../scripts/manifest_reader.py`, `#285`,
   `../../../docs/plans/2026-07-01-evidence-provenance-manifests-plan.md`
-
-### 13.6 Proof-integrity bridge fields (#388)
-
-`Disposition.PROOF_INTEGRITY` is the manifest disposition for a schema-valid bridge receipt whose
-stronger proof contract fails: missing output attestation, empty required output, hash mismatch,
-zero external tokens, or producer/consumer liveness contradiction. It is distinct from `UNPROVEN`
-(no schema-valid base receipt) and from `DELEGATION_INTEGRITY` (engine self-report contradicts the
-independent observer signal).
-
-`Manifest.bridge_run_key` is optional and additive in `saga.manifest.v1`. When present it carries the
-stable bridge run key from `bridge_receipt.run_id` or a canonical receipt hash fallback. Consumers use
-it to join producer launch evidence to manifest consumption and to de-duplicate run-ledger token facts.

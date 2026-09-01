@@ -1,6 +1,6 @@
 {
   "name": "orchestrate",
-  "version": "3.0.8",
+  "version": "4.0.1",
   "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
   "author": {
     "name": "Infiquetra",
@@ -23,6 +23,14 @@
     {
       "name": "agent-launcher",
       "version": ">=1.0.0"
+    },
+    {
+      "name": "mission-control",
+      "version": ">=2.15.1"
+    },
+    {
+      "name": "saga",
+      "version": ">=0.151.0"
     }
   ]
 }

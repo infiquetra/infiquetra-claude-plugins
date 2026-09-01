@@ -1,0 +1,1 @@
+{"blocking_rule":"review_result.v1 outcome","cycle":2,"policy_source":"plugins/saga/references/lens-roster.json","prior_cycle":{"findings":40,"outcome":"repairs_requested","reviewed_sha":"844c38e6fc7afb57643567f8ad649c236888bd22"},"scope":"main...HEAD"}

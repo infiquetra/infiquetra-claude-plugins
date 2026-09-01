@@ -177,14 +177,20 @@ def test_workflow_emit_succeeds_once_sequenced() -> None:
 
 
 def test_committed_specs_have_no_wave_conflicts() -> None:
-    """Regression sentinel over every spec in `docs/plans/`.
+    """Regression sentinel over every spec in `docs/workflows/`.
 
-    This check ships as a HALT, so a false positive would block real work. The measured baseline
-    is zero conflicts across all 18; if that ever changes, it should change because a genuinely
-    conflicting spec was authored — not because the detector drifted.
+    This check ships as a HALT, so a false positive would block real work. The measured
+    baseline is zero conflicts across the committed corpus; if that ever changes, it
+    should change because a genuinely conflicting spec was authored — not because the
+    detector drifted. Obligation 7 / R33: no corpus count pinned — the guard derives
+    its instances from the glob and checks each parsed spec actually carries units, so
+    the sentinel can never pass vacuously on an empty or degenerate corpus.
     """
-    specs = sorted(ROOT.glob("docs/plans/*-spec.json"))
-    assert len(specs) >= 18, "corpus shrank — re-check the baseline before trusting this test"
+    specs = sorted(ROOT.glob("docs/workflows/*-spec.json"))
+    assert specs, (
+        "the corpus glob resolved to nothing — re-check the pattern before trusting this test"
+    )
     for path in specs:
         spec = ES.ExecutionSpec.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        assert spec.units, f"{path.name} parsed with no units — not a real execution spec"
         assert ES.wave_file_conflicts(spec) == [], path.name

@@ -40,7 +40,17 @@ def _load(path: Path, name: str) -> ModuleType:
 
 
 ES = _load(SCRIPTS / "execution_spec.py", "workflow_execution_spec_under_test")
-W = _load(SCRIPTS / "workflow_emitter.py", "workflow_emitter_under_test")
+# The lease-contract CLI moved to the cc-workflows plugin with the emission path (#925/U4).
+W = _load(
+    ROOT
+    / "plugins"
+    / "cc-workflows"
+    / "skills"
+    / "cc-workflows"
+    / "scripts"
+    / "workflow_emitter.py",
+    "workflow_emitter_under_test",
+)
 
 
 def _spec() -> Any:

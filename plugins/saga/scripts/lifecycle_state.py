@@ -430,6 +430,83 @@ def recheck_orchestration_capability(
     }
 
 
+def _assert_known_tier(model: str, effort: str, *, source: str) -> None:
+    """Refuse a model, an effort, or a COMBINATION the shared tier vocabulary does not carry.
+
+    The vocabulary is ``fleet_commons.tier_palette``'s ``MODELS`` / ``EFFORTS``, reached through the
+    same shim :mod:`tier_defaults` uses, so there is one authority rather than a second copy here.
+
+    Membership in each list separately is not enough, and checking only that was the gap: every
+    effort is a legal effort and every model a legal model, but not every pairing runs. ``haiku``
+    tops out below ``xhigh``, so a plan naming that model at that effort passed two membership
+    checks and named a tier no host can execute. The sibling path could never produce it -- an
+    overlay entry goes through ``_validate_shape_and_tier`` against the registry, and a registry
+    default is runnable by construction -- so an explicit tier was the one door into this function
+    that skipped the check its own alternative enforces.
+    """
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    _scripts_dir = _Path(__file__).resolve().parent
+    if str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+    import fleet_commons_shim  # noqa: PLC0415
+
+    palette = fleet_commons_shim.load("tier_palette")
+    if model not in palette.MODELS:
+        raise ValueError(f"{source} model {model!r} is not one of {list(palette.MODELS)}")
+    if effort not in palette.EFFORTS:
+        raise ValueError(f"{source} effort {effort!r} is not one of {list(palette.EFFORTS)}")
+    if not palette.supports_effort(model, effort):
+        raise ValueError(
+            f"{source} names {model!r} at {effort!r}, which that model cannot run; its ceiling is "
+            f"{palette.effort_ceiling(model)!r}"
+        )
+
+
+def resolve_build_unit_tier(
+    *,
+    plan_tier: dict[str, str] | None = None,
+    work_shape: str | None = None,
+) -> dict[str, str]:
+    """Resolve the tier for a directly launched build unit (WK3 #929).
+
+    Precedence mirrors the shared tier chain: an explicit ``plan_tier`` wins; otherwise the work
+    shape (default ``mechanical`` for an undeclared unit per
+    ``references/execution-strategy.md``) is resolved through :mod:`tier_defaults` /
+    :mod:`fleet_commons.tier_resolver`, never a literal at the spawn site.
+
+    **An explicit tier is validated against the same vocabulary its sibling path resolves from.**
+    It used to be returned after a key-presence check alone, so a plan naming ``{"model": "gpt-5"}``
+    or ``{"effort": "maximum"}`` passed straight through to a spawn while the shape path could only
+    ever produce a registry value. "Explicit wins" is about PRECEDENCE, not about skipping the
+    check that the value exists.
+
+    **There is no host or session input at all**, which is what makes inheritance impossible: the
+    function cannot consult a host tier it is never given and never reads from the environment. An
+    earlier form took a ``host_tier`` argument and discarded it so a test could "prove"
+    non-inheritance — a parameter whose only purpose was to be ignored, which made that test
+    unfailable by construction.
+    """
+    if plan_tier is not None:
+        if "model" not in plan_tier or "effort" not in plan_tier:
+            raise ValueError(f"plan_tier must contain model and effort, got {plan_tier!r}")
+        model = str(plan_tier["model"])
+        effort = str(plan_tier["effort"])
+        _assert_known_tier(model, effort, source="plan_tier")
+        return {"model": model, "effort": effort}
+    shape = work_shape or "mechanical"
+    # Delegate to the existing chain so values stay in tier_policy.json and a
+    # malformed .saga/tier-defaults.json still raises TierDefaultsError.
+    from pathlib import Path as _Path  # noqa: PLC0415  (lazy to avoid top-level side effects)
+
+    _scripts_dir = _Path(__file__).resolve().parent
+    if str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+    import tier_defaults as _tier_defaults  # noqa: PLC0415
+
+    return _tier_defaults.resolve_tier_with_overlay(shape)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -486,6 +563,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="provenance of workflow availability: probed (ToolSearch) or asserted (default) (KTD3)",
     )
 
+    build_tier = subparsers.add_parser(
+        "resolve-build-unit-tier",
+        help="resolve a directly launched build unit's {model, effort} as JSON (#929)",
+    )
+    build_tier.add_argument("--plan-model", help="explicit plan tier model; requires --plan-effort")
+    build_tier.add_argument(
+        "--plan-effort", help="explicit plan tier effort; requires --plan-model"
+    )
+    build_tier.add_argument(
+        "--work-shape",
+        help="work shape to resolve when no explicit plan tier is given (default: mechanical)",
+    )
+
     recheck = subparsers.add_parser(
         "recheck-capability",
         help="re-check host capability on resume and recompile the orchestration tier (R11)",
@@ -537,6 +627,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             release_surface_file_count=args.release_surface_file_count,
         )
         print(json.dumps(result))
+        return 0
+    if args.command == "resolve-build-unit-tier":
+        # The fleet's CLI contract for a bad input is a JSON `error` on stderr and exit 2, not a
+        # traceback and not a bare SystemExit string. This subcommand is called from a skill
+        # document by an agent that reads stdout as JSON: a traceback there is a parse failure with
+        # no diagnosis in it, and `raise SystemExit(...)` exits 1, which the fleet uses for a
+        # genuine failure rather than a rejected argument.
+        if bool(args.plan_model) != bool(args.plan_effort):
+            print(
+                json.dumps({"error": "--plan-model and --plan-effort must be given together"}),
+                file=sys.stderr,
+            )
+            return 2
+        plan_tier = (
+            {"model": args.plan_model, "effort": args.plan_effort} if args.plan_model else None
+        )
+        try:
+            resolved = resolve_build_unit_tier(plan_tier=plan_tier, work_shape=args.work_shape)
+        except (ValueError, KeyError) as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 2
+        print(json.dumps(resolved))
         return 0
     if args.command == "recheck-capability":
         result = recheck_orchestration_capability(

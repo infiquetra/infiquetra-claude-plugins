@@ -75,7 +75,10 @@ def test_fleet_lease_runtime_adapters_are_retired_from_the_package() -> None:
 
 
 def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
-    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    # The "$CC_WORKFLOWS_SCRIPTS_DIR/..." expansions are quoted in the command blocks
+    # (review A01/S05), so match quote-tolerantly: strip double quotes from both the
+    # skill text and the needles. Presence and ordering stay the pinned contract.
+    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md").replace('"', "")
     for required in (
         "execution_spec.py settlement",
         "execution_spec.py lease",
@@ -88,10 +91,12 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
         "A missing structured result is `silent-no-op`",
         "This is at-least-once and preserves the stable idempotency key",
     ):
-        assert required in work_skill
+        assert required.replace('"', "") in work_skill
     reserve = work_skill.index("workflow_emitter.py reserve")
     attest = work_skill.index("workflow_emitter.py attest", reserve)
-    launch = work_skill.index('Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })', attest)
+    launch = work_skill.index(
+        "Workflow({ scriptPath: docs/workflows/<topic>.workflow.js })", attest
+    )
     release = work_skill.index("workflow_emitter.py release", launch)
     assert reserve < attest < launch < release
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.156.0] - 2026-08-31
+## [0.156.0] - 2026-09-01
 
 ### Changed
 
@@ -8,6 +8,286 @@
 - **Handoff envelope source-path resolution and carrier handling (issues 912/913, CORR-13/AU-09/AM-12).** An absolute source outside the declared root is re-anchored to its marker-directory subpath (`docs/brainstorms/`, etc.) under the declared root only when that candidate is an existing file; otherwise the original absolute file is read directly, so a maturity declared by the file the caller actually named is never bypassed by path inference. A source carrying no readable declaration — because neither the re-anchored candidate nor the original exists, or because the file that does exist declares nothing — still resolves by the path rule and can route live. So does a third case: an absolute source outside the declared root whose path contains none of the marker directories never enters the re-anchor branch at all, so the named, existing, declaring file is not read and its declared maturity is bypassed by path inference. A non-delimited carrier (maturity declared outside a delimited `---` block, e.g. bullet list) now fails closed with a distinct `unknown:carrier:` sentinel whose diagnostic names the missing delimiters, not the vocabulary. An unterminated block (opening `---` without closing `---`) is similarly scanned for a visible maturity and fails closed with `unknown:unterminated:` rather than falling through. Read/decode failures return `unknown:unreadable`.
 - **Frontmatter `maturity` is now decided by parsing the block as YAML, not by scanning lines (issues 912/913, findings AM-35/CORR-28/CORR-29).** Only the top-level `maturity:` key of the YAML mapping inside a closed delimited `---` block declares a maturity. Every other appearance inside the block fails closed as `unknown:carrier:` rather than falling through to the path rule: a sequence item at any column (which is nested under the preceding key, not top-level), a key nested under another mapping key, a flow-style `{maturity: ...}` invisible to a line scan, and a `maturity:` line in a block that will not parse. Two spellings that a line scan missed now declare correctly: a quoted `"maturity":` key and `maturity :` with a space before the colon. A non-string scalar is classified `unknown:unrecognized:<value>` rather than crashing. The previous rule called any indented key "nested and ignored"; a frontmatter whose whole body is uniformly indented is a top-level mapping under YAML, and a test pinning it as ignored was pinning a fail-open.
 - **A source resolving outside the declared root now fails closed (issues 912/913, findings SEC-15/SEC-16/AM-28).** Containment is judged on resolved paths on both sides, so a parent segment can no longer spell its way past a lexical comparison, and it is judged on the path rather than on whether the file exists. A refused source returns a new fifth sentinel, `unknown:out-of-root:<path>`, instead of falling through to the path rule — previously the same file gave opposite gate decisions depending only on how its path was spelled. Re-anchoring to a marker directory now has a single owner, `_reanchor_to_marker`, consumed by both `infer_maturity` and `build_handoff_envelope`; the two copies had diverged, so for an out-of-root absolute source declaring nothing the maturity was derived from the re-anchored subpath while the envelope published the out-of-root original. Consumers already stop on any `unknown:` prefix, so the new cause needs no consumer change.
+## [0.155.0] - 2026-08-31
+
+### Fixed
+
+- **Two more guard tests could not fail, and now can.** The tier-dispatch question guard read
+  `assert "AskUserQuestion" not in phase2 or "Build-unit tier" in phase2` — and the repair itself
+  added that heading to Phase 2, so the second operand was unconditionally true and a
+  questionnaire seeded into the dispatch passed. That is the same defect class the tier repair
+  fixed, recurring inside the file that fixed it, and what it let through is exactly what issue
+  #929 forbids. Two Phase-4.4 prose assertions carried dead disjuncts that subsumed their own
+  stricter operands. Each is now paired with a control proving it discriminates.
+- **The change-kinds gate has a behavioural test.** The single-sourcing clause was pinned by prose
+  grep alone and the derivation behind it was never called, so emptying its risky set left the
+  suite green. `requires_hard_test_gate` is now driven per kind, with controls for the empty list
+  and for safe-only kinds.
+- **An explicit build-unit tier is checked for RUNNABILITY, not just membership.** Every effort is
+  a legal effort and every model a legal model, but not every pairing runs — `haiku` tops out below
+  `xhigh` — so an explicit plan tier could name a combination no host can execute while its sibling
+  path, which resolves through the registry, could never produce one. The ceiling is read from
+  `fleet_commons.tier_palette` rather than restated, and the guard is driven across the palette's
+  whole product so both arms are exercised. (This one is recorded twice over: the first attempt at
+  it shipped the fix with no test, and its own mutation proof caught that — the check could be
+  deleted and the module stayed green.)
+- **`resolve-build-unit-tier` follows the fleet's CLI error contract.** A rejected argument printed
+  a bare `SystemExit` string at exit 1, and a bad tier raised through to a traceback; both are read
+  as JSON on stdout by an agent following the skill document. Both now print `{"error": ...}` on
+  stderr and exit 2.
+- **`/loop` no longer equates a `skipped` detect record with convergence.** A `skipped` carrying a
+  `note` means `detect` could not judge — it could not read the live board, or the submission had
+  no readable field — and says nothing about where the card is.
+- **Four false claims in shipped prose are corrected.** The changelog's "264 of 267 modules" is
+  210, measured; its `gated`/`halt` attribution was reversed (`gated` is the certificate declining
+  the op, which is what the empty allowlist produces; `halt` is the drift check); it credited an
+  `_override_line` refusal the source itself calls unreachable from that path; and Work §5.5 still
+  said the `qa` advance "is deferred to the `/qa` rebuild" while the same document's preamble — and
+  `plugins/saga/skills/qa/` — say it is `/qa`'s to make on a PASS.
+
+- **`/work`'s `/qa` preamble said the opposite of what `/qa` does (#930).** It read "`/qa` does not
+  yet advance the phase". `/qa` advances `lifecycle_phase` from `work` to `qa` on a PASS and keeps
+  it at `work` on a FAIL — its own skill says so and the saga specification's consumer table agrees.
+  The saga legitimately sits at `work` from merge until `/qa` runs and passes, which is the true
+  reason and is now what the sentence says.
+- **`halt` was attributed to an allowlist no conditional reads (#930).** Phase 4.4 said any op
+  "outside the closed auto-correct allowlist" returns `halt`. `AUTO_CORRECT_OP_KINDS` is
+  `frozenset()` and nothing anywhere branches on membership in it. `halt` is what an outside DRIFT
+  returns; what the empty allowlist means is that the auto-correct branch was deleted, leaving
+  `halt` as a drift's only outcome.
+- **The certificate's own comment named a mechanism retired by W7.** The idempotency-key recipe note
+  justified not migrating orphaned keys partly because `set-field-status` "is in
+  `AUTO_CORRECT_OP_KINDS`, which re-drives the asserted value on drift anyway". Nothing re-drives
+  anything. The conclusion stands; the reason given for it did not, and the note now says what
+  actually happens.
+- **The build-unit tier instructions named a function with no way to run it (#928/#929).** Both the
+  skill and its execution-strategy reference told an agent to resolve a tier "via
+  `lifecycle_state.py:resolve_build_unit_tier`" — a Python symbol with no CLI entry point. A
+  `resolve-build-unit-tier` subcommand now exists and prints `{"model": ..., "effort": ...}`, and
+  both documents name the runnable form.
+- **An explicit plan tier bypassed the validation its sibling path enforces (#929).** It was
+  returned after a key-presence check alone, so a plan naming a model or effort the shared registry
+  does not carry reached a spawn, while the shape path could only ever produce a registry value.
+  "Explicit wins" is about precedence, not about skipping the check that the value exists.
+- **A bare `artifact_pointer.py` reference survived outside the guard's scope (#930).** The guard
+  was scoped to `plugins/saga/skills`, and `plugins/saga/references/liveness-consumer-sites.md`
+  named the module bare. The module lives in team-execution, so a bare filename in saga prose points
+  at a file that is not there wherever in saga it appears; the guard now covers saga's prose and the
+  reference carries the full path.
+- **The `/loop` first-move sentence was left a verbless fragment (#930).** Rewritten as prose that
+  states the boundary it is about: `/loop` makes no first-time forward move, that move belongs to
+  `/plan` and `/work`, and since W7 the `detect` tick enforces it mechanically rather than by
+  convention.
+
+### Changed
+
+- **Three guard tests could not fail, and now can.** The tier test's literal check ended in
+  `or "resolve_build_unit_tier" in text` — the name of the function the file under test defines, so
+  the disjunction was true on every possible tree; proved by a mutation that hard-coded the pair at
+  the spawn site and left it green. The no-inheritance test passed a `host_tier` argument the
+  resolver accepted and discarded, so it asserted that discarding works; non-inheritance is now
+  proved from the signature and from a hostile environment, and the dead parameter is gone. The
+  change-kinds single-sourcing test was `assert "same" in collapsed.lower()`, which ordinary prose
+  satisfies; it now matches the clause itself, with a control proving the pattern discriminates.
+- **Two test modules import their subject by path**, like 210 of this suite's 267 modules. The
+  package form resolves against whichever `plugins` package is found first, which is the primary
+  checkout when the worktree under test is nested beneath it — so the module under test was not
+  necessarily the module in the tree under test.
+
+## [0.154.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work maintenance sweep (#930).** Work's post-merge ceremony now names all five calls
+  including `teardown` as the terminal reclamation gate; the expected five are derived as the
+  post-merge slice of `ship_ceremony.TRANSITIONS`. `/loop` no longer claims the first-time board
+  move belongs to `/work` and describes the submission path Work submits through Mission Control
+  (built in 0.151.0). The Phase-4.4 gated/allowlist conflation is separated: **`gated` is the
+  certificate declining the op** — which is what the empty auto-correct allowlist produces, along
+  with merge, deploy and any unauthorized field — and **`halt` is the drift check finding the live
+  board somewhere else** and declining to overwrite it. An earlier form of this entry attributed
+  the allowlist to `halt`, which reverses the two. The orphaned `skip silently` line is made
+  explicit. Every bare `artifact_pointer.py` under `plugins/saga/skills` now uses its full
+  repository-relative path `plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py`.
+
+## [0.153.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work build-unit tier resolution (#929).** Work's direct build-unit dispatch now resolves
+  its `{model, effort}` via `lifecycle_state.py:resolve_build_unit_tier` — an explicit plan tier
+  wins unchanged, otherwise the work shape (default `mechanical` when undeclared) is resolved
+  through the shared `tier_policy.json` registry via `tier_resolver` / `tier_defaults`, never a
+  literal at the spawn site and never by consulting the host session's tier. The seam takes **no
+  host or session input at all**, which is what makes that guarantee real: it cannot read a tier it
+  is never given. A malformed `.saga/tier-defaults.json` still raises `TierDefaultsError` through
+  the seam.
+
+## [0.152.0] - 2026-08-31
+
+### Fixed
+
+- **Saga Work merge-gate integrity: validate verdicts, record inputs, name the waived gate (#928).**
+  `plugins/saga/scripts/saga.py save` now validates every `--gate-verdict` through the existing
+  `parse_gate_verdict` parser and refuses the whole save with `error: <message>` at exit 2 on a
+  non-canonical state or malformed entry, writing neither the tick envelope nor the `state.json`
+  index — a malformed verdict is surfaced where the operator can see it rather than becoming a
+  stored fact a later gate trusts. `change_kinds` that decides the hard test gate is now recorded
+  verbatim in the Phase-4 work-session writeup, and that same list is the one passed to
+  `requires_hard_test_gate`. The dual-purpose `--doc-review-override` flag is split: the doc-review
+  gate keeps `--doc-review-override` and the review gate uses new `--review-gate-override`; both
+  route through a single `issue_progress.py:_override_line` helper, and the issue comment now
+  renders `doc review override` vs `review gate override` so the waived gate is unambiguous. The
+  helper does carry a refusal for a rationale naming an unknown gate, but it is a guard for a
+  direct caller and **unreachable from the flag path** — the split itself is what makes the waived
+  gate unambiguous, and crediting the refusal reads as a runtime check that never runs.
+
+## [0.151.0] - 2026-08-31
+
+### Fixed
+
+- **The pair guard is bounded at both ends, and an empty list is not a single-field write.** The
+  guard refused fewer than two *distinct* fields and accepted anything above: three fields is not a
+  lifecycle boundary, and authorizing one here would put an unreviewed field on the same
+  certificate as the pair. Two assignments to the same field cleared the distinct-count check while
+  carrying conflicting values for it. And an `assignments` key present but **empty** fell through
+  to the single-field fallback and reported a clean `Status`-only write — absent is the fallback,
+  empty is a caller that built a pair payload and put nothing in it.
+- **A pair's replay key is readable again.** `+` — the identity separator — was not in
+  `_safe_ledger_name`'s safe-character set, so every pair key took the SHA-1 fallback and the
+  ledger held an opaque digest for exactly the writes it most needs to be inspectable for. The
+  hostile-key fallback is unchanged.
+- **A single-field write is no longer told it has halves.** `outcome_reconcile.py` still drives
+  single-field `set-field-status`, and the no-report message told those callers that "which halves
+  landed is UNKNOWN" and to check every field — inventing a half-written board out of a write that
+  could only land or not.
+- **Both board-move triggers name conditions that exist where the move is made.** Plan §0.6
+  required the plan artifact's path (Phase 3) and Work §1.3b required the saga tick (§1.4) and the
+  work-session writeup (Phase 4) — conditions produced *after* the move they gate, so an agent
+  following either literally would defer the move or skip it and leave the card a stage behind.
+- **The reconcile controller's exit codes are documented, including where they are coarser than the
+  record.** `failed` and `error` share exit 1 and are opposites: `failed` wrote nothing, while
+  `error` means the board write committed and only the replay key is missing. A caller branching on
+  the exit code alone retries a move that already landed.
+- **`gated` and `halt` are stated as different decisions**, and the record contract no longer
+  accepts a note-free `skipped` as proof: a `skipped` proves convergence only when it also carries
+  its replay `key`, which is what distinguishes "already on disk" from a saga too old to emit a
+  note.
+
+- **Plan and Work submit their five lifecycle board moves again, as live `(Stage, Status)` pairs
+  (#927).** Since the 0.145.0 change Saga made none of the project-board moves: the submission
+  mechanism shipped and the caller never did, so a card sat exactly as it was picked up while
+  several units built against it. Each of the five boundaries — `plan` §0.6 `Planning`/`Designing`,
+  `plan` §5.0 `Planning`/`Ready for Active`, `work` §1.3b `Active`/`Implementing`, `work` §4.4
+  `Verify`/`Awaiting verification`, `work` §4.4 `Retro`/`Ready to close` — now names its actor, its
+  trigger, and a runnable submission through the reconcile controller. Deciding and submitting is
+  not writing: Mission Control remains the only executor of a `Stage` or `Status` write, and no
+  Saga path composes or executes one. `/loop` stays correction-only.
+- **The board move is a pair, and both halves are checked.** `Ready for Active` is a legal `Status`
+  on its own, so a `Status`-only submission writes a legal value, reports success, and leaves
+  `Stage` behind — a wrong card with a clean record. All five lifecycle boundaries carry both
+  assignments in one `flow set-field` invocation, every assertion in the suite reads both, and the
+  mechanism refuses a submission that opts into the pair payload and then carries fewer than two
+  **distinct** fields — counting elements would accept two assignments to one field, which is a
+  half-move wearing a pair's shape. A genuine single-field write keeps the pre-existing
+  `field`/`target_state` form, which is unchanged and stays legal.
+
+  One invocation is one process spawn, one CLI parse and one authorization pass — **not** one
+  discovery pass. `flow_set_fields_bulk` calls `_set_lifecycle_field_cross_board` once per
+  assignment and each does its own cross-board discovery, which is why the pair also doubles the
+  call's time budget rather than sharing the single-field one.
+- **A half-applied pair now names which half landed.** Mission Control writes one assignment at a
+  time and does not roll the first back, so a `Stage` write can land while `Status` fails.
+  Detection always worked — a non-empty `failed` raises, so the exit is non-zero — but
+  `default_board_writer` raised with `stderr` while the `updated`/`failed`/`identity` evidence sat
+  on discarded stdout, leaving the board half-written with no record of which field to repair. The
+  writer now parses that stdout and names the landed and the unlanded assignment. When there is no
+  report at all — a halt propagating out of the second assignment kills the run before the report is
+  printed, and leaves the first assignment written — it says the outcome is UNKNOWN and names what
+  was submitted, rather than reporting a total failure for a board that may be half-moved.
+- **The replay identity names the whole submission, at both minting sites.** `authorize_and_write`
+  mints its own idempotency key as well as the reconcile controller, and widening only the
+  controller would let a `(Stage, Status)` pair and a `Status`-only write to the same option
+  collide on one key — so the second is recorded `skipped` as already-applied, a success-shaped
+  record for a move that never landed. Both sites now derive the identity from the same helper. A
+  single-assignment submission renders exactly as before, so no existing ledger key is orphaned and
+  every pre-#927 caller is byte-unchanged. The pair's identity is order-independent — it names the
+  move, not the order a caller happened to list the halves in — and a field or option containing the
+  identity separator is refused rather than allowed to collide two different moves onto one key.
+- **A pair keeps its live drift check.** The guard that skips a field this controller cannot read
+  back compared the submission's ledger *identity* against the one readable field. A pair mints the
+  composite `Stage+Status`, which can never equal `Status`, so from the second tick every pair
+  returned `skipped` without reading the live board at all — the level-triggered convergence loop,
+  the single property that module exists to provide, off for every lifecycle write Plan, Work and
+  Orchestrate make. The question is whether the submission *contains* the readable field, not
+  whether its identity equals it; a `Stage`-only submission still refuses to judge.
+
+### Changed
+
+- **The zero-direct-write guard asks a new question, fleet-wide (#927).** `tests/test_saga_no_direct_write.py`
+  asked whether a file *named* the lifecycle-field operation and treated any mention as an offense;
+  under the operator's 2026-08-30 ruling that assertion forbids the sanctioned submission. It now
+  asks whether a path reaches GitHub's project fields *without* Mission Control's executor, and it
+  scans the whole of `plugins/` rather than `plugins/saga/` alone — the one-plugin scope is why
+  Orchestrate's leftover writer never failed it. The constant-resolution false-green guard, the
+  nested-run-artifact exclusion and the submission-core allowlists are unchanged.
+- **The Work and Plan skills state what a record actually proves.** Five submission blocks told an
+  agent that `written`/`skipped` is success. `skipped` is not a synonym for `written` — it also
+  means "already keyed" and "could not judge", carrying a `note` in the second case — and neither
+  word proves a *pair* moved, because an installed saga older than this release reports `written`
+  after writing one field. Phase 4.4 now carries the record contract once: check the `field`
+  identity, then the status, then the landed/NOT-landed detail on a failure. It also documents the
+  `error` status, which means the board write committed and the replay key did not, and states
+  plainly that Mission Control exposes **no read-back for `Stage`**, so "check both halves" is a
+  record check rather than a board read. The delivered-terminal trigger is stated to the same
+  standard as the Verify trigger it follows, since a weaker gate there would let a card reach the
+  terminal rung having skipped the one before it.
+
+## [0.150.0] - 2026-08-30
+
+### Added
+
+- **Structured pre-answer carrier for `/plan`.** A caller that has already settled the execution
+  backend or the routing destination may hand it to Plan as a fenced JSON block under schema
+  `plan_pre_answers.v1`. A supplied `inline` backend and any valid `destination` are applied and
+  visibly narrated with the caller that supplied them — `team-execution` and
+  `cc-workflows-ultracode` are legal plan values but require explicit operator invocation, so the
+  carrier stops and surfaces them instead of applying; a missing value falls through to the normal
+  adaptive conversation; an invalid or contradictory value stops and surfaces rather than becoming
+  a silent default; and a non-v1 token inside the `plan_pre_answers` family is refused whole while
+  a foreign schema family is not a carrier and is ignored. Validated by
+  `plugins/saga/scripts/plan_pre_answers.py`. Plan's conversation gains no question, checklist, or
+  fixed sequence — the carrier is intake evaluated once at entry, not a phase.
+- **One recursive plan-artifact conformance check**, covering the declared frontmatter fields and
+  the plan marker triple in a single pass and distinguishing legacy documents from newly created
+  ones.
+
+### Changed
+
+- **`backend:` is now required on every newly created plan document.** Legacy plans that lack it
+  stay compatible through `/work`'s attended offer — never rejected, never rewritten, and no bulk
+  corpus rewrite was performed.
+- **The plan-document contract has its own section in the saga spec**, kept clearly separate from
+  the saga tick envelope field table.
+- **The Claude Code Workflow emitter moved to the new `cc-workflows` plugin** at the typed
+  execution-spec boundary. Saga keeps the spec schema, validation, tier resolution, and
+  `team_emitter.py`; the Workflow backend remains runnable and explicit-invocation-only, exactly as
+  settled. Generated workflow artifacts now live under `docs/workflows/`, and `docs/plans/` is
+  reserved for plan documents.
+
+### Fixed
+
+- **`/plan` no longer produces a finished plan that routes back into `/plan`.** Phase 5.3 now emits
+  `--phase-status complete`, so the `/loop` dispatch table routes a completed plan onward to
+  `/doc-review`. Previously the omitted flag resolved to the `pending` default, which the dispatch
+  table sends back to Plan to "finish the plan".
+- **A failed saga save is no longer silent.** A filesystem failure while writing the tick now exits
+  non-zero naming the write that failed — the tick envelope, or the `state.json` index rewrite
+  after the envelope landed (in that second case the tick stays tracked, because `restore` reads
+  the envelope directly) — instead of a bare traceback, so an unreferenced plan cannot be produced
+  unnoticed.
+- **Six counterfactual execution-backend recommendation branches removed** across four documents,
+  without weakening the explicit-invocation pins that guard them.
 
 ## [0.149.0] - 2026-08-30
 
@@ -120,7 +400,6 @@
   staleness gate stays valid. Route decision (Q6): skill-contract change alone — no new registered
   operation kind in `reversibility_certificate.OpKind`, whose registry stays default-deny and off the
   reviewer's paths.
-
 
 ## [0.143.0] - 2026-08-26
 
@@ -379,7 +658,6 @@
   and therefore the only carrier that travels with the work. `/work` reads that field, records it as
   the operator's pick, and does not offer. It offers exactly as before when the field is absent,
   which is every plan written before this contract, so nothing existing changes behaviour.
-
 
 ## [0.135.0] - 2026-08-16
 
@@ -664,7 +942,6 @@
 
 ## [0.125.0] - 2026-08-04
 
-
 ### Fixed
 
 - **`/work` no longer overwrites the saga field it later reads (#693).** `orchestration_ref`
@@ -946,7 +1223,6 @@ gate — a false negative on a safety gate, strictly worse than the over-firing 
 The full behavior matrix — 14 forms that must gate, 8 that must not — is pinned in
 `tests/test_pre_push_gate.py` (32 tests).
 
-
 ## [0.118.0] - 2026-07-27
 
 ### Added - `spec_table.py`: the execution-spec approval table, at every backend approval (#668)
@@ -975,7 +1251,6 @@ The full behavior matrix — 14 forms that must gate, 8 that must not — is pin
 - `skills/work/SKILL.md` renders it before emitting and executing.
 - `skills/outcome/SKILL.md` renders it at leaf backend approval. `outcome.py` previously had 25
   `json.dumps` calls and no table at all.
-
 
 ## [0.117.0] - 2026-07-27
 
@@ -1012,7 +1287,6 @@ each claims to produce.
 - `references/adjustment-envelope.md`, `references/sandbox-spawn-sites.md`,
   `references/evidence-write-sites.md`, `references/envelope-token.md`, `skills/work/SKILL.md`, and
   the six gate-declaring skills updated to match.
-
 
 ## [0.116.0] - 2026-07-27
 
@@ -1482,7 +1756,6 @@ exhausted.
   (infiquetra-codex-plugins#34) ports verbatim.
 - Reference: `plugins/saga/references/outcome-cross-runtime.md`; outcome SKILL.md documents the
   new verb surface and the retirement.
-
 
 ## [0.102.0] - 2026-07-18
 

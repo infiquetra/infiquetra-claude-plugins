@@ -17,7 +17,10 @@ import pytest
 ROOT = Path(__file__).parent.parent
 SAGA_ROOT = ROOT / "plugins/saga"
 SCRIPT_DIR = SAGA_ROOT / "scripts"
-SOURCE_PATH = SCRIPT_DIR / "execution_spec.py"
+# The bounded concurrency emitters moved to the cc-workflows plugin (#925/U4); the
+# structural drift guard follows them there.
+CC_WORKFLOWS_ROOT = ROOT / "plugins" / "cc-workflows"
+SOURCE_PATH = CC_WORKFLOWS_ROOT / "skills" / "cc-workflows" / "scripts" / "emitter.py"
 INVENTORY_PATH = SAGA_ROOT / "references/concurrency-spawn-sites.md"
 DECISIONS_PATH = ROOT / "docs/engineering-journal/DECISIONS.md"
 REL_SOURCE = SOURCE_PATH.relative_to(ROOT).as_posix()
@@ -180,10 +183,8 @@ ES = _load_execution_spec()
 
 
 def _sources() -> dict[str, str]:
-    return {
-        path.relative_to(ROOT).as_posix(): path.read_text()
-        for path in sorted(SAGA_ROOT.rglob("*.py"))
-    }
+    paths = sorted(SAGA_ROOT.rglob("*.py")) + sorted(CC_WORKFLOWS_ROOT.rglob("*.py"))
+    return {path.relative_to(ROOT).as_posix(): path.read_text() for path in paths}
 
 
 def _inventory_rows(inventory: str) -> frozenset[InventoryRow]:
@@ -900,9 +901,18 @@ def test_injected_unguarded_executable_spawn_is_rejected() -> None:
 @pytest.mark.parametrize(
     ("source_path", "call"),
     [
-        ("plugins/saga/scripts/workflow_emitter.py", "selected.reserve_batch"),
-        ("plugins/saga/scripts/workflow_emitter.py", "selected.renew_batch"),
-        ("plugins/saga/scripts/workflow_emitter.py", "selected.settle_batch"),
+        (
+            "plugins/cc-workflows/skills/cc-workflows/scripts/workflow_emitter.py",
+            "selected.reserve_batch",
+        ),
+        (
+            "plugins/cc-workflows/skills/cc-workflows/scripts/workflow_emitter.py",
+            "selected.renew_batch",
+        ),
+        (
+            "plugins/cc-workflows/skills/cc-workflows/scripts/workflow_emitter.py",
+            "selected.settle_batch",
+        ),
     ],
 )
 def test_retired_lease_lifecycle_calls_are_absent(source_path: str, call: str) -> None:
@@ -933,7 +943,7 @@ def test_lease_hook_and_wrapper_are_absent_from_saga() -> None:
 def test_inventory_row_drift_is_rejected(drift: str) -> None:
     inventory = INVENTORY_PATH.read_text()
     row = (
-        "| `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` "
+        "| `plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py` | `_emit_panel_reconciliation` "
         "| verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` "
         "| `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U5)` "
         "| `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |"

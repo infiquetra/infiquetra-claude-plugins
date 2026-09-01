@@ -1,6 +1,42 @@
 # Decisions — Infiquetra Claude Plugins
 
-## 2026-08-30
+## 2026-08-31
+
+### Treat unproven composer continuation geometry as inconclusive  {#907-composer-structural-continuations}
+
+**Decision.** A composer continuation requires shared box-border geometry. Blank rows and mere
+indentation do not extend the input block because vendor status footers use those same shapes. If
+such a row follows an otherwise empty marker, or an empty marker is adjacent to another marker
+block, the result is `unclassifiable`, never affirmative `empty` or `staged`.
+
+**Date:** 2026-08-31 · **Issue:** #907 · **Origin:** Terminal validation review findings
+CORR-01, CORR-02, CORR-03, SEC-01, TEST-02, and TEST-03.
+
+**Why.** The viewport cannot distinguish a multiline draft from indented pane chrome, or a new
+empty composer from a glyph-led final draft row, without a structural boundary. Guessing in either
+direction can submit operator text or hard-stop an idle pane.
+
+**Rejected.** Treating every blank or indented row as input; treating every later glyph as a new
+box; preserving a fixed continuation-row limit. Each converts ambiguity into a false claim.
+
+**Revisit when.** Herdr exposes composer coordinates, cursor position, or another independent
+input-region signal.
+
+### The Orchestrate manifest owns the Agent Launcher floor  {#907-agent-launcher-floor-owner}
+
+**Decision.** Orchestrate derives its runtime Agent Launcher minimum from the dependency declared in
+its own plugin manifest. Discovery and ingestion record companion faults without killing module
+import; commands that create or expand work enforce the recorded fault with one remediation.
+
+**Date:** 2026-08-31 · **Issue:** #907 · **Origin:** Terminal validation review findings API-01,
+API-02, ARCH-03, ARCH-04, and TEST-01.
+
+**Why.** Independent floor literals drift, while import-time enforcement removes the read-only
+commands needed to inspect and recover an existing run. The manifest is already the distribution
+contract and is available in both repository and installed layouts.
+
+**Rejected.** A second tuple constant in Python; caller-injected source globals; validating every
+cache candidate during discovery; allowing an unusable companion to escape as a traceback.
 
 ### Fail open on a fully styled composer until an independent authorship signal exists  {#907-styled-composer-trade}
 
@@ -13,6 +49,8 @@
 **Rejected.** Selecting the last classifiable block, because scrollback can replace the live box; treating every styled row as empty, because it prompts into real drafts; treating every styled row as staged, because it hard-stops idle panes; assigning an unverified plain-marker fallback to every vendor.
 
 **Revisit when.** Herdr exposes cursor position or composer state, a vendor publishes a stable placeholder protocol, or a live capture verifies a stable Muse or OpenCode marker.
+
+## 2026-08-30
 
 ### Prepared-issue readiness accepts any Stage-configured Status plus Blocked; the entry option is a default, not a closed set (sdlc#91)  {#w10-readiness-stage-scoped-r91}
 

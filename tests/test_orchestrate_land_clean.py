@@ -543,6 +543,39 @@ class TestLandCleanReapsWhatTheRuleAllows:
         reaped = [line for line in out.splitlines() if line.startswith("reaped:")]
         assert reaped == ["reaped: alpha"]
 
+    def test_close_failure_is_saved_and_reported_by_land_clean(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        _write_run(
+            repo,
+            [
+                _unit_row(
+                    "alpha",
+                    wt_alpha,
+                    "done",
+                    tab_id="w1:t1",
+                    launch_receipt={"tab_id": "w1:t1", "owned": True},
+                )
+            ],
+        )
+        failed = subprocess.CompletedProcess(["herdr"], 3, "", "multiplexer unavailable")
+        monkeypatch.setattr(orchestrate, "close_run_session", lambda _unit: failed)
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        output = capsys.readouterr().out
+        failure = "tab close failed (3) for w1:t1: multiplexer unavailable"
+
+        assert wt_alpha.exists()
+        assert orchestrate.Run.load().unit("alpha").note == failure
+        assert f"kept alpha: {failure}" in output
+
     def test_it_never_deletes_branches(
         self,
         orchestrate: ModuleType,

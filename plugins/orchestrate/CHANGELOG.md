@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.0.2] - 2026-08-31
+
+### Fixed
+
+- **Companion-plugin faults are deferred to commands that require Agent Launcher (#907).** The
+  manifest is the single source of the `agent-launcher >=1.2.1` floor; cache discovery is numeric,
+  and stale, partial, or internally inconsistent installs no longer kill read-only Orchestrate
+  commands at import. Mutating launch commands receive one named failure with remediation.
+- **Stopped launches and cleanup failures retain durable recovery evidence (#907).** A staged-input
+  stop preserves the created session identifiers and receipt, while failed tab closes are saved
+  once to the run record and printed with the actual keep reason.
+
 ## [3.2.0] - 2026-08-30
 
 ### Fixed

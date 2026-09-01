@@ -28,16 +28,21 @@ from typing import Any
 
 
 def _load_composer_module() -> Any:
-    """Load the sibling parser in both standalone and Orchestrate-ingested layouts."""
-    source = Path(globals().get("_AGENT_LAUNCHER_SOURCE", __file__))
+    """Load the sibling parser from this compiled launcher's own source directory."""
+    source = Path(_load_composer_module.__code__.co_filename).resolve()
     path = source.with_name("composer.py")
+    if not path.is_file():
+        raise SystemExit(f"cannot load agent-launcher composer parser from {path}: file is missing")
     module_name = f"_agent_launcher_composer_{abs(hash(path))}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise SystemExit(f"cannot load agent-launcher composer parser from {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except (OSError, ImportError, SyntaxError) as exc:
+        raise SystemExit(f"cannot load agent-launcher composer parser from {path}: {exc}") from None
     return module
 
 
@@ -905,7 +910,9 @@ def close_run_session(unit: Any) -> subprocess.CompletedProcess[str] | None:
         if remaining is not None and unit.tab_id not in remaining:
             return subprocess.CompletedProcess(proc.args, 0, proc.stdout, proc.stderr)
         err = (proc.stderr or proc.stdout or "").strip()
-        append_unit_note(unit, tab_close_failure(unit.tab_id, proc.returncode, err))
+        failure = tab_close_failure(unit.tab_id, proc.returncode, err)
+        if failure not in unit.note.split("; "):
+            append_unit_note(unit, failure)
     return proc
 
 
@@ -1409,7 +1416,7 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
             row = agent_row(unit)
             if row is None or row.get("agent_status") != "idle":
                 break
-            if used_pane:
+            if not session_owned(unit):
                 guard_pane_before_write(unit, pane_id)
             used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere) or used_pane
             accepted = took_the_task(unit)

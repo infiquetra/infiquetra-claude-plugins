@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.1] - 2026-08-31
+
+### Fixed
+
+- **Composer geometry no longer turns pane chrome into a draft or an ambiguous draft into empty
+  (#907).** Paired borders are structural, blank and merely indented rows no longer become input
+  continuations, and adjacent glyph-led rows produce `unclassifiable` when the viewport cannot
+  prove whether they are a new box. Marker detection remains anchored at the row prefix.
+- **Every unowned-pane resend performs a fresh input inspection (#907).** A successful agent-prompt
+  send no longer lets a later pane fallback bypass the staged-input guard.
+- **The composer loader owns its source location and produces a named stop (#907).** Standalone and
+  Orchestrate-ingested launchers resolve `composer.py` from the compiled launcher path without a
+  caller-injected global; missing or unreadable parser files no longer escape as tracebacks.
+- **The serialized input-box receipt is now documented as a complete contract (#907).** The skill
+  and README enumerate every `input_box` value and the conditional redacted
+  `input_box_text_chars` field.
+
 ## [1.2.0] - 2026-08-30
 
 ### Fixed

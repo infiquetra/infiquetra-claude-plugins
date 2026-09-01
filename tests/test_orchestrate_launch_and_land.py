@@ -446,10 +446,10 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         saved = orchestrate.Run.load().unit("alpha")
         assert saved.status == orchestrate.PENDING
         assert saved.note == "operator draft withheld"
-        assert saved.tab_id is None
-        assert saved.pane_id is None
-        assert saved.agent_name is None
-        assert saved.launch_receipt == {}
+        assert saved.tab_id == "w1:t-existing"
+        assert saved.pane_id == "w1:p-existing"
+        assert saved.agent_name == "alpha-2"
+        assert saved.launch_receipt == {"input_box": "staged", "owned": False}
 
 
 def _git_branch_exists(repo: Path, branch: str) -> bool:

@@ -1497,15 +1497,37 @@ def _resubmit_one(
     return True
 
 
-AGENT_LAUNCHER_MIN_VERSION = (1, 2, 0)
-
-
 def _version_tuple(value: str) -> tuple[int, int, int]:
     """Parse the numeric three-part plugin versions used by this repository."""
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
     if match is None:
         raise SystemExit(f"agent-launcher has unsupported version {value!r}")
     return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
+
+
+def _declared_agent_launcher_floor(manifest: Path | None = None) -> tuple[int, int, int]:
+    """Read the one authoritative companion floor from Orchestrate's own manifest."""
+    if manifest is None:
+        manifest = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        dependencies = payload["dependencies"]
+        requirement = next(
+            entry["version"]
+            for entry in dependencies
+            if isinstance(entry, dict) and entry.get("name") == "agent-launcher"
+        )
+    except (OSError, ValueError, KeyError, TypeError, StopIteration) as exc:
+        raise SystemExit(
+            f"cannot read Orchestrate's agent-launcher dependency from {manifest}: {exc}"
+        ) from None
+    match = re.fullmatch(r">=(\d+\.\d+\.\d+)", str(requirement))
+    if match is None:
+        raise SystemExit(
+            f"Orchestrate's agent-launcher dependency must be a numeric >= floor, got "
+            f"{requirement!r} in {manifest}"
+        )
+    return _version_tuple(match.group(1))
 
 
 def _launcher_cache_version(path: Path) -> tuple[int, int, int]:
@@ -1524,8 +1546,9 @@ def _validated_agent_launcher(path: Path) -> Path:
         version = _version_tuple(str(payload["version"]))
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise SystemExit(f"cannot verify agent-launcher manifest {manifest}: {exc}") from None
-    if version < AGENT_LAUNCHER_MIN_VERSION:
-        required = ".".join(str(part) for part in AGENT_LAUNCHER_MIN_VERSION)
+    minimum = _declared_agent_launcher_floor()
+    if version < minimum:
+        required = ".".join(str(part) for part in minimum)
         actual = ".".join(str(part) for part in version)
         raise SystemExit(f"agent-launcher {actual} is installed; Orchestrate requires >={required}")
     return path
@@ -1541,38 +1564,38 @@ def _agent_launcher_script() -> Path | None:
                 f"AGENT_LAUNCHER_ROOT={override!r} does not contain "
                 "skills/agent-launcher/scripts/launcher.py"
             )
-        return _validated_agent_launcher(candidate)
+        return candidate
     here = Path(__file__).resolve()
     repo_candidate = (
         here.parents[4] / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
     )
     if repo_candidate.is_file():
-        return _validated_agent_launcher(repo_candidate)
+        return repo_candidate
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
         root = Path(plugin_root).resolve()
         for sibling in (root.parent / "agent-launcher", root.parent.parent / "agent-launcher"):
             direct = sibling / "skills" / "agent-launcher" / "scripts" / "launcher.py"
             if direct.is_file():
-                return _validated_agent_launcher(direct)
+                return direct
             matches = sorted(
                 sibling.glob("*/skills/agent-launcher/scripts/launcher.py"),
                 key=_launcher_cache_version,
             )
             if matches:
-                return _validated_agent_launcher(matches[-1])
+                return matches[-1]
     for parent in here.parents:
         if parent.name == "orchestrate":
             sibling = parent.parent / "agent-launcher"
             direct = sibling / "skills" / "agent-launcher" / "scripts" / "launcher.py"
             if direct.is_file():
-                return _validated_agent_launcher(direct)
+                return direct
             matches = sorted(
                 sibling.glob("*/skills/agent-launcher/scripts/launcher.py"),
                 key=_launcher_cache_version,
             )
             if matches:
-                return _validated_agent_launcher(matches[-1])
+                return matches[-1]
     return None
 
 
@@ -1604,14 +1627,22 @@ _REMEDIATION_MESSAGE = (
     "agent-launcher plugin not found. Install the companion plugin: "
     "claude plugin install agent-launcher@infiquetra-plugins"
 )
+_AGENT_LAUNCHER_ERROR: str | None = None
+
+
+def _agent_launcher_error(detail: str) -> str:
+    """One failure contract for every unusable companion-plugin state."""
+    return f"{detail.rstrip('.')}. {_REMEDIATION_MESSAGE}"
 
 
 def _agent_launcher_required(*_args: Any, **_kwargs: Any) -> Any:
-    raise SystemExit(_REMEDIATION_MESSAGE)
+    raise SystemExit(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE)
 
 
 def assert_agent_launcher_available() -> None:
     """Fail fast before creating any worktree, session, or mutating run state."""
+    if _AGENT_LAUNCHER_ERROR:
+        raise SystemExit(_AGENT_LAUNCHER_ERROR)
     if not _AGENT_LAUNCHER_AVAILABLE:
         raise SystemExit(_REMEDIATION_MESSAGE)
 
@@ -1624,15 +1655,32 @@ def _ingest_agent_launcher() -> bool:
     functions look up, so the patches still apply. Importing a second module
     would hide them. A missing plugin must not kill every subcommand at import.
     """
-    script = _agent_launcher_script()
-    if script is None:
+    global _AGENT_LAUNCHER_ERROR
+    try:
+        script = _agent_launcher_script()
+    except SystemExit as exc:
+        _AGENT_LAUNCHER_ERROR = _agent_launcher_error(str(exc))
         return False
+    if script is None:
+        _AGENT_LAUNCHER_ERROR = _REMEDIATION_MESSAGE
+        return False
+    try:
+        _validated_agent_launcher(script)
+    except SystemExit as exc:
+        # A stale but loadable launcher can still support recovery commands such as clean. The
+        # declared floor gates commands that create or expand work, not module import or status.
+        _AGENT_LAUNCHER_ERROR = _agent_launcher_error(str(exc))
     # launcher.py has a ``__main__`` CLI. When orchestrate.py is the entry point,
     # ingest would otherwise run that CLI against orchestrate's argv (``wait``,
     # ``clean``, …) and exit. The flag is this module's globals, not the environment.
     globals()["_AGENT_LAUNCHER_INGESTING"] = True
-    globals()["_AGENT_LAUNCHER_SOURCE"] = str(script)
-    exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
+    try:
+        exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
+    except (SystemExit, Exception) as exc:
+        _AGENT_LAUNCHER_ERROR = _agent_launcher_error(
+            f"agent-launcher at {script} is unusable: {exc}"
+        )
+        return False
     return True
 
 
@@ -1646,6 +1694,7 @@ if not _ingest_agent_launcher():
     roster = _agent_launcher_required
     live_agents = _agent_launcher_required
     close_run_session = _agent_launcher_required
+    tab_close_failure = _agent_launcher_required
     verify_unit_preflight = _agent_launcher_required
     append_unit_note = _agent_launcher_required
     say = _agent_launcher_required
@@ -2648,12 +2697,6 @@ def cmd_go(args: argparse.Namespace) -> int:
         except StagedInputError as exc:
             unit.status = PENDING
             unit.note = str(exc)
-            unit.tab_id = None
-            unit.pane_id = None
-            unit.agent_name = None
-            unit.reused = False
-            unit.owned = False
-            unit.launch_receipt = {}
             print(f"  {unit.name} PENDING: {exc}")
         except AccountMismatchError as exc:
             unit.status = ACCOUNT_MISMATCH
@@ -3724,11 +3767,15 @@ def cmd_land(args: argparse.Namespace) -> int:
     # landed. The sweep names only the units THIS land merged: reaping the whole run here also
     # closed the worktrees an earlier invocation deliberately kept.
     if getattr(args, "clean", False):
-        closed, _ = reap(r, merged_only=True, only=landed_names)
+        kept_reasons: dict[str, str] = {}
+        closed, _ = reap(r, merged_only=True, only=landed_names, kept_reasons=kept_reasons)
+        r.save()
         if closed:
             print(f"reaped: {', '.join(closed)}")
         else:
             print("nothing to reap: this land merged nothing")
+        for name, reason in kept_reasons.items():
+            print(f"kept {name}: {reason}")
     if resubmit_failed:
         return 4
     return 2 if writeback_failures else 0
@@ -4045,6 +4092,7 @@ def reap(
     branches: bool = False,
     only: Sequence[str] | None = None,
     remote: str = "origin",
+    kept_reasons: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
 
@@ -4084,11 +4132,11 @@ def reap(
             close_result = close_run_session(unit)
             if close_result is not None and close_result.returncode != 0:
                 detail = (close_result.stderr or close_result.stdout or "").strip()
-                append_unit_note(
-                    unit,
-                    f"cleanup kept worktree because tab close failed "
-                    f"({close_result.returncode}): {detail}",
-                )
+                failure = tab_close_failure(unit.tab_id, close_result.returncode, detail)
+                if failure not in unit.note.split("; "):
+                    append_unit_note(unit, failure)
+                if kept_reasons is not None:
+                    kept_reasons[unit.name] = failure
                 kept.append(unit.name)
                 continue
         if unit.worktree and Path(unit.worktree).exists():
@@ -4207,14 +4255,26 @@ def cmd_clean(args: argparse.Namespace) -> int:
             "branch-dependent cleanup checks are unavailable"
         )
     remote = getattr(args, "remote", "origin") or "origin"
-    closed, kept = reap(r, merged_only=args.merged, branches=args.branches, remote=remote)
+    kept_reasons: dict[str, str] = {}
+    closed, kept = reap(
+        r,
+        merged_only=args.merged,
+        branches=args.branches,
+        remote=remote,
+        kept_reasons=kept_reasons,
+    )
     if args.all and not kept:
         shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
-    elif args.all:
-        print("run state retained because cleanup kept work")
+    else:
+        r.save()
+        if args.all:
+            print("run state retained because cleanup kept work")
     print(f"closed: {', '.join(closed) or 'nothing'}")
-    if kept:
-        print(f"kept (not done, or its work not on the run branch): {', '.join(kept)}")
+    ordinary_kept = [name for name in kept if name not in kept_reasons]
+    if ordinary_kept:
+        print(f"kept (not done, or its work not on the run branch): {', '.join(ordinary_kept)}")
+    for name, reason in kept_reasons.items():
+        print(f"kept {name}: {reason}")
     return 0
 
 

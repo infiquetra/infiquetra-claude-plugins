@@ -756,6 +756,7 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
     orchestrate: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -778,13 +779,22 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
     failed = subprocess.CompletedProcess(["herdr"], 1, "", "multiplexer unavailable")
     monkeypatch.setattr(orchestrate, "close_run_session", lambda _unit: failed)
     monkeypatch.chdir(repo)
+    run_record.save()
 
-    closed, kept = orchestrate.reap(run_record, merged_only=False)
+    args = argparse.Namespace(merged=False, branches=False, all=False, remote="origin")
+    assert orchestrate.cmd_clean(args) == 0
+    first_output = capsys.readouterr().out
+    saved = orchestrate.Run.load().unit("worker")
 
-    assert closed == []
-    assert kept == ["worker"]
     assert worktree.exists()
-    assert "cleanup kept worktree" in unit.note
+    failure = "tab close failed (1) for w1:t1: multiplexer unavailable"
+    assert saved.note == failure
+    assert f"kept worker: {failure}" in first_output
+    assert "kept (not done, or its work not on the run branch): worker" not in first_output
+
+    assert orchestrate.cmd_clean(args) == 0
+    capsys.readouterr()
+    assert orchestrate.Run.load().unit("worker").note == failure
 
 
 @pytest.mark.parametrize(

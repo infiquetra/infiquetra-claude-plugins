@@ -35,8 +35,8 @@ COMPOSER_MARKERS = frozenset(glyph for glyph in COMPOSER_GLYPH_BY_VENDOR.values(
 
 # A border may precede the prompt glyph.  These are structural terminal characters, not content.
 _LEADING_BORDER_GLYPHS = frozenset("│┃┆┇┊┋╎╏▏▎▍▌▋▊▉█╭╰┌└")
+_TRAILING_BORDER_GLYPHS = frozenset("│┃┆┇┊┋╎╏▏▎▍▌▋▊▉█╮╯┐┘")
 _HORIZONTAL_RULE_GLYPHS = frozenset("─━═▄▀ ")
-_MAX_CONTINUATION_ROWS = 8
 
 
 class ComposerState(StrEnum):
@@ -137,6 +137,8 @@ class _ComposerBlock:
 
     lines: list[str]
     marker_column: int
+    ambiguous_empty: bool = False
+    adjacent_to_previous: bool = False
 
 
 def strip_ansi(text: str) -> str:
@@ -145,13 +147,24 @@ def strip_ansi(text: str) -> str:
 
 
 def _without_border(text: str) -> tuple[str, int]:
-    """Return left-trimmed text after a leading border and its original marker column."""
+    """Return row content without a paired box border and its original content column."""
     leading = len(text) - len(text.lstrip())
     candidate = text.lstrip()
+    bordered = False
     while candidate and candidate[0] in _LEADING_BORDER_GLYPHS:
+        bordered = True
         candidate = candidate[1:].lstrip()
     consumed = len(text) - len(candidate)
+    if bordered:
+        candidate = candidate.rstrip()
+        while candidate and candidate[-1] in _TRAILING_BORDER_GLYPHS:
+            candidate = candidate[:-1].rstrip()
     return candidate, max(leading, consumed)
+
+
+def _has_leading_border(text: str) -> bool:
+    candidate = text.lstrip()
+    return bool(candidate and candidate[0] in _LEADING_BORDER_GLYPHS)
 
 
 def _marker_column(line: str, glyph: str) -> int | None:
@@ -165,42 +178,66 @@ def _is_horizontal_rule(text: str) -> bool:
 
 
 def _is_continuation(line: str, *, marker_column: int) -> bool:
-    """Whether this row is a contiguous wrapped row of the current composer block."""
+    """Whether terminal geometry proves this row belongs to the current composer box.
+
+    Indentation alone is not proof: vendor status footers use the same indentation as wrapped
+    input. Unbordered rows are therefore an ambiguity boundary. A bordered row can continue only
+    inside the same box and beyond the marker column.
+    """
     clean = strip_ansi(line).replace("\xa0", " ")
     if not clean.strip():
-        return True
+        return False
     candidate, column = _without_border(clean)
     if _is_horizontal_rule(candidate) or candidate[:1] in COMPOSER_MARKERS:
         return False
-    # Wrapped composer rows are indented beyond their marker.  Styling is intentionally ignored:
-    # an erase-to-end or colour update on a continuation must not make a real draft disappear.
-    return column > marker_column
+    return _has_leading_border(clean) and column > marker_column
 
 
 def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
-    """Return bounded, contiguous marker blocks in pane order."""
+    """Return structurally bounded marker blocks in pane order.
+
+    A blank or merely indented row is not absorbed as input. When it follows an otherwise empty
+    marker, the empty claim becomes ambiguous instead: that shape can be either viewport chrome
+    or a multiline draft, and the viewport supplies no authorship signal that distinguishes them.
+    """
     blocks: list[_ComposerBlock] = []
     current: _ComposerBlock | None = None
+    separated = True
     for line in ansi_text.splitlines():
         column = _marker_column(line, glyph)
         if column is not None:
-            current = _ComposerBlock(lines=[line], marker_column=column)
+            current = _ComposerBlock(
+                lines=[line],
+                marker_column=column,
+                adjacent_to_previous=bool(blocks and not separated),
+            )
             blocks.append(current)
+            separated = False
             continue
         if current is None:
+            if strip_ansi(line).strip():
+                separated = True
             continue
-        if len(current.lines) <= _MAX_CONTINUATION_ROWS and _is_continuation(
-            line, marker_column=current.marker_column
-        ):
+        if _is_continuation(line, marker_column=current.marker_column):
             current.lines.append(line)
+            separated = False
             continue
+        if not _visible_after_marker(current.lines, glyph):
+            clean = strip_ansi(line).replace("\xa0", " ")
+            if not clean.strip() or _without_border(clean)[1] > current.marker_column:
+                current.ambiguous_empty = True
+        clean = strip_ansi(line).replace("\xa0", " ")
+        candidate, column = _without_border(clean)
+        separated = bool(clean.strip()) and (
+            _is_horizontal_rule(candidate) or column <= current.marker_column
+        )
         current = None
     return blocks
 
 
 def _visible_after_marker(lines: list[str], glyph: str) -> str:
-    clean_lines = [strip_ansi(line).replace("\xa0", " ") for line in lines]
-    first, _ = _without_border(clean_lines[0])
+    clean_lines = [_without_border(strip_ansi(line).replace("\xa0", " "))[0] for line in lines]
+    first = clean_lines[0]
     if first.startswith(glyph):
         clean_lines[0] = first[len(glyph) :]
     # Terminal wraps do not add a character to the draft; joining with a newline over-counts it.
@@ -213,23 +250,30 @@ def _unstyled_text(lines: list[str], glyph: str) -> str:
     output: list[str] = []
     for line in lines:
         cursor = 0
+        row: list[str] = []
         for sgr in SGR_RE.finditer(line):
             if not state.active:
-                output.append(ANSI_RE.sub("", line[cursor : sgr.start()]))
+                row.append(ANSI_RE.sub("", line[cursor : sgr.start()]))
             state.apply(sgr.group(1))
             cursor = sgr.end()
         if not state.active:
-            output.append(ANSI_RE.sub("", line[cursor:]))
-    text = "".join(output).replace("\xa0", " ")
-    candidate, _ = _without_border(text)
-    if candidate.startswith(glyph):
-        candidate = candidate[len(glyph) :]
-    return candidate.strip()
+            row.append(ANSI_RE.sub("", line[cursor:]))
+        candidate, _ = _without_border("".join(row).replace("\xa0", " "))
+        if _has_leading_border(strip_ansi(line)) and candidate:
+            candidate = candidate.rstrip()
+            while candidate and candidate[-1] in _TRAILING_BORDER_GLYPHS:
+                candidate = candidate[:-1].rstrip()
+        output.append(candidate)
+    if output and output[0].startswith(glyph):
+        output[0] = output[0][len(glyph) :]
+    return "".join(output).strip()
 
 
 def _classify_block(block: _ComposerBlock, *, glyph: str) -> ComposerInspection:
     visible = _visible_after_marker(block.lines, glyph)
     if not visible:
+        if block.ambiguous_empty or block.adjacent_to_previous:
+            return ComposerInspection(ComposerState.UNCLASSIFIABLE)
         # An empty box is empty regardless of how the client coloured its marker or background.
         return ComposerInspection(ComposerState.EMPTY, "")
     staged = _unstyled_text(block.lines, glyph)

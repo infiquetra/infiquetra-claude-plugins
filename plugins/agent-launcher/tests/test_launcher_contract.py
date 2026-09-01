@@ -114,8 +114,22 @@ def test_orchestrate_sorts_launcher_cache_versions_numerically() -> None:
 
 def test_orchestrate_rejects_a_launcher_below_its_declared_floor(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     orch = _load(ORCHESTRATE, "_orchestrate_version_floor_proof")
+    declared_manifest = tmp_path / "orchestrate-plugin.json"
+    declared_manifest.write_text(
+        json.dumps(
+            {
+                "dependencies": [
+                    {"name": "agent-launcher", "version": ">=9.8.7"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert orch._declared_agent_launcher_floor(declared_manifest) == (9, 8, 7)
+
     root = tmp_path / "agent-launcher" / "1.1.9"
     script = root / "skills" / "agent-launcher" / "scripts" / "launcher.py"
     script.parent.mkdir(parents=True)
@@ -123,8 +137,17 @@ def test_orchestrate_rejects_a_launcher_below_its_declared_floor(
     manifest = root / ".claude-plugin" / "plugin.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text('{"version":"1.1.9"}', encoding="utf-8")
-    with pytest.raises(SystemExit, match=r"requires >=1\.2\.0"):
+    monkeypatch.setattr(orch, "_declared_agent_launcher_floor", lambda: (9, 8, 7))
+    with pytest.raises(SystemExit, match=r"requires >=9\.8\.7"):
         orch._validated_agent_launcher(script)
+
+
+def test_ingested_launcher_resolves_composer_without_a_caller_injected_global() -> None:
+    launcher_source = LAUNCHER.read_text(encoding="utf-8")
+    orchestrate_source = ORCHESTRATE.read_text(encoding="utf-8")
+    assert "_AGENT_LAUNCHER_SOURCE" not in launcher_source
+    assert "_AGENT_LAUNCHER_SOURCE" not in orchestrate_source
+    assert "_load_composer_module.__code__.co_filename" in launcher_source
 
 
 @pytest.mark.usefixtures("launcher_on_path")
@@ -491,6 +514,34 @@ def test_composer_glyph_table_covers_the_launcher_vendor_roster(launcher: Module
     assert set(launcher.COMPOSER_GLYPH_BY_VENDOR) == set(launcher.VENDOR_FLAGS)
 
 
+def test_documented_input_box_receipt_schema_is_complete() -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    readme = LAUNCHER_README.read_text(encoding="utf-8")
+    values = {
+        "empty",
+        "staged",
+        "unclassifiable",
+        "not_found",
+        "unsupported_vendor",
+        "read_failed",
+        "read_timeout",
+    }
+    for surface in (skill, readme):
+        assert "input_box" in surface
+        assert "input_box_text_chars" in surface
+        assert all(f"`{value}`" in surface for value in values)
+
+
+def test_documented_opencode_permission_flag_matches_the_runtime_table(
+    launcher: ModuleType,
+) -> None:
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    sentence = next(line for line in skill.splitlines() if "OpenCode's `auto` posture" in line)
+    assert launcher.VENDOR_PERMISSION["opencode"]["auto"] == ["--auto"]
+    assert "`--auto`" in sentence
+    assert "`--dangerously-skip-permissions`" not in sentence
+
+
 @pytest.mark.parametrize(
     ("vendor", "glyph"),
     [("claude", "❯"), ("codex", "›"), ("grok", "❯"), ("agy", ">"), ("qwen", ">")],
@@ -506,6 +557,15 @@ def test_every_characterised_vendor_stops_on_its_own_draft(
 def test_bordered_composer_matches_after_the_border(launcher: ModuleType) -> None:
     result = launcher.inspect_composer("│ ❯ destructive draft", vendor="grok")
     assert result.state is launcher.ComposerState.STAGED
+
+
+@pytest.mark.parametrize("line", ["│ ❯   │", "\x1b[2m│ ❯   │\x1b[0m"])
+def test_paired_box_borders_are_structure_not_a_phantom_draft(
+    launcher: ModuleType, line: str
+) -> None:
+    result = launcher.inspect_composer(line, vendor="claude")
+    assert result.state is launcher.ComposerState.EMPTY
+    assert result.text == ""
 
 
 def test_composer_absent_reads_as_unreadable(launcher: ModuleType) -> None:
@@ -624,8 +684,10 @@ def test_an_empty_live_box_below_an_echo_reads_empty(launcher: ModuleType) -> No
     assert launcher.composer_staged_text(dump, vendor="claude") == ""
 
 
-def test_an_empty_box_directly_below_an_echo_reads_empty(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("❯ draft text\n❯ ", vendor="claude") == ""
+def test_adjacent_staged_and_empty_marker_rows_are_ambiguous(launcher: ModuleType) -> None:
+    """The viewport cannot distinguish a new empty box from a glyph-led final draft row."""
+    result = launcher.inspect_composer("❯ draft text\n❯ ", vendor="claude")
+    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
 
 
 def test_escapes_inside_staged_text_are_stripped(launcher: ModuleType) -> None:
@@ -668,16 +730,60 @@ def test_a_plain_marker_vendor_reads_its_own_box(launcher: ModuleType) -> None:
     assert launcher.composer_staged_text("> draft text", vendor="agy") == "draft text"
 
 
-def test_a_blank_marker_row_with_continuation_rows_is_one_block(launcher: ModuleType) -> None:
-    """A wrapped draft continues on unmarked rows; reading only the marker row reports the
-    first wrapped line and drops the rest."""
-    dump = "❯\n  wrapped draft continuation"
-    assert launcher.composer_staged_text(dump, vendor="claude") == "wrapped draft continuation"
+def test_blank_then_indented_text_is_ambiguous_not_affirmatively_empty(
+    launcher: ModuleType,
+) -> None:
+    """Indentation cannot distinguish multiline input from vendor status chrome."""
+    dump = "❯\n\n  wrapped draft or status footer"
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
 
 
 def test_styled_wrapped_row_stays_in_a_proven_staged_block(launcher: ModuleType) -> None:
-    dump = "❯ deploy the\n  \x1b[31mfleet\x1b[0m"
+    dump = "│ ❯ deploy the │\n│   \x1b[31mfleet\x1b[0m │"
     assert launcher.composer_staged_text(dump, vendor="claude") == "deploy thefleet"
+
+
+def test_status_footer_after_blank_is_not_counted_as_staged_input(
+    launcher: ModuleType,
+) -> None:
+    result = launcher.inspect_composer("› ninechars\n\n  model footer status", vendor="codex")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "ninechars"
+
+
+def test_unstyled_status_footer_after_empty_box_cannot_create_a_false_stop(
+    launcher: ModuleType,
+) -> None:
+    result = launcher.inspect_composer("› \n\n  model footer status", vendor="codex")
+    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
+
+
+@pytest.mark.parametrize(
+    ("vendor", "dump"),
+    [
+        ("codex", "› \n\n  model footer status"),
+        ("claude", "❯ here is the failing session:\n   ran the suite\n❯ "),
+    ],
+)
+def test_ambiguous_composer_geometry_never_records_affirmative_empty(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    vendor: str,
+    dump: str,
+) -> None:
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=dump,
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+        vendor=vendor,
+    )
+    launcher.launch(unit)
+    assert len(sends) == 1
+    assert unit.launch_receipt["input_box"] == "unclassifiable"
+    assert "input box unclassifiable" in unit.note
 
 
 def test_first_noncontinuation_terminates_the_composer_block(launcher: ModuleType) -> None:
@@ -687,7 +793,23 @@ def test_first_noncontinuation_terminates_the_composer_block(launcher: ModuleTyp
 
 def test_menu_marker_terminates_the_composer_block(launcher: ModuleType) -> None:
     dump = "❯ draft\n  continuation\n> menu choice\n  menu detail"
-    assert launcher.composer_staged_text(dump, vendor="claude") == "draftcontinuation"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "draft"
+
+
+def test_marker_must_be_the_first_printable_character_after_a_border(
+    launcher: ModuleType,
+) -> None:
+    dump = "❯ \nordinary output\n  footer hint contains ❯ but is not a composer"
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.EMPTY
+
+
+def test_glyph_led_last_visual_row_never_turns_a_staged_draft_into_empty(
+    launcher: ModuleType,
+) -> None:
+    dump = "❯ here is the failing session:\n   ran the suite\n❯ "
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
 
 
 def test_a_draft_above_a_closed_placeholder_row_is_unclassifiable(launcher: ModuleType) -> None:
@@ -1332,7 +1454,7 @@ def test_pane_fallback_resend_rechecks_for_staged_input(
         "pane_id": "w1:p1",
         "reused": False,
     }
-    monkeypatch.setattr(launcher, "list_tab_ids", lambda _workspace=None: frozenset())
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda _workspace=None: frozenset({"w1:t-new"}))
     monkeypatch.setattr(
         launcher,
         "run",
@@ -1349,16 +1471,71 @@ def test_pane_fallback_resend_rechecks_for_staged_input(
 
     monkeypatch.setattr(launcher, "send", pane_send)
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: False)
-    monkeypatch.setattr(launcher, "agent_row", lambda *_a, **_k: {"agent_status": "idle"})
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": "idle",
+            "pane_id": "w1:p1",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w1",
+            "interactive_ready": True,
+            "agent": "codex",
+        },
+    )
+
+    inspections: list[str] = []
 
     def stop_resend(*_args: object, **_kwargs: object) -> None:
-        raise launcher.StagedInputError("resend target now contains staged input")
+        inspections.append("guard")
+        if len(inspections) > 1:
+            raise launcher.StagedInputError("resend target now contains staged input")
 
     monkeypatch.setattr(launcher, "guard_pane_before_write", stop_resend)
     unit = launcher.LaunchRequest(name="worker", vendor="codex", worktree="/tmp/wt")
     with pytest.raises(launcher.StagedInputError, match="resend target"):
         launcher.launch(unit)
     assert sends == ["send"]
+    assert inspections == ["guard", "guard"]
+
+
+def test_agent_prompt_resend_rechecks_before_it_can_fall_back_to_the_pane(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit, _recorded, _sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane("❯ "),
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    inspections: list[str] = []
+    send_paths = iter([False, True])  # agent prompt first, pane fallback on the resend
+    accepted = iter([False, True])
+    monkeypatch.setattr(
+        launcher,
+        "guard_pane_before_write",
+        lambda *_a, **_k: inspections.append("guard"),
+    )
+    monkeypatch.setattr(launcher, "send", lambda *_a, **_k: next(send_paths))
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: next(accepted))
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": "idle",
+            "pane_id": "w80:p9",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w80",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+
+    launcher.launch(unit)
+
+    assert inspections == ["guard", "guard"]
+    assert unit.status == launcher.RUNNING
 
 
 def test_close_without_receipt_tab_id_stops(launcher: ModuleType) -> None:
@@ -1884,7 +2061,12 @@ def test_orchestrate_declares_agent_launcher_dependency_and_breaking_version() -
         f"dependencies must be an array, got {type(declared).__name__}"
     )
     floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
-    assert floors.get("agent-launcher") == ">=1.2.0", declared
+    launcher_manifest = json.loads(
+        (REPO / "plugins" / "agent-launcher" / ".claude-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert floors.get("agent-launcher") == f">={launcher_manifest['version']}", declared
 
 
 def test_skill_cleanup_example_redirects_receipt() -> None:
@@ -2153,7 +2335,7 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     skill = SKILL_MD.read_text(encoding="utf-8")
     learnings = (REPO / "docs" / "engineering-journal" / "LEARNINGS.md").read_text(encoding="utf-8")
     decisions = (REPO / "docs" / "engineering-journal" / "DECISIONS.md").read_text(encoding="utf-8")
-    assert "## [1.2.0] - 2026-08-30" in changelog
+    assert "## [1.2.1] - 2026-08-31" in changelog
     assert "selects the last block positionally" in changelog
     assert "`unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`" in changelog
     normalized_changelog = " ".join(changelog.split())

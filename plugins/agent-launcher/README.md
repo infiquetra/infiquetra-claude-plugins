@@ -27,6 +27,15 @@ The launch line carries a real prompt: without one, the session never leaves idl
 
 Standard library only, so `python3` — not `uv run`.
 
+## Input-box receipt contract
+
+For an unowned session, the launch receipt records composer inspection under `input_box`. Its
+complete value set is `empty`, `staged`, `unclassifiable`, `not_found`, `unsupported_vendor`,
+`read_failed`, and `read_timeout`. Only `staged` also carries `input_box_text_chars`; that number
+is the redacted count of characters positively recognized as staged, and the text itself is never
+written. Blank or indented rows that cannot be distinguished from vendor chrome are
+`unclassifiable`, never affirmative `empty`.
+
 ## Boundaries
 
 - Preview with `--dry-run` before every creation. It confirms `cwd` and `herdr_workspace`; it does not confirm model, effort, or account. Stop if the working directory or Herdr workspace is wrong.

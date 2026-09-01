@@ -42,6 +42,22 @@ def _install_plugin(cache: Path, plugin: str, version: str, *, parts: tuple[str,
     return destination
 
 
+def _set_plugin_version(root: Path, version: str) -> None:
+    manifest = root / ".claude-plugin" / "plugin.json"
+    payload = json.loads(_read(manifest))
+    payload["version"] = version
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _install_fake_agents(tmp_path: Path) -> Path:
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir(exist_ok=True)
+    wrapper = binary_dir / "agents"
+    wrapper.write_text("#!/bin/sh\nprintf 'Tools:\\n  claude  Claude\\n\\n'\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    return binary_dir
+
+
 def _run_installed_orchestrate(
     script_path: Path,
     args: list[str],
@@ -77,7 +93,7 @@ def test_agent_launcher_metadata_is_marketplace_registered() -> None:
     )
 
     assert plugin_json["name"] == "agent-launcher"
-    assert plugin_json["version"] == "1.2.0"
+    assert plugin_json["version"] == "1.2.1"
     assert "Herdr" in plugin_json["description"]
     assert {"agent-launcher", "agents", "herdr", "launch", "sessions"} <= set(
         plugin_json["keywords"]
@@ -100,7 +116,8 @@ def test_orchestrate_declares_agent_launcher_dependency_in_metadata() -> None:
         f"dependencies must be an array, got {type(declared).__name__}"
     )
     floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
-    assert floors.get("agent-launcher") == ">=1.2.0", declared
+    launcher_version = json.loads(_read(PLUGIN_ROOT / ".claude-plugin" / "plugin.json"))["version"]
+    assert floors.get("agent-launcher") == f">={launcher_version}", declared
 
     orch_entry = next(
         plugin for plugin in marketplace["plugins"] if plugin["name"] == "orchestrate"
@@ -109,7 +126,16 @@ def test_orchestrate_declares_agent_launcher_dependency_in_metadata() -> None:
         plugin for plugin in marketplace["plugins"] if plugin["name"] == "agent-launcher"
     )
     assert orch_entry["version"] == orch_json["version"]
-    assert launcher_entry["version"] == "1.2.0"
+    assert launcher_entry["version"] == launcher_version
+
+
+def test_orchestrate_skill_matches_the_deferred_floor_failure_contract() -> None:
+    skill = _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "SKILL.md")
+    section = skill[skill.index("**Single launch seam") : skill.index("Unsupported post-launch")]
+    assert "plugin manifest" in section
+    assert "read-only recovery commands" in section
+    assert all(command in section for command in ("`roster`", "`start`", "`expand`", "`go`"))
+    assert EXPECTED_REMEDIATION in section
 
 
 def test_agent_launcher_packaged_files() -> None:
@@ -246,7 +272,7 @@ def test_installed_orchestrate_with_discoverable_launcher_passes_preflight(tmp_p
     orch_install = _install_plugin(
         cache, "orchestrate", "3.0.1", parts=(".claude-plugin", "skills")
     )
-    _install_plugin(cache, "agent-launcher", "1.0.0", parts=(".claude-plugin", "skills"))
+    _install_plugin(cache, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills"))
     script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
 
     result = _run_installed_orchestrate(script, ["roster"], cwd=tmp_path)
@@ -255,3 +281,124 @@ def test_installed_orchestrate_with_discoverable_launcher_passes_preflight(tmp_p
     err_and_out = result.stderr + result.stdout
     assert "agent-launcher plugin not found" not in err_and_out
     assert EXPECTED_REMEDIATION not in err_and_out
+
+
+def test_read_only_help_survives_a_stale_launcher_while_roster_enforces_the_floor(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    stale = _install_plugin(cache, "agent-launcher", "1.2.0", parts=(".claude-plugin", "skills"))
+    _set_plugin_version(stale, "1.2.0")
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+    path = f"{_install_fake_agents(tmp_path)}:{os.environ.get('PATH', '')}"
+
+    help_result = _run_installed_orchestrate(
+        script, ["--help"], cwd=tmp_path, env_overrides={"PATH": path}
+    )
+    assert help_result.returncode == 0, help_result.stderr
+    assert "Traceback" not in help_result.stderr
+
+    roster_result = _run_installed_orchestrate(
+        script, ["roster"], cwd=tmp_path, env_overrides={"PATH": path}
+    )
+    assert roster_result.returncode != 0
+    output = roster_result.stderr + roster_result.stdout
+    assert "agent-launcher 1.2.0 is installed; Orchestrate requires >=1.2.1" in output
+    assert EXPECTED_REMEDIATION in output
+    assert "Traceback" not in output
+
+
+def test_missing_composer_is_deferred_and_reported_without_a_traceback(tmp_path: Path) -> None:
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    launcher_install = _install_plugin(
+        cache, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills")
+    )
+    (launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py").unlink()
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+
+    help_result = _run_installed_orchestrate(script, ["--help"], cwd=tmp_path)
+    assert help_result.returncode == 0, help_result.stderr
+    assert "Traceback" not in help_result.stderr
+
+    roster_result = _run_installed_orchestrate(script, ["roster"], cwd=tmp_path)
+    assert roster_result.returncode != 0
+    output = roster_result.stderr + roster_result.stdout
+    assert "cannot load agent-launcher composer parser" in output
+    assert "file is missing" in output
+    assert EXPECTED_REMEDIATION in output
+    assert "Traceback" not in output
+
+
+def test_standalone_launcher_missing_composer_is_a_named_stop(tmp_path: Path) -> None:
+    launcher_install = _install_plugin(
+        tmp_path, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills")
+    )
+    composer = launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py"
+    composer.unlink()
+    script = launcher_install / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    output = result.stderr + result.stdout
+    assert "cannot load agent-launcher composer parser" in output
+    assert "file is missing" in output
+    assert "Traceback" not in output
+
+
+def test_internal_launcher_failure_uses_the_same_deferred_named_contract(tmp_path: Path) -> None:
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    launcher_install = _install_plugin(
+        cache, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills")
+    )
+    composer = launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py"
+    composer.write_text("raise RuntimeError('simulated roster drift')\n", encoding="utf-8")
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+
+    help_result = _run_installed_orchestrate(script, ["--help"], cwd=tmp_path)
+    assert help_result.returncode == 0, help_result.stderr
+    assert "Traceback" not in help_result.stderr
+
+    roster_result = _run_installed_orchestrate(script, ["roster"], cwd=tmp_path)
+    assert roster_result.returncode != 0
+    output = roster_result.stderr + roster_result.stdout
+    assert "simulated roster drift" in output
+    assert EXPECTED_REMEDIATION in output
+    assert "Traceback" not in output
+
+
+def test_installed_cache_discovery_selects_and_validates_the_highest_numeric_version(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    older = _install_plugin(cache, "agent-launcher", "1.9.0", parts=(".claude-plugin", "skills"))
+    newer = _install_plugin(cache, "agent-launcher", "1.10.0", parts=(".claude-plugin", "skills"))
+    _set_plugin_version(older, "1.2.1")
+    _set_plugin_version(newer, "1.2.1")
+    old_script = older / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    old_script.write_text("raise RuntimeError('lower cache entry selected')\n", encoding="utf-8")
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+    path = f"{_install_fake_agents(tmp_path)}:{os.environ.get('PATH', '')}"
+
+    result = _run_installed_orchestrate(
+        script, ["roster"], cwd=tmp_path, env_overrides={"PATH": path}
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "claude" in result.stdout

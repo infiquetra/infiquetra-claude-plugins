@@ -105,7 +105,10 @@ def test_orchestrate_keeps_its_agent_launcher_floor() -> None:
     declared = manifest["dependencies"]
     assert isinstance(declared, list)
     floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
-    assert floors.get("agent-launcher") == ">=1.2.0", declared
+    launcher = json.loads(
+        (REPO_ROOT / "plugins/agent-launcher/.claude-plugin/plugin.json").read_text()
+    )
+    assert floors.get("agent-launcher") == f">={launcher['version']}", declared
 
 
 @pytest.mark.skipif(

@@ -19,7 +19,39 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
-## 2026-08-30
+## 2026-08-31
+
+### Terminal indentation is shared by input and status chrome  {#907-composer-indentation-ambiguity}
+
+**Context.** Issue 907's positional parser still treated every blank and indented row after a
+composer marker as input.
+**Evidence.** A live Codex viewport places a blank spacer and an indented model, directory, branch,
+quota, and context footer immediately below the marker. The parser reported a nine-character draft
+as 28 characters in a minimal reproduction, and an empty marker plus an unstyled footer as staged.
+**Mechanism.** Indentation is terminal layout, not membership in the input region. A second marker
+is also ambiguous when it is adjacent to staged text: it may be a new box or draft content.
+**Fix (or queued).** Only shared border geometry proves continuation. Ambiguous empty shapes become
+`unclassifiable`; paired borders are removed as structure; prefix anchoring remains mandatory.
+**Validation.** Focused tests cover paired borders, a status footer, blank-plus-indented content,
+adjacent glyph-led rows, and the marker-containment mutation.
+**Generalizable rule.** At a screen-scraping boundary, do not promote whitespace geometry into a
+semantic guarantee unless the same geometry cannot be produced by surrounding chrome.
+**Refs.** DECISIONS `{#907-composer-structural-continuations}`.
+
+### Dependency validation belongs at the command boundary  {#907-dependency-floor-command-boundary}
+
+**Context.** Orchestrate enforced a new Agent Launcher floor while importing its command module.
+**Evidence.** With a stale companion, `orchestrate.py --help` exited before argparse. With a missing
+`composer.py`, the same import emitted a raw `FileNotFoundError` traceback.
+**Mechanism.** Discovery, compatibility validation, and module ingestion used four different error
+contracts at module scope. Read-only commands therefore inherited the strictest launch-only fault.
+**Fix (or queued).** Cache discovery selects numerically, the manifest supplies the floor, ingestion
+records one named compatibility error, and work-creating commands enforce it with remediation.
+**Validation.** Installed-layout subprocess tests cover stale, partial, and multiple cached
+companions through the real discovery and ingestion path.
+**Generalizable rule.** A companion needed only for some commands must not make unrelated recovery
+commands unimportable; discover early, enforce at the first operation that needs the capability.
+**Refs.** DECISIONS `{#907-agent-launcher-floor-owner}`.
 
 ### A terminal composer is positional structure, not the last text a heuristic can classify  {#907-composer-position-before-classification}
 
@@ -49,6 +81,8 @@
 **Second finding, same run.** The module named after the plugin — `tests/test_agent_launcher_plugin.py` — holds release surfaces (manifest version, marketplace registration, packaged files) plus installed-layout fail-fast subprocess tests; direct launcher behavior tests live in `plugins/agent-launcher/tests/test_launcher_contract.py` and the orchestrate test files. Reading only the plugin-named module understates behavior coverage; reading only the plugin directory misses the installed-layout and drift guards.
 **Generalizable rule.** When a receipt carries two booleans with adjacent meanings, read each one's docstring before keying a guard on either — the bit whose name matches your intuition is not always the bit that names your case; and a test file named for the thing it tests is a claim about location, not coverage.
 **Refs.** Issues #897, #907; run plan `docs/plans/2026-08-30-agent-launcher-907-run-plan.md`, Findings 1 and 3.
+
+## 2026-08-30
 
 ### Leaving a stale adjacent section does not license a "same as" claim against it  {#w19-no-sameness-claim-against-stale-rows}
 

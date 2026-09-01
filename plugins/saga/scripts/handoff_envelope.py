@@ -31,6 +31,11 @@ HANDOFF_MATURITIES = (
     "pending-confirmation",
 )
 
+#: The subset whose `suggested_command` is runnable. `pending-confirmation` is a member of
+#: HANDOFF_MATURITIES but carries no durable route, so offering it as a remediation target
+#: sends the author straight back to the same diagnostic (API-25).
+ROUTABLE_MATURITIES = tuple(m for m in HANDOFF_MATURITIES if m != "pending-confirmation")
+
 # Derived from SOURCE_DIRS to avoid a second literal that must be kept in sync.
 # Used for re-anchoring an absolute source outside the declared root to its
 # marker-directory subpath.
@@ -245,8 +250,8 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
     # root, re-anchor to the subpath below the marker directory and resolve under
     # `base`; accept the re-anchored candidate ONLY when it is an existing file —
     # otherwise read the original absolute path directly. Three outcomes are possible:
-    # the re-anchored file is read, the original absolute file is read, or neither is
-    # readable and the path rule decides on the marker subpath — which routes live. A
+    # the re-anchored file is read, the original absolute file is read, or the source is
+    # refused. A
     # path carrying no marker directory never enters this branch at all and always
     # resolves by the path rule.
     base = root or Path.cwd()
@@ -432,7 +437,10 @@ def build_handoff_envelope(
         # Bound the raw author-controlled value so unbounded artifact text cannot
         # enter the published JSON field (API-12); the diagnostic tail is redundant
         # with suggested_command, so the bound only ever shortens machine input.
-        maturity = "unknown:" + maturity[len("unknown:") :][:120]
+        body = maturity[len("unknown:") :]
+        # Mark the loss: without the ellipsis the diagnostic quotes a value that does not
+        # appear anywhere in the artifact, and the author cannot tell it was truncated (AU-28).
+        maturity = "unknown:" + (body[:120] + "…" if len(body) > 120 else body)
     # Fail-closed for unrecognized/empty maturity (API-03) and pending-confirmation
     if maturity == "pending-confirmation":
         suggested_command = (
@@ -465,14 +473,16 @@ def build_handoff_envelope(
         elif maturity == "unknown:unreadable":
             suggested_command = (
                 f"Unreadable frontmatter for {selected_source}{reanchored_diagnostic} — "
-                f"file could not be read or decoded; no durable route"
+                f"file could not be opened, or decoded into text carrying a maturity "
+                f"declaration; no durable route; re-save the file as UTF-8 with a closed "
+                f"--- block and a top-level maturity: key, then re-run"
             )
         elif maturity.startswith("unknown:unrecognized:"):
             raw = maturity.removeprefix("unknown:unrecognized:")
             suggested_command = (
                 f"Unrecognized maturity {raw!r} for {selected_source}{reanchored_diagnostic} — "
                 "no durable route; fix frontmatter to one of "
-                f"{', '.join(HANDOFF_MATURITIES)}"
+                f"{', '.join(ROUTABLE_MATURITIES)}"
             )
         else:
             # Fallback for legacy unknown: prefix (should not occur after namespace reservation)
@@ -482,7 +492,7 @@ def build_handoff_envelope(
             suggested_command = (
                 f"Unrecognized maturity {raw!r} for {selected_source}{reanchored_diagnostic} — "
                 "no durable route; fix frontmatter to one of "
-                f"{', '.join(HANDOFF_MATURITIES)}"
+                f"{', '.join(ROUTABLE_MATURITIES)}"
             )
         # Keep handoff_maturity as the raw signal for diagnostics, but do not emit a route
     else:

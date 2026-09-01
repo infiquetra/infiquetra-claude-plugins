@@ -319,7 +319,7 @@ The field's runtime domain is consequently NOT closed at the six values: `infer_
 return the empty string, an `unknown:unrecognized:<raw>` sentinel carrying an unrecognized raw value
 (reserved namespace `unrecognized:` that no vocabulary value contains, so author text cannot forge it),
 a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared outside a delimited
-block), a `unknown:unterminated:<raw>` sentinel for an unterminated block (opening `---` without
+block), a `unknown:unterminated:<raw>` sentinel for a block whose closing delimiter was not found — either genuinely absent, or present but beyond the 8192-byte frontmatter read window (opening `---` without
 closing `---`), `unknown:unreadable` for a read/decode failure, or `unknown:out-of-root:<path>` for a source that resolves outside the declared root; the envelope's published
 `handoff_maturity` field is bounded to 120 characters after the `unknown:` prefix (the helper may
 return the full raw value, but the published field is truncated; the `unknown:` prefix plus its
@@ -506,8 +506,7 @@ directory. (The cached `branch`/`head_sha` may be stale — that is fine, git is
   the six `HANDOFF_MATURITIES` values (§4), the empty string (frontmatter declared the key but left it
   blank), an `unknown:unrecognized:<raw>` sentinel for an unrecognized value (reserved namespace
   `unrecognized:`), a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared
-  outside a delimited `---` block), a `unknown:unterminated:<raw>` sentinel for an unterminated block
-  (opening `---` without closing `---`), or `unknown:unreadable` for a read/decode failure (all
+  outside a delimited `---` block), a `unknown:unterminated:<raw>` sentinel for a block whose closing delimiter was not found — either genuinely absent, or present but beyond the 8192-byte frontmatter read window (opening `---` without closing `---`), or `unknown:unreadable` for a read/decode failure (all
   bounded to 120 characters after the `unknown:` prefix; the `unknown:` prefix and its discriminator
   segment are reserved and never appear in author-declared values; design record: `DECISIONS.md`
   `{#913-maturity-unknown-sentinel}`). For all non-vocabulary shapes `suggested_command` is

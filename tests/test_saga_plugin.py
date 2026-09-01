@@ -45,9 +45,9 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.151.0"  # issue 912: handoff envelope schema 1.1 and the
-    # fail-closed maturity vocabulary. Successor to W10's (sdlc#91) 0.150.0 — note 0.150.0 was taken
-    # by an unrelated run (Saga Plan Wave 1, 1c1c04a9) before this branch could ship it.
+    assert plugin_json["version"] == "0.156.0"  # issue 912: handoff envelope schema 1.1 and the
+    # fail-closed maturity vocabulary. 0.150.0 through 0.155.0 were all taken by unrelated runs
+    # while this branch was repairing, so the bump is re-derived from the current origin/main tip.
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -4009,7 +4009,7 @@ def test_loop_pending_confirmation_routes_to_brainstorm(tmp_path: Path) -> None:
     assert "| (none) | — | `pending-confirmation` | `/brainstorm` |" in dispatch
     assert "| `brainstorm` | any | `pending-confirmation` | `/brainstorm` |" in dispatch
     # Brainstorm phase with no declared maturity must also route (exploratory-only outcome writes no file)
-    assert "| `brainstorm` | any | — | `/brainstorm` (finish the WHAT) |" in dispatch
+    assert "| `brainstorm` | any | none declared | `/brainstorm` (finish the WHAT) |" in dispatch
     # Also verify parse_issue actually returns it via real path
     body = "### Handoff maturity\npending-confirmation\n"
     assert mod.extract(body)["handoff"]["maturity"] == "pending-confirmation"

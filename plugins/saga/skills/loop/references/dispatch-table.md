@@ -70,7 +70,7 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 |---|---|---|---|
 | (none) | — | `idea-ready` / `requirements-ready` | `/plan` |
 | `ideation` | any | — | `/plan` (settle HOW) |
-| `brainstorm` | any | — | `/brainstorm` (finish the WHAT) |
+| `brainstorm` | any | none declared | `/brainstorm` (finish the WHAT) |
 | (none) | — | `pending-confirmation` | `/brainstorm` |
 | `brainstorm` | any | `pending-confirmation` | `/brainstorm` |
 | `brainstorm` | any | `requirements-ready` | `/plan` (settle HOW) |

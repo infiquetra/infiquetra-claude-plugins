@@ -164,7 +164,11 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
         return None
     frontmatter = text[3:end]
     for line in frontmatter.splitlines():
-        extracted = _extract_declared_maturity_value(line)
+        # A bullet at column 0 is a top-level list item and counts as a visible
+        # declaration (CORR-26); an indented key is nested and stays ignored, which
+        # saga-spec.md section 9 states and tests pin.
+        probe = line[1:].lstrip() if line[:1] in ("-", "*") else line
+        extracted = _extract_declared_maturity_value(probe)
         if extracted is None:
             continue
         if not extracted:
@@ -185,8 +189,11 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
     # over the process cwd in BOTH forms. For an absolute source outside the declared
     # root, re-anchor to the subpath below the marker directory and resolve under
     # `base`; accept the re-anchored candidate ONLY when it is an existing file —
-    # otherwise read the original absolute path directly or fail closed with a
-    # sentinel, never fall through to the path rule (which would route live).
+    # otherwise read the original absolute path directly. Three outcomes are possible:
+    # the re-anchored file is read, the original absolute file is read, or neither is
+    # readable and the path rule decides on the marker subpath — which routes live. A
+    # path carrying no marker directory never enters this branch at all and always
+    # resolves by the path rule.
     base = root or Path.cwd()
     absolute = Path(normalized).is_absolute()
     if absolute and root is not None and not Path(normalized).is_relative_to(base.resolve()):
@@ -220,9 +227,10 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
                 normalized = reanchored_normalized
                 absolute = False
             else:
-                # Re-anchored subpath does not exist or not contained — read
-                # the original absolute file directly (the file the caller named)
-                # or fail closed, never fall through to the path rule.
+                # Re-anchored subpath does not exist or not contained — read the
+                # original absolute file directly (the file the caller named). When
+                # that file also declares nothing, control DOES reach the path rule
+                # below and can route live; the release note states this.
                 original_candidate = Path(normalized)
                 if original_candidate.is_file():
                     declared = _read_frontmatter_maturity(original_candidate)

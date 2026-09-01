@@ -85,7 +85,7 @@ name — and reporting is per dimension only.
 
 ## Layer 3 — Evaluator trust and safeguard-phrase drift guard
 
-*Audience: maintainer of tests and contract files. Version: 0.151.0.*
+*Audience: maintainer of tests and contract files. Version: 0.156.0.*
 
 **Evaluator-trust rule (R20).** `is_blocking(finding, *, reproducible,
 second_grader_agrees, operator_adjudicated) -> bool` returns `True`

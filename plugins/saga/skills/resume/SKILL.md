@@ -103,10 +103,9 @@ Brainstorm), scan `docs/brainstorms/*-requirements.md` and read frontmatter for 
 `plugins/saga/skills/brainstorm/SKILL.md` uses, stated in the same sequence: exact producer-fact
 match first (on `topic` plus `capability`); then files lacking the producer facts, which route to the
 labelled inference path rather than counting as absent — a file missing `capability` is a legacy
-artifact, never a miss; and only a genuinely empty scan reports no candidate. One unambiguous match
-is a matched candidate that routes to `/brainstorm` — summarize the restored boundary and continue
+artifact, never a miss; and only a genuinely empty scan reports no candidate. Exactly one exact match is a matched candidate that routes to `/brainstorm`; exactly one near-match is offered to the operator for confirmation first, matching Brainstorm Tier 1, and — summarize the restored boundary and continue
 from it without re-presenting settled decisions, reusing the existing Phase 1 disambiguation shape
-(single-select over the candidate list); two or more near-matches stop and ask the operator to
+(single-select over the candidate list); two or more tier 1 matches of any kind, exact or near, stop and ask the operator to
 choose, using the same slug-subset near-match predicate Brainstorm Tier 1 defines and explicitly never by recency, filename, or broad content match; a `pending-confirmation` match
 is restored as a proposed boundary awaiting confirmation, never as finished work. This document scan
 is read-only — Brainstorm still writes no Saga state. Classify the run:

@@ -94,7 +94,7 @@ def check_resume_restore(text: str) -> list[str]:
 def check_ambiguity_stop(text: str) -> list[str]:
     violations: list[str] = []
     norm = _norm(text).lower()
-    if "two or more near-matches stop and ask" not in norm:
+    if "two or more tier 1 matches of any kind, exact or near, stop and ask" not in norm:
         violations.append("missing ambiguity stop rule")
     if "never by recency" not in norm:
         violations.append("missing never by recency refusal")
@@ -441,7 +441,7 @@ def check_dispatch_pending(text: str) -> list[str]:
         if (
             line.strip().startswith("|")
             and "`brainstorm`" in line
-            and "| — |" in line
+            and "| none declared |" in line
             # Must be the brainstorm any -- row, not the pending row
             and "`/brainstorm`" in line
         ):
@@ -472,4 +472,34 @@ def test_dispatch_pending_routing_positive() -> None:
     assert check_dispatch_pending(text) == [], f"dispatch pending: {check_dispatch_pending(text)}"
     assert check_no_pending_to_plan(text) == [], (
         f"no pending to plan: {check_no_pending_to_plan(text)}"
+    )
+
+
+def check_near_match_predicate(text: str) -> list[str]:
+    """The Tier 1 near-match predicate must stay mechanically defined, not gestured at."""
+    violations: list[str] = []
+    norm = _norm(text).lower()
+    if "strict subset relation" not in norm:
+        violations.append("missing strict subset relation in near-match definition")
+    if "same `capability`" not in norm and "same capability" not in norm:
+        violations.append("missing same-capability condition in near-match definition")
+    if "tier 1 matches of any kind" not in norm:
+        violations.append("missing multiplicity rule over the whole tier 1 candidate set")
+    return violations
+
+
+def test_near_match_predicate_defined_in_brainstorm_and_mutation_fails() -> None:
+    text = _read(BRAINSTORM_SKILL)
+    assert check_near_match_predicate(text) == [], (
+        f"near-match violations: {check_near_match_predicate(text)}"
+    )
+    mutated = _mutate(text, "strict subset relation")
+    assert check_near_match_predicate(mutated) != []
+
+
+def test_near_match_multiplicity_rule_mirrored_in_resume() -> None:
+    text = _read(RESUME_SKILL)
+    norm = _norm(text).lower()
+    assert "tier 1 matches of any kind" in norm, (
+        "Resume must mirror Brainstorm's multiplicity rule over the whole tier 1 candidate set"
     )

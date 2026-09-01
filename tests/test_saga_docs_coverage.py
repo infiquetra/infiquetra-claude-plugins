@@ -302,3 +302,25 @@ def test_state_readiness_table_matches_model() -> None:
             f"table row for {maturity!r} has consumers {consumed_tokens!r} != model's {expected_consumers!r} "
             f"from cell {consumed!r}"
         )
+
+
+def test_model_maturity_values_match_runtime_vocabulary() -> None:
+    """The docs model claims to own the readiness mappings, so bind it to the runtime constant.
+
+    Without this the model and `HANDOFF_MATURITIES` can drift apart silently: the model is
+    prose-checked for structure, and nothing compared its maturity keys to the vocabulary the
+    envelope actually routes on.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "handoff_envelope", SAGA_ROOT / "scripts" / "handoff_envelope.py"
+    )
+    assert spec is not None and spec.loader is not None
+    he: ModuleType = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(he)
+    model: dict[str, Any] = yaml.safe_load(MODEL_PATH.read_text(encoding="utf-8"))
+    model_values = set(model["maturity"]["values"])
+    runtime_values = set(he.HANDOFF_MATURITIES)
+    assert model_values == runtime_values, (
+        f"docs model maturity values {sorted(model_values)} != runtime "
+        f"HANDOFF_MATURITIES {sorted(runtime_values)}"
+    )

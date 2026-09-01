@@ -1,6 +1,6 @@
 # Saga State And Readiness
 
-Saga has three stored state axes. Handoff readiness is derived from those axes, artifact paths, or a declared maturity in an off-chain artifact's own frontmatter (which wins over path inference per the off-chain maturity note in `plugins/saga/references/saga-spec.md`), and is never stored as saga tick frontmatter.
+Saga has three stored state axes. Handoff readiness is derived from those axes, artifact paths, or a declared maturity in an off-chain artifact's own frontmatter (an unindented top-level key inside a closed delimited block wins over path inference; an indented key is nested and is ignored, and a source the containment rules refuse to read is never consulted at all — see `plugins/saga/references/saga-spec.md` section 9), and is never stored as saga tick frontmatter.
 
 ![State and Readiness Ladder](assets/state-readiness-ladder.svg)
 

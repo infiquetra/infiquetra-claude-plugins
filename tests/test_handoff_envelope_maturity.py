@@ -382,13 +382,19 @@ def test_envelope_schema_version_pinned(tmp_path: Path) -> None:
     # Spec half must be the envelope versioning rule, not just any heading containing the substring.
     import re
 
-    assert re.search(
-        r"handoff_envelope\.py.*1\.1|handoff envelope.*1\.1", spec_text, re.IGNORECASE
-    ), (
-        "spec must contain the envelope versioning rule naming handoff_envelope.py and 1.1 on the same line"
+    # TEST-32: derive the searched version from the envelope and anchor to the "currently"
+    # clause. The historical "1.0 -> 1.1 is the precedent" parenthetical later on the same line
+    # satisfies a loose regex even when the current clause has drifted, so the guard must pin
+    # the clause that actually states today's value.
+    version = envelope["schema_version"]
+    anchored = (
+        r"handoff envelope built by `handoff_envelope\.py` carries its own "
+        rf"`schema_version` \(currently `\"{re.escape(version)}\"`\)"
     )
-    # Ensure the version appears in the section 9 bullet, not just a heading
-    assert "schema_version" in spec_text and "1.1" in spec_text
+    assert re.search(anchored, spec_text, re.IGNORECASE), (
+        f"saga-spec.md section 9 must state the envelope's current schema_version as {version!r} "
+        "in its currently clause, not only in a historical parenthetical"
+    )
 
 
 def test_carrier_diagnostic_names_delimiters_not_vocabulary(tmp_path: Path) -> None:
@@ -570,3 +576,102 @@ def test_corrupt_nul_bearing_file_is_unreadable(tmp_path: Path) -> None:
     target = plans / "2026-08-30-corrupt-requirements.md"
     target.write_bytes(b"\x00\x01\x02\xff\xfe\x99")
     assert HE.infer_maturity(str(target)) == "unknown:unreadable"
+
+
+def test_unterminated_bulleted_declaration_fails_closed(tmp_path: Path) -> None:
+    """TEST-28: an unterminated block with a bulleted declaration must not route."""
+    b = tmp_path / "docs" / "brainstorms"
+    b.mkdir(parents=True)
+    target = b / "2026-08-31-bulleted-requirements.md"
+    target.write_text("---\n- maturity: pending-confirmation\n", encoding="utf-8")
+    assert HE.infer_maturity(str(target), root=tmp_path).startswith("unknown:unterminated:")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-31-bulleted-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_unterminated_indented_declaration_fails_closed(tmp_path: Path) -> None:
+    """TEST-28: an unterminated block with an indented declaration must not route."""
+    b = tmp_path / "docs" / "brainstorms"
+    b.mkdir(parents=True)
+    target = b / "2026-08-31-indented-requirements.md"
+    target.write_text("---\n  maturity: pending-confirmation\n", encoding="utf-8")
+    assert HE.infer_maturity(str(target), root=tmp_path).startswith("unknown:unterminated:")
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-31-indented-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_unterminated_empty_value_fails_closed(tmp_path: Path) -> None:
+    """TEST-30: a bare maturity key inside an unterminated block must not route."""
+    b = tmp_path / "docs" / "brainstorms"
+    b.mkdir(parents=True)
+    target = b / "2026-08-31-emptyval-requirements.md"
+    target.write_text("---\nmaturity: \n", encoding="utf-8")
+    assert HE.infer_maturity(str(target), root=tmp_path) == "unknown:unterminated:"
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/2026-08-31-emptyval-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_carrier_scan_last_line_inside_window_fails_closed(tmp_path: Path) -> None:
+    """TEST-33: a carrier declaration on the last scanned line still fails closed."""
+    b = tmp_path / "docs" / "brainstorms"
+    b.mkdir(parents=True)
+    target = b / "2026-08-31-cliff-in-requirements.md"
+    body = "\n".join(f"filler {i}" for i in range(29)) + "\n- maturity: pending-confirmation\n"
+    target.write_text(body, encoding="utf-8")
+    assert HE.infer_maturity(str(target), root=tmp_path) == "unknown:carrier:pending-confirmation"
+
+
+def test_carrier_scan_first_line_outside_window_falls_through(tmp_path: Path) -> None:
+    """TEST-33: one line past the scan bound the declaration is not seen — the documented cliff."""
+    b = tmp_path / "docs" / "brainstorms"
+    b.mkdir(parents=True)
+    target = b / "2026-08-31-cliff-out-requirements.md"
+    body = "\n".join(f"filler {i}" for i in range(30)) + "\n- maturity: pending-confirmation\n"
+    target.write_text(body, encoding="utf-8")
+    assert HE.infer_maturity(str(target), root=tmp_path) == "requirements-ready"
+
+
+def test_nul_bearing_valid_utf8_is_unreadable(tmp_path: Path) -> None:
+    """TEST-29: the post-decode NUL guard — a stray NUL in an otherwise valid file fails closed."""
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    target = plans / "2026-08-31-nul-requirements.md"
+    target.write_bytes(b"---\nmaturity: pending-confirmation\n---\n\nbody with \x00 nul\n")
+    assert HE.infer_maturity(str(target), root=tmp_path) == "unknown:unreadable"
+    envelope = HE.build_handoff_envelope("docs/plans/2026-08-31-nul-requirements.md", root=tmp_path)
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_frontmatter_read_limit_does_not_split_a_codepoint(tmp_path: Path) -> None:
+    """TEST-35: a multi-byte codepoint straddling the read bound must not hide the declaration."""
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    target = plans / "2026-08-31-trim-requirements.md"
+    head = b"---\nmaturity: pending-confirmation\n---\n"
+    pad = b"x" * (HE._FRONTMATTER_READ_LIMIT - len(head) - 1)
+    target.write_bytes(head + pad + "é".encode() + b"tail\n")
+    assert HE.infer_maturity(str(target), root=tmp_path) == "pending-confirmation"
+
+
+def test_relative_source_escaping_root_does_not_read_out_of_root_frontmatter(
+    tmp_path: Path,
+) -> None:
+    """TEST-31: containment — a parent-segment escape must not honour the out-of-root declaration."""
+    root = tmp_path / "root"
+    (root / "docs" / "brainstorms").mkdir(parents=True)
+    outside = tmp_path / "outside" / "docs" / "brainstorms"
+    outside.mkdir(parents=True)
+    escaped = outside / "2026-08-31-escape-requirements.md"
+    escaped.write_text("---\nmaturity: pending-confirmation\n---\n\nx\n", encoding="utf-8")
+    relative = os.path.relpath(escaped, root)
+    result = HE.infer_maturity(relative, root=root)
+    # The out-of-root declaration must not leak in. The path rule then decides, which is a
+    # live route — recorded as a residual, not asserted here as desirable.
+    assert result != "pending-confirmation"
+    assert result == "requirements-ready"

@@ -87,7 +87,7 @@ uses this ack contract.
 
 ## Maturity
 
-A declared frontmatter `maturity` in an off-chain artifact's own frontmatter wins over path inference.
+A declared frontmatter `maturity` wins over path inference when it is an unindented, non-bulleted key inside a closed delimited `---` block. An indented key is nested and is ignored; a bulleted key at column 0 counts; a source the containment rules refuse to read, including an absolute path outside the declared root whose path carries no marker directory, is never consulted and resolves by path inference instead.
 
 - `docs/ideation/` -> `idea-ready`
 - `docs/brainstorms/` -> `requirements-ready`

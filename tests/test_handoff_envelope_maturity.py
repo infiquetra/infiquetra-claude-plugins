@@ -695,7 +695,9 @@ def _infer(tmp_path: Path, body: str) -> str:
     brainstorms = tmp_path / "docs" / "brainstorms"
     brainstorms.mkdir(parents=True, exist_ok=True)
     (brainstorms / "t-requirements.md").write_text(body, encoding="utf-8")
-    return HE.infer_maturity("docs/brainstorms/t-requirements.md", root=tmp_path)
+    return HE.infer_maturity(  # type: ignore[no-any-return]
+        "docs/brainstorms/t-requirements.md", root=tmp_path
+    )
 
 
 def test_sequence_item_at_column_zero_is_not_a_declaration(tmp_path: Path) -> None:
@@ -795,3 +797,20 @@ def test_out_of_root_sentinel_carries_a_diagnostic(tmp_path: Path) -> None:
     )
     assert "/issue --prepare" not in envelope["suggested_command"]
     assert "outside the declared root" in envelope["suggested_command"]
+
+
+def test_out_of_root_absolute_with_no_declaration_is_refused(tmp_path: Path) -> None:
+    """AM-28: classification and attribution must not come from different paths.
+
+    Neither the re-anchored candidate nor the original exists, so nothing declares. Previously
+    the maturity was derived from the re-anchored subpath while the envelope published the
+    out-of-root original, and the result was a live route.
+    """
+    root = tmp_path / "root"
+    (root / "docs" / "brainstorms").mkdir(parents=True)
+    ghost = tmp_path / "elsewhere" / "docs" / "brainstorms" / "ghost.md"
+    got = HE.infer_maturity(str(ghost), root=root)
+    assert got != "requirements-ready"
+    assert got.startswith("unknown:out-of-root:")
+    envelope = HE.build_handoff_envelope(str(ghost), root=root)
+    assert "/issue --prepare" not in envelope["suggested_command"]

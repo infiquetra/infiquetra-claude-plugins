@@ -219,6 +219,22 @@ def _is_within(candidate: Path, base: Path) -> bool:
         return False
 
 
+def _reanchor_to_marker(normalized: str) -> str | None:
+    """Return NORMALIZED's marker-directory subpath, or None when it carries no marker.
+
+    Single owner for re-anchoring (AM-28). Both `infer_maturity` and `build_handoff_envelope`
+    consume this, so which path was chosen cannot diverge between the maturity decision and
+    the path the envelope publishes.
+    """
+    parts = Path(normalized).parts
+    for marker in MARKER_DIRS:
+        if marker in parts:
+            idx = parts.index(marker)
+            # Guard against a zero index so the slice can never re-include the path anchor.
+            return "/".join(parts[idx - 1 :] if idx > 0 else parts[idx:])
+    return None
+
+
 def infer_maturity(source: str, root: Path | None = None) -> str:
     normalized = source.replace("\\", "/")
     # Frontmatter-declared maturity wins when the source resolves to an existing file
@@ -237,17 +253,7 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
     absolute = Path(normalized).is_absolute()
     if absolute and root is not None and not _is_within(Path(normalized), base):
         # Untrusted absolute input (root != cwd): try re-anchored subpath first.
-        parts = Path(normalized).parts
-        reanchored_normalized: str | None = None
-        for marker in MARKER_DIRS:
-            if marker in parts:
-                idx = parts.index(marker)
-                # Guard against zero index so the re-anchored slice can never re-include the path anchor.
-                if idx > 0:
-                    reanchored_normalized = "/".join(parts[idx - 1 :])
-                else:
-                    reanchored_normalized = "/".join(parts[idx:])
-                break
+        reanchored_normalized = _reanchor_to_marker(normalized)
         if reanchored_normalized is not None:
             # Check containment before reading: re-anchored candidate must be inside base.
             reanchored_candidate = base / reanchored_normalized
@@ -261,10 +267,7 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
                 declared = _read_frontmatter_maturity(reanchored_candidate)
                 if declared is not None:
                     return declared
-                # Re-anchored file exists but declares no maturity — use its path
-                # for the path-rule fallback below, not the original absolute.
-                normalized = reanchored_normalized
-                absolute = False
+                return f"unknown:out-of-root:{normalized}"
             else:
                 # Re-anchored subpath does not exist or not contained — read the
                 # original absolute file directly (the file the caller named). When
@@ -275,10 +278,7 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
                     declared = _read_frontmatter_maturity(original_candidate)
                     if declared is not None:
                         return declared
-                # Original also has no visible maturity — fall through using the
-                # re-anchored subpath for the path-rule check (consistent marker-based path)
-                normalized = reanchored_normalized
-                absolute = False
+                return f"unknown:out-of-root:{normalized}"
         else:
             # No marker directory in absolute path — keep original absolute handling:
             # `base / normalized` with absolute RHS returns the absolute path itself.
@@ -412,24 +412,12 @@ def build_handoff_envelope(
     # If selected_source is absolute outside root and re-anchored, update source to actual file read.
     if Path(selected_source).is_absolute() and root is not None:
         try:
-            if not Path(selected_source).is_relative_to(root.resolve()):
-                parts = Path(selected_source).parts
-                for marker in MARKER_DIRS:
-                    if marker in parts:
-                        idx = parts.index(marker)
-                        if idx > 0:
-                            reanchored = "/".join(parts[idx - 1 :])
-                            reanchored_candidate = root / reanchored
-                            try:
-                                if (
-                                    reanchored_candidate.resolve().is_relative_to(root.resolve())
-                                    and reanchored_candidate.is_file()
-                                ):
-                                    selected_source = reanchored
-                                    break
-                            except (OSError, ValueError):
-                                pass
-                        break
+            if not _is_within(Path(selected_source), root):
+                reanchored = _reanchor_to_marker(selected_source)
+                if reanchored is not None:
+                    reanchored_candidate = root / reanchored
+                    if _is_within(reanchored_candidate, root) and reanchored_candidate.is_file():
+                        selected_source = reanchored
         except (OSError, ValueError):
             pass
 

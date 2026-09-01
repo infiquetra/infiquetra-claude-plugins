@@ -45,6 +45,8 @@ guarantee holds for anything routed through saga and does not hold for anything 
 Mission Control. Anyone reading the cycle-7 release note should understand the fail-closed claim as
 scoped to saga's own reader.
 
+**Tracked as issue 950** — "Mission Control bypasses saga's fail-closed handoff maturity contract (API-23)", filed against this repository so the residual is not only recorded in run-scoped evidence.
+
 **Recommended next step.** A separate change against `plugins/mission-control/`, with its own
 review, teaching `sdlc_manager.py` to read declared frontmatter through saga's
 `handoff_envelope.infer_maturity` rather than maintaining a second, narrower vocabulary. Two

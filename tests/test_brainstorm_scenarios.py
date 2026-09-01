@@ -152,11 +152,11 @@ def test_offline_suite_complete_without_captured_transcripts() -> None:
     for case in cases:
         for dim in case["material_dimensions"]:
             assert dim in rubric_dims, f"case {case['id']} dimension {dim!r} not in rubric"
-        assert set(case["material_dimensions"]) == set(case["expected"].keys())
+        assert set(case["material_dimensions"]) == set(case["authored_verdicts"].keys())
     # No aggregate in data
     for case in cases:
         for key in ("score", "total", "aggregate", "overall", "quality"):
-            assert key not in case["expected"]
+            assert key not in case["authored_verdicts"]
             assert key not in case
     # Gating
     assert (
@@ -193,7 +193,7 @@ def test_offline_suite_complete_without_captured_transcripts() -> None:
 def test_per_dimension_reporting_positive() -> None:
     cases = _SCENARIOS["cases"]
     for case in cases:
-        assert set(case["expected"].keys()) == set(case["material_dimensions"]), (
+        assert set(case["authored_verdicts"].keys()) == set(case["material_dimensions"]), (
             f"case {case['id']} expected vs material_dimensions mismatch"
         )
 
@@ -208,7 +208,7 @@ def test_no_aggregate_negative() -> None:
     cases = _SCENARIOS["cases"]
     for case in cases:
         for banned in ("score", "total", "aggregate", "overall", "quality"):
-            assert banned not in case["expected"]
+            assert banned not in case["authored_verdicts"]
             assert banned not in case
     # No consumer computes an aggregate — AST walk over Assign/AnnAssign targets
     # Widened to every tests/test_brainstorm_*.py module; no escape clause
@@ -310,3 +310,19 @@ def test_calibration_shape_positive() -> None:
     assert "overall" not in _CALIBRATION
     assert "score" not in _CALIBRATION
     # Drift check is deferred until a real grader exists — shape is what we prove now
+
+
+def test_scenario_verdicts_are_disclosed_as_ungraded() -> None:
+    """TEST-39: the fixture must not read as evidence it is not.
+
+    Nothing grades the verdict values, so a reader must be told that in the data rather than
+    discovering it by mutating the file. If a grader is ever wired up, this test should be the
+    one that fails and gets deleted.
+    """
+    assert "grading_status" in _SCENARIOS
+    assert "no grader reads the verdict values yet" in _SCENARIOS["grading_status"]
+    for case in _SCENARIOS["cases"]:
+        assert case["transcript"] == "none", (
+            f"case {case['id']} carries a transcript, so its verdicts may now be gradable "
+            "— wire the grader and delete this test"
+        )

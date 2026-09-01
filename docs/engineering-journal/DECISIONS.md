@@ -18,7 +18,7 @@
 **Why.** Deterministic tests can prove mechanics, scenarios can show data shape per dimension, drift guards can prove a sentence is present and wired — but no deterministic test may assert a question, no single model judge may block alone (R17/R20), and no string check can prove behaviour. Prior art `engine_benchmark` gives the data-suite + injectable-runner shape; `lint_test_shape` gives the AST mechanism; `_mutate_source` gives the in-memory mutation.
 **Rejected.** Markdown rubrics as carrier (R19 needs data); aggregate quality number (R19 forbids); synthesized transcript labelled `captured` (harness substitution); live judge in CI (R23 requires offline).
 **Revisit when.** Captured transcripts become available from the parked checkpoint — they add `transcript: captured` cases without changing the offline machinery — or a grader is built so calibration drift can be surfaced, or new critical safeguards are declared.
-**Refs.** Issue #915; `plugins/saga/references/brainstorm-evidence-model.md`; `tests/data/brainstorm/`; `tests/test_brainstorm_evidence_model.py`, `tests/test_brainstorm_scenarios.py`, `tests/test_brainstorm_mutation_proofs.py`.
+**Refs.** Issue #915; `plugins/saga/references/brainstorm-evidence-model.md`; `tests/data/brainstorm/`; `tests/test_brainstorm_evidence_model.py`, `tests/test_brainstorm_scenarios.py`, `tests/test_brainstorm_predicate_wiring.py`.
 
 ### Brainstorm adaptive judgment model: consequence-calibrated, privately tracked, bounded helpers  {#914-judgment-adaptive-model-bounded-helpers}
 

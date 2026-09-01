@@ -99,7 +99,7 @@ operator adjudication is recorded. The deterministic case plus the four decisive
 **Calibration (R21).** `tests/data/brainstorm/calibration.json` holds a
 small fixed set of cases with expected grades and a `drift_floor` key that today has no consumer. No grader exists yet; the test asserts only that the calibration data has the expected shape (three cases, each with `id` and `expected` per rubric dimension) and that no aggregate target exists. Drift will be surfaced when a grader is built; until then the floor is data only.
 
-**Safeguard-phrase drift guard (R22).** `tests/test_brainstorm_mutation_proofs.py`
+**Safeguard-phrase drift guard (R22).** `tests/test_brainstorm_predicate_wiring.py`
 carries one case per safeguard U1 and U2 declared critical — eight in
 total: the ambiguity stop, the fresh-confirmation rule, the route-gating
 on declared readiness, the no-deferred-save rule, the helper ceiling,

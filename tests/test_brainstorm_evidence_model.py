@@ -307,7 +307,7 @@ def test_offline_and_side_effect_free_negative() -> None:
     for mod_name in (
         "test_brainstorm_evidence_model",
         "test_brainstorm_scenarios",
-        "test_brainstorm_mutation_proofs",
+        "test_brainstorm_predicate_wiring",
     ):
         path = ROOT / f"tests/{mod_name}.py"
         if path.exists():

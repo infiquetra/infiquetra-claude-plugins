@@ -103,16 +103,22 @@ Brainstorm), scan `docs/brainstorms/*-requirements.md` and read frontmatter for 
 `plugins/saga/skills/brainstorm/SKILL.md` uses, stated in the same sequence: exact producer-fact
 match first (on `topic` plus `capability`); then files lacking the producer facts, which route to the
 labelled inference path rather than counting as absent — a file missing `capability` is a legacy
-artifact, never a miss; and only a genuinely empty scan reports no candidate. Exactly one exact match is a matched candidate that routes to `/brainstorm`; exactly one near-match is offered to the operator for confirmation first, matching Brainstorm Tier 1, and — summarize the restored boundary and continue
-from it without re-presenting settled decisions, reusing the existing Phase 1 disambiguation shape
-(single-select over the candidate list); two or more tier 1 matches of any kind, exact or near, stop and ask the operator to
-choose, using the same slug-subset near-match predicate Brainstorm Tier 1 defines and explicitly never by recency, filename, or broad content match; a `pending-confirmation` match
-is restored as a proposed boundary awaiting confirmation, never as finished work. This document scan
+artifact, never a miss; and only a genuinely empty scan reports no candidate. Exactly one exact match is a matched candidate that routes to `/brainstorm`: summarize the
+restored boundary and continue from it without re-presenting settled decisions. Exactly one
+near-match — the slug-subset predicate Brainstorm Tier 1 defines, symmetric in either direction —
+is offered to the operator for confirmation and waits for that answer; on confirmation it becomes
+the matched candidate above, and on a decline it is excluded and the scan continues at the
+labelled inference path. Two or more tier 1 matches of any kind, exact or near, stop and ask the
+operator to choose, using the existing Phase 1 disambiguation shape (single-select over the
+candidate list) and explicitly never by recency, filename, or broad content match. A
+`pending-confirmation` match is restored as a proposed boundary awaiting confirmation, never as
+finished work. This document scan
 is read-only — Brainstorm still writes no Saga state. Classify the run:
 
 - **matched-saga** — a candidate matches the thread (`issue_ref`, `plan_path`, `branch`, or operator
   confirmation) -> **Tier 1** (Phase 1 -> 2 -> 3a -> 4 -> 5).
-- **matched-brainstorm** — the document scan found exactly one unambiguous
+- **matched-brainstorm** — the document scan found exactly one tier 1 match, either an exact match
+  or a near-match the operator confirmed, as one
   `docs/brainstorms/*-requirements.md` candidate, no saga matches the thread, and the input names no
   resolvable GitHub issue (an input naming an issue with a matching artifact is `resolvable-issue`
   below, not this class). Route directly to `/brainstorm`, bypassing Phases 1 through 5. For a

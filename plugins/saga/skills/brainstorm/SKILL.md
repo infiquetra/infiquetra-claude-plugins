@@ -78,7 +78,7 @@ heading located after Phase 3, before Phase 4), which is cross-referenced here a
 this order.
 
 1. **Tier 1 — Exact match.** Among files that carry the producer facts (`capability`, `activity` per Phase 0.2 and the section contract) and `topic` and `maturity`, match on `topic` (case-insensitive comparison of the operator's topic slugged the same way the filename is, via the shipped slugify helper at `plugins/saga/scripts/saga.py:slugify`) plus `capability`. Exactly one match restores directly: summarize the restored boundary and continue
-   from it without re-presenting settled decisions. A **near-match** is a file whose producer facts carry the same `capability` and whose `topic` slug stands in a strict subset relation to the operator's slugged topic over hyphen-separated tokens — one token set contains the other and the two are not equal, equality being the exact match handled above. It is computed from the slugs alone. A single near-match carrying the producer facts is offered to the operator for confirmation rather than falling to tier 3. Two or more tier 1 matches of any kind, exact or near, stop and ask the
+   from it without re-presenting settled decisions. A **near-match** is a file whose producer facts carry the same `capability` and whose `topic` slug stands in a strict subset relation to the operator's slugged topic over hyphen-separated tokens — one token set contains the other and the two are not equal, equality being the exact match handled above. The subset relation is **symmetric**: either token set may be the subset of the other, and the two are not equal, equality being the exact match handled above. Worked both ways, operator topic `prune` against file topic `saga-worktree-prune` is a near-match, and so is operator topic `saga-worktree-prune` against file topic `prune`. The symmetry is deliberate — a directed reading would drop the shorter-topic case to tier 3 and start a duplicate brainstorm, which is exactly the continuity failure this rule exists to prevent. It is computed from the slugs alone. A single near-match carrying the producer facts is offered to the operator for confirmation rather than falling to tier 3. If the operator declines that offer, the declined file is excluded and the scan continues at tier 2 with the remaining files, then at tier 3 if tier 2 qualifies nothing. A decline never starts fresh on its own. Two or more tier 1 matches of any kind, exact or near, stop and ask the
    operator to choose, explicitly never by recency, filename, or broad content match. A match at
    `maturity: pending-confirmation` re-enters at the Phase 2.5 confirmation, not at Phase 1; a match at `maturity: requirements-ready` re-enters at Phase 4 (Handoff) with the durable routes already available. Re-entry at `pending-confirmation` carries the matched artifact's existing path forward.
 2. **Tier 2 — Legacy inference.** Only when tier 1 produced no match, consider the files that exist
@@ -401,8 +401,9 @@ returns to `pending-confirmation` until the operator confirms again. This holds 
 
 For an artifact missing the producer facts (`capability`, `activity`), provenance may be inferred from
 durable document evidence; the inference is labelled inferred in what the operator is shown; the
-operator confirms it before it is used; multiple near-matches are a hard stop, never a recency or
-filename guess; and discovery never writes to the file. Operator confirmation of an inference does
+operator confirms it before it is used; two or more candidate inferences are a hard stop, never a recency or
+filename guess — tier 1's near-match predicate does not apply here, because it requires the
+producer facts these files are defined as lacking; and discovery never writes to the file. Operator confirmation of an inference does
 not backfill the producer facts into the legacy file — the confirmation governs this session only, and
 the file on disk is left exactly as found.
 

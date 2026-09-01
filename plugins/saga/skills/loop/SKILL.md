@@ -107,11 +107,15 @@ should this go? Point me at the issue, a plan/doc path, describe the work, or sa
 ### 0.2 Issue handoff routing
 
 If the input is a GitHub issue, parse its body with `scripts/parse_issue.py` (it reads the body on
-stdin and emits the `handoff` object). Use `handoff.maturity` for maturity routing:
+stdin and emits the `handoff` object). Use `handoff.maturity` for maturity routing: Read `handoff.requires_clarification` alongside `handoff.maturity`: when it is `True` the maturity value alone does not decide the route.
 
 - `idea-ready` / `requirements-ready` -> the next command is `/plan` (no plan exists yet).
 - `plan-ready` / `resume-ready` -> the next command is `/work` (a plan already exists).
 - `pending-confirmation` -> the next command is `/brainstorm` (boundary recorded but unconfirmed, dispatch-table `pending-confirmation` row).
+- `deferred-context` — the issue carries a boundary that is recorded but not yet actionable. It is a
+  member of `HANDOFF_MATURITY_VALUES` and `handoff.requires_clarification` is `True` for it, so the
+  route is to ask the operator the clarifying question the issue names before any other phase runs.
+  Never treat it as absent and never fall through to the saga scan on it.
 - empty -> the issue carries no recognized handoff metadata; continue to the saga scan (Phase 0.3) and classify normally — an ordinary issue without a handoff section is the common case, not a frontmatter failure.
 
 The parsed `flags` (`has_security`, `has_infra`, `has_api`) feed the hard test-gate check (Phase 2)

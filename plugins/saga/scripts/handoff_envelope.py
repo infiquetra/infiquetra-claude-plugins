@@ -230,7 +230,7 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
         return False
 
     try:
-        parsed = yaml.load(frontmatter, Loader=_StrictMappingLoader)  # noqa: S506 — strict SafeLoader subclass
+        parsed = yaml.load(frontmatter, Loader=_StrictMappingLoader)  # noqa: S506 # nosec B506
     except yaml.YAMLError:
         scanned = _scanned_maturity_line()
         return None if scanned is None else _carrier(scanned)

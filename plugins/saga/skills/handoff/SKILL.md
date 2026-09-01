@@ -97,7 +97,7 @@ A declared frontmatter `maturity` wins over path inference when it is the top-le
 - `docs/work-sessions/` or branch refs -> `resume-ready`
 - explicit preserve/defer language -> `deferred-context` when the user says execution should wait
 
-Beyond these, two fail-closed states carry no route: an empty declared value, and an `unknown:`-prefixed sentinel. The sentinel carries one of four causes — `unknown:unreadable` when the file cannot be opened or cannot be decoded into text carrying a maturity declaration, `unknown:unterminated:` for an opening `---` with no closing `---`, `unknown:carrier:` for a maturity declared outside a delimited block, and `unknown:unrecognized:` for any other value (see `saga-spec.md` §4 and `DECISIONS.md` `{#913-maturity-unknown-sentinel}`). All three non-vocabulary shapes (`pending-confirmation`, empty, `unknown:`-prefixed) mean stop — never route.
+Beyond these, two fail-closed states carry no route: an empty declared value, and an `unknown:`-prefixed sentinel. The sentinel carries one of five causes — `unknown:unreadable` when the file cannot be opened or cannot be decoded into text carrying a maturity declaration, `unknown:unterminated:` for an opening `---` with no closing `---`, `unknown:carrier:` for a maturity declared outside a delimited block, `unknown:unrecognized:` for any other value, and `unknown:out-of-root:` for a source that resolves outside the declared root (see `saga-spec.md` §4 and `DECISIONS.md` `{#913-maturity-unknown-sentinel}`). All three non-vocabulary shapes (`pending-confirmation`, empty, `unknown:`-prefixed) mean stop — never route.
 
 ## Recipient Guidance
 

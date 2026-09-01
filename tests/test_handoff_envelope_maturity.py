@@ -814,3 +814,23 @@ def test_out_of_root_absolute_with_no_declaration_is_refused(tmp_path: Path) -> 
     assert got.startswith("unknown:out-of-root:")
     envelope = HE.build_handoff_envelope(str(ghost), root=root)
     assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_reanchored_candidate_escaping_root_is_refused(tmp_path: Path) -> None:
+    """TEST-37: the re-anchored candidate's containment check must be load-bearing.
+
+    The marker slice carries `..` segments, so re-anchoring lands on a REAL file outside the
+    declared root. Without the containment check that file is read and its declaration leaks
+    in. The escape target is a sibling of the root, reached as root/../outside/.
+    """
+    root = tmp_path / "root"
+    (root / "docs" / "brainstorms").mkdir(parents=True)
+    victim = tmp_path / "outside"
+    victim.mkdir()
+    (victim / "x.md").write_text("---\nmaturity: plan-ready\n---\n\nB\n", "utf-8")
+    source = str(
+        tmp_path / "elsewhere" / "docs" / "brainstorms" / ".." / ".." / ".." / "outside" / "x.md"
+    )
+    result = HE.infer_maturity(source, root=root)
+    assert result != "plan-ready", "an out-of-root declaration must not leak in"
+    assert result.startswith("unknown:out-of-root:")

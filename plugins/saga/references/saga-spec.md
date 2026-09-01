@@ -320,7 +320,7 @@ return the empty string, an `unknown:unrecognized:<raw>` sentinel carrying an un
 (reserved namespace `unrecognized:` that no vocabulary value contains, so author text cannot forge it),
 a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared outside a delimited
 block), a `unknown:unterminated:<raw>` sentinel for an unterminated block (opening `---` without
-closing `---`), or `unknown:unreadable` for a read/decode failure; the envelope's published
+closing `---`), `unknown:unreadable` for a read/decode failure, or `unknown:out-of-root:<path>` for a source that resolves outside the declared root; the envelope's published
 `handoff_maturity` field is bounded to 120 characters after the `unknown:` prefix (the helper may
 return the full raw value, but the published field is truncated; the `unknown:` prefix plus its
 discriminator segment is reserved and never appears in author-declared values), the fail-closed shapes

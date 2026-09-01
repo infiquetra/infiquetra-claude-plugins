@@ -309,8 +309,11 @@ HANDOFF_MATURITIES = ("idea-ready", "requirements-ready", "plan-ready", "resume-
 `destination` mirrors `lifecycle_state.normalize_destination`'s canonical set — use that helper to normalize
 user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing. `HANDOFF_MATURITIES` is
 implemented in `plugins/saga/scripts/handoff_envelope.py`. Frontmatter `maturity` must be an
-unindented top-level `maturity:` key inside YAML delimited by `---` lines; indented nested keys are
-ignored. An unrecognized non-empty, empty, non-delimited carrier (within the first 30 lines), unterminated block, or unreadable
+the top-level `maturity:` key of the YAML mapping delimited by `---` lines, decided by parsing that
+block as YAML rather than by scanning lines. Any other appearance inside the block — a sequence item
+at any column, a key nested under another mapping key, a flow-style `{maturity: ...}`, or a
+`maturity:` line in a block that will not parse — does not declare and fails closed as
+`unknown:carrier:`, never falling through to the path rule. An unrecognized non-empty, empty, non-delimited carrier (within the first 30 lines), unterminated block, or unreadable
 file (within the first 8192 bytes) fails closed with no durable route and a diagnostic, rather than falling through to the path rule, provided the declaration lies within the bounded read windows; beyond those windows the path rule applies.
 The field's runtime domain is consequently NOT closed at the six values: `infer_maturity` may also
 return the empty string, an `unknown:unrecognized:<raw>` sentinel carrying an unrecognized raw value
@@ -322,7 +325,7 @@ closing `---`), or `unknown:unreadable` for a read/decode failure; the envelope'
 return the full raw value, but the published field is truncated; the `unknown:` prefix plus its
 discriminator segment is reserved and never appears in author-declared values), the fail-closed shapes
 recorded in `DECISIONS.md`
-`{#913-maturity-unknown-sentinel}` and specified for consumers in §9. Consumers MUST route on the
+`{#913-maturity-unknown-sentinel}` and specified for consumers in §4. Consumers MUST route on the
 vocabulary values only and stop on the sentinel shapes.
 
 Shaping is an Operations board Status, not a Saga lifecycle phase, not a Saga command, and not an automatic consequence of any Saga capability completing. Mission Control is the only routine writer of that field. Cross-reference `plugins/saga/skills/plan/SKILL.md` §0.6, which already states the same derivation boundary, and note that Office Hours' lowercase "discovery / shaping" phrasing is ordinary English for its own activity, unrelated to the board column (the lifecycle-consistency check pins those exact phrases mechanically).

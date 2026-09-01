@@ -4089,12 +4089,19 @@ def test_unrecognized_maturity_fails_closed_and_vocabularies_synced(tmp_path: Pa
         "unrecognized maturity must not emit a route"
     )
     assert envelope["handoff_maturity"].startswith("unknown:")
-    # Indented nested key must be ignored — falls through to path rule (requirements-ready)
+    # Uniformly indented frontmatter IS top-level YAML — declares and fails closed (not ignored)
     target.write_text("---\n  maturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8")
     assert (
         handoff.infer_maturity("docs/brainstorms/2026-08-30-x-requirements.md", root=tmp_path)
-        == "requirements-ready"
+        == "pending-confirmation"
     )
+    # Genuinely nested key does not declare, fails closed as carrier
+    target.write_text(
+        "---\nmeta:\n  maturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8"
+    )
+    assert handoff.infer_maturity(
+        "docs/brainstorms/2026-08-30-x-requirements.md", root=tmp_path
+    ).startswith("unknown:carrier:")
     # Vocabulary drift guard: every code-level maturity vocab is superset of HANDOFF_MATURITIES
     handoff_mats = set(handoff.HANDOFF_MATURITIES)
     assert set(parse_mod.HANDOFF_MATURITY_VALUES) == handoff_mats

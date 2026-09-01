@@ -252,13 +252,24 @@ def test_unrecognized_maturity_fails_closed(tmp_path: Path) -> None:
         "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
     )
     assert "/issue --prepare" not in envelope["suggested_command"]
-    # Indented nested key should be ignored -> falls through to path rule (requirements-ready) but
-    # if same file also has no top-level maturity, it should be ignored
+    # A frontmatter whose whole body is uniformly indented IS a top-level YAML mapping — there is
+    # nothing for it to be nested under — so the declaration is honoured and the document fails
+    # closed. The previous line-scanner contract called this "nested, therefore ignored" and fell
+    # through to the path rule, routing a declared pending-confirmation live. That was a fail-open,
+    # and pinning it here is why it survived five review cycles.
     target.write_text("---\n  maturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8")
     assert (
         HE.infer_maturity("docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path)
-        == "requirements-ready"
+        == "pending-confirmation"
     )
+    # A genuinely nested key — under another mapping key — does not declare, and fails closed as a
+    # carrier rather than falling through to the path rule.
+    target.write_text(
+        "---\nmeta:\n  maturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8"
+    )
+    assert HE.infer_maturity(
+        "docs/brainstorms/2026-08-30-topic-requirements.md", root=tmp_path
+    ).startswith("unknown:carrier:")
 
 
 def test_maturity_vocabularies_in_sync() -> None:
@@ -671,7 +682,116 @@ def test_relative_source_escaping_root_does_not_read_out_of_root_frontmatter(
     escaped.write_text("---\nmaturity: pending-confirmation\n---\n\nx\n", encoding="utf-8")
     relative = os.path.relpath(escaped, root)
     result = HE.infer_maturity(relative, root=root)
-    # The out-of-root declaration must not leak in. The path rule then decides, which is a
-    # live route — recorded as a residual, not asserted here as desirable.
+    # The out-of-root declaration must not leak in, AND the escape must not route live.
+    # This test previously asserted `requirements-ready` — the path rule's live route — and
+    # its own comment conceded that was undesirable. SEC-15 is the P1 finding that a
+    # containment refusal must fail closed, so the refusal is now the asserted behaviour.
     assert result != "pending-confirmation"
-    assert result == "requirements-ready"
+    assert result.startswith("unknown:out-of-root:")
+
+
+def _infer(tmp_path: Path, body: str) -> str:
+    """Write BODY as a brainstorm artifact under TMP_PATH and return its inferred maturity."""
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True, exist_ok=True)
+    (brainstorms / "t-requirements.md").write_text(body, encoding="utf-8")
+    return HE.infer_maturity("docs/brainstorms/t-requirements.md", root=tmp_path)
+
+
+def test_sequence_item_at_column_zero_is_not_a_declaration(tmp_path: Path) -> None:
+    """AM-35: a column-0 sequence item is nested under the preceding key, not top-level."""
+    got = _infer(tmp_path, "---\ntitle: x\nthings:\n- maturity: plan-ready\n---\n\nBody\n")
+    assert got != "plan-ready"
+    assert got.startswith("unknown:carrier:")
+
+
+def test_bullet_without_space_is_not_a_declaration(tmp_path: Path) -> None:
+    """CORR-29: `-maturity:` is not a YAML sequence item and must not declare."""
+    got = _infer(tmp_path, "---\ntitle: x\n-maturity: plan-ready\n---\n\nBody\n")
+    assert got != "plan-ready"
+    assert got.startswith("unknown:carrier:")
+
+
+def test_quoted_top_level_key_declares(tmp_path: Path) -> None:
+    """CORR-28: `"maturity":` is a valid YAML spelling of the top-level key."""
+    assert _infer(tmp_path, '---\n"maturity": pending-confirmation\n---\n\nBody\n') == (
+        "pending-confirmation"
+    )
+
+
+def test_space_before_colon_declares(tmp_path: Path) -> None:
+    """CORR-28: `maturity :` is a valid YAML spelling of the top-level key."""
+    assert (
+        _infer(tmp_path, "---\nmaturity : pending-confirmation\n---\n\nBody\n")
+        == "pending-confirmation"
+    )
+
+
+def test_nested_under_another_mapping_key_fails_closed(tmp_path: Path) -> None:
+    """A nested declaration is refused rather than routed live by the path rule."""
+    got = _infer(tmp_path, "---\nmeta:\n  maturity: plan-ready\n---\n\nBody\n")
+    assert got.startswith("unknown:carrier:")
+
+
+def test_non_string_scalar_maturity_is_unrecognized(tmp_path: Path) -> None:
+    """A YAML float must be classified, not crash the reader."""
+    assert _infer(tmp_path, "---\nmaturity: 1.1\n---\n\nBody\n") == "unknown:unrecognized:1.1"
+
+
+def test_malformed_yaml_carrying_maturity_fails_closed(tmp_path: Path) -> None:
+    """A block that will not parse but visibly declares must never route live."""
+    got = _infer(tmp_path, "---\nmaturity: pending-confirmation\n  bad: [unclosed\n---\n\nBody\n")
+    assert got.startswith("unknown:")
+
+
+def test_flow_style_nested_mapping_fails_closed(tmp_path: Path) -> None:
+    """Flow-style nesting is invisible to a line scan: no line begins with `maturity:`.
+
+    Without the structural check this falls through to the path rule and routes live.
+    """
+    got = _infer(tmp_path, "---\ntitle: x\nmeta: {maturity: plan-ready}\n---\n\nBody\n")
+    assert got != "plan-ready"
+    assert got.startswith("unknown:carrier:")
+
+
+def test_flow_style_nested_sequence_fails_closed(tmp_path: Path) -> None:
+    """Same blindness inside a flow sequence of mappings."""
+    got = _infer(tmp_path, "---\ntitle: x\nthings: [{maturity: plan-ready}]\n---\n\nBody\n")
+    assert got != "plan-ready"
+    assert got.startswith("unknown:carrier:")
+
+
+def test_relative_traversal_outside_root_fails_closed(tmp_path: Path) -> None:
+    """SEC-15: a relative path escaping the declared root must not route live."""
+    root = tmp_path / "root"
+    (root / "docs" / "brainstorms").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x-requirements.md").write_text("---\nmaturity: plan-ready\n---\n\nB\n", "utf-8")
+    got = HE.infer_maturity("docs/brainstorms/../../../outside/x-requirements.md", root=root)
+    assert got.startswith("unknown:out-of-root:")
+    assert got != "requirements-ready"
+
+
+def test_same_file_two_spellings_agree(tmp_path: Path) -> None:
+    """SEC-15: the gate decision must not depend on how a path is spelled."""
+    root = tmp_path / "root"
+    brainstorms = root / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    (brainstorms / "x-requirements.md").write_text(
+        "---\nmaturity: pending-confirmation\n---\n\nB\n", "utf-8"
+    )
+    direct = HE.infer_maturity("docs/brainstorms/x-requirements.md", root=root)
+    indirect = HE.infer_maturity("docs/brainstorms/./x-requirements.md", root=root)
+    assert direct == indirect == "pending-confirmation"
+
+
+def test_out_of_root_sentinel_carries_a_diagnostic(tmp_path: Path) -> None:
+    """The refusal must explain itself rather than emit a runnable command."""
+    root = tmp_path / "root"
+    (root / "docs" / "brainstorms").mkdir(parents=True)
+    envelope = HE.build_handoff_envelope(
+        "docs/brainstorms/../../../outside/x-requirements.md", root=root
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"]
+    assert "outside the declared root" in envelope["suggested_command"]

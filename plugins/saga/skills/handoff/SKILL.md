@@ -87,7 +87,7 @@ uses this ack contract.
 
 ## Maturity
 
-A declared frontmatter `maturity` wins over path inference when it is an unindented, non-bulleted key inside a closed delimited `---` block. An indented key is nested and is ignored; a bulleted key at column 0 counts; a source the containment rules refuse to read, including an absolute path outside the declared root whose path carries no marker directory, is never consulted and resolves by path inference instead.
+A declared frontmatter `maturity` wins over path inference when it is the top-level `maturity:` key of the YAML mapping inside a closed delimited `---` block, decided by parsing that block as YAML. Any other appearance inside the block — a sequence item at any column, a key nested under another mapping key, or a flow-style `{maturity: ...}` — does not declare and fails closed as `unknown:carrier:`. A source the containment rules refuse to read, including an absolute path outside the declared root whose path carries no marker directory, is never consulted and resolves by path inference instead.
 
 - `docs/ideation/` -> `idea-ready`
 - `docs/brainstorms/` -> `requirements-ready`
@@ -97,7 +97,7 @@ A declared frontmatter `maturity` wins over path inference when it is an uninden
 - `docs/work-sessions/` or branch refs -> `resume-ready`
 - explicit preserve/defer language -> `deferred-context` when the user says execution should wait
 
-Beyond these, two fail-closed states carry no route: an empty declared value, and an `unknown:`-prefixed sentinel. The sentinel carries one of four causes — `unknown:unreadable` when the file cannot be opened or cannot be decoded into text carrying a maturity declaration, `unknown:unterminated:` for an opening `---` with no closing `---`, `unknown:carrier:` for a maturity declared outside a delimited block, and `unknown:unrecognized:` for any other value (see `saga-spec.md` §9 and `DECISIONS.md` `{#913-maturity-unknown-sentinel}`). All three non-vocabulary shapes (`pending-confirmation`, empty, `unknown:`-prefixed) mean stop — never route.
+Beyond these, two fail-closed states carry no route: an empty declared value, and an `unknown:`-prefixed sentinel. The sentinel carries one of four causes — `unknown:unreadable` when the file cannot be opened or cannot be decoded into text carrying a maturity declaration, `unknown:unterminated:` for an opening `---` with no closing `---`, `unknown:carrier:` for a maturity declared outside a delimited block, and `unknown:unrecognized:` for any other value (see `saga-spec.md` §4 and `DECISIONS.md` `{#913-maturity-unknown-sentinel}`). All three non-vocabulary shapes (`pending-confirmation`, empty, `unknown:`-prefixed) mean stop — never route.
 
 ## Recipient Guidance
 

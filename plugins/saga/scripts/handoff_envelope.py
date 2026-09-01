@@ -10,6 +10,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yaml
+
 STATE_DIR = Path(".claude/saga")
 SOURCE_DIRS = (
     Path("docs/plans"),
@@ -163,21 +165,58 @@ def _read_frontmatter_maturity(path: Path) -> str | None:
                 continue
         return None
     frontmatter = text[3:end]
-    for line in frontmatter.splitlines():
-        # A bullet at column 0 is a top-level list item and counts as a visible
-        # declaration (CORR-26); an indented key is nested and stays ignored, which
-        # saga-spec.md section 9 states and tests pin.
-        probe = line[1:].lstrip() if line[:1] in ("-", "*") else line
-        extracted = _extract_declared_maturity_value(probe)
-        if extracted is None:
-            continue
-        if not extracted:
+    # Only a top-level YAML mapping key declares a maturity (AM-35/CORR-28/CORR-29).
+    # Every other in-block appearance fails closed as unknown:carrier: rather than
+    # falling through to the path rule. A line scan cannot make this distinction: a
+    # sequence item at column 0 is nested under the preceding key, not top-level.
+
+    def _scanned_maturity_line() -> str | None:
+        for line in frontmatter.splitlines():
+            probe = line.strip().lstrip("-*").strip()
+            if probe.startswith("maturity:"):
+                return probe[len("maturity:") :].strip().strip("\"'").strip()
+        return None
+
+    def _carrier(value: str | None) -> str:
+        return f"unknown:carrier:{value}" if value else "unknown:carrier:"
+
+    def _has_nested_maturity(node: object) -> bool:
+        if isinstance(node, dict):
+            return any(key == "maturity" or _has_nested_maturity(val) for key, val in node.items())
+        if isinstance(node, list):
+            return any(_has_nested_maturity(item) for item in node)
+        return False
+
+    try:
+        parsed = yaml.safe_load(frontmatter)
+    except yaml.YAMLError:
+        scanned = _scanned_maturity_line()
+        return None if scanned is None else _carrier(scanned)
+    if isinstance(parsed, dict) and "maturity" in parsed:
+        raw = parsed["maturity"]
+        value = "" if raw is None else str(raw).strip()
+        if not value:
             return ""  # Empty maturity — signal, do not fall through
-        if extracted in HANDOFF_MATURITIES:
-            return extracted
+        if value in HANDOFF_MATURITIES:
+            return value
         # Unrecognized non-empty — signal as unknown:unrecognized: (reserved namespace)
-        return f"unknown:unrecognized:{extracted}"
+        return f"unknown:unrecognized:{value}"
+    scanned = _scanned_maturity_line()
+    if scanned is not None or _has_nested_maturity(parsed):
+        return _carrier(scanned)
     return None
+
+
+def _is_within(candidate: Path, base: Path) -> bool:
+    """True when CANDIDATE resolves inside BASE.
+
+    Both sides are resolved, so a parent segment cannot spell its way past a lexical
+    comparison (SEC-16). A path that cannot be resolved is treated as outside.
+    """
+    try:
+        return candidate.resolve().is_relative_to(base.resolve())
+    except (OSError, ValueError):
+        return False
 
 
 def infer_maturity(source: str, root: Path | None = None) -> str:
@@ -196,7 +235,7 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
     # resolves by the path rule.
     base = root or Path.cwd()
     absolute = Path(normalized).is_absolute()
-    if absolute and root is not None and not Path(normalized).is_relative_to(base.resolve()):
+    if absolute and root is not None and not _is_within(Path(normalized), base):
         # Untrusted absolute input (root != cwd): try re-anchored subpath first.
         parts = Path(normalized).parts
         reanchored_normalized: str | None = None
@@ -254,17 +293,16 @@ def infer_maturity(source: str, root: Path | None = None) -> str:
                 return declared
     else:
         # Relative path — require containment before reading to prevent directory traversal.
-        try:
-            is_contained = candidate.resolve().is_relative_to(base.resolve())
-        except (OSError, ValueError):
-            is_contained = False
-        if candidate.is_file() and is_contained:
-            declared = _read_frontmatter_maturity(candidate)
-            if declared is not None:
-                return declared
-        elif candidate.is_file() and not is_contained:
-            # File exists but outside declared root — do not read, fall through to path rule.
-            pass
+        if _is_within(candidate, base):
+            if candidate.is_file():
+                declared = _read_frontmatter_maturity(candidate)
+                if declared is not None:
+                    return declared
+        else:
+            # Outside the declared root: refuse rather than fall through (SEC-15). The path
+            # rule below would route this live, so falling through would give one file
+            # opposite gate decisions depending only on how its path is spelled.
+            return f"unknown:out-of-root:{normalized}"
     if "docs/ideation/" in normalized:
         return "idea-ready"
     if "docs/brainstorms/" in normalized:
@@ -420,7 +458,7 @@ def build_handoff_envelope(
                 f"Frontmatter carrier missing delimiters for {selected_source}{reanchored_diagnostic} — "
                 f"maturity {raw!r} declared outside a delimited YAML block; "
                 f"no durable route; fix frontmatter to be delimited by literal --- lines "
-                f"with an unindented maturity: key"
+                f"with a top-level maturity: key"
             )
         elif maturity.startswith("unknown:unterminated:"):
             raw = maturity.removeprefix("unknown:unterminated:")
@@ -428,6 +466,13 @@ def build_handoff_envelope(
                 f"Unterminated frontmatter block for {selected_source}{reanchored_diagnostic} — "
                 f"maturity {raw!r} declared but closing --- missing; "
                 f"no durable route; fix frontmatter to close the block"
+            )
+        elif maturity.startswith("unknown:out-of-root:"):
+            raw = maturity.removeprefix("unknown:out-of-root:")
+            suggested_command = (
+                f"Source outside the declared root for {selected_source}{reanchored_diagnostic} — "
+                f"{raw!r} resolves outside the root this handoff was given; no durable route; "
+                f"name a source inside the declared root"
             )
         elif maturity == "unknown:unreadable":
             suggested_command = (

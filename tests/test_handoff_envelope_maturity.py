@@ -470,7 +470,9 @@ def test_sentinel_length_bound(tmp_path: Path) -> None:
     envelope = HE.build_handoff_envelope(
         "docs/brainstorms/2026-08-30-long-requirements.md", root=tmp_path
     )
-    assert len(envelope["handoff_maturity"]) == len("unknown:") + 120  # type: ignore[index]
+    # Truncation now marks the loss with an ellipsis (AU-28), so the bound is 120 + "…"
+    assert len(envelope["handoff_maturity"]) == len("unknown:") + 121  # type: ignore[index]
+    assert envelope["handoff_maturity"].endswith("…")  # type: ignore[index]
     assert "/issue --prepare" not in envelope["suggested_command"]
 
 

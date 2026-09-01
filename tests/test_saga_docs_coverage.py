@@ -249,11 +249,23 @@ def test_ladder_renderer_rows_equal_model_maturity_values() -> None:
     """
     model = _load_model()
     renderer = _load_renderer()
-    row_labels = {maturity for _, maturity, _ in renderer.MATURITY_ROWS}
+    rows = renderer.maturity_rows(model)
+    row_labels = {maturity for _, maturity, _ in rows}
+    # All three columns, not just the name: source and consumer text must equal what the model
+    # declares, so a label cannot drift from its declared source (DOC-34).
+    for source, maturity, consumer in rows:
+        declared = model["maturity"]["values"][maturity]
+        assert source == " + ".join(declared["from"]), (
+            f"ladder source for {maturity!r} is {source!r}, model declares {declared['from']!r}"
+        )
+        assert consumer == " / ".join(declared["consumed_by"]), (
+            f"ladder consumer for {maturity!r} is {consumer!r}, "
+            f"model declares {declared['consumed_by']!r}"
+        )
     model_values = set(model["maturity"]["values"])
     assert row_labels == model_values, (
         f"ladder rows {row_labels!r} != model values {model_values!r}; "
-        "add the missing maturity to render_docs_visuals.py's MATURITY_ROWS and regenerate the asset"
+        "add the missing maturity to render_docs_visuals.py's LADDER_ORDER and regenerate the asset"
     )
     # Secondary: the rows must have reached the asset (not just the list)
     svg = renderer.render_all(model)["state-readiness-ladder"]

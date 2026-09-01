@@ -32,14 +32,28 @@ COLORS = {
     "panel": "#ffffff",
 }
 
-MATURITY_ROWS = [
-    ("docs/ideation/", "idea-ready", "/plan"),
-    ("docs/brainstorms/ + docs/specs/", "requirements-ready", "/plan"),
-    ("frontmatter pending-confirmation", "pending-confirmation", "/brainstorm"),
-    ("preserve/defer language", "deferred-context", "/handoff"),
-    ("docs/plans/ + docs/reviews/", "plan-ready", "/work"),
-    ("docs/work-sessions/ + branch refs", "resume-ready", "/work"),
-]
+#: Display order for the state-readiness ladder. Order is a rendering concern and lives here;
+#: the row CONTENT comes from the model, so no column can drift from its declared source (DOC-34).
+LADDER_ORDER = (
+    "idea-ready",
+    "requirements-ready",
+    "pending-confirmation",
+    "deferred-context",
+    "plan-ready",
+    "resume-ready",
+)
+
+
+def maturity_rows(model: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Build the ladder's rows from the model so all three columns have one source of truth."""
+    values = model["maturity"]["values"]
+    missing = set(values) ^ set(LADDER_ORDER)
+    if missing:
+        raise ValueError(f"LADDER_ORDER and model maturity values disagree: {sorted(missing)}")
+    return [
+        (" + ".join(values[name]["from"]), name, " / ".join(values[name]["consumed_by"]))
+        for name in LADDER_ORDER
+    ]
 
 
 def _load_model(path: Path = MODEL_PATH) -> dict[str, Any]:
@@ -233,7 +247,7 @@ def render_state_readiness_ladder(model: dict[str, Any]) -> str:
 
     _box(parts, 760, 180, 770, 560)
     _text(parts, 800, 230, "Derived maturity passport", cls="label")
-    maturity_rows = MATURITY_ROWS
+    maturity_rows = globals()["maturity_rows"](model)
     y = 285
     for source, maturity, consumer in maturity_rows:
         _box(parts, 800, y, 660, 62)

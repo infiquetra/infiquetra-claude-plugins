@@ -83,6 +83,11 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 | `work` | `complete` (merged) | `resume-ready` | `/qa` (advisory, gate-only) |
 | `qa` | any | `resume-ready` | `/handoff` or `/retro` (advisory, shipped) |
 | `retro` | any | — | **terminal** — done; `/handoff` if a learning should become an issue |
+| any | any | any combination not matched above | **STOP** — ask the operator; never guess a route from an unmatched combination |
+
+The final row makes the table total. Any `lifecycle_phase` / `phase_status` / maturity combination
+not listed above — a brainstorm-phase saga at `idea-ready`, an `unknown:` sentinel, or any shape a
+later change introduces — stops and asks rather than falling to the nearest plausible row.
 
 For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `idea-ready` /
 `requirements-ready`, it is `/plan` (matches `parse_issue.py`'s `handoff.can_plan` / `can_work` for those maturities). `pending-confirmation` is not routed via `can_plan`/`can_work`; it routes to `/brainstorm` via the no-saga row above.

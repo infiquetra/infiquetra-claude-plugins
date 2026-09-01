@@ -448,6 +448,10 @@ def check_dispatch_pending(text: str) -> list[str]:
             has_brainstorm_empty = True
     if not has_brainstorm_empty:
         violations.append("missing brainstorm -- (no maturity) -> /brainstorm row")
+    if not any(
+        "any combination not matched above" in line and "STOP" in line for line in text.splitlines()
+    ):
+        violations.append("dispatch table must carry a total catch-all row (AU-22)")
     return violations
 
 

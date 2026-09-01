@@ -68,9 +68,12 @@ def parse_source_context(text: str) -> dict[str, str]:
 
 def extract_handoff(body: str) -> dict[str, object]:
     sections = split_h3_sections(body)
-    maturity = first_content_line(sections.get("Handoff maturity", ""))
-    if maturity not in HANDOFF_MATURITY_VALUES:
-        maturity = ""
+    raw_maturity = first_content_line(sections.get("Handoff maturity", ""))
+    maturity = raw_maturity if raw_maturity in HANDOFF_MATURITY_VALUES else ""
+    # A section that is PRESENT but carries an unrecognized value is not the same as an absent
+    # section. Collapsing both to "" made a malformed declaration — including every `unknown:`
+    # sentinel — read as benign to /loop, which treats empty as "nothing declared" (API-24).
+    unrecognized_declaration = bool(raw_maturity) and not maturity
     source_context = parse_source_context(sections.get("Source context", ""))
     return {
         "maturity": maturity,
@@ -80,7 +83,7 @@ def extract_handoff(body: str) -> dict[str, object]:
         "source_title": source_context.get("source_title", ""),
         "can_plan": maturity in {"idea-ready", "requirements-ready"},
         "can_work": maturity in {"plan-ready", "resume-ready"},
-        "requires_clarification": maturity == "deferred-context",
+        "requires_clarification": maturity == "deferred-context" or unrecognized_declaration,
     }
 
 

@@ -1416,7 +1416,11 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
             row = agent_row(unit)
             if row is None or row.get("agent_status") != "idle":
                 break
-            if not session_owned(unit):
+            # KTD4: ownership says who created the tab; used_pane says whether this launcher
+            # typed into it. Either half alone is the defect this run already shipped twice:
+            # an unowned pane can hold text somebody staged earlier, and a pane this launcher
+            # typed into can hold text staged since. Both re-inspect before every resend.
+            if used_pane or not session_owned(unit):
                 guard_pane_before_write(unit, pane_id)
             used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere) or used_pane
             accepted = took_the_task(unit)

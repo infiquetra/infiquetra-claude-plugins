@@ -1796,6 +1796,131 @@ def test_agent_prompt_resend_rechecks_before_it_can_fall_back_to_the_pane(
     assert unit.status == launcher.RUNNING
 
 
+def _prepare_resend_launch(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    agent_prompt_ok: bool,
+    pane_dump: str,
+    preexisting_tabs: frozenset[str],
+) -> tuple[Any, list[list[str]], list[str], list[str]]:
+    """Drive the real send/say and the resend loop with only the Herdr boundary stubbed.
+
+    Whether `herdr agent prompt` succeeds or is refused selects the two delivery doors: a
+    refusal makes say() type into the pane, which is the used_pane half of the resend
+    predicate. Returns the unit, every recorded command, the pane-typing writes, and the
+    guard calls made by the counting wrapper around the real guard.
+    """
+    recorded: list[list[str]] = []
+    pane_writes: list[str] = []
+    guard_calls: list[str] = []
+    receipt = {"tab_id": "w1:t-new", "agent_name": "worker-2", "pane_id": "w1:p1", "reused": False}
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            rc = 0 if agent_prompt_ok else 1
+            detail = "" if agent_prompt_ok else "not interactive ready"
+            return subprocess.CompletedProcess(cmd, rc, "", detail)
+        if cmd[:3] == ["herdr", "pane", "run"]:
+            pane_writes.append(cmd[-1])
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["herdr", "pane", "read"]:
+            return subprocess.CompletedProcess(cmd, 0, pane_dump, "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+
+    real_guard = launcher.guard_pane_before_write
+
+    def counting_guard(unit: Any, pane_id: str) -> None:
+        guard_calls.append(pane_id)
+        real_guard(unit, pane_id)
+
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda _workspace=None: preexisting_tabs)
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    monkeypatch.setattr(launcher, "guard_pane_before_write", counting_guard)
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": "idle",
+            "pane_id": "w1:p1",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w1",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
+    return unit, recorded, pane_writes, guard_calls
+
+
+def test_pane_fallback_resend_into_an_owned_pane_rechecks_for_staged_input(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-01: an owned session whose first send typed into the pane is re-inspected on the
+    resend. At the frozen revision this shape makes three pane writes and zero guard calls
+    (DID NOT RAISE); the probe is rebuilt here from the artifact."""
+    unit, _recorded, pane_writes, guard_calls = _prepare_resend_launch(
+        launcher,
+        monkeypatch,
+        agent_prompt_ok=False,
+        pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
+        preexisting_tabs=frozenset(),
+    )
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
+        launcher.launch(unit)
+    assert guard_calls == ["w1:p1"]
+    assert len(pane_writes) == 1
+    assert unit.tab_id == "w1:t-new"
+    assert unit.pane_id == "w1:p1"
+    assert unit.owned is True
+    assert unit.launch_receipt["agent_name"] == "worker-2"
+    assert unit.launch_receipt["input_box"] == "staged"
+
+
+def test_agent_prompt_resend_into_an_owned_pane_is_never_inspected(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The direction not fixed: ownership is about who created the tab, never who last
+    typed. An owned session delivered through `herdr agent prompt` has never been written
+    by this launcher, so no resend inspects it -- zero guard calls in the whole launch."""
+    unit, recorded, pane_writes, guard_calls = _prepare_resend_launch(
+        launcher,
+        monkeypatch,
+        agent_prompt_ok=True,
+        pane_dump=_claude_pane("❯ "),
+        preexisting_tabs=frozenset(),
+    )
+    launcher.launch(unit)
+    assert guard_calls == []
+    assert pane_writes == []
+    prompt_calls = [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]
+    assert len(prompt_calls) == 3
+    assert unit.status == launcher.PROMPT_UNDELIVERED
+
+
+def test_each_resend_after_a_pane_fallback_is_inspected_once(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fixed side, counted: an owned pane-fallback launch makes zero guard calls before
+    its first send and exactly one per resend while the session stays idle."""
+    unit, _recorded, pane_writes, guard_calls = _prepare_resend_launch(
+        launcher,
+        monkeypatch,
+        agent_prompt_ok=False,
+        pane_dump=_claude_pane("❯ "),
+        preexisting_tabs=frozenset(),
+    )
+    launcher.launch(unit)
+    assert guard_calls == ["w1:p1", "w1:p1"]
+    assert len(pane_writes) == 3
+    assert unit.status == launcher.PROMPT_UNDELIVERED
+
+
 def test_close_without_receipt_tab_id_stops(launcher: ModuleType) -> None:
     unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-1")
     with pytest.raises(SystemExit, match="ownership"):

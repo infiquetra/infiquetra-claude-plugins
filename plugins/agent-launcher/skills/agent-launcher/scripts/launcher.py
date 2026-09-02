@@ -150,21 +150,8 @@ def record_wrapper_identity(
     unit.reused = reused
     owned = tab_was_created(unit.tab_id, preexisting)
     unit.owned = owned
+    # launch_receipt_shape is the single owner of this dict; it reads the attributes just set.
     receipt = launch_receipt_shape(unit)
-    receipt.update(
-        {
-            "unit_name": unit.name,
-            "vendor": unit.vendor,
-            "tab_id": unit.tab_id,
-            "pane": unit.pane_id,
-            "agent_name": unit.agent_name,
-            "reused": reused,
-            "owned": owned,
-            "permission": getattr(unit, "permission", None),
-            "verified": False,
-            "prompt_delivered": None,
-        }
-    )
     unit.launch_receipt = receipt
     return receipt
 
@@ -618,6 +605,11 @@ DELIVERY_WARNING = (
 # local socket round trip, so this is a bound on a wedged herdr rather than a wait for work.
 PANE_INPUT_READ_SECONDS = 5.0
 TAB_CLOSE_SECONDS = 10.0
+# How long to give one pane write. The two calls that put a line into a session were the only
+# Herdr calls with no bound, so a wedged daemon hung go and land mid-delivery, after the guard
+# had inspected the composer and before any status was written. A write is a local socket round
+# trip carrying at most a pane-typed line or a prompt handle, so this bounds a wedge, not work.
+PANE_WRITE_SECONDS = 30.0
 
 # A transcript written during the create is legitimate evidence; one left by an earlier run is
 # minutes or hours old. One second absorbs filesystem mtime granularity without admitting a
@@ -786,14 +778,19 @@ def pane_input_inspection(pane_id: str, *, vendor: str) -> Any:
     return inspect_composer(proc.stdout, vendor=vendor)
 
 
-def pane_input_text(pane_id: str, *, vendor: str) -> str | None:
-    """Compatibility view of :func:`pane_input_inspection`."""
-    inspection = pane_input_inspection(pane_id, vendor=vendor)
-    if inspection.state is ComposerState.STAGED:
-        return inspection.text
-    if inspection.state is ComposerState.EMPTY:
-        return ""
-    return None
+def should_guard_pane_write(unit: Any, *, wrote_before: bool) -> bool:
+    """The one rule for whether a pane must be inspected before the write about to happen.
+
+    Two halves, both needed (KTD4). Ownership says who created the tab: a pane this launcher
+    did not create may hold text somebody staged earlier. ``wrote_before`` says whether this
+    launcher has already put anything into the session, through either door -- ``herdr agent
+    prompt`` or pane typing -- because once it has, a person may have typed since, and the
+    door the first write used says nothing about that. The only write that skips inspection
+    is the first write into a pane this launcher created seconds earlier: an empty fresh pane
+    is its own starting state. Orchestrate's later senders call this too, always with
+    ``wrote_before`` true, since every unit they reach was prompted by its launch.
+    """
+    return wrote_before or not session_owned(unit)
 
 
 def guard_pane_before_write(unit: Any, pane_id: str) -> None:
@@ -1374,17 +1371,18 @@ def _deliver(
     review_elsewhere: bool,
     argv: list[str],
     since: float | None,
-    used_pane: bool,
+    wrote_before: bool,
 ) -> None:
     """Deliver the task into an existing pane: inspect, preflight, send, resend loop.
 
     Every collaborator is reached through this module's globals, so every existing stub still
     applies. ``since`` floors the transcript account fallback -- the create instant on a
     fresh launch, None on a redelivery, which trades away the recency floor the receipt
-    cannot supply (the receipt records no creation time). ``used_pane`` seeds the KTD4
-    predicate: false before a fresh launch's first send, true from the start of a
-    redelivery, because the stop that made the redelivery necessary was an inspection
-    that found text.
+    cannot supply (the receipt records no creation time). ``wrote_before`` seeds the write
+    half of ``should_guard_pane_write``: false before a fresh launch's first send, true from
+    the start of a redelivery, because the stop that made the redelivery necessary was an
+    inspection that found text. It becomes true the moment the first send returns,
+    whichever door carried it: the flag records that this launcher wrote, not how.
     """
     ready = await_ready(unit)
     identity = None
@@ -1393,18 +1391,24 @@ def _deliver(
     if unit.vendor == "opencode":
         # The OpenCode picker is itself a pane write, so on an unowned session the inspection
         # that authorises it sits immediately before it (KTD5); the send carries its own below.
-        if used_pane or not session_owned(unit):
+        if should_guard_pane_write(unit, wrote_before=wrote_before):
             guard_pane_before_write(unit, pane_id)
         _, ready = drive_opencode_variant_selection(unit, pane_id)
     verify_unit_preflight(unit, pane_id, ready=ready, argv=argv, since=since, identity=identity)
     # The inspection that authorises the first pane write is taken immediately before that
     # write, never before the preflight: the declared bounds between an earlier read and the
     # send sum to about fifty seconds, and a person typing inside that window defeats the
-    # guard. On a fresh launch used_pane is false here, so this is the ownership half of the
-    # KTD4 predicate; a redelivery seeds used_pane true and inspects whatever the ownership.
-    if used_pane or not session_owned(unit):
+    # guard. On a fresh launch wrote_before is false here, so this is the ownership half of
+    # the predicate; a redelivery seeds it true and inspects whatever the ownership.
+    if should_guard_pane_write(unit, wrote_before=wrote_before):
         guard_pane_before_write(unit, pane_id)
-    used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+    send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+    # From here on this launcher has written into the session. Which door carried the line is
+    # irrelevant to the next write's inspection: a `herdr agent prompt` that succeeded is as
+    # much a write as a pane-typed one, and the resends below land fifteen and thirty seconds
+    # later, inside the window a person can type in. Deriving this flag from the door was the
+    # defect the terminal review found (F02/F03): it was true only for the pane fallback.
+    wrote_before = True
     accepted = took_the_task(unit)
     if not accepted:
         # Resend only into a session that has still never left idle. A resend risks giving a unit
@@ -1415,13 +1419,11 @@ def _deliver(
             row = agent_row(unit)
             if row is None or row.get("agent_status") != "idle":
                 break
-            # KTD4: ownership says who created the tab; used_pane says whether this launcher
-            # typed into it. Either half alone is the defect this run already shipped twice:
-            # an unowned pane can hold text somebody staged earlier, and a pane this launcher
-            # typed into can hold text staged since. Both re-inspect before every resend.
-            if used_pane or not session_owned(unit):
+            # wrote_before is true on every resend, so this always inspects; the call goes
+            # through the shared predicate so the three write sites cannot drift apart.
+            if should_guard_pane_write(unit, wrote_before=wrote_before):
                 guard_pane_before_write(unit, pane_id)
-            used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere) or used_pane
+            send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
             accepted = took_the_task(unit)
             if accepted:
                 break
@@ -1439,12 +1441,16 @@ def _deliver(
 def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
     """Create the session, then deliver the task with each pane write inspected at its own door.
 
-    An unowned session is inspected immediately before every write the launcher is about to
-    make (KTD5). The OpenCode variant picker is a write, so an unowned OpenCode launch reads
-    twice -- once immediately before the picker, once immediately before the send, after the
-    preflight -- and every other unowned vendor reads once, immediately before its send. A
-    session the launcher created is not inspected before its first send: an empty fresh pane
-    is this launcher's own starting state.
+    An unowned session is inspected immediately before the first write the launcher is about
+    to make (KTD5), and every session -- owned or not -- is inspected before each later write
+    (``should_guard_pane_write``). The OpenCode path makes three pane writes: opening the
+    picker, selecting the variant inside it, and the send. An unowned OpenCode launch reads
+    twice -- once immediately before the picker opens, once immediately before the send, after
+    the preflight. The variant selection typed into the open picker is not inspected: the
+    composer is not on screen while the picker is, so a read there would classify the picker,
+    not a draft. That gap is a named residual, not coverage. Every other unowned vendor reads
+    once, immediately before its send. A session the launcher created is not inspected before
+    its first send: an empty fresh pane is this launcher's own starting state.
     """
     target_workspace_id = workspace_id_for_name(unit.workspace) if unit.workspace else None
     preexisting = (
@@ -1491,7 +1497,7 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
         review_elsewhere=review_elsewhere,
         argv=argv,
         since=created_at,
-        used_pane=False,
+        wrote_before=False,
     )
 
 
@@ -1502,8 +1508,16 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
     operator clears the composer the retry prompts the same pane. This entry never runs the
     wrapper create -- calling launch() again would create a second session and overwrite the
     first owned tab (the prior validation artifact's REL-03 rebuilt through the retry door) --
-    and it seeds used_pane true, so the KTD4 predicate inspects the first write whatever the
-    ownership: the stop that made this retry necessary was an inspection that found text.
+    and it seeds ``wrote_before`` true, so ``should_guard_pane_write`` inspects the first write
+    whatever the ownership: the stop that made this retry necessary was an inspection that
+    found text.
+
+    It inherits the resend loop's own precondition, too. A staged-input stop can be raised
+    from inside that loop, after a first send already went out; if the session has since
+    left idle it may already hold the task, and the resend loop refuses exactly that resend.
+    So a row that is anything but idle -- working, blocked, or gone -- gets nothing: the unit
+    is recorded sent-but-unobserved, which closes the retry route and hands the tab to the
+    operator rather than risking a second delivery when the session next goes idle.
     """
     pane_id = getattr(unit, "pane_id", None)
     if not pane_id:
@@ -1511,6 +1525,20 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
             f"{unit.name}: cannot redeliver without the pane a staged-input stop recorded; "
             "clear the composer and relaunch the unit instead"
         )
+    row = agent_row(unit)
+    status = None if row is None else row.get("agent_status")
+    if status != "idle":
+        seen = "gone from herdr" if row is None else f"{status or 'unknown'}, not idle"
+        append_unit_note(
+            unit,
+            f"redelivery withheld: the session was {seen}, so it may already hold the task; "
+            "check the tab before prompting it again",
+        )
+        unit.status = PROMPT_UNDELIVERED
+        append_unit_note(unit, DELIVERY_WARNING)
+        if isinstance(unit.launch_receipt, dict):
+            unit.launch_receipt["prompt_delivered"] = False
+        return
     _deliver(
         unit,
         pane_id,
@@ -1518,7 +1546,7 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
         review_elsewhere=review_elsewhere,
         argv=agent_argv(unit),
         since=None,
-        used_pane=True,
+        wrote_before=True,
     )
 
 
@@ -1558,48 +1586,58 @@ def pane_text(unit: Any, text: str) -> str:
     ).strip()
 
 
-def say(unit: Any, pane_id: str | None, text: str) -> bool:
+def say(unit: Any, pane_id: str | None, text: str) -> None:
     """Put one line into the session.
 
     ``herdr agent prompt`` is the right door, but it refuses any agent that never reports
     ``interactive_ready`` -- qwen is one today. For those, type into the pane instead, which is what
     the operator would do by hand -- but only up to the length a pane will still carry as an
     instruction rather than as an attachment. See ``pane_text``.
+
+    Both doors are bounded by ``PANE_WRITE_SECONDS``. A prompt that times out is not a refusal:
+    the line may already have been delivered, so the pane door is never tried behind it -- that
+    would be the second delivery every other guard in this file exists to prevent -- and the
+    stop names what is unknown. This returns nothing on purpose: callers once read "which door"
+    off its return value and used that as the write flag, which left every ``herdr agent
+    prompt`` write untracked (terminal review F02/F03). Whether a write happened is the
+    caller's own knowledge -- a call that returned wrote.
     """
     handle = unit.agent_name or unit.name
-    attempt = run(["herdr", "agent", "prompt", handle, text], check=False)
+    attempt = run(
+        ["herdr", "agent", "prompt", handle, text], check=False, timeout=PANE_WRITE_SECONDS
+    )
+    if isinstance(attempt, TimedOutProcess):
+        raise SystemExit(
+            f"{unit.name}: herdr agent prompt did not return within {PANE_WRITE_SECONDS}s; "
+            "the line may or may not have reached the session -- check the tab before "
+            "prompting it again"
+        )
     if attempt.returncode == 0:
-        return False
+        return
     if not pane_id:
         raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
     typed = pane_text(unit, text)
-    run(["herdr", "pane", "run", pane_id, typed])
+    run(["herdr", "pane", "run", pane_id, typed], timeout=PANE_WRITE_SECONDS)
     fallback_note = "prompted through its pane; this agent does not report interactive readiness"
     if fallback_note not in unit.note.split("; "):
         append_unit_note(unit, fallback_note)
-    return True
 
 
 def send(
     unit: Any, pane_id: str | None, backend: str = "inline", *, review_elsewhere: bool = False
-) -> bool:
+) -> None:
     """Set the session up, then give it its task.
 
     Setup goes first and separately: a tier has to be in force before the work starts, and a slash
     command bundled into the same message as the task is just text the agent reads.
     """
-    used_pane = False
     for line in unit.setup:
-        used_pane = say(unit, pane_id, line) or used_pane
-    used_pane = (
-        say(
-            unit,
-            pane_id,
-            normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere),
-        )
-        or used_pane
+        say(unit, pane_id, line)
+    say(
+        unit,
+        pane_id,
+        normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere),
     )
-    return used_pane
 
 
 def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:

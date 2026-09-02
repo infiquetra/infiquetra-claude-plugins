@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import inspect
@@ -2037,12 +2038,14 @@ def test_pane_fallback_resend_into_an_owned_pane_rechecks_for_staged_input(
     assert unit.launch_receipt["input_box"] == "staged"
 
 
-def test_agent_prompt_resend_into_an_owned_pane_is_never_inspected(
+def test_agent_prompt_resend_into_an_owned_pane_is_inspected_before_each_resend(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The direction not fixed: ownership is about who created the tab, never who last
-    typed. An owned session delivered through `herdr agent prompt` has never been written
-    by this launcher, so no resend inspects it -- zero guard calls in the whole launch."""
+    """The write half of the predicate tracks every door, not only the pane-typing fallback
+    (terminal review F03). An owned session delivered through `herdr agent prompt` has been
+    written by this launcher the instant the first prompt goes out, so each of the two
+    resends -- about 15 and 30 seconds later -- inspects the pane first. The first send
+    into the freshly created pane still takes no inspection."""
     unit, recorded, pane_writes, guard_calls = _prepare_resend_launch(
         launcher,
         monkeypatch,
@@ -2051,11 +2054,43 @@ def test_agent_prompt_resend_into_an_owned_pane_is_never_inspected(
         preexisting_tabs=frozenset(),
     )
     launcher.launch(unit)
-    assert guard_calls == []
+    assert guard_calls == ["w1:p1", "w1:p1"]
     assert pane_writes == []
     prompt_calls = [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]
     assert len(prompt_calls) == 3
     assert unit.status == launcher.PROMPT_UNDELIVERED
+
+
+def test_agent_prompt_resend_into_an_owned_pane_stops_on_a_draft_staged_since(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The consequence F03 names: text the operator staged after the first prompt is found
+    by the resend inspection and the resend is withheld, rather than concatenated onto it."""
+    dumps = iter([_claude_pane(f"❯ {STAGED_SLASH_COMMAND}")])
+    unit, recorded, pane_writes, guard_calls = _prepare_resend_launch(
+        launcher,
+        monkeypatch,
+        agent_prompt_ok=True,
+        pane_dump="",
+        preexisting_tabs=frozenset(),
+    )
+    real_run = launcher.run
+
+    def staged_on_read(cmd: list[str], **k: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "pane", "read"]:
+            recorded.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, next(dumps, _claude_pane("❯ ")), "")
+        result: subprocess.CompletedProcess[str] = real_run(cmd, **k)
+        return result
+
+    monkeypatch.setattr(launcher, "run", staged_on_read)
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
+        launcher.launch(unit)
+    assert guard_calls == ["w1:p1"]
+    prompt_calls = [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]
+    assert len(prompt_calls) == 1
+    assert pane_writes == []
+    assert unit.launch_receipt["input_box"] == "staged"
 
 
 def test_each_resend_after_a_pane_fallback_is_inspected_once(
@@ -2173,6 +2208,320 @@ def test_redeliver_without_a_pane_id_is_a_named_stop(launcher: ModuleType) -> No
     unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
     with pytest.raises(SystemExit, match="cannot redeliver"):
         launcher.redeliver(unit)
+
+
+def _prepare_redeliver_real_send(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    owned: bool,
+    pane_dumps: list[str],
+    agent_status: str = "idle",
+    accepted: bool = False,
+) -> tuple[Any, list[list[str]], list[str], list[str]]:
+    """A redelivery driven through the real send/say and the real guard, with only the
+    Herdr boundary stubbed (terminal review F02: the stubbed-send harness above could not
+    observe the resend loop). ``pane_dumps`` feeds successive guard reads; the last one
+    repeats. Returns the unit, every recorded command, the pane-typing writes, and the
+    guard calls."""
+    recorded: list[list[str]] = []
+    pane_writes: list[str] = []
+    guard_calls: list[str] = []
+    dumps = iter(pane_dumps)
+    last = pane_dumps[-1]
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, next(dumps, last), "")
+        if cmd[:3] == ["herdr", "pane", "run"]:
+            pane_writes.append(cmd[-1])
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    real_guard = launcher.guard_pane_before_write
+
+    def counting_guard(unit: Any, pane_id: str) -> None:
+        guard_calls.append(pane_id)
+        real_guard(unit, pane_id)
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    monkeypatch.setattr(launcher, "guard_pane_before_write", counting_guard)
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: accepted)
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": agent_status,
+            "pane_id": "w1:p1",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w1",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+    unit = launcher.LaunchRequest(
+        name="worker",
+        vendor="claude",
+        worktree="/tmp/wt",
+        task="do the thing",
+        pane_id="w1:p1",
+        tab_id="w1:t1",
+        owned=owned,
+        launch_receipt={
+            "tab_id": "w1:t1",
+            "pane": "w1:p1",
+            "agent_name": "worker-2",
+            "owned": owned,
+            "input_box": "staged",
+        },
+    )
+    return unit, recorded, pane_writes, guard_calls
+
+
+def test_redeliver_with_the_real_send_inspects_before_every_write(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review F02, the executed probe rebuilt: a redelivery into an owned pane
+    whose first prompt goes through `herdr agent prompt` and is never taken. At the frozen
+    revision the plain assignment after the first send discarded the seeded flag, so the
+    two resends went out with no inspection -- one guard call for three writes. Every
+    write of a redelivery is inspected, because the stop that made it necessary was an
+    inspection that found text."""
+    unit, recorded, pane_writes, guard_calls = _prepare_redeliver_real_send(
+        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")]
+    )
+    launcher.redeliver(unit)
+    prompt_calls = [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]
+    assert len(prompt_calls) == 3
+    assert guard_calls == ["w1:p1", "w1:p1", "w1:p1"]
+    assert pane_writes == []
+    assert unit.status == launcher.PROMPT_UNDELIVERED
+
+
+def test_redeliver_resend_stops_on_a_draft_staged_after_the_first_prompt(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The consequence F02/F03 name on the retry door: an empty box at the first write, a
+    draft typed during the fifteen-second delivery window, and the resend is withheld."""
+    unit, recorded, pane_writes, guard_calls = _prepare_redeliver_real_send(
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ "), _claude_pane(f"❯ {STAGED_SLASH_COMMAND}")],
+    )
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
+        launcher.redeliver(unit)
+    prompt_calls = [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]
+    assert len(prompt_calls) == 1
+    assert guard_calls == ["w1:p1", "w1:p1"]
+    assert unit.launch_receipt["input_box"] == "staged"
+
+
+def test_redeliver_refuses_when_the_session_has_left_idle(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review F04/F30: the resend loop refuses to resend into a session that has
+    left idle, because it may already hold the task. A staged-input stop raised from inside
+    that loop happens after a send went out, so the retry door inherits the same rule: a
+    row that is working, blocked or gone gets nothing, the retry route closes, and the unit
+    is recorded as sent-but-unobserved for the operator to check."""
+    unit, recorded, pane_writes, guard_calls = _prepare_redeliver_real_send(
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ ")],
+        agent_status="working",
+    )
+    launcher.redeliver(unit)
+    assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
+    assert pane_writes == []
+    assert guard_calls == []
+    assert unit.status == launcher.PROMPT_UNDELIVERED
+    assert "redelivery withheld" in unit.note
+    assert launcher.DELIVERY_WARNING in unit.note
+    assert unit.launch_receipt["prompt_delivered"] is False
+    assert unit.launch_receipt["input_box"] == "staged"
+
+
+def test_redeliver_refuses_when_the_session_is_gone(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other arm of the same rule: no Herdr row at all is not idle either."""
+    unit, recorded, pane_writes, _guard_calls = _prepare_redeliver_real_send(
+        launcher, monkeypatch, owned=False, pane_dumps=[_claude_pane("❯ ")]
+    )
+    monkeypatch.setattr(launcher, "agent_row", lambda *_a, **_k: None)
+    launcher.redeliver(unit)
+    assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
+    assert pane_writes == []
+    assert unit.status == launcher.PROMPT_UNDELIVERED
+    assert "redelivery withheld" in unit.note
+
+
+def test_redeliver_into_an_idle_session_still_sends(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counter-case for F04/F30: the liveness rule must not close the retry door on the
+    session it exists for -- one still sitting idle with a cleared composer is redelivered
+    and, once it takes the task, recorded RUNNING."""
+    unit, recorded, _pane_writes, guard_calls = _prepare_redeliver_real_send(
+        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")], accepted=True
+    )
+    launcher.redeliver(unit)
+    assert len([c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]) == 1
+    assert guard_calls == ["w1:p1"]
+    assert unit.status == launcher.RUNNING
+    assert unit.launch_receipt["prompt_delivered"] is True
+    assert "redelivery withheld" not in unit.note
+
+
+def test_redeliver_admits_a_transcript_older_than_the_retry(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Terminal review F17: the redelivery passes ``since=None`` on purpose -- the receipt
+    records no creation time, so the recency floor a fresh launch applies cannot be
+    supplied and is traded away. This test leaves the preflight real: a transcript written
+    an hour before the retry is admitted as the account proof. Replacing the argument with
+    a live timestamp floors that transcript out and the retry stops on an unverified
+    account."""
+    unit, recorded, _pane_writes, _guard_calls = _prepare_redeliver_real_send(
+        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")], accepted=True
+    )
+    monkeypatch.undo()
+    # Rebuild the boundary without the preflight stub; every pane read without --format is
+    # the statusline read, which answers nothing so the transcript is the only evidence.
+    dumps = [_claude_pane("❯ ")]
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, dumps[0], "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "workspace_id_for_name", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": "idle",
+            "pane_id": "w1:p1",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w1",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+    personal = tmp_path / "personal"
+    company = tmp_path / "company"
+    monkeypatch.setattr(launcher, "claude_transcript_roots", lambda: (personal, company))
+    project = personal / launcher.claude_project_slug("/tmp/wt")
+    project.mkdir(parents=True)
+    transcript = project / "session.jsonl"
+    transcript.write_text("{}\n")
+    an_hour_ago = time.time() - 3600
+    os.utime(transcript, (an_hour_ago, an_hour_ago))
+    unit.account = "personal"
+
+    launcher.redeliver(unit)
+
+    assert unit.status == launcher.RUNNING
+    assert unit.launch_receipt["account_evidence"] == "transcript"
+    assert launcher.ACCOUNT_MISMATCH not in unit.note
+
+
+def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review F18: the two calls that write into a pane were the only Herdr calls
+    with no bound, so a wedged daemon hung go and land mid-delivery. Both carry
+    PANE_WRITE_SECONDS. A prompt that times out is not a refusal: the line may have been
+    delivered, so the pane door is never tried behind it and the stop is named."""
+    timeouts: list[tuple[str, object]] = []
+
+    def fake_run(cmd: list[str], **k: object) -> subprocess.CompletedProcess[str]:
+        timeouts.append((" ".join(cmd[:3]), k.get("timeout")))
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "not interactive ready")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    unit = launcher.LaunchRequest(name="worker", vendor="qwen", worktree="/tmp/wt")
+    launcher.say(unit, "w1:p1", "hello")
+    assert timeouts == [
+        ("herdr agent prompt", launcher.PANE_WRITE_SECONDS),
+        ("herdr pane run", launcher.PANE_WRITE_SECONDS),
+    ]
+    assert launcher.PANE_WRITE_SECONDS > 0
+
+    def timed_out(cmd: list[str], **k: object) -> subprocess.CompletedProcess[str]:
+        timeouts.append((" ".join(cmd[:3]), k.get("timeout")))
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            timed: subprocess.CompletedProcess[str] = launcher.TimedOutProcess(
+                cmd, 124, "", "timed out"
+            )
+            return timed
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    timeouts.clear()
+    monkeypatch.setattr(launcher, "run", timed_out)
+    with pytest.raises(SystemExit, match="did not return within"):
+        launcher.say(unit, "w1:p1", "hello")
+    assert [name for name, _ in timeouts] == ["herdr agent prompt"]
+
+
+def test_wrapper_identity_receipt_is_the_shape_function_output(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review F15: the receipt the wrapper create records is
+    launch_receipt_shape's dict, built once from the attributes just set, not a second
+    hand-typed literal of the same ten keys."""
+    monkeypatch.setattr(launcher, "session_owned", lambda unit, receipt=None: unit.owned is True)
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
+    info = {"tab_id": "w1:t-new", "agent_name": "worker-2", "pane_id": "w1:p1", "reused": "true"}
+    receipt = launcher.record_wrapper_identity(unit, info, preexisting=frozenset())
+    assert receipt == launcher.launch_receipt_shape(unit)
+    assert receipt["owned"] is True
+    assert receipt["reused"] is True
+    assert receipt["pane"] == "w1:p1"
+    assert unit.launch_receipt is receipt
+
+
+def test_pane_write_guard_predicate_has_one_owner(launcher: ModuleType) -> None:
+    """Terminal review F16: the rule deciding when a pane must be re-inspected before a
+    write lives in should_guard_pane_write and nowhere else. Every launcher site calls it,
+    so an edit to the rule cannot leave a copy behind; the truth table is the KTD4 rule."""
+    source = LAUNCHER.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    owner = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "should_guard_pane_write"
+    )
+    inline_copies = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.BoolOp)
+        and "session_owned(" in ast.unparse(node)
+        and not (owner.lineno <= node.lineno <= (owner.end_lineno or owner.lineno))
+    ]
+    assert inline_copies == [], f"predicate re-derived inline at lines {inline_copies}"
+    calls = source.count("should_guard_pane_write(")
+    assert calls >= 4, "the helper must be defined and called at each of the three write sites"
+    owned = launcher.LaunchRequest(
+        name="w", vendor="claude", owned=True, launch_receipt={"owned": True}
+    )
+    unowned = launcher.LaunchRequest(name="w", vendor="claude", launch_receipt={"owned": False})
+    assert launcher.should_guard_pane_write(owned, wrote_before=False) is False
+    assert launcher.should_guard_pane_write(owned, wrote_before=True) is True
+    assert launcher.should_guard_pane_write(unowned, wrote_before=False) is True
+    assert launcher.should_guard_pane_write(unowned, wrote_before=True) is True
 
 
 def test_close_without_receipt_tab_id_stops(launcher: ModuleType) -> None:

@@ -21,6 +21,44 @@
 
 ## 2026-09-02
 
+### A write flag derived from which door carried the write tracks the door, not the write  {#907-write-flag-tracked-the-door}
+
+**Context.** Issue 907's terminal Saga Code Review scored the branch that had already closed
+91 findings and returned seven P1s, three of which were one defect (F02, F03, F04): a
+redelivery into an owned session resent its prompt twice, fifteen and thirty seconds after the
+first, with no composer inspection between. Operator text typed inside that window would be
+concatenated onto the resend and could be submitted.
+**Evidence.** Before U19 of the repair, `say()` in
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` returned `False` when the
+`herdr agent prompt` door succeeded and `True` only from the pane-typing fallback; `_deliver`
+did `used_pane = send(...)` -- a plain assignment that also destroyed the `used_pane=True` seed
+`redeliver()` passed -- and the resend loop's predicate was `used_pane or not
+session_owned(unit)`. The rebuilt probe is `test_redeliver_with_the_real_send_inspects_before_every_write`
+(one guard call for three writes at the frozen revision) and
+`test_agent_prompt_resend_into_an_owned_pane_is_inspected_before_each_resend`, which replaces a
+test that pinned the gap as "the direction not fixed".
+**Mechanism.** The flag was named for one door. Its true meaning -- "this launcher has already
+written into the session, so a person may have typed since" -- holds after either door, but the
+value was computed from the door, so every vendor whose prompt succeeds ran the resend loop
+with the write half of the predicate permanently false. The plain assignment was the second
+half: even the redelivery seed, set true on purpose, was overwritten by the door's answer on the
+first send. Two sites seventeen lines apart carried the same statement in two forms
+(`x = send()` and `x = send() or x`), which is how the seed survived one and died in the other.
+**Fix.** `say()` and `send()` return nothing; `_deliver` sets `wrote_before = True` the moment
+the first send returns; the predicate has one owner, `should_guard_pane_write(unit,
+wrote_before=...)`, called at all three launcher write sites and exported to Orchestrate's
+senders; `redeliver()` inherits the resend loop's never-left-idle precondition and closes the
+retry route as `prompt_undelivered` when the session is working or gone. Eleven named mutants
+are killed by the U19 tests, including the mirror-image mutant (predicate always true), which
+`test_freshly_created_pane_takes_no_inspection_path` catches.
+**Generalizable rule.** When a boolean's meaning is "X has happened", set it where X happens,
+never derive it from a return value that describes how X happened. And when the same
+statement appears twice in two forms, the shorter form is a bug waiting for the case the longer
+form was written for.
+**Refs.** Issue #907; terminal review
+`docs/code-reviews/2026-09-02-issue-907-terminal-code-review-result.v1.json` F02, F03, F04,
+F16, F30; DECISIONS `{#907-staged-input-redeliver}`.
+
 ### Entries new versus origin/main belong under today's date heading  {#907-journal-newest-first-vs-origin}
 
 **Context.** Eight issue 907 journal entries were filed under `## 2026-08-31` because

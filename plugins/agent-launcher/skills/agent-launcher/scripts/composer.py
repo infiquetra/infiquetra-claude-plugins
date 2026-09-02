@@ -18,7 +18,10 @@ SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 
 # This is a complete roster, not a fallback table.  A vendor whose input box has not been
 # characterised is present with ``None`` and receives an explicit unsupported-vendor result.
-# The launcher asserts these keys against its own vendor roster at import time.
+# The launcher asserts these keys against its own vendor roster at import time.  Checked-in
+# pane captures exist only for Claude and Codex (tests/fixtures/composer-panes.json, which
+# also carries two live idle Claude captures); Grok, Agy and Qwen have characterised markers
+# but no checked-in capture.
 COMPOSER_GLYPH_BY_VENDOR: dict[str, str | None] = {
     "claude": "❯",
     "codex": "›",
@@ -49,6 +52,17 @@ class ComposerState(StrEnum):
     UNSUPPORTED_VENDOR = "unsupported_vendor"
     READ_FAILED = "read_failed"
     READ_TIMEOUT = "read_timeout"
+
+
+class _RowClass(StrEnum):
+    """One class per physical row; the whole row rule lives in ``_classify_row``."""
+
+    MARKER = "marker"
+    BLANK = "blank"
+    RULE = "rule"
+    BORDERED = "bordered"
+    INDENTED = "indented"
+    TERMINATOR = "terminator"
 
 
 @dataclass(frozen=True)
@@ -147,7 +161,12 @@ def strip_ansi(text: str) -> str:
 
 
 def _without_border(text: str) -> tuple[str, int]:
-    """Return row content without a paired box border and its original content column."""
+    """Return row content without a paired box border and its original content column.
+
+    At most one trailing glyph is stripped, and only after a leading border was consumed: a
+    draft may itself end in a border-shaped character, and the closing border is the only
+    structural one.
+    """
     leading = len(text) - len(text.lstrip())
     candidate = text.lstrip()
     bordered = False
@@ -157,7 +176,7 @@ def _without_border(text: str) -> tuple[str, int]:
     consumed = len(text) - len(candidate)
     if bordered:
         candidate = candidate.rstrip()
-        while candidate and candidate[-1] in _TRAILING_BORDER_GLYPHS:
+        if candidate and candidate[-1] in _TRAILING_BORDER_GLYPHS:
             candidate = candidate[:-1].rstrip()
     return candidate, max(leading, consumed)
 
@@ -167,45 +186,67 @@ def _has_leading_border(text: str) -> bool:
     return bool(candidate and candidate[0] in _LEADING_BORDER_GLYPHS)
 
 
-def _marker_column(line: str, glyph: str) -> int | None:
-    candidate, column = _without_border(strip_ansi(line).replace("\xa0", " "))
-    return column if candidate.startswith(glyph) else None
-
-
 def _is_horizontal_rule(text: str) -> bool:
     stripped = text.strip()
     return bool(stripped) and set(stripped) <= _HORIZONTAL_RULE_GLYPHS
 
 
-def _is_continuation(line: str, *, marker_column: int) -> bool:
-    """Whether terminal geometry proves this row belongs to the current composer box.
+def _classify_row(line: str, *, glyph: str, marker_column: int | None) -> tuple[_RowClass, int]:
+    """Classify one physical row of the viewport: the row rule, stated in one place.
 
-    Indentation alone is not proof: vendor status footers use the same indentation as wrapped
-    input. Unbordered rows are therefore an ambiguity boundary. A bordered row can continue only
-    inside the same box and beyond the marker column.
+    The shape is read after ANSI stripping, with ``\\xa0`` read as space. Every non-blank
+    class is decided on the row's content after border pairing, so a bordered row whose
+    content is only rule glyphs is a rule row, not a bordered one. ``marker_column`` is the
+    marker column of the block in play -- open, or awaiting settlement after a blank row --
+    or ``None`` when no block is in play; it decides only the indented/terminator split.
     """
     clean = strip_ansi(line).replace("\xa0", " ")
     if not clean.strip():
-        return False
+        return _RowClass.BLANK, 0
     candidate, column = _without_border(clean)
-    if _is_horizontal_rule(candidate) or candidate[:1] in COMPOSER_MARKERS:
-        return False
-    return _has_leading_border(clean) and column > marker_column
+    if candidate.startswith(glyph):
+        return _RowClass.MARKER, column
+    if _is_horizontal_rule(candidate):
+        return _RowClass.RULE, column
+    if _has_leading_border(clean):
+        return _RowClass.BORDERED, column
+    if (
+        marker_column is not None
+        and column > marker_column
+        and candidate[:1] not in COMPOSER_MARKERS
+    ):
+        return _RowClass.INDENTED, column
+    return _RowClass.TERMINATOR, column
 
 
 def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
     """Return structurally bounded marker blocks in pane order.
 
-    A blank or merely indented row is not absorbed as input. When it follows an otherwise empty
-    marker, the empty claim becomes ambiguous instead: that shape can be either viewport chrome
-    or a multiline draft, and the viewport supplies no authorship signal that distinguishes them.
+    One class per physical row decides everything. A row directly below an open block
+    continues it when it is bordered, or when it is unbordered and indented past the marker
+    column; a blank, rule, marker or terminator row ends the block and separates it from the
+    next. An empty block closed by a blank row is not settled until the next non-blank row
+    arrives: indented content makes it ``ambiguous_empty`` -- that shape is either a status
+    footer after a spacer or a draft with a leading blank line -- and anything else settles
+    it as empty.
     """
     blocks: list[_ComposerBlock] = []
     current: _ComposerBlock | None = None
+    unsettled_blank: _ComposerBlock | None = None
     separated = True
     for line in ansi_text.splitlines():
-        column = _marker_column(line, glyph)
-        if column is not None:
+        marker_column = (
+            current.marker_column
+            if current is not None
+            else unsettled_blank.marker_column
+            if unsettled_blank is not None
+            else None
+        )
+        row_class, column = _classify_row(line, glyph=glyph, marker_column=marker_column)
+        if row_class is _RowClass.MARKER:
+            # A marker row settles any blank-closed empty block as plain empty before the
+            # next block starts; adjacency records whether a separator came between them.
+            unsettled_blank = None
             current = _ComposerBlock(
                 lines=[line],
                 marker_column=column,
@@ -213,25 +254,27 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
             )
             blocks.append(current)
             separated = False
-            continue
-        if current is None:
-            if strip_ansi(line).strip():
+        elif current is not None:
+            if row_class in (_RowClass.BORDERED, _RowClass.INDENTED):
+                # Containment (bordered) or indentation past the marker column (unbordered)
+                # proves continuation. No capture shows chrome between the marker and its
+                # draft rows, so that asymmetry is accepted and recorded.
+                current.lines.append(line)
+                separated = False
+            else:
+                if row_class is _RowClass.BLANK and not _visible_after_marker(current.lines, glyph):
+                    unsettled_blank = current
+                current = None
                 separated = True
-            continue
-        if _is_continuation(line, marker_column=current.marker_column):
-            current.lines.append(line)
-            separated = False
-            continue
-        if not _visible_after_marker(current.lines, glyph):
-            clean = strip_ansi(line).replace("\xa0", " ")
-            if not clean.strip() or _without_border(clean)[1] > current.marker_column:
-                current.ambiguous_empty = True
-        clean = strip_ansi(line).replace("\xa0", " ")
-        candidate, column = _without_border(clean)
-        separated = bool(clean.strip()) and (
-            _is_horizontal_rule(candidate) or column <= current.marker_column
-        )
-        current = None
+        else:
+            if unsettled_blank is not None:
+                if row_class is _RowClass.INDENTED:
+                    unsettled_blank.ambiguous_empty = True
+                    unsettled_blank = None
+                elif row_class is not _RowClass.BLANK:
+                    unsettled_blank = None
+            if row_class is not _RowClass.BORDERED and row_class is not _RowClass.INDENTED:
+                separated = True
     return blocks
 
 
@@ -258,10 +301,14 @@ def _unstyled_text(lines: list[str], glyph: str) -> str:
             cursor = sgr.end()
         if not state.active:
             row.append(ANSI_RE.sub("", line[cursor:]))
-        candidate, _ = _without_border("".join(row).replace("\xa0", " "))
-        if _has_leading_border(strip_ansi(line)) and candidate:
+        joined = "".join(row).replace("\xa0", " ")
+        candidate, _ = _without_border(joined)
+        if not _has_leading_border(joined) and _has_leading_border(strip_ansi(line)) and candidate:
+            # The row's border glyphs were styled and never entered the unstyled content,
+            # but an unstyled closing border can still trail it. Exactly one glyph, so a
+            # draft ending in a border-shaped character keeps that character.
             candidate = candidate.rstrip()
-            while candidate and candidate[-1] in _TRAILING_BORDER_GLYPHS:
+            if candidate and candidate[-1] in _TRAILING_BORDER_GLYPHS:
                 candidate = candidate[:-1].rstrip()
         output.append(candidate)
     if output and output[0].startswith(glyph):

@@ -414,6 +414,24 @@ STAGED_SLASH_COMMAND = "/saga:doc-review docs/plans/x.md"
 CAPTURED_COMPOSERS = json.loads(
     (Path(__file__).parent / "fixtures" / "composer-panes.json").read_text(encoding="utf-8")
 )
+# The parser module loaded for its private glyph rosters only; every state assertion goes
+# through the launcher fixture so class identity never crosses module boundaries.
+COMPOSER_MODULE = _load(
+    REPO / "plugins" / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "composer.py",
+    "_agent_launcher_contract_composer",
+)
+# Full `herdr pane read --source visible --format ansi` dumps of two idle Claude sessions in
+# workspace wEV (Herdr 0.8.2): the marker row sits between two horizontal-rule rows with three
+# two-space-indented status rows below the lower rule. Captured 2026-09-02 from wEV:pG and
+# wEV:pQ; the plan's 2026-09-01 captures came from wEV:pM and wEV:p6, which no longer exist.
+LIVE_CLAUDE_IDLE_KEYS = (
+    "claude_live_idle_2026-09-02_herdr0.8.2_wEV-pG",
+    "claude_live_idle_2026-09-02_herdr0.8.2_wEV-pQ",
+)
+# The complete border rosters as the test's own pinned expectation: the parametrised cases
+# must survive a shrunk roster, so they cannot be derived from the module under mutation.
+LEADING_BORDER_ROSTER = "│┃┆┇┊┋╎╏▏▎▍▌▋▊▉█╭╰┌└"
+TRAILING_BORDER_ROSTER = "│┃┆┇┊┋╎╏▏▎▍▌▋▊▉█╮╯┐┘"
 
 
 def _claude_pane(composer_line: str) -> str:
@@ -730,6 +748,13 @@ def test_a_plain_marker_vendor_reads_its_own_box(launcher: ModuleType) -> None:
     assert launcher.composer_staged_text("> draft text", vendor="agy") == "draft text"
 
 
+def test_a_blank_marker_row_with_continuation_rows_is_one_block(launcher: ModuleType) -> None:
+    """A wrapped draft continues on unmarked rows; reading only the marker row reports the
+    first wrapped line and drops the rest."""
+    dump = "❯\n  wrapped draft continuation"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "wrapped draft continuation"
+
+
 def test_blank_then_indented_text_is_ambiguous_not_affirmatively_empty(
     launcher: ModuleType,
 ) -> None:
@@ -793,7 +818,7 @@ def test_first_noncontinuation_terminates_the_composer_block(launcher: ModuleTyp
 
 def test_menu_marker_terminates_the_composer_block(launcher: ModuleType) -> None:
     dump = "❯ draft\n  continuation\n> menu choice\n  menu detail"
-    assert launcher.composer_staged_text(dump, vendor="claude") == "draft"
+    assert launcher.composer_staged_text(dump, vendor="claude") == "draftcontinuation"
 
 
 def test_marker_must_be_the_first_printable_character_after_a_border(
@@ -828,6 +853,189 @@ def test_open_fully_styled_content_is_unclassifiable(launcher: ModuleType, prefi
 def test_closed_hint_then_reopened_span_is_unclassifiable(launcher: ModuleType) -> None:
     result = launcher.inspect_composer("\x1b[2m❯ \x1b[0m\x1b[2mdeploy prod", vendor="claude")
     assert result.state is launcher.ComposerState.UNCLASSIFIABLE
+
+
+# --- The row rule: one classification per physical row (issue 907 U1, CORR-01/02/04/05/06, SEC-04,
+# --- TEST-01/02/07/08/09, ARCH-03/04/17). Every clause below names the clause it binds.
+
+
+def _claude_marker_bytes() -> str:
+    """The fixture's own Claude marker row, the bytes a live pane emits for an empty box."""
+    return CAPTURED_COMPOSERS["claude_echo_above_empty"].splitlines()[-1]
+
+
+def test_unbordered_two_row_claude_draft_is_absorbed_whole(launcher: ModuleType) -> None:
+    """CORR-04: an unbordered wrapped draft is not truncated to its marker row."""
+    row_one = "Stop before running U5 with Grok and Agy blocked. Direct host verification"
+    row_two = "found both real executables. Use the live roster."
+    dump = f"❯ {row_one}\n  {row_two}"
+    assert launcher.composer_staged_text(dump, vendor="claude") == row_one + row_two
+
+
+def test_unbordered_three_row_codex_draft_is_absorbed_whole(launcher: ModuleType) -> None:
+    """TEST-07: the three-row Codex draft returns all three rows, not 22 of 41 characters."""
+    dump = "› first row of the draft\n  second row\n  third row"
+    assert launcher.composer_staged_text(dump, vendor="codex") == (
+        "first row of the draftsecond rowthird row"
+    )
+
+
+def test_an_empty_marker_with_an_indented_request_row_is_staged(launcher: ModuleType) -> None:
+    """CORR-02: the marker alone on row 1 with the request indented on row 2 is a draft."""
+    dump = _claude_marker_bytes() + "\n  the actual request text the operator staged"
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "the actual request text the operator staged"
+    assert len(result.text) == 43
+
+
+def test_a_styled_at_mention_with_an_indented_unstyled_row_is_staged(
+    launcher: ModuleType,
+) -> None:
+    """CORR-01: a styled at-mention on the marker row plus unstyled indented text is a draft."""
+    dump = (
+        _claude_marker_bytes()
+        + "\x1b[38;2;128;128;128m@plugins/agent-launcher/README.md\x1b[0m"
+        + "\n  please review this and tell me what breaks"
+    )
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == (
+        "@plugins/agent-launcher/README.mdplease review this and tell me what breaks"
+    )
+
+
+def test_an_empty_marker_followed_by_two_blank_rows_is_empty(launcher: ModuleType) -> None:
+    """Trailing blank rows alone read empty (C23: a blank is not by itself ambiguity)."""
+    result = launcher.inspect_composer("❯ \n\n\n", vendor="claude")
+    assert result.state is launcher.ComposerState.EMPTY
+    assert result.text == ""
+
+
+def test_an_echo_a_blank_row_and_an_empty_marker_read_empty(launcher: ModuleType) -> None:
+    """CORR-05: a blank row separates, so the live empty box is not adjacent to the echo."""
+    result = launcher.inspect_composer("❯ earlier submitted prompt\n\n❯ ", vendor="claude")
+    assert result.state is launcher.ComposerState.EMPTY
+    assert result.text == ""
+
+
+def test_a_bordered_draft_ending_in_a_corner_glyph_keeps_it(launcher: ModuleType) -> None:
+    """CORR-06: at most one trailing border glyph is structure; the draft's own corner stays."""
+    result = launcher.inspect_composer("│ ❯ the tree ends with (╰╯ │", vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "the tree ends with (╰╯"
+
+
+def test_a_bordered_box_whose_only_content_is_a_border_glyph_is_staged(
+    launcher: ModuleType,
+) -> None:
+    """SEC-04: one border-glyph character of content is a draft, not an empty box."""
+    result = launcher.inspect_composer("│ ❯ █ │", vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "█"
+
+
+def test_a_bordered_row_flush_at_the_marker_column_continues(launcher: ModuleType) -> None:
+    """SEC-04: containment, not a column comparison, proves a bordered continuation."""
+    dump = "│ ❯ │\n│ y │"
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "y"
+
+
+def test_a_bordered_rule_row_ends_the_block_and_never_joins_the_draft(
+    launcher: ModuleType,
+) -> None:
+    """C18: a bordered row whose content is only rule glyphs is a rule row, not a continuation."""
+    dump = "│ ❯ x │\n│    ──── │\n│   y │"
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "x"
+
+
+def test_round_corner_borders_lead_and_trail_a_two_row_draft(launcher: ModuleType) -> None:
+    """The corner glyphs are rosters on both sides: they lead row 1 and close row 2."""
+    dump = "╭ ❯ draft ╮\n╰   more ╯"
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "draftmore"
+
+
+@pytest.mark.parametrize("glyph", sorted(LEADING_BORDER_ROSTER))
+def test_every_leading_border_glyph_is_rostered(launcher: ModuleType, glyph: str) -> None:
+    """TEST-08 / C21: removing any one leading glyph breaks this named case for that glyph."""
+    result = launcher.inspect_composer(f"{glyph} ❯ draft text", vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "draft text"
+
+
+@pytest.mark.parametrize("glyph", sorted(TRAILING_BORDER_ROSTER))
+def test_every_trailing_border_glyph_is_rostered(launcher: ModuleType, glyph: str) -> None:
+    """TEST-08 / C22: removing any one trailing glyph breaks this named case for that glyph."""
+    result = launcher.inspect_composer(f"│ ❯ hi {glyph}", vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "hi"
+
+
+def test_the_border_rosters_match_their_pinned_expectation() -> None:
+    """Drift pin: a glyph added to or removed from either roster fails here, so the pinned
+    parametrisation above cannot silently fall behind the module."""
+    assert frozenset(LEADING_BORDER_ROSTER) == COMPOSER_MODULE._LEADING_BORDER_GLYPHS
+    assert frozenset(TRAILING_BORDER_ROSTER) == COMPOSER_MODULE._TRAILING_BORDER_GLYPHS
+
+
+def test_unstyled_text_joins_rows_without_a_separator() -> None:
+    """CORR-10: the wrap boundary adds no character; the join is pinned directly."""
+    assert COMPOSER_MODULE._unstyled_text(["❯ deploy the", "  fleet"], "❯") == "deploy thefleet"
+
+
+@pytest.mark.parametrize("key", LIVE_CLAUDE_IDLE_KEYS)
+def test_a_live_idle_claude_pane_is_prompted_through_the_real_guard(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """R3: the live captures are the horizontal-rule clause's real-pane regression fixtures."""
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=CAPTURED_COMPOSERS[key],
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    launcher.launch(unit)
+    assert len(sends) == 1
+    assert unit.launch_receipt["input_box"] == "empty"
+
+
+def _corrp01_pane() -> str:
+    """CORR-01: the fixture marker plus a styled at-file mention, then an indented request."""
+    return (
+        _claude_marker_bytes()
+        + "\x1b[38;2;128;128;128m@plugins/agent-launcher/README.md\x1b[0m"
+        + "\n  please review this and tell me what breaks"
+    )
+
+
+def _corrp02_pane() -> str:
+    """CORR-02: the fixture marker alone, then the operator's request indented on row 2."""
+    return _claude_marker_bytes() + "\n  the actual request text the operator staged"
+
+
+@pytest.mark.parametrize("pane", [_corrp01_pane, _corrp02_pane], ids=["corrp01", "corrp02"])
+def test_corrp01_and_corrp02_panes_stop_the_prompt_through_the_real_guard(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, pane: Any
+) -> None:
+    """CORR-01 and CORR-02 end to end: the guard refuses to write behind a real draft shape."""
+    unit, _recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=pane(),
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
+        launcher.launch(unit)
+    assert sends == []
+    assert unit.launch_receipt["input_box"] == "staged"
 
 
 def test_unreadable_box_is_marked_and_the_prompt_still_goes(

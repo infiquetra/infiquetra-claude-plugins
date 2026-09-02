@@ -2,6 +2,41 @@
 
 ## 2026-09-02
 
+### The launcher's `PaneWriter` is the only pane-write door, and it owns the inspection  {#907-pane-writer-owns-the-write-rule}
+
+**Decision.** Both raw Herdr write doors -- `herdr agent prompt` and `herdr pane run` -- exist
+only inside `PaneWriter` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`,
+and `PaneWriter.write` is the only method that opens either. It decides, before each write,
+whether to inspect the composer, from `should_guard_pane_write` and its own record of having
+written. The OpenCode picker driver, `send()`, the resend loop, `redeliver()`, and Orchestrate's
+review-dispatch and land-resubmission senders all construct or receive a writer and call
+`write`; none of them may call `run` with a pane-write command. The enumeration of write sites
+and the structural test live in `plugins/agent-launcher/tests/test_launcher_contract.py`
+(`PANE_WRITE_SITES`, `test_every_pane_write_goes_through_the_one_writer`).
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:** the operator's ruling on the terminal
+review's cycle 2 (`docs/code-reviews/2026-09-02-issue-907-terminal-code-review-cycle2-result.v1.json`
+F38, F39, F40, F41, F46, F47, F50, F57).
+
+**Why.** Four consecutive repair rounds on this branch each satisfied the finding in front of
+them and left an adjacent write unguarded: the tab-id clear, the import-time floor, the
+redelivery that bypassed the inspection, and finally a per-call-site flag that the picker path
+never set. A rule enforced by discipline -- "remember to set `wrote_before`" -- fails exactly
+once per new call site. A rule enforced by construction -- there is no unguarded call to make --
+cannot. The test that pins the enumeration makes a new write site a red test until its row is
+added, and the per-site mutation run (each `writer.write` swapped for the private raw door) is
+the acceptance evidence that every site is observed.
+
+**Rejected.** A fifth flag-setting call after the picker (the shape that failed four times); a
+decorator on the raw door (still a second door to forget); an unconditional inspection before
+every write regardless of ownership (would re-inspect the fresh owned tab's first write, which
+issue 897 ruled out of scope, and would still leave the door itself callable).
+
+**Revisit when.** Herdr exposes composer state or cursor position directly, at which point the
+inspection can move from a pane read to a query and the writer's `wrote` record may become
+unnecessary; or when a third plugin needs to write into a pane, which must reuse this class
+rather than grow a door of its own.
+
 ### The run-file contract string is bound to the Unit field set by a test  {#907-run-file-contract-bound-to-unit-fields}
 
 **Decision.** `RUN_FILE_CONTRACT` in

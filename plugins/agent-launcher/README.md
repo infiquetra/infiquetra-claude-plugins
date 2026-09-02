@@ -31,12 +31,15 @@ Standard library only, so `python3` — not `uv run`.
 
 ## Input-box receipt contract
 
-The launch receipt records the last composer inspection under `input_box`. A pane is inspected
-immediately before a write whenever the write could land behind staged text: before the first
-write into a session the launcher did not create, and before every later write into any session,
-owned or not, once the launcher has written into it (each resend, and the first write of a
-redelivery). A fresh owned launch whose first prompt was taken made no inspection, so its receipt
-carries no `input_box` key; an owned session that was resent to or redelivered carries it. Its complete value set is
+The launch receipt records the last composer inspection under `input_box`. Every line that enters
+a session — each setup slash command, the task, each resend, both picker keystrokes on OpenCode,
+and every later prompt Orchestrate sends — goes through one door, `PaneWriter.write`, which
+inspects the pane immediately before the write whenever the write could land behind staged text:
+before the first write into a session the launcher did not create, and before every later write
+into any session, owned or not, once the launcher has written into it. The only uninspected write
+is the first one into a tab the launcher created seconds earlier. A fresh owned launch with no
+setup lines whose first prompt was taken therefore made no inspection and its receipt carries no
+`input_box` key; any session written to more than once carries it. Its complete value set is
 `empty`, `staged`, `unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`, and
 `read_timeout`. Only `staged` also carries `input_box_text_chars`: the visible length of what the
 parser absorbed — visible characters after border stripping, rows joined without a separator, one

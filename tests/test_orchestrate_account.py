@@ -589,7 +589,8 @@ class TestCmdGoAccountIntegration:
 
         monkeypatch.setattr(orchestrate, "run", fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda *args, **kwargs: True)
-        monkeypatch.setattr(orchestrate, "say", lambda unit, pane_id, text: sent_tasks.append(text))
+        # The prompt door is observed at the Herdr boundary inside fake_run above; the writer
+        # is real.
         monkeypatch.setattr(
             orchestrate,
             "live_agents",

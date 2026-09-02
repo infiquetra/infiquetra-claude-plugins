@@ -21,6 +21,35 @@
 
 ## 2026-09-02
 
+### A per-call-site flag is a discipline, and the fourth call site forgets it  {#907-flag-per-call-site-fails-at-the-next-site}
+
+**Context.** Cycle 1 of the issue 907 terminal review found the pane-write guard's write flag
+tracked which door carried a line rather than whether one was written. The cycle-1 repair
+replaced it with a `wrote_before` value threaded through `_deliver`, set true after the first
+send, and handed to a shared predicate at three call sites. Cycle 2 (F39, F40, F41, F46) found the
+fourth site: the OpenCode picker driver made two pane writes of its own before the send and
+never set the flag, so an owned OpenCode launch made three uninspected writes, and `send()` was
+itself several writes behind one inspection.
+**Evidence.** At `7aa0e3b7`, forcing the picker site's predicate to the false flag left the
+launcher suite green while the same mutation at the other two launcher sites and at
+Orchestrate's sender all failed (cycle 2, F39). After U28, the seven-mutant run recorded in
+`docs/work-sessions/2026-09-02-issue-907-terminal-review-cycle2-repair-u28-u33.md` forces the
+guard off at each of the five enumerated write sites and every one is observed.
+**Mechanism.** A flag that callers must set is a rule enforced by discipline, and discipline is
+exactly the resource a repair round spends on the finding in front of it. Each round on this
+branch guarded the site it was shown and left the adjacent site's state stale, four times in
+succession, because the raw door stayed callable from anywhere. Moving the door and the rule
+into one object -- `PaneWriter`, whose `write` inspects from its own record of having written,
+and which is the only holder of the `herdr pane run` and `herdr agent prompt` calls -- removes
+the call a future site could forget. What remains to enforce is structural and cheap: a test
+that the raw doors appear nowhere else and that the set of `writer.write` sites equals a pinned
+enumeration.
+**Generalizable rule.** When the same class of defect recurs at "the next call site", stop
+adding a guard at the site and remove the ability to reach the effect without the guard; then
+pin the set of sites in a test so the next one is a red test rather than a review finding.
+**Refs.** Issue #907; cycle 2 review F38–F41, F46, F47, F50; DECISIONS
+`{#907-pane-writer-owns-the-write-rule}`.
+
 ### An unterminated OSC start makes a negated-BEL character class quadratic  {#907-osc-regex-quadratic}
 
 **Context.** The composer parser strips ANSI with one regex whose OSC branch was

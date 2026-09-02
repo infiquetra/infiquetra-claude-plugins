@@ -12,6 +12,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -458,14 +459,16 @@ def test_failed_live_dispatch_keeps_the_result_retryable_and_the_worker_protecte
     monkeypatch.setattr(orchestrate, "live_agents", lambda: _live(worker))
     attempts: list[str] = []
 
-    def flaky_prompt(unit: Any, _pane_id: str | None, text: str) -> None:
-        protected = orchestrate.Run.load().unit(unit.name)
+    def flaky_prompt(handle: str, text: str) -> None:
+        protected = next(
+            u for u in orchestrate.Run.load().units if (u.agent_name or u.name) == handle
+        )
         assert [request["fix_id"] for request in protected.fix_requests] == ["retry-dispatch"]
         attempts.append(text)
         if len(attempts) == 1:
             raise SystemExit("prompt transport failed")
 
-    monkeypatch.setattr(orchestrate, "say", flaky_prompt)
+    _stub_prompt_door(orchestrate, monkeypatch, flaky_prompt)
 
     assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
     failed = orchestrate.Run.load()
@@ -503,11 +506,11 @@ def test_failed_dispatch_to_a_worker_that_dies_moves_the_fix_to_one_replacement(
     monkeypatch.setattr(orchestrate, "live_agents", lambda: live)
     attempts: list[str] = []
 
-    def failed_prompt(_unit: Any, _pane_id: str | None, text: str) -> None:
+    def failed_prompt(_handle: str, text: str) -> None:
         attempts.append(text)
         raise SystemExit("worker pane died before receiving the prompt")
 
-    monkeypatch.setattr(orchestrate, "say", failed_prompt)
+    _stub_prompt_door(orchestrate, monkeypatch, failed_prompt)
 
     assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
     live.clear()
@@ -962,12 +965,12 @@ def test_land_retries_a_failed_review_resubmission_after_the_repair_is_already_l
     monkeypatch.chdir(repo)
     attempts: list[str] = []
 
-    def flaky_prompt(_unit: Any, _pane_id: str | None, text: str) -> None:
+    def flaky_prompt(_handle: str, text: str) -> None:
         attempts.append(text)
         if len(attempts) == 1:
             raise SystemExit("controller prompt failed")
 
-    monkeypatch.setattr(orchestrate, "say", flaky_prompt)
+    _stub_prompt_door(orchestrate, monkeypatch, flaky_prompt)
 
     assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
     first_output = capsys.readouterr().out
@@ -1038,6 +1041,28 @@ def _record_herdr_boundary(
 
     monkeypatch.setattr(orchestrate, "run", fake_run)
     return recorded
+
+
+def _stub_prompt_door(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    on_prompt: Callable[[str, str], None],
+) -> None:
+    """Stub the prompt door at the Herdr boundary, never the writer: ``on_prompt(handle,
+    text)`` may raise to model a transport failure; pane reads answer an empty composer;
+    every other command reaches the real ``run``."""
+    real_run = orchestrate.run
+
+    def fake_run(cmd: list[str], *a: Any, **k: Any) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            on_prompt(cmd[3], cmd[4])
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["herdr", "pane", "read"]:
+            return subprocess.CompletedProcess(cmd, 0, _claude_composer_pane("❯ "), "")
+        result: subprocess.CompletedProcess[str] = real_run(cmd, *a, **k)
+        return result
+
+    monkeypatch.setattr(orchestrate, "run", fake_run)
 
 
 def _prompt_calls(recorded: list[list[str]]) -> list[list[str]]:
@@ -1139,6 +1164,32 @@ def test_owned_review_dispatch_inspects_once_before_its_send(
     assert len(_prompt_calls(recorded)) == 1
     assert fixer.status == "running"
     assert fixer.launch_receipt["input_box"] == "empty"
+
+
+def test_a_live_worker_with_no_pane_is_prompted_without_a_read(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terminal review cycle 2, F53: a live worker with an agent handle but no recorded pane
+    cannot be inspected; the writer prompts it through the handle -- one prompt, zero pane
+    reads, no stop."""
+    controller = _controller(orchestrate)
+    fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
+    fixer.pane_id = None
+    run = _run(orchestrate, fixer, controller)
+    routing = orchestrate.route_review_result(
+        run,
+        _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
+        agents=_live(fixer),
+    )
+    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [])
+
+    dispatched = orchestrate.dispatch_review_routing(routing)
+
+    assert dispatched == ["api-builder"]
+    assert _pane_reads(recorded) == []
+    assert len(_prompt_calls(recorded)) == 1
+    assert fixer.status == "running"
 
 
 def test_owned_review_dispatch_with_draft_refuses(

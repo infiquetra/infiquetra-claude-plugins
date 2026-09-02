@@ -1456,23 +1456,21 @@ def route_review_result(
 
 
 def _send_with_pane_guard(unit: Unit, text: str) -> None:
-    """Inspect the pane immediately before the write ``say`` would make.
+    """Put one line into a live unit's session through the launcher's only door.
 
-    The rule is the launcher's own ``should_guard_pane_write``, called with ``wrote_before``
+    ``PaneWriter`` is the launcher's single pane-write choke point; Orchestrate does not own
+    a door of its own, so it cannot write unguarded. The writer is seeded ``wrote_before``
     true: every unit this sender reaches -- a live worker taking a routed repair, a controller
-    taking a resubmission -- was prompted by its launch, so this launcher has already written
-    into the session and a person may have typed since. That differs from ``launch`` on
-    purpose. The launcher's owned exemption covers only the first write into a pane created
-    seconds earlier; these writes land hours or days later into a session the operator has
-    been watching, so ownership alone exempts nothing here (terminal review F06). An adopted
-    unit with no receipt is unowned and inspected for that reason too. A unit with no pane
-    cannot be inspected and is prompted through its agent handle as before. An inconclusive
-    inspection still sends -- that is the documented trade in ``guard_pane_before_write``.
+    taking a resubmission -- was prompted by its launch, so the launcher has already written
+    into the session and a person may have typed since. The launcher's owned exemption covers
+    only the first write into a pane created seconds earlier; these writes land hours or days
+    later into a session the operator has been watching, so ownership alone exempts nothing
+    here (terminal review F06). A unit with no pane cannot be inspected and is prompted through
+    its agent handle. An inconclusive inspection still sends -- the documented trade in
+    ``guard_pane_before_write``.
     """
-    pane_id = unit.pane_id
-    if pane_id and should_guard_pane_write(unit, wrote_before=True):
-        guard_pane_before_write(unit, pane_id)
-    say(unit, pane_id, text)
+    writer = PaneWriter(unit, unit.pane_id, wrote_before=True)
+    writer.write(text)
 
 
 def dispatch_review_routing(
@@ -1903,7 +1901,7 @@ if not _ingest_agent_launcher():
     tab_close_failure = _agent_launcher_required
     verify_unit_preflight = _agent_launcher_required
     append_unit_note = _agent_launcher_required
-    say = _agent_launcher_required
+    PaneWriter = _agent_launcher_required
     session_owned = _agent_launcher_required
     should_guard_pane_write = _agent_launcher_required
     guard_pane_before_write = _agent_launcher_required

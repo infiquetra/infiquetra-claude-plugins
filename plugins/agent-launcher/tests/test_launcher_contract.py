@@ -74,7 +74,7 @@ def test_degraded_path_binds_settle_and_review_names() -> None:
     for name in (
         "append_unit_note",
         "VENDOR_FLAGS",
-        "say",
+        "PaneWriter",
         "has_delivery_warning",
         "VENDOR_PERMISSION",
         "VENDOR_NOTES",
@@ -535,11 +535,18 @@ def _prepare_guard_launch(
         "pane_id": "w80:p9",
         "reused": True,
     }
-    monkeypatch.setattr(
-        launcher,
-        "run",
-        _make_fake_run(recorded, pane_dump=pane_dump, existing_tabs=existing_tabs, receipt=receipt),
+    inner = _make_fake_run(
+        recorded, pane_dump=pane_dump, existing_tabs=existing_tabs, receipt=receipt
     )
+
+    def fake_run(cmd: list[str], **k: object) -> subprocess.CompletedProcess[str]:
+        # The writes themselves are observed at the Herdr boundary, never by stubbing the
+        # writer: a stubbed send once hid that the guard inside it never ran.
+        if cmd[:3] == ["herdr", "agent", "prompt"] or cmd[:3] == ["herdr", "pane", "run"]:
+            sends.append(tuple(cmd))
+        return inner(cmd, **k)
+
+    monkeypatch.setattr(launcher, "run", fake_run)
     # launch() resolves the wrapper in agent_argv before run(); stubbing run is not enough.
     monkeypatch.setattr(launcher, "launcher", lambda: "agents")
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
@@ -557,7 +564,6 @@ def _prepare_guard_launch(
             "agent": vendor,
         },
     )
-    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
     unit = launcher.LaunchRequest(name="reviewer", vendor=vendor, worktree="/tmp/wt")
     return unit, recorded, sends
@@ -1217,6 +1223,9 @@ def test_unreadable_box_is_marked_and_the_prompt_still_goes(
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         recorded.append(cmd)
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            sends.append(tuple(cmd))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
         if cmd[:3] == ["herdr", "pane", "read"]:
             pane_read_timeouts.append(kwargs.get("timeout"))
             return subprocess.CompletedProcess(cmd, 1, "", "no such pane")
@@ -1244,7 +1253,6 @@ def test_unreadable_box_is_marked_and_the_prompt_still_goes(
             "agent": "codex",
         },
     )
-    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append(a))
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
     unit = launcher.LaunchRequest(name="reader", vendor="codex", worktree="/tmp/wt")
     launcher.launch(unit)
@@ -1292,63 +1300,6 @@ def test_staged_text_reaches_no_sink_verbatim(
     assert unit.launch_receipt["input_box_text_chars"] == len(STAGED_SLASH_COMMAND)
 
 
-def test_opencode_guard_reads_before_the_picker_types(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The input guard runs before the OpenCode picker writes into an unowned pane -- and
-    the send carries its own adjacent inspection, so the unowned OpenCode path reads twice."""
-    typed: list[list[str]] = []
-    # An opencode pane's own glyph is ">": the menu rows and the staged draft all carry it, and
-    # the last classified block is the box.
-    dump = "Choose variant:\n> high\n> low\n" + f"> {STAGED_SLASH_COMMAND}"
-    receipt = {
-        "tab_id": "w80:t1",
-        "agent_name": "oc-2",
-        "pane_id": "w80:p9",
-        "reused": False,
-    }
-
-    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
-        if cmd[:3] == ["herdr", "pane", "run"]:
-            typed.append(cmd)
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-        if cmd[:3] == ["herdr", "pane", "read"]:
-            return subprocess.CompletedProcess(cmd, 0, dump, "")
-        if cmd[:3] == ["herdr", "tab", "list"]:
-            tabs = {"result": {"tabs": [{"tab_id": "w80:t1", "label": "t"}]}}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
-        if cmd[:3] == ["herdr", "pane", "current"]:
-            pane = {"result": {"pane": {"workspace_id": "w80"}}}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
-        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
-
-    monkeypatch.setattr(launcher, "run", fake_run)
-    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
-    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
-    order: list[str] = []
-    monkeypatch.setattr(
-        launcher, "verify_unit_identity", lambda *a, **k: ([], [], "opencode", True)
-    )
-    monkeypatch.setattr(launcher, "guard_pane_before_write", lambda *a, **k: order.append("guard"))
-
-    def select_variant(*_args: object, **_kwargs: object) -> tuple[str, bool]:
-        order.append("picker")
-        return "high", True
-
-    monkeypatch.setattr(
-        launcher,
-        "drive_opencode_variant_selection",
-        select_variant,
-    )
-    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
-    monkeypatch.setattr(launcher, "send", lambda *a, **k: False)
-    monkeypatch.setattr(launcher, "took_the_task", lambda *a, **k: True)
-    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt", effort="high")
-    launcher.launch(unit)
-    assert order == ["guard", "picker", "guard"]
-    assert typed == []
-
-
 def test_the_send_inspection_is_taken_after_the_preflight(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1381,70 +1332,6 @@ def test_the_send_inspection_is_taken_after_the_preflight(
     launcher.launch(unit)
     assert order == ["preflight", "guard"]
     assert unit.launch_receipt["input_box"] == "empty"
-
-
-def test_second_opencode_read_before_the_send_stops_a_late_staged_draft(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """REL-08: an unowned OpenCode launch reads twice -- once before the picker, once
-    immediately before the send -- so a draft staged between them still stops the send.
-    The classifier carries no OpenCode entry (the picker residual holds that custody), so
-    the second read's stop is modelled at the guard boundary while the read sites are
-    real: the run stub serves an empty composer to the first read and a staged draft to
-    the second. At the frozen revision there is one read, it is empty, and the send is
-    made."""
-    dumps = iter([_claude_pane("❯ "), _claude_pane(f"❯ {STAGED_SLASH_COMMAND}")])
-    ansi_reads: list[list[str]] = []
-    sends: list[str] = []
-    receipt = {"tab_id": "w80:t1", "agent_name": "oc-2", "pane_id": "w80:p9", "reused": False}
-
-    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
-        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
-            ansi_reads.append(cmd)
-            return subprocess.CompletedProcess(cmd, 0, next(dumps), "")
-        if cmd[:3] == ["herdr", "pane", "run"]:
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-        if cmd[:3] == ["herdr", "tab", "list"]:
-            tabs = {"result": {"tabs": [{"tab_id": "w80:t1", "label": "t"}]}}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
-        if cmd[:3] == ["herdr", "pane", "current"]:
-            pane = {"result": {"pane": {"workspace_id": "w80"}}}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
-        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
-
-    monkeypatch.setattr(launcher, "run", fake_run)
-    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
-    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
-    monkeypatch.setattr(
-        launcher, "verify_unit_identity", lambda *a, **k: ([], [], "opencode", True)
-    )
-    order: list[str] = []
-
-    def guard(unit: Any, pane_id: str) -> None:
-        order.append("guard")
-        # Read through the real inspection so the stop is driven by what the pane returned,
-        # not by the call count: the classifier has no OpenCode entry, so the read is
-        # classified in the pane's vendor-neutral claude shape.
-        inspection = launcher.pane_input_inspection(pane_id, vendor="claude")
-        if inspection.state is launcher.ComposerState.STAGED:
-            raise launcher.StagedInputError("second read found staged input")
-
-    monkeypatch.setattr(launcher, "guard_pane_before_write", guard)
-
-    def picker(*_args: object, **_kwargs: object) -> tuple[str, bool]:
-        order.append("picker")
-        return "high", True
-
-    monkeypatch.setattr(launcher, "drive_opencode_variant_selection", picker)
-    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
-    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append("send"))
-    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
-    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt", effort="high")
-    with pytest.raises(launcher.StagedInputError, match="second read"):
-        launcher.launch(unit)
-    assert len(ansi_reads) == 2
-    assert sends == []
-    assert order == ["guard", "picker", "guard"]
 
 
 def test_a_reused_pane_with_an_empty_box_below_an_echo_is_not_stopped(
@@ -1932,12 +1819,15 @@ def test_pane_fallback_resend_rechecks_for_staged_input(
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
     sends: list[str] = []
+    plain_run = launcher.run
 
-    def pane_send(*_args: object, **_kwargs: object) -> bool:
-        sends.append("send")
-        return True
+    def counting_run(cmd: list[str], **k: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            sends.append("send")
+        result: subprocess.CompletedProcess[str] = plain_run(cmd, **k)
+        return result
 
-    monkeypatch.setattr(launcher, "send", pane_send)
+    monkeypatch.setattr(launcher, "run", counting_run)
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: False)
     monkeypatch.setattr(
         launcher,
@@ -1978,14 +1868,12 @@ def test_agent_prompt_resend_rechecks_before_it_can_fall_back_to_the_pane(
         existing_tabs=("w80:t1",),
     )
     inspections: list[str] = []
-    send_paths = iter([False, True])  # agent prompt first, pane fallback on the resend
     accepted = iter([False, True])
     monkeypatch.setattr(
         launcher,
         "guard_pane_before_write",
         lambda *_a, **_k: inspections.append("guard"),
     )
-    monkeypatch.setattr(launcher, "send", lambda *_a, **_k: next(send_paths))
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: next(accepted))
     monkeypatch.setattr(
         launcher,
@@ -2165,105 +2053,6 @@ def test_each_resend_after_a_pane_fallback_is_inspected_once(
     assert unit.status == launcher.PROMPT_UNDELIVERED
 
 
-def _prepare_redeliver(
-    launcher: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    owned: bool,
-    pane_dump: str,
-) -> tuple[Any, list[list[str]], list[str]]:
-    """A unit carrying a staged-input stop's identifiers, with only the Herdr boundary
-    stubbed. Returns the unit, every recorded command, and the sends."""
-    recorded: list[list[str]] = []
-    sends: list[str] = []
-
-    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
-        recorded.append(cmd)
-        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, pane_dump, "")
-        if cmd[:3] == ["herdr", "agent", "prompt"]:
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
-
-    monkeypatch.setattr(launcher, "run", fake_run)
-    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
-    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
-    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
-    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append("send"))
-    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
-    monkeypatch.setattr(
-        launcher,
-        "agent_row",
-        lambda *_a, **_k: {
-            "agent_status": "idle",
-            "pane_id": "w1:p1",
-            "workspace_id": "w1",
-            "interactive_ready": True,
-            "agent": "claude",
-        },
-    )
-    unit = launcher.LaunchRequest(
-        name="worker",
-        vendor="claude",
-        worktree="/tmp/wt",
-        pane_id="w1:p1",
-        tab_id="w1:t1",
-        owned=owned,
-        launch_receipt={
-            "tab_id": "w1:t1",
-            "pane": "w1:p1",
-            "agent_name": "worker-2",
-            "owned": owned,
-            "input_box": "staged",
-        },
-    )
-    return unit, recorded, sends
-
-
-def test_redeliver_records_no_wrapper_create_and_keeps_the_tab(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The retry never runs the wrapper create: calling launch() again would create a second
-    session and overwrite the first owned tab (the prior validation artifact's REL-03,
-    rebuilt through the retry door)."""
-    unit, recorded, sends = _prepare_redeliver(
-        launcher, monkeypatch, owned=False, pane_dump=_claude_pane("❯ ")
-    )
-    launcher.redeliver(unit)
-    assert not any(cmd[0] == "agents" for cmd in recorded)
-    assert unit.tab_id == "w1:t1"
-    assert unit.status == launcher.RUNNING
-    assert unit.launch_receipt["prompt_delivered"] is True
-    assert unit.launch_receipt["input_box"] == "empty"
-    assert sends == ["send"]
-
-
-def test_redeliver_inspects_before_the_first_write_on_an_owned_unit(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The used_pane half of the pre-send predicate, observable only here: a redelivery
-    into a pane this launcher owns still inspects before its first write, because the stop
-    that made the redelivery necessary was an inspection that found text. A still-staged
-    pane raises with no send."""
-    unit, _recorded, sends = _prepare_redeliver(
-        launcher,
-        monkeypatch,
-        owned=True,
-        pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
-    )
-    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
-        launcher.redeliver(unit)
-    assert sends == []
-    assert unit.launch_receipt["input_box"] == "staged"
-
-
-def test_redeliver_without_a_pane_id_is_a_named_stop(launcher: ModuleType) -> None:
-    """A unit that lost its pane id cannot be redelivered; the stop names the recovery."""
-    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
-    with pytest.raises(SystemExit, match="cannot redeliver"):
-        launcher.redeliver(unit)
-
-
 def _prepare_redeliver_real_send(
     launcher: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
@@ -2333,6 +2122,52 @@ def _prepare_redeliver_real_send(
         },
     )
     return unit, recorded, pane_writes, guard_calls
+
+
+def test_redeliver_records_no_wrapper_create_and_keeps_the_tab(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry never runs the wrapper create: calling launch() again would create a second
+    session and overwrite the first owned tab (the prior validation artifact's REL-03,
+    rebuilt through the retry door)."""
+    unit, recorded, _pane_writes, guard_calls = _prepare_redeliver_real_send(
+        launcher, monkeypatch, owned=False, pane_dumps=[_claude_pane("❯ ")], accepted=True
+    )
+    launcher.redeliver(unit)
+    assert not any(cmd[0] == "agents" for cmd in recorded)
+    assert unit.tab_id == "w1:t1"
+    assert unit.status == launcher.RUNNING
+    assert unit.launch_receipt["prompt_delivered"] is True
+    assert unit.launch_receipt["input_box"] == "empty"
+    assert len([c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]) == 1
+    assert guard_calls == ["w1:p1"]
+
+
+def test_redeliver_inspects_before_the_first_write_on_an_owned_unit(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The used_pane half of the pre-send predicate, observable only here: a redelivery
+    into a pane this launcher owns still inspects before its first write, because the stop
+    that made the redelivery necessary was an inspection that found text. A still-staged
+    pane raises with no send."""
+    unit, recorded, _pane_writes, guard_calls = _prepare_redeliver_real_send(
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane(f"❯ {STAGED_SLASH_COMMAND}")],
+    )
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
+        launcher.redeliver(unit)
+    assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
+    assert guard_calls == ["w1:p1"]
+    assert unit.launch_receipt["input_box"] == "staged"
+
+
+def test_redeliver_without_a_pane_id_is_a_named_stop(launcher: ModuleType) -> None:
+    """A unit that lost its pane id cannot be redelivered; the stop names the recovery."""
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
+    with pytest.raises(SystemExit, match="cannot redeliver"):
+        launcher.redeliver(unit)
 
 
 def test_redeliver_with_the_real_send_inspects_before_every_write(
@@ -2550,8 +2385,10 @@ def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(launcher, "run", fake_run)
-    unit = launcher.LaunchRequest(name="worker", vendor="qwen", worktree="/tmp/wt")
-    launcher.say(unit, "w1:p1", "hello")
+    unit = launcher.LaunchRequest(
+        name="worker", vendor="qwen", worktree="/tmp/wt", launch_receipt={"owned": True}
+    )
+    launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
     assert timeouts == [
         ("herdr agent prompt", launcher.PANE_WRITE_SECONDS),
         ("herdr pane run", launcher.PANE_WRITE_SECONDS),
@@ -2570,8 +2407,32 @@ def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
     timeouts.clear()
     monkeypatch.setattr(launcher, "run", timed_out)
     with pytest.raises(SystemExit, match="did not return within"):
-        launcher.say(unit, "w1:p1", "hello")
+        launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
     assert [name for name, _ in timeouts] == ["herdr agent prompt"]
+
+
+def test_a_pane_typing_timeout_names_the_ambiguity_like_the_prompt_door(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review cycle 2, F60: the pane-typing door's timeout was a generic stop that
+    never said the line may have reached the session. Both doors now raise the same shape."""
+
+    def timed_out_typing(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "not interactive ready")
+        if cmd[:3] == ["herdr", "pane", "run"]:
+            timed: subprocess.CompletedProcess[str] = launcher.TimedOutProcess(
+                cmd, 124, "", "timed out"
+            )
+            return timed
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(launcher, "run", timed_out_typing)
+    unit = launcher.LaunchRequest(
+        name="worker", vendor="qwen", worktree="/tmp/wt", launch_receipt={"owned": True}
+    )
+    with pytest.raises(SystemExit, match="pane run into w1:p1 did not return within"):
+        launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
 
 
 def test_wrapper_identity_receipt_is_the_shape_function_output(
@@ -2591,27 +2452,109 @@ def test_wrapper_identity_receipt_is_the_shape_function_output(
     assert unit.launch_receipt is receipt
 
 
-def test_pane_write_guard_predicate_has_one_owner(launcher: ModuleType) -> None:
-    """Terminal review F16: the rule deciding when a pane must be re-inspected before a
-    write lives in should_guard_pane_write and nowhere else. Every launcher site calls it,
-    so an edit to the rule cannot leave a copy behind; the truth table is the KTD4 rule."""
-    source = LAUNCHER.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    owner = next(
-        node
+# Every place in either plugin that puts a line into a session, enumerated. Each is a call on
+# a ``PaneWriter`` named ``writer``; the class is the only owner of the two raw Herdr doors.
+# Adding a write anywhere means adding a row here, and the mutation run in
+# ``tools``-free form below (``test_forcing_the_guard_off_at_each_write_site_is_observed``)
+# turns every row's guard off independently and expects a failing observation each time.
+PANE_WRITE_SITES: tuple[tuple[str, str, str], ...] = (
+    ("launcher.py", "drive_opencode_variant_selection", "picker open"),
+    ("launcher.py", "drive_opencode_variant_selection", "variant select"),
+    ("launcher.py", "send", "setup line"),
+    ("launcher.py", "send", "task"),
+    ("orchestrate.py", "_send_with_pane_guard", "review dispatch and land resubmission"),
+)
+RAW_DOORS = (("herdr", "pane", "run"), ("herdr", "agent", "prompt"))
+
+
+def _enclosing_function(tree: ast.AST, target: ast.expr | ast.stmt) -> str:
+    best = ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.lineno <= target.lineno <= (
+            node.end_lineno or node.lineno
+        ):
+            best = node.name
+    return best
+
+
+def _writer_write_calls(tree: ast.Module) -> list[str]:
+    return [
+        _enclosing_function(tree, node)
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "should_guard_pane_write"
-    )
-    inline_copies = [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.BoolOp)
-        and "session_owned(" in ast.unparse(node)
-        and not (owner.lineno <= node.lineno <= (owner.end_lineno or owner.lineno))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "write"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "writer"
     ]
-    assert inline_copies == [], f"predicate re-derived inline at lines {inline_copies}"
-    calls = source.count("should_guard_pane_write(")
-    assert calls >= 4, "the helper must be defined and called at each of the three write sites"
+
+
+def _raw_door_calls(tree: ast.Module) -> list[tuple[int, str]]:
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if node.func.id != "run" or not node.args or not isinstance(node.args[0], ast.List):
+            continue
+        head = tuple(
+            elt.value
+            for elt in node.args[0].elts[:3]
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        )
+        if head in RAW_DOORS:
+            found.append((node.lineno, _enclosing_function(tree, node)))
+    return found
+
+
+def test_every_pane_write_goes_through_the_one_writer(launcher: ModuleType) -> None:
+    """Terminal review cycle 2, the operator's ruling: an unguarded pane write must be
+    impossible by construction. The two raw Herdr doors exist only inside PaneWriter; no
+    other function in either plugin calls them; every write site is a ``writer.write`` and
+    the set of sites is exactly the enumerated one; and no function in either file re-derives
+    the guard predicate inline (cycle 1 F16, cycle 2 F46/F50)."""
+    launcher_tree = ast.parse(LAUNCHER.read_text(encoding="utf-8"))
+    orchestrate_tree = ast.parse(ORCHESTRATE.read_text(encoding="utf-8"))
+    writer_class = next(
+        node
+        for node in launcher_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "PaneWriter"
+    )
+    strays = [
+        (line, fn)
+        for line, fn in _raw_door_calls(launcher_tree)
+        if not (writer_class.lineno <= line <= (writer_class.end_lineno or line))
+    ]
+    assert strays == [], f"raw pane-write door outside PaneWriter in launcher.py: {strays}"
+    assert _raw_door_calls(orchestrate_tree) == [], "orchestrate.py owns no pane-write door"
+    assert len(_raw_door_calls(launcher_tree)) == 2, "one prompt door and one typing door"
+    sites = sorted(
+        [(f, fn) for f, fn, _ in PANE_WRITE_SITES],
+    )
+    observed = sorted(
+        [("launcher.py", fn) for fn in _writer_write_calls(launcher_tree)]
+        + [("orchestrate.py", fn) for fn in _writer_write_calls(orchestrate_tree)]
+    )
+    assert observed == sites, f"write sites drifted from the enumeration: {observed}"
+    for tree, name in ((launcher_tree, "launcher.py"), (orchestrate_tree, "orchestrate.py")):
+        owner = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef) and node.name == "should_guard_pane_write"
+            ),
+            None,
+        )
+        inline = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.BoolOp)
+            and "session_owned(" in ast.unparse(node)
+            and not (
+                owner is not None
+                and owner.lineno <= node.lineno <= (owner.end_lineno or owner.lineno)
+            )
+        ]
+        assert inline == [], f"guard predicate re-derived inline in {name} at {inline}"
     owned = launcher.LaunchRequest(
         name="w", vendor="claude", owned=True, launch_receipt={"owned": True}
     )
@@ -2620,6 +2563,214 @@ def test_pane_write_guard_predicate_has_one_owner(launcher: ModuleType) -> None:
     assert launcher.should_guard_pane_write(owned, wrote_before=True) is True
     assert launcher.should_guard_pane_write(unowned, wrote_before=False) is True
     assert launcher.should_guard_pane_write(unowned, wrote_before=True) is True
+
+
+def _prepare_opencode_launch(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    existing_tabs: tuple[str, ...],
+    composer_dumps: list[str] | None = None,
+    accepted: bool = True,
+) -> tuple[Any, list[list[str]], list[str], list[str]]:
+    """An OpenCode launch with the real picker driver, the real writer and the real guard,
+    only the Herdr boundary stubbed. Recent-unwrapped reads serve the picker menu; ANSI reads
+    serve ``composer_dumps`` in order (the last repeats). Returns the unit, every recorded
+    command, the pane-typed lines, and the guard calls."""
+    recorded: list[list[str]] = []
+    typed: list[str] = []
+    guard_calls: list[str] = []
+    dumps = iter(composer_dumps or [_claude_pane("❯ ")])
+    last = (composer_dumps or [_claude_pane("❯ ")])[-1]
+    receipt = {"tab_id": "w80:t1", "agent_name": "oc-2", "pane_id": "w80:p9", "reused": False}
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        if cmd[:3] == ["herdr", "pane", "run"]:
+            typed.append(cmd[-1])
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, next(dumps, last), "")
+        if cmd[:3] == ["herdr", "pane", "read"]:
+            return subprocess.CompletedProcess(cmd, 0, "Select variant\n> high\n> low\n", "")
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            tabs = {"result": {"tabs": [{"tab_id": t, "label": t} for t in existing_tabs]}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        if cmd[:3] == ["herdr", "pane", "current"]:
+            pane = {"result": {"pane": {"workspace_id": "w80"}}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+
+    real_guard = launcher.guard_pane_before_write
+
+    def counting_guard(unit: Any, pane_id: str) -> None:
+        guard_calls.append(pane_id)
+        real_guard(unit, pane_id)
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        launcher, "verify_unit_identity", lambda *a, **k: ([], [], "opencode", True)
+    )
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    monkeypatch.setattr(launcher, "guard_pane_before_write", counting_guard)
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: accepted)
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": "idle",
+            "pane_id": "w80:p9",
+            "cwd": "/tmp/wt",
+            "workspace_id": "w80",
+            "interactive_ready": True,
+            "agent": "opencode",
+        },
+    )
+    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt", effort="high")
+    return unit, recorded, typed, guard_calls
+
+
+def _prompts(recorded: list[list[str]]) -> list[list[str]]:
+    return [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]
+
+
+def test_an_unowned_opencode_launch_inspects_before_all_three_writes(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The picker's two writes and the task are three writes through one writer, each
+    inspected on an unowned session -- observed as guard calls at the real guard, with the
+    real picker driver typing into the pane."""
+    unit, recorded, typed, guard_calls = _prepare_opencode_launch(
+        launcher, monkeypatch, existing_tabs=("w80:t1",)
+    )
+    launcher.launch(unit)
+    assert typed == ["/variants", "high"]
+    assert len(_prompts(recorded)) == 1
+    assert guard_calls == ["w80:p9", "w80:p9", "w80:p9"]
+    assert unit.variant == "high"
+    assert unit.status == launcher.RUNNING
+
+
+def test_an_owned_opencode_launch_inspects_before_the_select_and_the_task(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review cycle 2, F40/F47: at 7aa0e3b7 an owned OpenCode launch made three
+    pane writes with no inspection, because the picker never set the write flag. The writer
+    records its own first write -- the picker opening -- so the variant select and the task
+    are both inspected; only that first write into the fresh tab is exempt."""
+    unit, recorded, typed, guard_calls = _prepare_opencode_launch(
+        launcher, monkeypatch, existing_tabs=()
+    )
+    launcher.launch(unit)
+    assert unit.owned is True
+    assert typed == ["/variants", "high"]
+    assert len(_prompts(recorded)) == 1
+    assert guard_calls == ["w80:p9", "w80:p9"]
+
+
+def test_an_owned_opencode_redelivery_inspects_before_every_write(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review cycle 2, F39: the picker write site on the retry door, where the
+    write half of the rule is load-bearing. A redelivery seeds the writer as having written,
+    so the picker open, the select and the task are all inspected."""
+    unit, recorded, typed, guard_calls = _prepare_opencode_launch(
+        launcher, monkeypatch, existing_tabs=()
+    )
+    unit.pane_id, unit.tab_id, unit.owned = "w80:p9", "w80:t1", True
+    unit.launch_receipt = {
+        "tab_id": "w80:t1",
+        "pane": "w80:p9",
+        "owned": True,
+        "input_box": "staged",
+    }
+    launcher.redeliver(unit)
+    assert typed == ["/variants", "high"]
+    assert len(_prompts(recorded)) == 1
+    assert guard_calls == ["w80:p9", "w80:p9", "w80:p9"]
+
+
+def test_a_draft_staged_while_the_picker_was_open_stops_the_task(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REL-08 rebuilt on the writer: the inspection before the task is taken after the picker
+    and the preflight, so a draft staged in between still stops the send. The classifier has
+    no OpenCode entry, so the stop is modelled at the guard boundary while the read sites and
+    the picker driver are real: the run stub serves an empty composer to the first two reads
+    and a staged draft to the third."""
+    unit, recorded, typed, guard_calls = _prepare_opencode_launch(
+        launcher,
+        monkeypatch,
+        existing_tabs=("w80:t1",),
+        composer_dumps=[
+            _claude_pane("❯ "),
+            _claude_pane("❯ "),
+            _claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
+        ],
+    )
+
+    def guard(unit: Any, pane_id: str) -> None:
+        guard_calls.append(pane_id)
+        inspection = launcher.pane_input_inspection(pane_id, vendor="claude")
+        if inspection.state is launcher.ComposerState.STAGED:
+            raise launcher.StagedInputError("third read found staged input")
+
+    monkeypatch.setattr(launcher, "guard_pane_before_write", guard)
+    with pytest.raises(launcher.StagedInputError, match="third read"):
+        launcher.launch(unit)
+    assert typed == ["/variants", "high"]
+    assert _prompts(recorded) == []
+    assert len(guard_calls) == 3
+
+
+def test_each_setup_line_and_the_task_are_separately_inspected(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review cycle 2, F41: send() was several writes -- one per setup slash command,
+    then the task -- behind one guard, so the task could land up to a minute past its
+    inspection. Each write is now its own inspected write: guard calls equal writes on an
+    unowned launch, and on an owned fresh launch only the very first write is exempt."""
+    unit, recorded, sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane("❯ "),
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    unit.setup = ["/effort high", "/model opus"]
+    guard_calls: list[str] = []
+    real_guard = launcher.guard_pane_before_write
+
+    def counting_guard(u: Any, pane_id: str) -> None:
+        guard_calls.append(pane_id)
+        real_guard(u, pane_id)
+
+    monkeypatch.setattr(launcher, "guard_pane_before_write", counting_guard)
+    launcher.launch(unit)
+    assert [c[4] for c in sends] == ["/effort high", "/model opus", unit.task or ""][:2] + [
+        sends[2][4]
+    ]
+    assert len(sends) == 3
+    assert len(guard_calls) == 3
+
+    owned, owned_recorded, owned_sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane("❯ "),
+        receipt_tab="w80:t-new",
+        existing_tabs=(),
+    )
+    owned.setup = ["/effort high", "/model opus"]
+    guard_calls.clear()
+    monkeypatch.setattr(launcher, "guard_pane_before_write", counting_guard)
+    launcher.launch(owned)
+    assert owned.owned is True
+    assert len(owned_sends) == 3
+    assert len(guard_calls) == 2
 
 
 def _staged_receipt(**over: Any) -> dict[str, Any]:

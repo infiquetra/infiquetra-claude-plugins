@@ -650,7 +650,7 @@ def agent_row(unit: Any, agents: list[dict] | None = None) -> dict | None:
 def await_ready(unit: Any, seconds: float = LAUNCH_SETTLE_SECONDS) -> bool:
     """Wait until this session will actually take a prompt. True if it said so.
 
-    Some agents never report readiness at all -- qwen is one, and it is why `say` has a pane
+    Some agents never report readiness at all -- qwen is one, and it is why the writer has a pane
     fallback. There is nothing to wait for there, so the window is spent and the send goes ahead,
     which is still later than sending the instant the tab appears.
     """
@@ -814,7 +814,11 @@ def guard_pane_before_write(unit: Any, pane_id: str) -> None:
     receipt = unit.launch_receipt if isinstance(unit.launch_receipt, dict) else None
     if inspection.state not in (ComposerState.EMPTY, ComposerState.STAGED):
         state = inspection.state.value
-        append_unit_note(unit, f"input box {state}, prompted without a conclusive inspection")
+        inconclusive_note = f"input box {state}, prompted without a conclusive inspection"
+        # One line per cause, however many writes it authorises: the picker path inspects
+        # with the picker on screen, and every one of those reads is inconclusive.
+        if inconclusive_note not in unit.note.split("; "):
+            append_unit_note(unit, inconclusive_note)
         if receipt is not None:
             receipt["input_box"] = state
         return
@@ -862,11 +866,14 @@ def confirm_opencode_variant_selected(unit: Any, pane_id: str, selected: str) ->
 
 
 def drive_opencode_variant_selection(
-    unit: Any, pane_id: str, *, timeout: float = 10.0
+    unit: Any, pane_id: str, *, writer: PaneWriter, timeout: float = 10.0
 ) -> tuple[str, bool]:
     """Drive OpenCode's `/variants` picker in Herdr and verify the selection took.
 
     Returns the variant now in force and whether the session reported itself ready afterwards.
+    Both of the picker's writes go through ``writer`` -- they are pane writes like any other,
+    and the writer is the only door (``PaneWriter``); this function has no way to type into the
+    pane on its own.
 
     A pane holds the session's whole recent output, not only its picker, so a parse that finds
     nothing the variant ladder recognises is read as "the picker has not drawn yet" and polled
@@ -875,7 +882,7 @@ def drive_opencode_variant_selection(
     session; only once the window closes is an unrecognised set accepted, and an empty one stops.
     """
     # Open the picker
-    run(["herdr", "pane", "run", pane_id, "/variants"])
+    writer.write("/variants", door="pane")
 
     # Read the live picker options from the pane
     deadline = time.monotonic() + timeout
@@ -896,7 +903,7 @@ def drive_opencode_variant_selection(
     selected = resolve_opencode_variant(requested, available_options)
 
     # Send selected variant into the pane
-    run(["herdr", "pane", "run", pane_id, selected])
+    writer.write(selected, door="pane")
 
     # Wait until session returns to task-ready, then confirm the picker actually moved
     ready = await_ready(unit)
@@ -1379,42 +1386,31 @@ def _deliver(
     since: float | None,
     wrote_before: bool,
 ) -> None:
-    """Deliver the task into an existing pane: inspect, preflight, send, resend loop.
+    """Deliver the task into an existing pane: preflight, then every write through one door.
 
     Every collaborator is reached through this module's globals, so every existing stub still
     applies. ``since`` floors the transcript account fallback -- the create instant on a
     fresh launch, None on a redelivery, which trades away the recency floor the receipt
-    cannot supply (the receipt records no creation time). ``wrote_before`` seeds the write
-    half of ``should_guard_pane_write``: false before a fresh launch's first send, true from
+    cannot supply (the receipt records no creation time). ``wrote_before`` seeds the one
+    ``PaneWriter`` this delivery uses: false before a fresh launch's first write, true from
     the start of a redelivery, because the stop that made the redelivery necessary was an
-    inspection that found text. It becomes true the moment the first send returns,
-    whichever door carried it: the flag records that this launcher wrote, not how.
+    inspection that found text. Nothing here decides whether to inspect; the writer does,
+    before each write it makes, and there is no other way to write.
     """
+    writer = PaneWriter(unit, pane_id, wrote_before=wrote_before)
     ready = await_ready(unit)
     identity = None
     if not session_owned(unit):
         identity = verify_unit_identity(unit, pane_id, ready=ready)
     if unit.vendor == "opencode":
-        # The OpenCode picker is itself a pane write, so on an unowned session the inspection
-        # that authorises it sits immediately before it (KTD5); the send carries its own below.
-        if should_guard_pane_write(unit, wrote_before=wrote_before):
-            guard_pane_before_write(unit, pane_id)
-        _, ready = drive_opencode_variant_selection(unit, pane_id)
+        # The picker's two writes are the first writes of an OpenCode delivery; the writer
+        # inspects each under the same rule as every other write.
+        _, ready = drive_opencode_variant_selection(unit, pane_id, writer=writer)
     verify_unit_preflight(unit, pane_id, ready=ready, argv=argv, since=since, identity=identity)
-    # The inspection that authorises the first pane write is taken immediately before that
-    # write, never before the preflight: the declared bounds between an earlier read and the
-    # send sum to about fifty seconds, and a person typing inside that window defeats the
-    # guard. On a fresh launch wrote_before is false here, so this is the ownership half of
-    # the predicate; a redelivery seeds it true and inspects whatever the ownership.
-    if should_guard_pane_write(unit, wrote_before=wrote_before):
-        guard_pane_before_write(unit, pane_id)
-    send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
-    # From here on this launcher has written into the session. Which door carried the line is
-    # irrelevant to the next write's inspection: a `herdr agent prompt` that succeeded is as
-    # much a write as a pane-typed one, and the resends below land fifteen and thirty seconds
-    # later, inside the window a person can type in. Deriving this flag from the door was the
-    # defect the terminal review found (F02/F03): it was true only for the pane fallback.
-    wrote_before = True
+    # The send comes after the preflight, so the inspection that authorises its first write is
+    # taken immediately before that write: the declared bounds between an earlier read and the
+    # send sum to about fifty seconds, and a person typing inside that window defeats the guard.
+    send(unit, writer, backend, review_elsewhere=review_elsewhere)
     accepted = took_the_task(unit)
     if not accepted:
         # Resend only into a session that has still never left idle. A resend risks giving a unit
@@ -1425,11 +1421,8 @@ def _deliver(
             row = agent_row(unit)
             if row is None or row.get("agent_status") != "idle":
                 break
-            # wrote_before is true on every resend, so this always inspects; the call goes
-            # through the shared predicate so the three write sites cannot drift apart.
-            if should_guard_pane_write(unit, wrote_before=wrote_before):
-                guard_pane_before_write(unit, pane_id)
-            send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+            # The writer has written by now, so every write of a resend is inspected.
+            send(unit, writer, backend, review_elsewhere=review_elsewhere)
             accepted = took_the_task(unit)
             if accepted:
                 break
@@ -1447,16 +1440,15 @@ def _deliver(
 def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
     """Create the session, then deliver the task with each pane write inspected at its own door.
 
-    An unowned session is inspected immediately before the first write the launcher is about
-    to make (KTD5), and every session -- owned or not -- is inspected before each later write
-    (``should_guard_pane_write``). The OpenCode path makes three pane writes: opening the
-    picker, selecting the variant inside it, and the send. An unowned OpenCode launch reads
-    twice -- once immediately before the picker opens, once immediately before the send, after
-    the preflight. The variant selection typed into the open picker is not inspected: the
-    composer is not on screen while the picker is, so a read there would classify the picker,
-    not a draft. That gap is a named residual, not coverage. Every other unowned vendor reads
-    once, immediately before its send. A session the launcher created is not inspected before
-    its first send: an empty fresh pane is this launcher's own starting state.
+    Every line that enters the session goes through one ``PaneWriter``, which inspects the
+    composer before each write under ``should_guard_pane_write``: an unowned session is
+    inspected before its first write and every session is inspected before every later write.
+    The one write that skips inspection is the first write into a tab this launcher created
+    seconds earlier -- an empty fresh pane is its own starting state. On OpenCode that first
+    write is the picker opening, so an owned OpenCode launch inspects before the variant
+    selection and before the task; an unowned one inspects before all three. A read taken
+    while the picker is on screen classifies the picker, not a draft, and is recorded as an
+    inconclusive inspection under the documented trade -- it is taken, not skipped.
     """
     target_workspace_id = workspace_id_for_name(unit.workspace) if unit.workspace else None
     preexisting = (
@@ -1592,58 +1584,112 @@ def pane_text(unit: Any, text: str) -> str:
     ).strip()
 
 
-def say(unit: Any, pane_id: str | None, text: str) -> None:
-    """Put one line into the session.
+class PaneWriter:
+    """The only door through which a line enters a session, and the owner of the inspection.
 
-    ``herdr agent prompt`` is the right door, but it refuses any agent that never reports
-    ``interactive_ready`` -- qwen is one today. For those, type into the pane instead, which is what
-    the operator would do by hand -- but only up to the length a pane will still carry as an
-    instruction rather than as an attachment. See ``pane_text``.
+    Both raw doors -- ``herdr agent prompt`` and ``herdr pane run`` -- exist only inside this
+    class, and ``write`` is the only method that opens either, so an unguarded pane write is
+    not something a caller can forget to prevent: there is no call that performs one. Before
+    each write, ``write`` asks ``should_guard_pane_write`` whether the composer must be
+    inspected first, using its own record of whether it has already written into this session
+    (``wrote``). That record is the writer's, scoped to one delivery, never a value threaded by
+    hand across callers -- four repair rounds on this file each satisfied a finding at one call
+    site and left the adjacent site's flag stale; the picker's two writes were the last such
+    site (issue 907 terminal review cycle 2, F39/F40/F41/F46).
 
-    Both doors are bounded by ``PANE_WRITE_SECONDS``. A prompt that times out is not a refusal:
-    the line may already have been delivered, so the pane door is never tried behind it -- that
-    would be the second delivery every other guard in this file exists to prevent -- and the
-    stop names what is unknown. This returns nothing on purpose: callers once read "which door"
-    off its return value and used that as the write flag, which left every ``herdr agent
-    prompt`` write untracked (terminal review F02/F03). Whether a write happened is the
-    caller's own knowledge -- a call that returned wrote.
+    ``wrote_before`` seeds the record: false for a fresh launch, whose first write into a tab
+    this launcher created seconds earlier is the one write the rule exempts; true for a
+    redelivery and for Orchestrate's later senders, where a person may have typed since.
+
+    Doors. ``door="prompt"`` is ``herdr agent prompt``, the right door for an agent that reports
+    interactive readiness; one that never does -- qwen today -- refuses it, and the line is typed
+    into the pane instead, as the operator would by hand, up to the length a pane still carries
+    as an instruction (``pane_text``). ``door="pane"`` types verbatim: the OpenCode picker is
+    driven with keystrokes, not prompts. Both are bounded by ``PANE_WRITE_SECONDS``; a write
+    that times out on either door is a named stop saying the line may or may not have reached
+    the session, and the prompt door never falls through to the pane behind a timeout -- that
+    would be the second delivery every guard in this file exists to prevent. A writer with no
+    pane can only prompt through the agent handle and has nothing to inspect.
     """
-    handle = unit.agent_name or unit.name
-    attempt = run(
-        ["herdr", "agent", "prompt", handle, text], check=False, timeout=PANE_WRITE_SECONDS
-    )
-    if isinstance(attempt, TimedOutProcess):
-        raise SystemExit(
-            f"{unit.name}: herdr agent prompt did not return within {PANE_WRITE_SECONDS}s; "
-            "the line may or may not have reached the session -- check the tab before "
-            "prompting it again"
+
+    def __init__(self, unit: Any, pane_id: str | None, *, wrote_before: bool) -> None:
+        self.unit = unit
+        self.pane_id = pane_id
+        self.wrote = wrote_before
+
+    def write(self, text: str, *, door: str = "prompt") -> None:
+        """Inspect if the rule requires it, then put ``text`` into the session."""
+        if self.pane_id and should_guard_pane_write(self.unit, wrote_before=self.wrote):
+            guard_pane_before_write(self.unit, self.pane_id)
+        self._raw(text, door=door)
+        self.wrote = True
+
+    def _raw(self, text: str, *, door: str) -> None:
+        """The doors themselves. Private on purpose: only ``write`` may open them."""
+        unit = self.unit
+        if door == "pane":
+            if not self.pane_id:
+                raise SystemExit(f"{unit.name}: no pane to type into")
+            self._type(text)
+            return
+        if door != "prompt":
+            raise SystemExit(f"{unit.name}: unknown pane-write door {door!r}")
+        handle = unit.agent_name or unit.name
+        attempt = run(
+            ["herdr", "agent", "prompt", handle, text], check=False, timeout=PANE_WRITE_SECONDS
         )
-    if attempt.returncode == 0:
-        return
-    if not pane_id:
-        raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
-    typed = pane_text(unit, text)
-    run(["herdr", "pane", "run", pane_id, typed], timeout=PANE_WRITE_SECONDS)
-    fallback_note = "prompted through its pane; this agent does not report interactive readiness"
-    if fallback_note not in unit.note.split("; "):
-        append_unit_note(unit, fallback_note)
+        if isinstance(attempt, TimedOutProcess):
+            raise SystemExit(
+                f"{unit.name}: herdr agent prompt did not return within {PANE_WRITE_SECONDS}s; "
+                "the line may or may not have reached the session -- check the tab before "
+                "prompting it again"
+            )
+        if attempt.returncode == 0:
+            return
+        if not self.pane_id:
+            raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
+        self._type(pane_text(unit, text))
+        fallback_note = (
+            "prompted through its pane; this agent does not report interactive readiness"
+        )
+        if fallback_note not in unit.note.split("; "):
+            append_unit_note(unit, fallback_note)
+
+    def _type(self, text: str) -> None:
+        unit = self.unit
+        typed = run(
+            ["herdr", "pane", "run", str(self.pane_id), text],
+            check=False,
+            timeout=PANE_WRITE_SECONDS,
+        )
+        if isinstance(typed, TimedOutProcess):
+            raise SystemExit(
+                f"{unit.name}: herdr pane run into {self.pane_id} did not return within "
+                f"{PANE_WRITE_SECONDS}s; the line may or may not have reached the session -- "
+                "check the tab before prompting it again"
+            )
+        if typed.returncode != 0:
+            err = (typed.stderr or typed.stdout or "").strip()
+            raise SystemExit(
+                f"{unit.name}: command failed ({typed.returncode}) while typing into pane "
+                f"{self.pane_id}\n{err}"
+            )
 
 
 def send(
-    unit: Any, pane_id: str | None, backend: str = "inline", *, review_elsewhere: bool = False
+    unit: Any, writer: PaneWriter, backend: str = "inline", *, review_elsewhere: bool = False
 ) -> None:
-    """Set the session up, then give it its task.
+    """Set the session up, then give it its task -- each line one inspected write.
 
     Setup goes first and separately: a tier has to be in force before the work starts, and a slash
-    command bundled into the same message as the task is just text the agent reads.
+    command bundled into the same message as the task is just text the agent reads. Each setup
+    line and the task are separate writes, each inspected by the writer before it goes: one
+    inspection before the first of them would leave the task landing up to a minute past its
+    guard (terminal review cycle 2, F41).
     """
     for line in unit.setup:
-        say(unit, pane_id, line)
-    say(
-        unit,
-        pane_id,
-        normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere),
-    )
+        writer.write(line)
+    writer.write(normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere))
 
 
 def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:

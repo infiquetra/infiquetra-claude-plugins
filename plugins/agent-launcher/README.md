@@ -21,6 +21,8 @@ python3 "$S" roster
 python3 "$S" preview --vendor codex --task reviewer --cwd "$PWD" --model gpt-5.4 --effort xhigh
 python3 "$S" launch  --vendor codex --task reviewer --cwd "$PWD" --model gpt-5.4 --effort xhigh --prompt "review the diff" > receipt.json
 python3 "$S" close --receipt-json receipt.json
+# after a staged-input stop, once the composer is clear -- never a second launch:
+python3 "$S" redeliver --vendor <tool> --task <tab-name> --cwd "$PWD" --prompt <text> --receipt-json receipt.json > receipt-retry.json
 ```
 
 The launch line carries a real prompt: without one, the session never leaves idle and the command exits nonzero.
@@ -29,8 +31,12 @@ Standard library only, so `python3` — not `uv run`.
 
 ## Input-box receipt contract
 
-For an unowned session, the launch receipt records composer inspection under `input_box`; an owned
-session is never inspected, so its receipt carries no `input_box` key. Its complete value set is
+The launch receipt records the last composer inspection under `input_box`. A pane is inspected
+immediately before a write whenever the write could land behind staged text: before the first
+write into a session the launcher did not create, and before every later write into any session,
+owned or not, once the launcher has written into it (each resend, and the first write of a
+redelivery). A fresh owned launch whose first prompt was taken made no inspection, so its receipt
+carries no `input_box` key; an owned session that was resent to or redelivered carries it. Its complete value set is
 `empty`, `staged`, `unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`, and
 `read_timeout`. Only `staged` also carries `input_box_text_chars`: the visible length of what the
 parser absorbed — visible characters after border stripping, rows joined without a separator, one

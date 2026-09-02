@@ -1769,6 +1769,42 @@ def close_owned_session(unit: Any, *, receipt: dict[str, Any] | None = None) -> 
         raise SystemExit(tab_close_failure(unit.tab_id, proc.returncode, err))
 
 
+def _adopt_staged_receipt(unit: LaunchRequest, receipt: dict[str, Any]) -> None:
+    """Take the session identifiers a staged-input stop recorded onto a fresh request.
+
+    The standalone retry door. The receipt is the only thing that knows which tab and pane
+    the stop left behind and whether this launcher owns them, so those come from it; the
+    task text and launch settings come from the flags, exactly as ``launch`` took them. Three
+    refusals keep this from becoming a second delivery: a receipt for a different task name,
+    a receipt that records no staged-input stop (``launch`` may already have delivered its
+    prompt), and a receipt with no pane to prompt.
+    """
+    recorded_name = receipt.get("unit_name")
+    if recorded_name and recorded_name != unit.name:
+        raise SystemExit(
+            f"cannot redeliver: receipt was written for task {recorded_name!r}, not {unit.name!r}"
+        )
+    if receipt.get("input_box") != ComposerState.STAGED.value:
+        raise SystemExit(
+            "cannot redeliver: the receipt does not record a staged-input stop "
+            f"(input_box is {receipt.get('input_box')!r}); redeliver retries only that stop -- "
+            "a prompt that was delivered must not be sent twice, and anything else is a new "
+            "launch under a new task name"
+        )
+    pane_id = receipt.get("pane") or receipt.get("pane_id")
+    if not pane_id:
+        raise SystemExit(
+            "cannot redeliver: the receipt records no pane; clear the composer and launch "
+            "again under a new task name"
+        )
+    unit.tab_id = receipt.get("tab_id")
+    unit.pane_id = str(pane_id)
+    unit.agent_name = receipt.get("agent_name") or unit.name
+    unit.reused = wrapper_reused(receipt.get("reused"))
+    unit.owned = receipt.get("owned") is True
+    unit.launch_receipt = receipt
+
+
 def _request_from_args(args: argparse.Namespace) -> LaunchRequest:
     assert_safe_path_component(args.task, "task name")
     cwd = str(Path(args.cwd).resolve()) if args.cwd else str(Path.cwd().resolve())
@@ -1823,6 +1859,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--skip-preview",
         action="store_true",
         help="Rejected if set: launch always previews first",
+    )
+    redeliver_p = sub.add_parser(
+        "redeliver",
+        help="Re-prompt the pane a staged-input stop recorded; never creates a session",
+    )
+    _add_launch_flags(redeliver_p)
+    redeliver_p.add_argument(
+        "--receipt-json",
+        required=True,
+        help="The receipt the staged-input stop wrote; tab, pane and ownership come from it",
     )
     close_p = sub.add_parser("close", help="Close a session this process owns")
     close_p.add_argument(
@@ -1887,6 +1933,18 @@ def cli_main(argv: list[str] | None = None) -> int:
         close_owned_session(unit, receipt=receipt)
         return 0
     unit = _request_from_args(args)
+    if args.cmd == "redeliver":
+        receipt = _load_receipt(args.receipt_json)
+        _adopt_staged_receipt(unit, receipt)
+        try:
+            redeliver(unit)
+        except SystemExit:
+            json.dump(unit.launch_receipt, sys.stdout, indent=2, sort_keys=True)
+            sys.stdout.write("\n")
+            raise
+        json.dump(unit.launch_receipt, sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 1 if unit.status == PROMPT_UNDELIVERED else 0
     if args.cmd == "argv":
         print(" ".join(agent_argv(unit)))
         return 0

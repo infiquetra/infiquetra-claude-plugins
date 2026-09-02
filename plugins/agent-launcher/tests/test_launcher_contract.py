@@ -639,17 +639,26 @@ def test_input_box_text_chars_counts_a_styled_remainder_not_only_the_unstyled_pa
     assert unit.launch_receipt["input_box_text_chars"] > len(unstyled)
 
 
-def test_documents_state_the_count_definition_and_the_owned_session_absence() -> None:
-    """DOCC-01, DOCC-10, DOCC-11, DOCC-02: both surfaces carry the KTD3 count definition,
-    the owned-session absence, and the accepted indented-row asymmetry. Prose is compared
-    with whitespace flattened so line wrapping cannot mask a claim."""
+def test_documents_state_the_count_definition_and_the_shipped_guard_rule() -> None:
+    """DOCC-01, DOCC-10, DOCC-11, DOCC-02, and terminal review F11: both surfaces carry the
+    KTD3 count definition, the accepted indented-row asymmetry, and the shipped write-guard
+    rule -- an owned session IS inspected before every later write, and only a fresh owned
+    launch whose first prompt was taken carries no `input_box` key. The superseded
+    one-sided sentence must be gone. Prose is compared with whitespace flattened so line
+    wrapping cannot mask a claim."""
     for path in (SKILL_MD, LAUNCHER_README):
         flat = " ".join(path.read_text(encoding="utf-8").split())
         assert "visible length of what the parser absorbed" in flat, path
         assert "one character short at each wrapped-row boundary" in flat, path
         assert "lower bound" in flat, path
         assert "carries no `input_box` key" in flat, path
-        assert "read as input" in flat, path
+        assert "every later write into any session, owned or not" in flat, path
+        assert "an owned session is never inspected" not in flat, path
+        assert "redeliver" in flat, path
+    skill = " ".join(SKILL_MD.read_text(encoding="utf-8").split())
+    assert "never a second `launch`" in skill
+    assert 'python3 "$S" redeliver' in skill
+    assert "a receipt that does not record a staged-input stop" in skill
 
 
 def test_documented_opencode_permission_flag_matches_the_runtime_table(
@@ -2522,6 +2531,206 @@ def test_pane_write_guard_predicate_has_one_owner(launcher: ModuleType) -> None:
     assert launcher.should_guard_pane_write(owned, wrote_before=True) is True
     assert launcher.should_guard_pane_write(unowned, wrote_before=False) is True
     assert launcher.should_guard_pane_write(unowned, wrote_before=True) is True
+
+
+def _staged_receipt(**over: Any) -> dict[str, Any]:
+    receipt: dict[str, Any] = {
+        "unit_name": "worker",
+        "vendor": "claude",
+        "tab_id": "w1:t1",
+        "pane": "w1:p1",
+        "agent_name": "worker-2",
+        "reused": False,
+        "owned": True,
+        "input_box": "staged",
+        "input_box_text_chars": 12,
+        "prompt_delivered": None,
+    }
+    receipt.update(over)
+    return receipt
+
+
+def test_redeliver_cli_adopts_the_stop_receipt_and_never_creates(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """Terminal review F07: the staged-input stop has a CLI-reachable standalone recovery.
+    The retry takes tab, pane and ownership from the receipt the stop wrote and the task
+    from the same flags launch took; it goes through redeliver(), never launch()."""
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(_staged_receipt()))
+    seen: list[Any] = []
+
+    def fake_redeliver(unit: Any, *_a: object, **_k: object) -> None:
+        seen.append(unit)
+        unit.status = launcher.RUNNING
+        unit.launch_receipt["prompt_delivered"] = True
+
+    monkeypatch.setattr(launcher, "redeliver", fake_redeliver)
+    monkeypatch.setattr(launcher, "launch", lambda *_a, **_k: pytest.fail("launch was run"))
+    rc = launcher.cli_main(
+        [
+            "redeliver",
+            "--vendor",
+            "claude",
+            "--task",
+            "worker",
+            "--cwd",
+            str(tmp_path),
+            "--prompt",
+            "do the thing",
+            "--receipt-json",
+            str(receipt_path),
+        ]
+    )
+    assert rc == 0
+    (unit,) = seen
+    assert (unit.tab_id, unit.pane_id, unit.agent_name, unit.owned) == (
+        "w1:t1",
+        "w1:p1",
+        "worker-2",
+        True,
+    )
+    assert unit.task == "do the thing"
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["prompt_delivered"] is True
+    assert printed["tab_id"] == "w1:t1"
+
+
+def test_redeliver_cli_exits_nonzero_when_the_prompt_was_not_taken(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(_staged_receipt()))
+
+    def withheld(unit: Any, *_a: object, **_k: object) -> None:
+        unit.status = launcher.PROMPT_UNDELIVERED
+        unit.launch_receipt["prompt_delivered"] = False
+
+    monkeypatch.setattr(launcher, "redeliver", withheld)
+    rc = launcher.cli_main(
+        ["redeliver", "--vendor", "claude", "--task", "worker", "--receipt-json", str(receipt_path)]
+    )
+    assert rc == 1
+    assert json.loads(capsys.readouterr().out)["prompt_delivered"] is False
+
+
+@pytest.mark.parametrize(
+    ("over", "message"),
+    [
+        ({"unit_name": "other"}, "written for task 'other'"),
+        ({"input_box": "empty"}, "does not record a staged-input stop"),
+        ({"prompt_delivered": True, "input_box": None}, "does not record a staged-input stop"),
+        ({"pane": None}, "records no pane"),
+    ],
+)
+def test_redeliver_cli_refuses_a_receipt_that_is_not_a_staged_stop(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    over: dict[str, Any],
+    message: str,
+) -> None:
+    """Counter-cases for F07: the retry door is only for the staged-input stop. A receipt
+    for another task, one whose prompt was delivered, or one with no pane is refused before
+    any Herdr call -- a second delivery is the failure every other guard exists to prevent."""
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(_staged_receipt(**over)))
+    monkeypatch.setattr(launcher, "run", lambda *_a, **_k: pytest.fail("herdr was called"))
+    monkeypatch.setattr(launcher, "redeliver", lambda *_a, **_k: pytest.fail("redeliver ran"))
+    with pytest.raises(SystemExit, match=message):
+        launcher.cli_main(
+            [
+                "redeliver",
+                "--vendor",
+                "claude",
+                "--task",
+                "worker",
+                "--receipt-json",
+                str(receipt_path),
+            ]
+        )
+
+
+FAKE_HERDR_FOR_REDELIVER = """#!/usr/bin/env python3
+import json, os, sys
+log = os.environ["HERDR_LOG"]
+state = os.environ["HERDR_STATE"]
+argv = sys.argv[1:]
+with open(log, "a") as fh:
+    fh.write(" ".join(argv) + "\\n")
+if argv[:2] == ["agent", "list"]:
+    status = "working" if os.path.exists(state) else "idle"
+    row = {"name": "worker-2", "agent": "claude", "pane_id": "w1:p1", "workspace_id": "w1",
+           "cwd": os.environ["HERDR_CWD"], "interactive_ready": True, "agent_status": status}
+    print(json.dumps({"result": {"agents": [row]}}))
+elif argv[:2] == ["pane", "read"] and "--format" in argv:
+    print("\\x1b[2m────\\x1b[0m\\n❯ \\n\\x1b[2m────\\x1b[0m")
+elif argv[:2] == ["pane", "read"]:
+    print("")
+elif argv[:2] == ["agent", "prompt"]:
+    open(state, "w").close()
+sys.exit(0)
+"""
+
+
+def test_redeliver_cli_as_a_real_subprocess_reprompts_the_recorded_pane(tmp_path: Path) -> None:
+    """The command under test run as a real subprocess with a fake herdr and agents on PATH:
+    no fixture stands in for the launcher. The receipt's pane is inspected once before the
+    prompt, the wrapper create never runs, the session leaves idle after the prompt, and the
+    updated receipt comes back on stdout with the exit code saying delivered."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    herdr = bin_dir / "herdr"
+    herdr.write_text(FAKE_HERDR_FOR_REDELIVER, encoding="utf-8")
+    herdr.chmod(0o755)
+    agents = bin_dir / "agents"
+    agents.write_text("#!/bin/sh\necho 'the wrapper create must not run' >&2\nexit 9\n")
+    agents.chmod(0o755)
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(_staged_receipt()))
+    log = tmp_path / "herdr.log"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "HERDR_LOG": str(log),
+        "HERDR_STATE": str(tmp_path / "prompted"),
+        "HERDR_CWD": str(worktree.resolve()),
+    }
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(LAUNCHER),
+            "redeliver",
+            "--vendor",
+            "claude",
+            "--task",
+            "worker",
+            "--cwd",
+            str(worktree),
+            "--prompt",
+            "do the thing",
+            "--receipt-json",
+            str(receipt_path),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    receipt = json.loads(proc.stdout)
+    assert receipt["prompt_delivered"] is True
+    assert receipt["tab_id"] == "w1:t1"
+    assert receipt["input_box"] == "empty"
+    calls = [line.split() for line in log.read_text(encoding="utf-8").splitlines()]
+    prompts = [i for i, c in enumerate(calls) if c[:2] == ["agent", "prompt"]]
+    reads = [i for i, c in enumerate(calls) if c[:2] == ["pane", "read"] and "--format" in c]
+    assert len(prompts) == 1
+    assert len(reads) == 1 and reads[0] < prompts[0]
+    assert "the wrapper create must not run" not in proc.stderr
+    assert calls[prompts[0]][2] == "worker-2"
 
 
 def test_close_without_receipt_tab_id_stops(launcher: ModuleType) -> None:

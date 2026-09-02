@@ -37,6 +37,25 @@ def _frontmatter(path: Path) -> dict[str, str]:
     raise AssertionError(f"{path} has no closing frontmatter marker")
 
 
+OLD_SOURCE_RENAMES = (
+    ("class PaneWriter:", "class LegacyPaneWriter:"),
+    ("def should_guard_pane_write(", "def legacy_should_guard_pane_write("),
+    ("def session_has_started(", "def legacy_session_has_started("),
+    ("def redeliver(", "def legacy_redeliver("),
+)
+
+
+def _strip_new_launcher_names(launcher_install: Path) -> None:
+    """Rewrite an installed launcher so it predates the floor in substance: the names this
+    Orchestrate release binds are renamed away while the manifest keeps its version."""
+    script = launcher_install / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    text = script.read_text(encoding="utf-8")
+    for old, new in OLD_SOURCE_RENAMES:
+        assert old in text, old
+        text = text.replace(old, new)
+    script.write_text(text, encoding="utf-8")
+
+
 def _install_plugin(cache: Path, plugin: str, version: str, *, parts: tuple[str, ...]) -> Path:
     """Copy the named subtrees of a repo plugin into a simulated cache."""
     destination = cache / plugin / version
@@ -397,6 +416,36 @@ def test_read_only_help_and_roster_survive_a_stale_launcher_while_go_enforces_th
     assert "Traceback" not in output
 
 
+def test_a_launcher_root_that_lacks_the_bound_names_is_the_named_companion_fault(
+    tmp_path: Path,
+) -> None:
+    """Cycle 2, F72: the consumer contract tests read the in-repo launcher, but the real
+    ingest resolves whatever tree the launcher root points at. A tree whose manifest
+    satisfies the floor but whose script omits the names Orchestrate binds must produce the
+    named companion fault with the update remedy on the write side, not a NameError, and
+    must still serve status."""
+    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    old_tree = tmp_path / "old-launcher-tree"
+    shutil.copytree(
+        tmp_path / "cache-at-floor" / MARKETPLACE / "agent-launcher" / _declared_floor(), old_tree
+    )
+    _strip_new_launcher_names(old_tree)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "HERDR_LOG": str(tmp_path / "herdr-old-tree.log"),
+        "AGENT_LAUNCHER_ROOT": str(old_tree),
+    }
+    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
+    go = _run_installed_orchestrate(script, ["go"], cwd=repo, env_overrides=env)
+    output = go.stderr + go.stdout
+    assert go.returncode != 0
+    assert "does not define" in output and "PaneWriter" in output, output
+    assert "claude plugin update agent-launcher@infiquetra-plugins" in output
+    assert "NameError" not in output and "Traceback" not in output
+    status = _run_installed_orchestrate(script, ["status"], cwd=repo, env_overrides=env)
+    assert status.returncode == 0, status.stderr + status.stdout
+
+
 def test_missing_composer_is_deferred_and_reported_without_a_traceback(tmp_path: Path) -> None:
     cache = tmp_path / "cache" / MARKETPLACE
     orch_install = _install_plugin(
@@ -669,6 +718,11 @@ def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes, Path]
     )
     if state == "below-floor":
         _set_plugin_version(launcher_install, "1.0.0")
+    if state == "old-source":
+        # A manifest at the floor over a source that predates it (cycle 2, F69): the names
+        # Orchestrate binds are absent, so the write side must refuse with the update remedy
+        # instead of dying in a NameError at the first pane write.
+        _strip_new_launcher_names(launcher_install)
     if state == "unusable":
         composer = launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py"
         composer.write_text("raise RuntimeError('simulated roster drift')\n", encoding="utf-8")
@@ -758,7 +812,7 @@ def _assert_no_pane_write(calls: list[list[str]], command: str, state: str) -> N
         )
 
 
-@pytest.mark.parametrize("state", ["at-floor", "below-floor", "unusable"])
+@pytest.mark.parametrize("state", ["at-floor", "below-floor", "old-source", "unusable"])
 @pytest.mark.parametrize("command", list(MATRIX_INVOCATIONS))
 def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) -> None:
     """SEC-03/API-02: the companion floor as a command-by-state matrix. A below-floor or
@@ -781,11 +835,17 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
                 f"{state}/{command}: liveness was not asked of herdr"
             )
         return
-    if state == "below-floor":
+    if state in ("below-floor", "old-source"):
+        # Cycle 2, F56: no command in these two states may write a pane, whatever bucket it
+        # is in -- asserted for every command, not only the gated ones.
+        _assert_no_pane_write(calls, command, state)
         if command in GATED_SUBCOMMANDS:
             assert code != 0, f"{state}/{command}: ran against a below-floor companion"
             assert "claude plugin update agent-launcher@infiquetra-plugins" in output, (
                 f"{state}/{command}: no update remedy: {output}"
+            )
+            assert "NameError" not in output and "Traceback" not in output, (
+                f"{state}/{command}: {output}"
             )
             assert EXPECTED_REMEDIATION not in output, (
                 f"{state}/{command}: the install remedy serves a stale install: {output}"
@@ -811,7 +871,8 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
                 f"{state}/{command}: refused: {output}"
             )
         return
-    # unusable: nothing was ingested
+    # unusable: nothing was ingested; nothing may write a pane whatever the bucket (F56)
+    _assert_no_pane_write(calls, command, state)
     if command in GATED_SUBCOMMANDS or command in INGEST_ONLY_SUBCOMMANDS:
         assert code != 0, f"{state}/{command}: ran against an unusable companion"
         assert "simulated roster drift" in output or "not found" in output, (

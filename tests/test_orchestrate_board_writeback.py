@@ -1359,6 +1359,20 @@ class TestTheRunFileNamesItsOwnContract:
         payload = json.loads((repo / ".orchestrate" / "run.json").read_text())
         assert payload["contract"] not in previous_reader_knows
         assert "permission_declared" in payload["units"][0]
+        # Cycle 2, F73: exercise the gate itself as the older reader would run it, not only
+        # the membership of two literals.
+        monkeypatch.setattr(orchestrate, "KNOWN_RUN_FILE_CONTRACTS", previous_reader_knows)
+        with pytest.raises(orchestrate.RunFileContractError, match="Update the orchestrate plugin"):
+            orchestrate.Run.load()
+
+    def test_a_legacy_row_without_the_permission_key_reads_as_not_declared(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cycle 2, F67: the field defaulted true, so a legacy unit row lacking the key read
+        as a posture somebody chose. Only the plan parser sets it true."""
+        _write_run(repo, [_unit("work-alpha")])
+        monkeypatch.chdir(repo)
+        assert orchestrate.Run.load().unit("work-alpha").permission_declared is False
 
     def test_a_run_file_from_a_newer_orchestrate_is_refused_not_read(
         self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch

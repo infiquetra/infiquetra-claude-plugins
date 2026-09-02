@@ -254,11 +254,14 @@ class Unit:
     ``auto`` is the default because it is enough for a unit to do its own work in its own worktree.
     ``bypass`` is there because it is what the operator runs all day, and a unit that keeps stopping
     to ask in a tab nobody is watching has failed. The containment is the worktree either way."""
-    permission_declared: bool = True
+    permission_declared: bool = False
     """Whether the plan row that produced this unit named ``permission`` explicitly.
 
-    False means the unit inherited the default. Recorded because a run that declared a posture and
-    a plan that omitted the field produce a worker in ``auto`` with nothing on screen to say so."""
+    False means the unit inherited the default, and false is the default here too, so a unit row
+    that lacks the key -- a legacy run file, or one written by hand -- reads as not declared
+    rather than as a posture somebody chose (cycle 2, F67). The plan parser is the only producer
+    that sets it true. Recorded because a run that declared a posture and a plan that omitted the
+    field produce a worker in ``auto`` with nothing on screen to say so."""
     setup: list[str] = field(default_factory=list)
     """Lines sent into the session before its task, for tier control the command line lacks.
 
@@ -939,10 +942,12 @@ def read_unit(raw: dict[str, Any]) -> Unit:
     unit's in-memory task text is restored cleanly; unmarked hand-authored briefs load verbatim.
 
     A key this Unit does not know is dropped with a one-line notice naming the unit, the key
-    and this Orchestrate's version: a run file written by a newer Orchestrate loads (its
-    unknown fields are ignored) instead of dying with a TypeError. Nothing about the writer
-    is known or recorded, and no version is ever written into the run file -- which makes
-    this release the oldest Orchestrate that reads this release's run files.
+    and this Orchestrate's version. That is a safety net for a row under a contract this
+    version knows -- a hand-edited record, or a same-contract writer that added a field it
+    should not have -- not forward tolerance: a run file written by a newer Orchestrate under
+    a newer contract string is refused by ``Run.load`` before any unit row is read (cycle 2,
+    F68). No version is ever written into the run file; the contract string is the only
+    statement of shape.
     """
     known = set(Unit.__dataclass_fields__)
     unknown = [key for key in raw if key not in known]
@@ -1901,7 +1906,68 @@ def _ingest_agent_launcher() -> bool:
     # The exec binds the launcher's module docstring into this namespace, so --help would
     # describe the launcher; Orchestrate keeps describing Orchestrate.
     globals()["__doc__"] = own_doc
+    _bind_missing_launcher_names(script)
     return True
+
+
+# Every launcher name Orchestrate calls. The degraded block below binds each to the
+# required-companion stub when nothing was ingested; ``_bind_missing_launcher_names`` binds the
+# same stub for any of them a launcher that WAS ingested does not define -- a companion whose
+# manifest satisfies the floor but whose source predates it, or a launcher root pointed at an
+# older tree (cycle 2, F54/F69/F72). Without that check a missing name surfaced as a NameError
+# at the first pane write instead of the named companion fault with the update remedy.
+REQUIRED_LAUNCHER_NAMES = (
+    "launch",
+    "redeliver",
+    "agent_argv",
+    "launcher",
+    "launchable",
+    "roster",
+    "live_agents",
+    "close_run_session",
+    "tab_close_failure",
+    "verify_unit_preflight",
+    "agent_row",
+    "session_has_started",
+    "append_unit_note",
+    "PaneWriter",
+    "session_owned",
+    "should_guard_pane_write",
+    "guard_pane_before_write",
+    "models",
+    "favourites",
+    "has_delivery_warning",
+    "clear_delivery_warning",
+    "VENDOR_FLAGS",
+    "VENDOR_PERMISSION",
+    "VENDOR_NOTES",
+    "AccountMismatchError",
+    "StagedInputError",
+)
+
+
+def _bind_missing_launcher_names(script: Path) -> None:
+    """After a successful exec, refuse the write side by name for any required name absent.
+
+    The stub raises the companion fault; the two stop classes are bound to local exception
+    types so ``except`` clauses keep working. The fault carries the update remedy, because a
+    launcher that loads but lacks these names is an older release, whatever its manifest says.
+    An error already recorded (a floor failure) is kept: it names the same remedy.
+    """
+    global _AGENT_LAUNCHER_ERROR
+    missing = [name for name in REQUIRED_LAUNCHER_NAMES if name not in globals()]
+    if not missing:
+        return
+    for name in missing:
+        if name in ("AccountMismatchError", "StagedInputError"):
+            globals()[name] = type(name, (Exception,), {})
+        else:
+            globals()[name] = _agent_launcher_required
+    if not _AGENT_LAUNCHER_ERROR:
+        _AGENT_LAUNCHER_ERROR = (
+            f"agent-launcher at {script} does not define {', '.join(missing)}; Orchestrate "
+            f"requires a release that does. {_UPDATE_REMEDIATION}"
+        )
 
 
 run = _subprocess_run

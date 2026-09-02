@@ -693,6 +693,46 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         assert orchestrate.Run.load().unit("alpha").status == "pending"
         assert "already has tab w1:t-old" in capsys.readouterr().out
 
+    def test_a_staged_receipt_without_a_pane_is_not_a_retry(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Cycle 2, F55: the predicate's pane clause had no test asserting false. A pending
+        unit with a staged receipt but no pane is not redelivered -- there is nothing to prompt
+        -- and go treats it as an ordinary unit that already has a tab."""
+        unit = orchestrate.Unit(
+            name="alpha",
+            vendor="claude",
+            task="x",
+            status="pending",
+            tab_id="w1:t1",
+            launch_receipt={"input_box": "staged"},
+        )
+        assert orchestrate._staged_input_stop(unit) is False
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="pending",
+                    branch=None,
+                    tab_id="w1:t1",
+                    launch_receipt={"input_box": "staged", "owned": True},
+                )
+            ],
+        )
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(orchestrate, "launch", lambda *_a, **_k: pytest.fail("launch ran"))
+        monkeypatch.setattr(
+            orchestrate, "redeliver", lambda *_a, **_k: pytest.fail("redeliver ran")
+        )
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert "already has tab w1:t1" in capsys.readouterr().out
+
     def test_the_staged_marker_is_the_composer_enum_value(self, orchestrate: ModuleType) -> None:
         """Terminal review F25: Orchestrate's stop predicate compares the receipt against a
         value the launcher's ComposerState enum produces. The two are bound here so a renamed

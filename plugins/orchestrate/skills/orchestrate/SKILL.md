@@ -161,9 +161,10 @@ role, owned paths, outstanding fix requests, dependencies, worktree, branch, tab
 `variant`, `launch_receipt`, and `parked_state`. If session state is wrong, `herdr agent list` is the real
 truth.
 
-The file names its own shape under a `contract` key. A run file this Orchestrate writes cannot be opened
-by an Orchestrate older than 4.2.0: the older one refuses it by name and tells you to update, rather than
-reading it wrong. This Orchestrate still opens every run file an older one wrote. So after updating
+The file names its own shape under a `contract` key. An Orchestrate from 4.0.0 up to 4.1.x refuses a
+run file this version writes, by name, with the update remedy, rather than reading it wrong. An
+Orchestrate older than 4.0.0 has no contract gate at all: it opens the file blind and fails without a
+named cause. This Orchestrate still opens every run file an older one wrote. So after updating
 Orchestrate, finish or `clean` a run with the version that started it, or update every seat that will
 touch the run.
 

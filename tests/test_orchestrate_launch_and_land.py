@@ -1484,7 +1484,7 @@ class TestOpenCodeLaunchAndVariantRecipe:
         unit = r.units[0]
         assert unit.status == "failed"
         assert "ultra" in unit.note
-        assert "not available in live picker options" in unit.note
+        assert "options the live picker offered" in unit.note
 
     def test_mismatched_working_directory_stops_before_task_submission(
         self,

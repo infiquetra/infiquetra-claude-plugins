@@ -434,7 +434,7 @@ class TestOpenCodeVariantResolution:
             orchestrate.resolve_opencode_variant("ultra", options)
         msg = str(exc_info.value)
         assert "ultra" in msg
-        assert "not available in live picker options" in msg
+        assert "options the live picker offered" in msg
 
     def test_empty_picker_options_fails_loudly(self, orchestrate: ModuleType) -> None:
         with pytest.raises(SystemExit) as exc_info:

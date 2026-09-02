@@ -1405,16 +1405,36 @@ def route_review_result(
     return routing
 
 
+def _send_with_unowned_guard(unit: Unit, text: str) -> None:
+    """Inspect an unowned pane immediately before the write ``say`` would make.
+
+    Ownership-scoped exactly as ``launch`` is: a session the launcher created is
+    not inspected (owned workers and an owned controller keep their current send).
+    An adopted unit with no receipt is unowned. An inconclusive inspection still
+    sends -- that is the documented trade in ``guard_pane_before_write``.
+    """
+    pane_id = unit.pane_id
+    if pane_id and not session_owned(unit):
+        guard_pane_before_write(unit, pane_id)
+    say(unit, pane_id, text)
+
+
 def dispatch_review_routing(
     routing: ReviewRouting,
     *,
     sender: Callable[[Unit, str], None] | None = None,
 ) -> list[str]:
     """Send routed requests to live workers; replacement units launch through ordinary ``go``."""
-    send_one = sender or (lambda unit, text: say(unit, unit.pane_id, text))
+    send_one = sender or _send_with_unowned_guard
     dispatched: list[str] = []
     for unit, request in routing.dispatches:
-        send_one(unit, _request_prompt(request, run_branch=routing.run_branch))
+        try:
+            send_one(unit, _request_prompt(request, run_branch=routing.run_branch))
+        except StagedInputError as exc:
+            if str(exc) not in unit.note:
+                append_unit_note(unit, str(exc))
+            print(exc)
+            continue
         unit.status = RUNNING
         append_unit_note(unit, f"outstanding review fix {_fix_request_id(request)}")
         dispatched.append(unit.name)
@@ -1516,8 +1536,13 @@ def _resubmit_one(
         "Resubmit that exact revision through this same Code Review controller and emit the next "
         "complete typed result for `review-result` collection."
     )
-    send_one = sender or (lambda unit, text: say(unit, unit.pane_id, text))
-    send_one(controller, task)
+    send_one = sender or _send_with_unowned_guard
+    try:
+        send_one(controller, task)
+    except StagedInputError as exc:
+        if str(exc) not in controller.note:
+            append_unit_note(controller, str(exc))
+        raise
     controller.status = RUNNING
     append_unit_note(controller, f"resubmitted landed revision {revision}")
     r.write_review_slot(controller, review_resubmit_pending=False)
@@ -1797,6 +1822,8 @@ if not _ingest_agent_launcher():
     verify_unit_preflight = _agent_launcher_required
     append_unit_note = _agent_launcher_required
     say = _agent_launcher_required
+    session_owned = _agent_launcher_required
+    guard_pane_before_write = _agent_launcher_required
     models = _agent_launcher_required
     favourites = _agent_launcher_required
     has_delivery_warning = _agent_launcher_required

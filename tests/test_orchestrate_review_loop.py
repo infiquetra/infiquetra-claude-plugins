@@ -1011,3 +1011,203 @@ def test_landed_work_repairs_resubmit_the_exact_revision_to_the_same_controller(
     assert controller.status == "running"
     assert run.review_resubmit_pending is False
     assert len(run.units) == 2
+
+
+def _claude_composer_pane(composer_line: str) -> str:
+    """The same unbordered Claude/Grok composer geometry the launch tests use."""
+    rule = "\x1b[2m──────────────────────────────\x1b[0m"
+    return f"{rule}\n{composer_line}\n{rule}\n"
+
+
+def _record_herdr_boundary(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    pane_dumps: list[str],
+) -> list[list[str]]:
+    """Stub only ``run`` and record every command the default sender issues."""
+    dumps = iter(pane_dumps)
+    recorded: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(list(cmd))
+        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, next(dumps), "")
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(orchestrate, "run", fake_run)
+    return recorded
+
+
+def _prompt_calls(recorded: list[list[str]]) -> list[list[str]]:
+    return [cmd for cmd in recorded if cmd[:3] == ["herdr", "agent", "prompt"]]
+
+
+def _pane_reads(recorded: list[list[str]]) -> list[list[str]]:
+    return [cmd for cmd in recorded if cmd[:3] == ["herdr", "pane", "read"]]
+
+
+def test_unowned_review_dispatch_with_draft_refuses(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-02: an unowned live worker holding a draft is not prompted.
+
+    Evidence before the edit: at the frozen revision the default sender calls
+    ``say`` with no inspection, so this test fails by observing an ``agent
+    prompt`` and no StagedInputError-class stop on the unit.
+    """
+    controller = _controller(orchestrate)
+    fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
+    fixer.launch_receipt = {"owned": False}
+    run = _run(orchestrate, fixer, controller)
+    routing = orchestrate.route_review_result(
+        run,
+        _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
+        agents=_live(fixer),
+    )
+    recorded = _record_herdr_boundary(
+        orchestrate,
+        monkeypatch,
+        [_claude_composer_pane("❯ operator draft that was never sent")],
+    )
+    prior_status = fixer.status
+    prior_requests = list(fixer.fix_requests)
+
+    dispatched = orchestrate.dispatch_review_routing(routing)
+
+    assert dispatched == []
+    assert _prompt_calls(recorded) == []
+    assert "already holds staged input" in fixer.note
+    assert isinstance(orchestrate.StagedInputError, type)
+    assert fixer.status == prior_status
+    assert fixer.fix_requests == prior_requests
+
+
+def test_unowned_review_dispatch_with_empty_sends(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the guard: an unowned empty pane is inspected, then sent."""
+    controller = _controller(orchestrate)
+    fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
+    fixer.launch_receipt = {"owned": False}
+    run = _run(orchestrate, fixer, controller)
+    routing = orchestrate.route_review_result(
+        run,
+        _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
+        agents=_live(fixer),
+    )
+    recorded = _record_herdr_boundary(
+        orchestrate,
+        monkeypatch,
+        [_claude_composer_pane("❯ ")],
+    )
+
+    dispatched = orchestrate.dispatch_review_routing(routing)
+
+    assert dispatched == ["api-builder"]
+    assert len(_pane_reads(recorded)) == 1
+    assert len(_prompt_calls(recorded)) == 1
+    assert fixer.status == "running"
+
+
+def test_owned_review_dispatch_sends_without_a_read(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The direction not fixed: an owned worker is not inspected, matching launch."""
+    controller = _controller(orchestrate)
+    fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
+    fixer.launch_receipt = {"owned": True}
+    run = _run(orchestrate, fixer, controller)
+    routing = orchestrate.route_review_result(
+        run,
+        _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
+        agents=_live(fixer),
+    )
+    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [])
+
+    dispatched = orchestrate.dispatch_review_routing(routing)
+
+    assert dispatched == ["api-builder"]
+    assert _pane_reads(recorded) == []
+    assert len(_prompt_calls(recorded)) == 1
+    assert fixer.status == "running"
+
+
+def test_adopted_review_dispatch_without_a_receipt_is_unowned(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REL-09: an adopted unit (no receipt, owned unset) is inspected as unowned."""
+    controller = _controller(orchestrate)
+    fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
+    fixer.launch_receipt = {}
+    run = _run(orchestrate, fixer, controller)
+    routing = orchestrate.route_review_result(
+        run,
+        _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
+        agents=_live(fixer),
+    )
+    recorded = _record_herdr_boundary(
+        orchestrate,
+        monkeypatch,
+        [_claude_composer_pane("❯ operator draft that was never sent")],
+    )
+    prior_status = fixer.status
+
+    dispatched = orchestrate.dispatch_review_routing(routing)
+
+    assert dispatched == []
+    assert _prompt_calls(recorded) == []
+    assert "already holds staged input" in fixer.note
+    assert fixer.status == prior_status
+
+
+def test_unowned_land_resubmit_with_draft_refuses(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The land path: an unowned controller holding a draft is not resubmitted."""
+    controller = _controller(orchestrate)
+    controller.launch_receipt = {"owned": False}
+    worker = _worker(orchestrate, "builder", "review-fixer", "src")
+    run = _run(orchestrate, worker, controller)
+    run.review_resubmit_pending = True
+    recorded = _record_herdr_boundary(
+        orchestrate,
+        monkeypatch,
+        [_claude_composer_pane("❯ operator draft that was never sent")],
+    )
+    prior_status = controller.status
+
+    with pytest.raises(orchestrate.StagedInputError, match="already holds staged input"):
+        orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
+
+    assert _prompt_calls(recorded) == []
+    assert "already holds staged input" in controller.note
+    assert controller.status == prior_status
+    assert run.review_resubmit_pending is True
+
+
+def test_owned_land_resubmit_sends_without_a_read(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The direction not fixed: an owned controller is resubmitted with no pane read."""
+    controller = _controller(orchestrate)
+    controller.launch_receipt = {"owned": True}
+    worker = _worker(orchestrate, "builder", "review-fixer", "src")
+    run = _run(orchestrate, worker, controller)
+    run.review_resubmit_pending = True
+    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [])
+
+    resubmitted = orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
+
+    assert resubmitted is True
+    assert _pane_reads(recorded) == []
+    assert len(_prompt_calls(recorded)) == 1
+    assert controller.status == "running"
+    assert run.review_resubmit_pending is False

@@ -893,7 +893,6 @@ LAUNCHER_ONLY_NAMES = (
     "ComposerState",
     "ComposerInspection",
     "inspect_composer",
-    "guard_pane_before_write",
     "pane_input_inspection",
     "record_wrapper_identity",
     "await_ready",

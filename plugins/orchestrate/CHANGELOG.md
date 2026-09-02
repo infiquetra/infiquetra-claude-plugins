@@ -1,5 +1,98 @@
 # Changelog
 
+## [4.3.0] - 2026-09-02
+
+### Added
+
+- **`redrive --unit <name>` (#907).** The one door back for a unit recorded
+  `prompt_undelivered`: once its session is idle, the unit is re-prompted through the
+  launcher's inspected writer; a session that has visibly started is refused with its tab
+  named. Gated on the companion floor like the other write commands, which are now seven.
+
+### Changed
+
+- **The agent-launcher floor is `>=1.4.0` (#907).** That release carries `PaneWriter`, the
+  single pane-write door this version's senders construct, and the retry door `redrive` uses.
+- **Review dispatch and land resubmission write through the launcher's `PaneWriter` (#907).**
+  Orchestrate owns no pane-write door of its own.
+- **`land` exits 4 when a review resubmission is withheld on staged input (#907).** The stop
+  reaches the failure handler again; with several controllers, each still gets its turn and
+  the withheld ones are raised together. The command document carries `land`'s full exit-code
+  table, pinned against the command's return statements.
+- **After ingest, Orchestrate verifies every launcher name it binds (#907).** A launcher whose
+  manifest satisfies the floor but whose source lacks a required name refuses the write side
+  by name with the update remedy instead of a NameError at the first pane write.
+- **`permission_declared` defaults to false (#907).** A legacy unit row without the key reads
+  as not declared; only the plan parser sets it true.
+- **`land --clean` no longer says it merged nothing when every merged unit was kept, and a
+  keep reason names the tab the same pass already closed (#907).**
+- **The skill scopes the run-file downgrade refusal (#907):** 4.0.0 through 4.1.x refuse by
+  name; older than 4.0.0 opens the file blind.
+
+## [4.2.0] - 2026-09-02
+
+### Changed
+
+- **Run files carry contract `2026-09-02.permission-declared` (#907).** `Unit` gained
+  `permission_declared` in 4.1.0 under an unchanged contract string, so an installed 4.0.1
+  accepted the file and died in a bare `TypeError` instead of the named refusal. An Orchestrate
+  older than 4.2.0 now refuses a run file this version writes, by name, with the update remedy;
+  this version still opens every older run file. The contract string is bound to the `Unit`
+  field set by a test, so the next added field cannot ship without a bump.
+- **The agent-launcher floor is `>=1.3.0` (#907).** That release carries the guarded
+  redelivery door and the shared `should_guard_pane_write` predicate this version calls.
+- **Review dispatch and land resubmission inspect owned panes too (#907).** Every unit those
+  senders reach was prompted by its launch hours or days earlier, so ownership exempts nothing
+  there; the predicate is the launcher's, called with the write half true.
+- **A staged-input stop on one Code Review controller no longer aborts the multi-controller
+  resubmit loop (#907).** It is recorded on that controller, printed with its name, and left
+  pending for the next `land`; the other controllers are still resubmitted.
+- **`roster` and `saga` run against a companion below the floor (#907).** They write nothing.
+  Only the six commands that write a pane, create a session or worktree, or close a tab --
+  `start`, `expand`, `go`, `review-result`, `land`, `clean` -- gate on the floor; the two
+  informational commands refuse only when no companion was ingested at all.
+- **`clean --merged` prints the true keep reason for two more shapes (#907).** A done unit
+  with no branch of its own reads "done, with no branch of its own to measure", not "not
+  done"; a branch git cannot compare reads as a git failure, not "not on the run branch".
+- **`reap` checks `git worktree remove` (#907).** A removal that fails and leaves the directory
+  behind keeps the unit with the reason, so `clean --all` no longer deletes the only record
+  naming that worktree.
+
+### Fixed
+
+- **`SKILL.md` names both permission fields and the run-file reader floor; the README and the
+  command document name the floor-gated commands by bucket (#907).**
+
+## [4.1.0] - 2026-09-02
+
+### Changed
+
+- **The agent-launcher floor is a command-by-state matrix, not an import-time side
+  effect (#907).** Eight commands — `roster`, `saga`, `start`, `expand`, `go`,
+  `review-result`, `land`, and `clean` — refuse a companion below the declared
+  `>=1.2.2` floor, or a missing or unusable companion, before any pane write,
+  session or worktree creation, or tab close. `--help` survives either fault.
+  `status` and `check` degrade to liveness-unknown when the companion is missing
+  or unusable. `wait`, `settle`, and `adopt` refuse without Herdr reads.
+- **A staged-input stop retries the same pane (#907).** The unit stays `PENDING`
+  with its tab, pane, and receipt; a later `go` re-prompts that pane and creates
+  no session. `already has tab` does not apply to a staged unit.
+- **Run files tolerate unknown unit keys with a named notice (#907).** An older
+  Orchestrate still cannot read a file this version writes; the compatibility
+  floor for a reader of this run-file shape is 4.1.0.
+
+## [4.0.2] - 2026-08-31
+
+### Fixed
+
+- **Companion-plugin faults are deferred to commands that require Agent Launcher (#907).** The
+  manifest is the single source of the `agent-launcher >=1.2.1` floor; cache discovery is numeric,
+  and stale, partial, or internally inconsistent installs no longer kill read-only Orchestrate
+  commands at import. Mutating launch commands receive one named failure with remediation.
+- **Stopped launches and cleanup failures retain durable recovery evidence (#907).** A staged-input
+  stop preserves the created session identifiers and receipt, while failed tab closes are saved
+  once to the run record and printed with the actual keep reason.
+
 ## [4.0.1] - 2026-08-31
 
 ### Fixed
@@ -175,6 +268,29 @@ nothing checks them at runtime.
   live-but-newer fails loud here rather than being submitted blind. Reading the document instead of
   importing `sdlc_manager` is deliberate: that resolver reaches GitHub through a `gh` child, and a
   land must never wait on the network.
+## [3.2.0] - 2026-08-30
+
+### Fixed
+
+- **Unowned-pane stops are retryable and cleanup retains evidence on close failure (#907).** A
+  staged-input stop returns its unit to pending after clearing stale session identity. Cleanup now
+  keeps the worktree when an owned tab cannot be closed instead of force-removing the evidence.
+- **The Agent Launcher dependency floor is enforced, not only declared (#907).** Orchestrate
+  requires Agent Launcher 1.2.0 at runtime and chooses cached versions numerically, matching the
+  skill's `sort -V` lookup.
+
+## [3.1.0] - 2026-08-30
+
+### Added
+
+- **A declared permission is carried visibly, and an undeclared one says so (#896).** The unit
+  model records whether the plan row that produced it named `permission` explicitly
+  (`permission_declared`), and plan loading prints one line naming every unit that omitted the
+  field and inherited the `auto` default — a run that declared a posture and a plan that never
+  mentioned one are no longer indistinguishable on screen. The dependency floor rises to
+  `agent-launcher >=1.1.0` in the same release because Orchestrate's permission behaviour now
+  consumes the launcher's `resolve_permission`; installed beside launcher 1.0.0 it would silently
+  get the old fallback to auto, which is the defect itself.
 
 ## [3.0.8] - 2026-08-27
 

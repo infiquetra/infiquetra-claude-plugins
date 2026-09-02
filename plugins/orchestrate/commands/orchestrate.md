@@ -497,14 +497,30 @@ land in `Planning`; `work`, `fix` and `codereview` in `Active`. That is all five
 `Verify` or `Retro` — those begin only after conditions a run cannot observe — and a `status_map`
 override naming either stage is refused at submission, not merely absent from the default map.
 
-**Install saga 0.151.0 or later and mission-control 2.15.1 or later before relying on this.** Both
-floors are declared in `plugin.json`; **only saga's is enforced** — a saga below its floor is
+**Install saga 0.151.0 or later and mission-control 2.15.1 or later before relying on this.**
+Both floors are declared in `plugin.json`; saga's is enforced — a saga below its floor is
 refused before any submission, because an older saga silently drops the `Stage` half and reports
-success. The mission-control floor, like the agent-launcher one beside it, is a declaration the
-installer reads and no code checks.
+success. The agent-launcher floor is enforced at runtime as a command-by-state matrix:
+`--help` survives a stale or missing companion, `status` and `check` degrade to
+liveness-unknown when it is missing or unusable, and the seven pane-write, session-create or
+tab-close commands -- `start`, `expand`, `go`, `review-result`, `land`, `clean`, and `redrive` --
+refuse with an update or install remedy. `roster` and `saga` write nothing, so a stale companion still
+serves them; only a missing or unusable one refuses them. The mission-control floor is a
+declaration the installer reads.
 
 Read the exit code, not the prose. `land` and `announce` both exit **2** when a card was not
-updated, and every failure prints its reason and whether a retry can clear it. A failure survives
+updated, and every failure prints its reason and whether a retry can clear it. `land`'s full
+exit-code table:
+
+| Exit | Meaning |
+|---|---|
+| 0 | Every unit that was ready merged, its card was updated, and any owed review resubmission was made. |
+| 1 | The merge into the run branch could not complete: a conflict worktree is retained or the landing ref could not be updated; the reason and the retained path are printed and the unit is left untouched. |
+| 2 | Merges landed but a board card was not updated, or an earlier writeback is still outstanding. |
+| 3 | Merges landed but a landing worktree could not be removed. |
+| 4 | A review resubmission that was owed was not made: the prompt failed, or the controller's composer held staged input and the resubmission was withheld. |
+
+The codes are pinned against the command's own return statements by a test. A failure survives
 the invocation: a later `land` re-reports any unit still outstanding rather than exiting 0 over a
 card it never fixed. Each writeback also names, on stderr, which saga executed it and which schema
 validated the rung — several copies of each are usually installed.

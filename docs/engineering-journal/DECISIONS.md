@@ -1,5 +1,218 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-02
+
+### The launcher's `PaneWriter` is the only pane-write door, and it owns the inspection  {#907-pane-writer-owns-the-write-rule}
+
+**Decision.** Both raw Herdr write doors -- `herdr agent prompt` and `herdr pane run` -- exist
+only inside `PaneWriter` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`,
+and `PaneWriter.write` is the only method that opens either. It decides, before each write,
+whether to inspect the composer, from `should_guard_pane_write` and its own record of having
+written. The OpenCode picker driver, `send()`, the resend loop, `redeliver()`, and Orchestrate's
+review-dispatch and land-resubmission senders all construct or receive a writer and call
+`write`; none of them may call `run` with a pane-write command. The enumeration of write sites
+and the structural test live in `plugins/agent-launcher/tests/test_launcher_contract.py`
+(`PANE_WRITE_SITES`, `test_every_pane_write_goes_through_the_one_writer`).
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:** the operator's ruling on the terminal
+review's cycle 2 (`docs/code-reviews/2026-09-02-issue-907-terminal-code-review-cycle2-result.v1.json`
+F38, F39, F40, F41, F46, F47, F50, F57).
+
+**Why.** Four consecutive repair rounds on this branch each satisfied the finding in front of
+them and left an adjacent write unguarded: the tab-id clear, the import-time floor, the
+redelivery that bypassed the inspection, and finally a per-call-site flag that the picker path
+never set. A rule enforced by discipline -- "remember to set `wrote_before`" -- fails exactly
+once per new call site. A rule enforced by construction -- there is no unguarded call to make --
+cannot. The test that pins the enumeration makes a new write site a red test until its row is
+added, and the per-site mutation run (each `writer.write` swapped for the private raw door) is
+the acceptance evidence that every site is observed.
+
+**Rejected.** A fifth flag-setting call after the picker (the shape that failed four times); a
+decorator on the raw door (still a second door to forget); an unconditional inspection before
+every write regardless of ownership (would re-inspect the fresh owned tab's first write, which
+issue 897 ruled out of scope, and would still leave the door itself callable).
+
+**Revisit when.** Herdr exposes composer state or cursor position directly, at which point the
+inspection can move from a pane read to a query and the writer's `wrote` record may become
+unnecessary; or when a third plugin needs to write into a pane, which must reuse this class
+rather than grow a door of its own.
+
+### The run-file contract string is bound to the Unit field set by a test  {#907-run-file-contract-bound-to-unit-fields}
+
+**Decision.** `RUN_FILE_CONTRACT` in
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` moves to a new dated string
+whenever `Unit` gains or loses a field, not only when a key changes meaning. The binding is
+`UNIT_FIELDS_BY_CONTRACT` in `tests/test_orchestrate_board_writeback.py`: a table from each
+contract string ever issued to the exact field tuple it was issued for. The test fails when the
+current field tuple is not the one recorded for the current string, when the current string is
+not the newest, or when any issued string is missing from `KNOWN_RUN_FILE_CONTRACTS`.
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:** terminal review
+`docs/code-reviews/2026-09-02-issue-907-terminal-code-review-result.v1.json` F05 and F21.
+
+**Why.** Every Orchestrate before 4.2.0 reads a unit row with a bare `Unit(**raw)`. It passes
+the contract gate on a string it knows and then dies in a TypeError on a key it does not, which
+is exactly the failure the contract key exists to turn into a named refusal with an update
+remedy. `permission_declared` shipped under the unchanged 2026-08-31 string, so the changelog's
+"4.1.0 is the oldest reader" line was enforced by nothing. A rule that lives only in a comment
+above the constant had already been missed once; the table makes the omission a red test.
+
+**Rejected.** Deriving the contract string from a hash of the field names (a rename would bump
+the contract for a file an older reader could still open, and the string would stop naming the
+change); relying on the forward-compatible `read_unit` alone (it protects this version reading
+newer files, not older versions reading this one).
+
+**Revisit when.** Every installed Orchestrate is at or above 4.2.0, whose `read_unit` drops
+unknown keys with a notice; from then on an added field needs no contract bump, only a removed
+or re-typed one, and the table can shrink to the meaning-changing entries.
+
+### A run coordination plan lives outside `docs/plans/`  {#907-run-plan-outside-plans-corpus}
+
+**Decision.** Relocate `2026-08-30-agent-launcher-907-run-plan.md` from `docs/plans/` to
+`docs/runs/` without changing one byte of its contents. Leave every frozen citation of
+the old path alone.
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:** operator ruling on the held
+`tests/test_plan_artifact_conformance.py` failure.
+
+**Why.** `docs/plans/**/*.md` is the saga plan-conformance corpus; placement alone
+decides membership. The accepted plan is a saga implementation plan (Implementation
+Units, Key Technical Decisions, U1..U14). The relocated document is a run
+coordination plan — a run-contract preamble, seven issue lanes L1..L7, a runtime
+checkpoint, a release-surface section, coexistence, stop conditions. Those are two
+artifact kinds. The repo already separates kinds by directory (reviews, code-reviews,
+handoffs, work-sessions, evidence). The document's frontmatter and L1..L7 labels are
+true and are cited downstream; editing them to satisfy the corpus lint would falsify
+the record.
+
+**Rejected.** Renaming L1..L7 to U1..U7 — that would falsify every downstream citation
+and collide with this run's own U1..U14. Dropping `backend: inline` — that would
+delete a true statement to pass a lint. Widening the conformance regex — that would
+change a shipped plugin outside this issue's scope.
+
+**Revisit when.** A later issue owns a first-class run-plan schema, or the saga
+conformance corpus is deliberately widened to include `docs/runs/`.
+
+### Issue 907 ships Orchestrate 4.1.0 against Agent Launcher 1.2.2  {#907-release-numbers}
+
+**Decision.** Keep main's three declared dependencies — agent-launcher, mission-control
+`>=2.15.1`, and saga `>=0.151.0`. Raise the agent-launcher floor to the companion version
+this branch ships. Number orchestrate `4.1.0` and agent-launcher `1.2.2`. Carry main's
+`4.0.0` and `4.0.1` CHANGELOG entries beneath the branch entry. Do not ship the branch's
+old single-dependency manifest.
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:** operator Decision 3 on
+`docs/plans/2026-09-01-issue-907-terminal-validation-repair-plan.md`.
+**Why.** Publishing the branch's one-dependency contract would silently withdraw two
+floors already declared on `origin/main`.
+**Rejected.** Shipping orchestrate `4.0.2` with only `agent-launcher >=1.2.1`.
+**Revisit when.** The next companion bump.
+
+### `input_box_text_chars` is the visible length of the absorbed draft  {#907-input-box-visible-length}
+
+**Decision.** The receipt count is the visible length of what the parser absorbed: characters
+after border stripping, rows joined without a separator, a lower bound when the draft contains
+a blank line, one short per wrapped row boundary. It is not the unstyled-run length.
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:**
+`docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` DOCC-01 / plan KTD3.
+
+**Why.** The parser positively recognises only unstyled characters, but the operator wants the
+size of the withheld draft. Computing the unstyled count reports `2` for a thirty-character
+draft.
+
+**Rejected.** Copying the unstyled length into the receipt; leaving the documents claiming a
+count the code does not compute.
+
+### A staged-input stop retries the same pane and never creates a second session  {#907-staged-input-redeliver}
+
+**Decision.** A `PENDING` unit whose receipt `input_box` is `staged` is redelivered by `go`
+through `redeliver`, which repeats everything after the wrapper create against the recorded
+pane. Identifiers and the receipt stay; the stop message is appended. The `already has tab`
+skip applies only to units without that marker.
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:**
+`docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` REL-03 (prior
+validation meaning) inverted on this branch / plan KTD6.
+
+**Why.** Calling `launch()` again would run the wrapper create, overwrite `tab_id`, and drop
+the first owned tab. Clearing identity to make the retry possible was the other mirror image.
+
+**Rejected.** A new run-file field; a `requeue` subcommand; a second create under any `go`
+branch.
+
+### Treat unproven composer continuation geometry as inconclusive  {#907-composer-structural-continuations}
+
+**Decision.** One classification per physical row (KTD1). A row continues an open block when
+it is bordered, or when it is unbordered and indented past the marker column. A blank row, a
+horizontal rule, a marker row, or a terminator ends the block. `ambiguous_empty` is only the
+footer-after-spacer shape: an empty marker, a blank, then an indented unbordered row is
+`unclassifiable`. Trailing blank rows alone read `empty`. A draft the row rule absorbs reads
+`staged`. `adjacent_to_previous` stays.
+
+**Date:** 2026-08-31 · **Issue:** #907 · **Origin:**
+`docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` CORR-01, CORR-02,
+CORR-03, SEC-01, TEST-02, and TEST-03. The commit message of `dd3593ab` said five findings
+across four lenses; this entry originally named six across three. The identifiers above are
+scoped to that validation artifact, not to
+`docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json`.
+
+**Why.** Both real fixtures and the live idle Claude captures are unbordered, so a border
+requirement never fires for Claude or Codex. Vendor status footers use blank spacers and
+indent. Guessing in either direction can submit operator text or hard-stop an idle pane.
+
+**Rejected.** Treating every blank or indented row as input; treating every later glyph as a
+new box; requiring a border to continue; preserving a fixed continuation-row limit.
+
+**Revisit when.** Checked-in captures exist for Grok, Agy, and Qwen composers, and for one
+bordered-vendor viewport. Also when Herdr exposes composer coordinates or cursor position.
+`docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` CORR-07 and the
+CORR-08 capture gap stay as this residual, not as a silent claim that those vendors are
+covered.
+
+### The Orchestrate companion floor is a command-by-state matrix  {#907-agent-launcher-floor-owner}
+
+**Decision.** The manifest still owns the numeric floor (KTD7). Policy is a matrix, not an
+import-time side effect. Below floor: the launcher is ingested so read-only commands keep
+their Herdr reads -- that bucket is `status`, `check`, `wait`, `settle`, `adopt`, `roster`
+and `saga` -- and the commands that write a pane, create a session or worktree, or
+close a tab -- `start`, `expand`, `go`, `review-result`, `land`, `clean`, and (from 4.3.0)
+`redrive` -- refuse with an update remedy. Missing or unusable: nothing is ingested; `status` and `check` degrade to
+liveness-unknown; `wait`, `settle`, `adopt`, `roster`, `saga`, `start`, `expand`, `go`,
+`review-result`, `land`, and `clean` refuse with the missing or unusable message. `--help`
+and the other non-live commands run either way. *Amended 2026-09-02:* between 2026-08-31 and
+the issue 907 terminal review, `roster` and `saga` were wired to the write-side gate and
+refused below floor too; the terminal review's F08, F19 and F24 found the record, the README
+and the command document disagreeing with the code and with `SKILL.md`. The code was brought
+back to this record (`assert_agent_launcher_ingested`), because the two commands write
+nothing, and the matrix test now pins both buckets by name.
+
+**Date:** 2026-08-31 · **Issue:** #907 · **Origin:**
+`docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` API-01, API-02,
+ARCH-03, ARCH-04, and TEST-01.
+
+**Why.** A naive fail-closed recreates the dead-`status` finding. A naive fail-open lets a
+below-floor companion reach pane writes. The manifest is already the distribution contract.
+
+**Rejected.** A second tuple constant in Python; validating every cache candidate during
+discovery; killing `--help` at import; allowing an unusable companion to escape as a
+traceback.
+
+**Revisit when.** A new Orchestrate subcommand reaches Herdr, or the companion floor moves.
+README and `commands/orchestrate.md` now describe this matrix (U13 / DOCC-04); they must not
+again claim the agent-launcher floor is unchecked.
+
+### Fail open on a fully styled composer until an independent authorship signal exists  {#907-styled-composer-trade}
+
+**Decision.** The unowned-pane guard stops only on unambiguous, unstyled staged text. A non-empty live composer rendered entirely inside client styling is recorded as `unclassifiable` and the launch proceeds. Read failure, read timeout, missing composer, and unsupported vendor remain distinct receipt outcomes. The vendor glyph registry is complete against the launcher's vendor roster: Claude, Codex, Grok, Agy, and Qwen carry verified markers; Muse and OpenCode carry explicit `None` exemptions with their evidence rather than inheriting a guessed fallback.
+
+**Date:** 2026-08-30 · **Issue:** #907 · **Origin:** `docs/code-reviews/2026-08-30-issue-907-cycle-3-review-result.v1.json` reliability finding and the operator-authorized final residual repair.
+
+**Why.** A viewport can render an operator draft and a client placeholder with byte-identical Select Graphic Rendition spans. Fail-closed would stop ordinary working launches. The cycle-3 43-pane sweep that first measured that cost was a one-off against captures outside the repository and is not reproducible from the tree; the two fixture entries and the two live idle Claude captures are the reproducible evidence. Claiming the box empty would be false. A distinct inconclusive outcome preserves the evidence without inventing certainty.
+
+**Rejected.** Selecting the last classifiable block, because scrollback can replace the live box; treating every styled row as empty, because it prompts into real drafts; treating every styled row as staged, because it hard-stops idle panes; assigning an unverified plain-marker fallback to every vendor.
+
+**Revisit when.** Herdr exposes cursor position or composer state, a vendor publishes a stable placeholder protocol, or a live capture verifies a stable Muse or OpenCode marker. `docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` API-10 stays as this residual.
+
 ## 2026-08-31
 
 ### Orchestrate's `landed` rung is retired rather than gated or remapped  {#927-landed-rung-retired}

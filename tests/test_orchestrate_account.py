@@ -344,7 +344,8 @@ class TestPostLaunchAccountVerification:
         )
 
         receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=True)
-        assert "account" in receipt["confirmed_against_herdr"]
+        assert "account" not in receipt["confirmed_against_herdr"]
+        assert receipt["confirmed_outside_herdr"] == ["account"]
         assert receipt["account"] == "company"
 
     def test_mismatch_worker_transcript_under_personal_root_raises_and_closes_session(
@@ -537,6 +538,10 @@ class TestCmdGoAccountIntegration:
 
         monkeypatch.setattr(orchestrate, "run", fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda *args, **kwargs: True)
+        # Both herdr readings a launch takes, pinned: the ownership snapshot and the agent list.
+        # Unpinned, fake_run passed them through to the herdr on PATH (issue 907, U34).
+        monkeypatch.setattr(orchestrate, "list_tab_ids", lambda *args, **kwargs: frozenset())
+        monkeypatch.setattr(orchestrate, "live_agents", lambda *args, **kwargs: [])
         monkeypatch.setattr(orchestrate, "took_the_task", lambda *args, **kwargs: True)
         monkeypatch.setattr(orchestrate, "check_unit_account", lambda *args, **kwargs: (True, None))
 
@@ -588,7 +593,16 @@ class TestCmdGoAccountIntegration:
 
         monkeypatch.setattr(orchestrate, "run", fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda *args, **kwargs: True)
-        monkeypatch.setattr(orchestrate, "say", lambda unit, pane_id, text: sent_tasks.append(text))
+        # The ownership snapshot, pinned so it never asks the herdr on PATH (issue 907, U34). An
+        # empty snapshot makes tab-1 owned, so the mismatch below closes it -- and that close is
+        # recorded here rather than sent to whatever herdr the host has.
+        monkeypatch.setattr(orchestrate, "list_tab_ids", lambda *args, **kwargs: frozenset())
+        closed: list[str] = []
+        monkeypatch.setattr(
+            orchestrate, "close_run_session", lambda unit: closed.append(unit.tab_id)
+        )
+        # The prompt door is observed at the Herdr boundary inside fake_run above; the writer
+        # is real.
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
@@ -610,6 +624,8 @@ class TestCmdGoAccountIntegration:
         assert "account mismatch" in worker.note
         # Task was never sent to the worker on the wrong account
         assert sent_tasks == []
+        # The mismatch closed the tab this launch owned, and nothing else.
+        assert closed == ["tab-1"]
 
 
 @pytest.mark.usefixtures("launcher_on_path")

@@ -19,6 +19,286 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-09-02
+
+### A test that reaches a host binary is green where the binary lives and red where it does not  {#907-host-binary-leak-is-invisible-to-the-local-gate}
+
+**Context.** Pull request 951, the issue 907 branch, went red in CI at a revision where the local
+gate had just reported green: two launcher tests expected a stubbed stop and got `herdr did not
+list the session; cannot verify agent kind` instead. One of them exists on `main` and passes
+there, so the branch broke it.
+**Evidence.** With the directory holding `herdr` removed from PATH, both tests fail locally with
+the CI message; with a tripwire `herdr` on PATH that logs `PYTEST_CURRENT_TEST`, twenty-one tests
+across `plugins/agent-launcher/tests/test_launcher_contract.py`,
+`tests/test_orchestrate_drift_and_adopt.py` and `tests/test_orchestrate_account.py` were found
+invoking it, nineteen of them passing either way. Fixed in the U34 commit on the issue 907
+branch.
+**Mechanism.** A fresh launch takes two herdr readings before any stage the tests stub: it
+snapshots the workspace's tabs to decide whether it created the tab, and it identity-checks an
+unowned session against `herdr agent list`. The tests prepended a fake `agents` wrapper to PATH
+and stubbed `await_ready` and `verify_unit_preflight`, but not the snapshot. On the operator's
+machine the snapshot reached the live herdr, the receipt tab was absent from its list, the tab
+was judged owned and the identity check was skipped -- so the stubbed stop fired as expected.
+A runner has no herdr: the snapshot returned nothing, ownership was unprovable, the identity
+check ran and stopped the launch one stage earlier. The local gate ran the same code and could
+not tell, because the variable was what the host had installed, not what the tree contained.
+**Fix.** Each leaking test pins the reading it left live -- the snapshot to an empty set, the
+agent list to an empty list -- and a root `conftest.py` shadows `herdr` with a shim that exits
+non-zero for the whole pytest session, so any future test that depends on the host's herdr fails
+on its first local run. Tests that need a herdr already put their own fake ahead on PATH; tests
+that need it absent already replace PATH.
+**Validation.** The two named tests fail with herdr unreachable before the fix and pass with it
+unreachable after; the tripwire run over the affected files records zero invocations after the
+fix; the full gate for U34 ran with the herdr directory scrubbed from PATH.
+**Generalizable rule.** A test that shells out is only hermetic if every binary it can reach is
+one it put there. "It passes locally" is evidence about the host as much as about the code;
+before trusting a green run for a subprocess-driving test, run it once with the host's copy of
+each binary made unreachable, or make the suite do that for you.
+**Refs.** [[#907-flag-per-call-site-fails-at-the-next-site]] (the same branch, the same
+lesson about discipline versus construction); `feedback_harness_substitution_hides_the_defect`
+in operator memory (the inverse failure: a stub standing in for the component under test).
+
+### A per-call-site flag is a discipline, and the fourth call site forgets it  {#907-flag-per-call-site-fails-at-the-next-site}
+
+**Context.** Cycle 1 of the issue 907 terminal review found the pane-write guard's write flag
+tracked which door carried a line rather than whether one was written. The cycle-1 repair
+replaced it with a `wrote_before` value threaded through `_deliver`, set true after the first
+send, and handed to a shared predicate at three call sites. Cycle 2 (F39, F40, F41, F46) found the
+fourth site: the OpenCode picker driver made two pane writes of its own before the send and
+never set the flag, so an owned OpenCode launch made three uninspected writes, and `send()` was
+itself several writes behind one inspection.
+**Evidence.** At `7aa0e3b7`, forcing the picker site's predicate to the false flag left the
+launcher suite green while the same mutation at the other two launcher sites and at
+Orchestrate's sender all failed (cycle 2, F39). After U28, the seven-mutant run recorded in
+`docs/work-sessions/2026-09-02-issue-907-terminal-review-cycle2-repair-u28-u33.md` forces the
+guard off at each of the five enumerated write sites and every one is observed.
+**Mechanism.** A flag that callers must set is a rule enforced by discipline, and discipline is
+exactly the resource a repair round spends on the finding in front of it. Each round on this
+branch guarded the site it was shown and left the adjacent site's state stale, four times in
+succession, because the raw door stayed callable from anywhere. Moving the door and the rule
+into one object -- `PaneWriter`, whose `write` inspects from its own record of having written,
+and which is the only holder of the `herdr pane run` and `herdr agent prompt` calls -- removes
+the call a future site could forget. What remains to enforce is structural and cheap: a test
+that the raw doors appear nowhere else and that the set of `writer.write` sites equals a pinned
+enumeration.
+**Generalizable rule.** When the same class of defect recurs at "the next call site", stop
+adding a guard at the site and remove the ability to reach the effect without the guard; then
+pin the set of sites in a test so the next one is a red test rather than a review finding.
+**Refs.** Issue #907; cycle 2 review F38–F41, F46, F47, F50; DECISIONS
+`{#907-pane-writer-owns-the-write-rule}`.
+
+### An unterminated OSC start makes a negated-BEL character class quadratic  {#907-osc-regex-quadratic}
+
+**Context.** The composer parser strips ANSI with one regex whose OSC branch was
+`\][^\x07]*(?:\x07|\x1b\\)`. Issue 907's terminal review (F12) measured `inspect_composer` at
+0.074 s for 500 unterminated OSC starts and 18.9 s for 8000, a clean quadratic, and noted that
+the five-second Herdr read timeout bounds only the subprocess, not this in-process parse.
+**Evidence.** `test_unterminated_osc_sequences_parse_in_linear_time` in
+`plugins/agent-launcher/tests/test_launcher_contract.py`: 16000 starts took 9.06 s on the old
+regex and under 0.2 s after the fix (commit for U26 of the repair round).
+**Mechanism.** `[^\x07]*` admits ESC, so from each unterminated `ESC ]` the body ran greedily to
+the end of the viewport looking for a BEL or `ESC \` that never came, then backtracked the whole
+way; the engine then retried from the next start and did it again. Excluding ESC from the body
+(`[^\x07\x1b]*`) stops each attempt at the very next escape, which is what the OSC grammar says
+anyway: an OSC body may contain neither BEL nor ESC. The launcher additionally hands the parser
+at most `PANE_INSPECT_MAX_CHARS` characters, taken from the tail because the live box is the last
+block, so a pathological viewport cannot turn one inspection into seconds through any other path.
+**Generalizable rule.** A negated character class that excludes the terminator but not the
+sequence's own introducer is a backtracking bomb on unterminated input; exclude both. And a
+timeout on the read is not a bound on the parse of what was read.
+**Refs.** Issue #907; terminal review
+`docs/code-reviews/2026-09-02-issue-907-terminal-code-review-result.v1.json` F12.
+
+### A write flag derived from which door carried the write tracks the door, not the write  {#907-write-flag-tracked-the-door}
+
+**Context.** Issue 907's terminal Saga Code Review scored the branch that had already closed
+91 findings and returned seven P1s, three of which were one defect (F02, F03, F04): a
+redelivery into an owned session resent its prompt twice, fifteen and thirty seconds after the
+first, with no composer inspection between. Operator text typed inside that window would be
+concatenated onto the resend and could be submitted.
+**Evidence.** Before U19 of the repair, `say()` in
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` returned `False` when the
+`herdr agent prompt` door succeeded and `True` only from the pane-typing fallback; `_deliver`
+did `used_pane = send(...)` -- a plain assignment that also destroyed the `used_pane=True` seed
+`redeliver()` passed -- and the resend loop's predicate was `used_pane or not
+session_owned(unit)`. The rebuilt probe is `test_redeliver_with_the_real_send_inspects_before_every_write`
+(one guard call for three writes at the frozen revision) and
+`test_agent_prompt_resend_into_an_owned_pane_is_inspected_before_each_resend`, which replaces a
+test that pinned the gap as "the direction not fixed".
+**Mechanism.** The flag was named for one door. Its true meaning -- "this launcher has already
+written into the session, so a person may have typed since" -- holds after either door, but the
+value was computed from the door, so every vendor whose prompt succeeds ran the resend loop
+with the write half of the predicate permanently false. The plain assignment was the second
+half: even the redelivery seed, set true on purpose, was overwritten by the door's answer on the
+first send. Two sites seventeen lines apart carried the same statement in two forms
+(`x = send()` and `x = send() or x`), which is how the seed survived one and died in the other.
+**Fix.** `say()` and `send()` return nothing; `_deliver` sets `wrote_before = True` the moment
+the first send returns; the predicate has one owner, `should_guard_pane_write(unit,
+wrote_before=...)`, called at all three launcher write sites and exported to Orchestrate's
+senders; `redeliver()` inherits the resend loop's never-left-idle precondition and closes the
+retry route as `prompt_undelivered` when the session is working or gone. Eleven named mutants
+are killed by the U19 tests, including the mirror-image mutant (predicate always true), which
+`test_freshly_created_pane_takes_no_inspection_path` catches.
+**Generalizable rule.** When a boolean's meaning is "X has happened", set it where X happens,
+never derive it from a return value that describes how X happened. And when the same
+statement appears twice in two forms, the shorter form is a bug waiting for the case the longer
+form was written for.
+**Refs.** Issue #907; terminal review
+`docs/code-reviews/2026-09-02-issue-907-terminal-code-review-result.v1.json` F02, F03, F04,
+F16, F30; DECISIONS `{#907-staged-input-redeliver}`.
+
+### Entries new versus origin/main belong under today's date heading  {#907-journal-newest-first-vs-origin}
+
+**Context.** Eight issue 907 journal entries were filed under `## 2026-08-31` because
+that is their Origin date, and that heading already exists on `origin/main`.
+**Evidence.** `scripts/lint_journal_order.py --base-ref origin/main` reported those
+eight as new entries outside the newest section.
+**Mechanism.** The new-entry guard compares against the base ref, not the entry's
+Origin date. An older Origin date is not a license to open or extend a heading
+that the base already carries.
+**Fix (or queued).** U16 moved the eight into the existing `## 2026-09-02` section
+without changing their prose.
+**Generalizable rule.** A journal entry that is new versus the merge base goes
+under today's heading even when its Origin date is older.
+**Refs.** Issue #907 unit U16.
+
+### A helper's annotation must follow a fourth return element  {#907-annotation-follows-return}
+
+**Context.** U8's matrix helper started returning the fake `herdr`/`agents` PATH
+directory as a fourth element so gated commands could be invoked with a recording
+binary on PATH.
+**Evidence.** `uv run python -m mypy tests/test_agent_launcher_plugin.py
+--ignore-missing-imports` reported the 4-tuple return against
+`tuple[Path, Path, bytes]` and three unpack sites that already expected four
+values (`:746`, `:923`, `:934`).
+**Mechanism.** The call sites were updated when the helper gained `bin_dir`; the
+annotation was not. Mypy then treated every unpack as taking four values from a
+3-tuple.
+**Fix (or queued).** Annotate `_matrix_layout` as `tuple[Path, Path, bytes, Path]`.
+The call sites stay; they were already right.
+**Generalizable rule.** When a helper grows a return element, the annotation is
+the defect if the call sites already unpack the new shape. Do not edit the
+callers to match a stale signature.
+**Refs.** Issue #907 unit U15.
+
+### Installer-facing docs can claim a floor is unchecked after code already enforces it  {#907-docs-lag-runtime-floor}
+
+**Context.** `origin/main`'s orchestrate README and command document said the agent-launcher
+floor was declared for the installer and nothing verifies it, after U8 already enforced the
+KTD7 command-by-state matrix on this branch.
+**Evidence.** `git show origin/main:plugins/orchestrate/README.md` (the "nothing verifies them"
+sentence) and `commands/orchestrate.md` (the "no code checks" sentence); finding DOCC-04.
+The merged tree still held both sentences until U13. `SKILL.md` already described the matrix.
+**Mechanism.** Those two files exist only on `origin/main`. The merge brought the pre-enforcement
+claim onto a branch that had already closed the dead-`status` inversion. A reader of README
+or the slash-command doc would conclude the floor is decorative.
+**Fix (or queued).** U13 replaced each false sentence with the KTD7 matrix (surviving `--help`,
+`status`, and `check`; write / create / close refuse) and left the mission-control floor as an
+installer declaration. A contract test forbids the two pre-enforcement phrases.
+**Generalizable rule.** When a runtime floor lands on a branch, correct the installer-facing
+docs that live only on main in the same serial run as the merge, or the published story
+reverts to the claim the code just retired.
+**Refs.** DECISIONS `{#907-agent-launcher-floor-owner}`; plan unit U13 / DOCC-04.
+
+### A finding satisfied by building its mirror image is not repaired  {#907-verification-order}
+
+**Context.** Two repair rounds on `work/cp907-launcher-session-contract` closed a finding by
+inverting the broken rule, and every lens scored lower on `dd3593ab` than on the revision those
+rounds set out to improve.
+**Evidence.** The staged-input stop that once orphaned a session by clearing its identifiers
+became a permanent `already has tab` wedge (prior validation
+`docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` REL-03, rebuilt
+through the retry door). The import-time companion floor that once killed `--help` became
+fail-open for write commands (the same artifact's dead-`status` finding inverted). Both are
+reproducible from the tree: `git show 2fe7c954` vs `dd3593ab` of `cmd_go` and
+`_ingest_agent_launcher`.
+**Mechanism.** The one fix that was mutation-tested before commit, positional last-block
+selection, survived every later review. The fixes that landed before anything tried to break
+them did not. A two-sided rule needs a counter-case for the side it is not changing.
+**Fix (or queued).** Units U1–U9 of
+`docs/plans/2026-09-01-issue-907-terminal-validation-repair-plan.md` write the failing
+reproducer first, then the named counter-cases, then every listed mutant.
+**Generalizable rule.** Prove the direction you are not fixing, or the next repair will ship
+its opposite.
+**Refs.** DECISIONS `{#907-staged-input-redeliver}`, `{#907-agent-launcher-floor-owner}`;
+plan KTD6 and KTD7.
+
+### Terminal indentation is shared by input and status chrome  {#907-composer-indentation-ambiguity}
+
+**Context.** Issue 907's positional parser still treated every blank and indented row after a
+composer marker as input.
+**Evidence.** A live Codex viewport places a blank spacer and an indented model, directory, branch,
+quota, and context footer immediately below the marker. The parser reported a nine-character draft
+as 28 characters in a minimal reproduction, and an empty marker plus an unstyled footer as staged.
+**Mechanism.** Indentation is terminal layout, not membership in the input region. A second marker
+is also ambiguous when it is adjacent to staged text: it may be a new box or draft content.
+**Fix (or queued).** Only shared border geometry proves continuation. Ambiguous empty shapes become
+`unclassifiable`; paired borders are removed as structure; prefix anchoring remains mandatory.
+**Validation.** Focused tests cover paired borders, a status footer, blank-plus-indented content,
+adjacent glyph-led rows, and the marker-containment mutation.
+**Generalizable rule.** At a screen-scraping boundary, do not promote whitespace geometry into a
+semantic guarantee unless the same geometry cannot be produced by surrounding chrome.
+**Refs.** DECISIONS `{#907-composer-structural-continuations}`.
+
+### Dependency validation belongs at the command boundary  {#907-dependency-floor-command-boundary}
+
+**Context.** Orchestrate enforced a new Agent Launcher floor while importing its command module.
+**Evidence.** With a stale companion, `orchestrate.py --help` exited before argparse. With a missing
+`composer.py`, the same import emitted a raw `FileNotFoundError` traceback.
+**Mechanism.** Discovery, compatibility validation, and module ingestion used four different error
+contracts at module scope. Read-only commands therefore inherited the strictest launch-only fault.
+**Fix (or queued).** Cache discovery selects numerically, the manifest supplies the floor, ingestion
+records one named compatibility error, and work-creating commands enforce it with remediation.
+**Validation.** Installed-layout subprocess tests cover stale, partial, and multiple cached
+companions through the real discovery and ingestion path.
+**Generalizable rule.** A companion needed only for some commands must not make unrelated recovery
+commands unimportable; discover early, enforce at the first operation that needs the capability.
+**Refs.** DECISIONS `{#907-agent-launcher-floor-owner}`.
+
+### A terminal composer is positional structure, not the last text a heuristic can classify  {#907-composer-position-before-classification}
+
+**Context.** Issue 907's first repair grouped composer rows but selected the last block it could classify. Real Claude panes draw the live placeholder in a closed styled span, so the live block dropped out and an earlier scrollback echo became the answer.
+**Evidence.** The cycle-3 reliability capture set of 43 real pane viewports was a one-off
+sweep against bytes that are not in this repository and is not reproducible from the tree.
+The reproducible evidence is the two checked-in fixture entries
+(`claude_echo_above_empty`, `codex_closed_placeholder` in
+`plugins/agent-launcher/tests/fixtures/composer-panes.json`) and the two live idle Claude
+captures recorded there with pane provenance. Focused fixtures cover a classified echo above
+a closed-span live box, Codex and Grok glyphs, bordered composers, wrapped styled rows, and
+block termination.
+**Mechanism.** Classification and selection were in the wrong order. A composer is the lowest contiguous block carrying that client's verified marker. Whether its contents are empty, staged, or unclassifiable is a property of that already-selected block; classification cannot be used to choose a different block. Stubbing preflight in the first end-to-end tests also hid receipt reconstruction, so collaborator stubs must stay below the behavior-owning function.
+**Fix (or queued).** `composer.py` owns a bounded positional parser; `launcher.py` owns reads and prompt decisions. The last block always decides, rows stop at the first structural non-continuation, and one receipt object is updated in place.
+**Validation.** Reverting positional last-block selection fails these five tests, which is
+the mutation `docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json`
+DOCC-07 actually observed: `test_adjacent_staged_and_empty_marker_rows_are_ambiguous`,
+`test_ambiguous_composer_geometry_never_records_affirmative_empty`,
+`test_glyph_led_last_visual_row_never_turns_a_staged_draft_into_empty`,
+`test_a_draft_above_a_closed_placeholder_row_is_unclassifiable`, and
+`test_echo_above_closed_span_hint_does_not_fall_back_to_the_echo`. The previously named
+`test_echo_above_a_closed_span_placeholder_does_not_false_stop` stays green under that
+mutant and is not a proof of positional selection.
+**Generalizable rule.** When screen state has a location-defined authority, select by position first and classify second. In tests, stub the input source, not the function that rebuilds or persists the result.
+**Refs.** Issue #907; DECISIONS `{#907-styled-composer-trade}`.
+
+### Terminal styling cannot prove authorship when client and operator bytes are identical  {#907-styled-composer-undecidable}
+
+**Context.** A fully styled placeholder and an operator draft can have the same Select Graphic Rendition byte shape. Treating “styled” as synonymous with “client-owned placeholder” silently prompts into real operator text; treating it as staged hard-stops ordinary idle panes.
+**Evidence.** The cycle-3 captures include fourteen truth-labelled non-empty boxes that remain unclassifiable from styling alone, while the focused closed-span placeholder fixture has the same observable form. Colour-reset mutation coverage also showed that terminal code 39 resets foreground colour but does not clear dim intensity.
+**Mechanism.** ANSI styling describes presentation, not who typed the characters. No parser of the viewport alone can recover missing authorship. Attribute state must still be tracked accurately so plain characters exposed by a real style reset remain detectable.
+**Fix (or queued).** The parser reports `unclassifiable` and the launcher records the accepted fail-open trade without claiming the box empty. A stronger policy is queued behind an independent signal such as cursor position or vendor-published composer state.
+**Generalizable rule.** If two semantic states are byte-identical at the observation boundary, expose uncertainty explicitly; do not convert presentation heuristics into an authorship guarantee.
+**Refs.** Issue #907; DECISIONS `{#907-styled-composer-trade}`.
+
+### The wrapper's `reused` bit names the workspace, not the pane — a guard keyed on it inspects the ordinary create path  {#907-reused-is-a-workspace-bit}
+
+**Context.** Run 907 closed seven session-contract defects in the Agent Launcher. Issue 897's literal acceptance said a pane "recorded `reused=true`" must be inspected before prompting, while the same issue's out-of-scope clause forbade reading the pane on the ordinary create path. Inside Herdr nearly every launch joins a workspace that already exists, so the two demands could not both be honoured.
+**Evidence.** `wrapper_reused` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` (defined at line 94 at revision `dbbb4c42`; lines 54-65 are the composer-module loading and glyph binding): "Whether the wrapper said the *workspace* already existed. This is not tab ownership." Issue 897; the operator's amendment is quoted at https://github.com/infiquetra/infiquetra-claude-plugins/issues/897#issuecomment-5469528122.
+**Mechanism.** The receipt carries two facts that read alike: `reused` (the wrapper joined a pre-existing workspace — the common case) and `owned` (the receipt `tab_id` was absent from the workspace tab set snapshotted immediately before the wrapper ran). A guard keyed on `reused` fires on the ordinary create path — exactly the path the issue says must stay untouched — and a guard keyed on ownership is the only one that names "a session this launch did not create".
+**Fix (or queued).** The shipped guard keys on `session_owned(unit)` being false (unit L2 of 907, commit `b97a3226`). Mutation proof: keying the guard on `reused` fails `test_freshly_created_pane_takes_no_inspection_path`.
+**Second finding, same run.** The module named after the plugin — `tests/test_agent_launcher_plugin.py` — holds release surfaces (manifest version, marketplace registration, packaged files) plus installed-layout fail-fast subprocess tests; direct launcher behavior tests live in `plugins/agent-launcher/tests/test_launcher_contract.py` and the orchestrate test files. Reading only the plugin-named module understates behavior coverage; reading only the plugin directory misses the installed-layout and drift guards.
+**Generalizable rule.** When a receipt carries two booleans with adjacent meanings, read each one's docstring before keying a guard on either — the bit whose name matches your intuition is not always the bit that names your case; and a test file named for the thing it tests is a claim about location, not coverage.
+**Refs.** Issues #897, #907; run plan `docs/plans/2026-08-30-agent-launcher-907-run-plan.md`, Findings 1 and 3.
+
 ## 2026-08-31
 
 ### Three guard tests could not fail, and each failed the same way: the assertion named its own subject  {#927-unfailable-guard-tests}

@@ -754,11 +754,24 @@ def test_cmd_land_resubmits_a_scoped_pending_controller(
     assert reloaded.review_slot(reloaded.review_controllers()[0])["review_resubmit_pending"] is True
 
     sent: list[str] = []
-    monkeypatch.setattr(orchestrate, "say", lambda unit, pane, text: sent.append(unit.name))
+    real_run = orchestrate.run
+
+    def prompt_door(cmd: list[str], *a: Any, **k: Any) -> Any:
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            sent.append(cmd[3])
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["herdr", "pane", "read"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return real_run(cmd, *a, **k)
+
+    monkeypatch.setattr(orchestrate, "run", prompt_door)
     orchestrate.cmd_land(argparse.Namespace(clean=False))
 
     after = orchestrate.Run.load()
-    assert sent == ["cr-c2"], "land must tell the scoped controller to resubmit"
+    controller = after.review_controllers()[0]
+    assert sent == [controller.agent_name or controller.name], (
+        "land must tell the scoped controller to resubmit"
+    )
     assert after.review_slot(after.review_controllers()[0])["review_resubmit_pending"] is False
 
 

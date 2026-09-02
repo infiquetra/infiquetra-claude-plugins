@@ -280,7 +280,7 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "4.0.1",
+      "version": "4.3.0",
       "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
       "author": {
         "name": "Infiquetra",
@@ -305,7 +305,7 @@
     {
       "name": "agent-launcher",
       "source": "./plugins/agent-launcher",
-      "version": "1.0.0",
+      "version": "1.4.0",
       "description": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface.",
       "author": {
         "name": "Infiquetra",

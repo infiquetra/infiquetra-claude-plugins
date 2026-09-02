@@ -1074,6 +1074,9 @@ def _top_level_bindings(tree: ast.Module) -> set[str]:
 
 def test_the_degraded_stub_roster_covers_every_referenced_launcher_name() -> None:
     """ARCH-18 / TEST-10 / O13: the roster is test-bound by the reviewer's AST method.
+    This checks completeness -- every launcher name Orchestrate references has a degraded
+    binding -- not minimality: a stub bound for a name Orchestrate never references is
+    harmless and is not reported here (terminal review F35).
     Every launcher-provided name Orchestrate's own code references must have a binding in
     the degraded fallback, or a failed ingest leaves that reference unbound."""
     orch_tree = ast.parse(
@@ -1095,3 +1098,74 @@ def test_the_degraded_stub_roster_covers_every_referenced_launcher_name() -> Non
                     degraded.add(sub.name)
     missing = (provided & referenced) - degraded - own
     assert not missing, f"launcher names referenced with no degraded binding: {sorted(missing)}"
+
+
+SHARED_STATUS_CONSTANTS = ("RUNNING", "PROMPT_UNDELIVERED", "ACCOUNT_MISMATCH")
+
+
+def _top_level_assignment(tree: ast.Module, name: str) -> ast.expr:
+    """The value expression bound to ``name`` at module top level, through a plain assignment
+    or one position of a tuple unpacking such as ``PENDING, RUNNING, ... = ...``."""
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == name:
+                return node.value
+            if isinstance(target, ast.Tuple) and isinstance(node.value, ast.Tuple):
+                for position, element in enumerate(target.elts):
+                    if isinstance(element, ast.Name) and element.id == name:
+                        return node.value.elts[position]
+    raise AssertionError(f"{name} is not assigned at the top level")
+
+
+def _call_string_arg(node: ast.expr) -> str:
+    assert isinstance(node, ast.Call), ast.unparse(node)
+    value = ast.literal_eval(node.args[0])
+    assert isinstance(value, str)
+    return value
+
+
+def test_the_four_shared_constants_agree_between_orchestrate_and_the_launcher() -> None:
+    """Terminal review F31: the launcher's exec into Orchestrate's globals redefines four names
+    Orchestrate binds above its ingest point -- three status strings and TASK_DIR -- so the
+    launcher's copies win after a successful ingest and Orchestrate's win in the degraded path.
+    The launcher comment asserts the literals are identical; this binds them, reading each
+    module's own definition rather than the post-ingest namespace."""
+    orch_tree = ast.parse(
+        _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "scripts" / "orchestrate.py")
+    )
+    launcher_tree = ast.parse(
+        _read(PLUGIN_ROOT / "skills" / "agent-launcher" / "scripts" / "launcher.py")
+    )
+    for name in SHARED_STATUS_CONSTANTS:
+        orch_value = ast.literal_eval(_top_level_assignment(orch_tree, name))
+        launcher_value = ast.literal_eval(_top_level_assignment(launcher_tree, name))
+        assert orch_value == launcher_value, name
+    run_file = _call_string_arg(_top_level_assignment(orch_tree, "RUN_FILE"))
+    task_dir_expr = ast.unparse(_top_level_assignment(orch_tree, "TASK_DIR"))
+    assert task_dir_expr == "RUN_FILE.parent / 'tasks'", task_dir_expr
+    launcher_task_dir = _call_string_arg(_top_level_assignment(launcher_tree, "TASK_DIR"))
+    assert str(Path(run_file).parent / "tasks") == str(Path(launcher_task_dir))
+
+
+def test_every_sibling_plugin_path_goes_through_the_layout_helper() -> None:
+    """Terminal review F36: ``_plugin_root`` claims every place that needs a sibling plugin or
+    a plugin manifest goes through it so the layout is named once. A raw ``parents[...]``
+    index anywhere else is that claim being false."""
+    source = _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "scripts" / "orchestrate.py")
+    tree = ast.parse(source)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_plugin_root"
+    )
+    strays = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "parents"
+        and not (helper.lineno <= node.lineno <= (helper.end_lineno or helper.lineno))
+    ]
+    assert strays == [], f"raw parents[] index outside _plugin_root at lines {strays}"

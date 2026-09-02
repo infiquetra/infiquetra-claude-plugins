@@ -170,6 +170,12 @@ SAGA_SYNTAX: dict[str, str] = {
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
 PROMPT_UNDELIVERED = "prompt_undelivered"
 ACCOUNT_MISMATCH = "account_mismatch"
+# The receipt value the launcher writes for a staged-input stop: ``ComposerState.STAGED.value``
+# in the agent-launcher's composer module. Orchestrate's whole staged retry route hangs on this
+# one string, and the enum is only bound into this namespace after a successful ingest, so the
+# literal lives here under a name and ``tests/test_orchestrate_launch_and_land.py`` binds it to
+# the enum (terminal review F25). Drift there is a red test, not a silent "already has tab".
+STAGED_INPUT_BOX = "staged"
 ORPHANED = "orphaned"
 PARKED = "parked"
 
@@ -2240,7 +2246,7 @@ def _schema_candidates() -> list[Path]:
     the mission-control plugin in the same checkout -- then each vendor's install cache, newest
     version first."""
     here = Path(__file__).resolve()
-    paths = [here.parents[4] / "mission-control" / "config" / "sdlc-schema.json"]
+    paths = [_plugin_root(here).parent / "mission-control" / "config" / "sdlc-schema.json"]
     paths.extend(_install_candidates("mission-control", "config/sdlc-schema.json"))
     return paths
 
@@ -2546,7 +2552,7 @@ def _write_is_retryable(write: dict[str, Any]) -> bool:
     return bool(write.get("retryable", True))
 
 
-PLUGIN_MANIFEST = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+PLUGIN_MANIFEST = _plugin_root(Path(__file__).resolve()) / ".claude-plugin" / "plugin.json"
 
 _VERSION_FLOOR_RE = re.compile(r">=\s*v?(\d+(?:\.\d+)*)")
 
@@ -3542,7 +3548,7 @@ def _staged_input_stop(unit: Unit) -> bool:
         unit.status == PENDING
         and bool(unit.pane_id)
         and isinstance(unit.launch_receipt, dict)
-        and unit.launch_receipt.get("input_box") == "staged"
+        and unit.launch_receipt.get("input_box") == STAGED_INPUT_BOX
     )
 
 

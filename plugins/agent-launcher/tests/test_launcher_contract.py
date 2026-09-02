@@ -1069,6 +1069,49 @@ def test_a_bordered_rule_row_ends_the_block_and_never_joins_the_draft(
     assert result.text == "x"
 
 
+def test_an_indented_row_led_by_another_vendors_glyph_ends_the_block(
+    launcher: ModuleType,
+) -> None:
+    """Terminal review F13, first clause: an indented row directly below the marker that
+    starts with another vendor's composer glyph is menu chrome, not a continuation. Without
+    the cross-glyph guard in the INDENTED clause the row joins the draft and the withheld
+    count grows to include chrome; the control row below shows the same shape without a
+    glyph is still absorbed."""
+    chrome = launcher.inspect_composer("❯ x\n  › menu item", vendor="claude")
+    assert chrome.state is launcher.ComposerState.STAGED
+    assert chrome.text == "x"
+    plain = launcher.inspect_composer("❯ x\n  more", vendor="claude")
+    assert plain.state is launcher.ComposerState.STAGED
+    assert plain.text == "xmore"
+
+
+def test_a_bordered_row_of_spaced_rule_segments_is_a_rule_row(launcher: ModuleType) -> None:
+    """Terminal review F13, second clause: the space belongs to the rule-glyph set, so a
+    bordered row whose content is rule segments separated by spaces terminates the block
+    exactly as a continuous rule does. Dropping the space turns it into a bordered
+    continuation and the draft absorbs the rule and the row below it."""
+    spaced = launcher.inspect_composer("│ ❯ x │\n│ ── ── │\n│ y │", vendor="claude")
+    assert spaced.state is launcher.ComposerState.STAGED
+    assert spaced.text == "x"
+    continuous = launcher.inspect_composer("│ ❯ x │\n│ ──── │\n│ y │", vendor="claude")
+    assert continuous.text == "x"
+
+
+def test_a_styled_border_around_a_border_glyph_draft_still_reads_staged(
+    launcher: ModuleType,
+) -> None:
+    """Terminal review F14: the one-glyph trailing strip is implemented twice; this binds
+    the second copy, in the unstyled-text pass. The borders are styled so they never enter
+    the unstyled content, and the draft is two border-shaped characters. Exactly one is
+    treated as a closing border, one survives, and the box is staged -- a stop. An unbounded
+    strip there would leave no unstyled character and the box would fall open as
+    unclassifiable, the direction the feature exists to prevent."""
+    dump = "\x1b[2m│\x1b[0m ❯ ██ \x1b[2m│\x1b[0m"
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "██"
+
+
 def test_round_corner_borders_lead_and_trail_a_two_row_draft(launcher: ModuleType) -> None:
     """The corner glyphs are rosters on both sides: they lead row 1 and close row 2."""
     dump = "╭ ❯ draft ╮\n╰   more ╯"

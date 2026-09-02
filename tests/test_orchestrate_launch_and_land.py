@@ -626,8 +626,11 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """The direction not fixed: a PENDING unit carrying a tab with no staged marker is
-        an ordinary already-launched unit and is skipped, never redelivered."""
+        """The direction not fixed: a PENDING unit carrying a tab AND a pane with no staged
+        marker is an ordinary already-launched unit and is skipped, never redelivered. The
+        unit carries a pane on purpose (terminal review F28): without one the stop predicate
+        returned False on the pane check and this counter-case never reached the input_box
+        clause it exists to observe."""
         _write_run(
             repo,
             [
@@ -636,6 +639,7 @@ class TestRunWorkspaceIsInheritedAtLaunch:
                     status="pending",
                     branch=None,
                     tab_id="w1:t-old",
+                    pane_id="w1:p-old",
                     launch_receipt={"input_box": "empty", "owned": False},
                 )
             ],
@@ -654,6 +658,56 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         assert saved.status == "pending"
         assert launched == []
         assert "already has tab w1:t-old" in capsys.readouterr().out
+
+    def test_a_pending_unit_with_a_pane_and_an_empty_receipt_is_skipped_not_redelivered(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Terminal review F28, second counter-case: a pane and a receipt with no input_box
+        at all. Widening the clause so an empty receipt also routes to redelivery would
+        re-prompt an already-launched unit into its live pane; this observes that edge."""
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="pending",
+                    branch=None,
+                    tab_id="w1:t-old",
+                    pane_id="w1:p-old",
+                    launch_receipt={},
+                )
+            ],
+        )
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(orchestrate, "launch", lambda *_a, **_k: pytest.fail("launch was run"))
+        monkeypatch.setattr(
+            orchestrate, "redeliver", lambda *_a, **_k: pytest.fail("redeliver was run")
+        )
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert orchestrate.Run.load().unit("alpha").status == "pending"
+        assert "already has tab w1:t-old" in capsys.readouterr().out
+
+    def test_the_staged_marker_is_the_composer_enum_value(self, orchestrate: ModuleType) -> None:
+        """Terminal review F25: Orchestrate's stop predicate compares the receipt against a
+        value the launcher's ComposerState enum produces. The two are bound here so a renamed
+        enum value cannot make the predicate silently return False, print already-has-tab,
+        and never redeliver."""
+        assert orchestrate.ComposerState.STAGED.value == orchestrate.STAGED_INPUT_BOX
+        unit = orchestrate.Unit(
+            name="alpha",
+            vendor="claude",
+            task="x",
+            status="pending",
+            pane_id="w1:p1",
+            launch_receipt={"input_box": orchestrate.ComposerState.STAGED.value},
+        )
+        assert orchestrate._staged_input_stop(unit) is True
 
     def test_a_fresh_pending_unit_goes_through_launch_never_redeliver(
         self,

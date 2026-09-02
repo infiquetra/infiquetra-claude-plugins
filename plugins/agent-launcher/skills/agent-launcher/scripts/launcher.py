@@ -1348,6 +1348,15 @@ def _record_create_timeout(
 
 
 def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
+    """Create the session, then deliver the task with each pane write inspected at its own door.
+
+    An unowned session is inspected immediately before every write the launcher is about to
+    make (KTD5). The OpenCode variant picker is a write, so an unowned OpenCode launch reads
+    twice -- once immediately before the picker, once immediately before the send, after the
+    preflight -- and every other unowned vendor reads once, immediately before its send. A
+    session the launcher created is not inspected before its first send: an empty fresh pane
+    is this launcher's own starting state.
+    """
     target_workspace_id = workspace_id_for_name(unit.workspace) if unit.workspace else None
     preexisting = (
         list_tab_ids(target_workspace_id) if target_workspace_id or not unit.workspace else None
@@ -1389,12 +1398,14 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
 
     ready = await_ready(unit)
     identity = None
-    # The guard reads before any vendor-specific path types into the pane: the OpenCode picker
-    # submits through the same door the prompt uses, so it must not run ahead of the inspection.
+    used_pane = False
     if not session_owned(unit):
         identity = verify_unit_identity(unit, pane_id, ready=ready)
-        guard_pane_before_write(unit, pane_id)
     if unit.vendor == "opencode":
+        # The OpenCode picker is itself a pane write, so on an unowned session the inspection
+        # that authorises it sits immediately before it (KTD5); the send carries its own below.
+        if used_pane or not session_owned(unit):
+            guard_pane_before_write(unit, pane_id)
         _, ready = drive_opencode_variant_selection(unit, pane_id)
     verify_unit_preflight(
         unit,
@@ -1404,7 +1415,13 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
         since=created_at,
         identity=identity,
     )
-
+    # The inspection that authorises the first pane write is taken immediately before that
+    # write, never before the preflight: the declared bounds between an earlier read and the
+    # send sum to about fifty seconds, and a person typing inside that window defeats the
+    # guard. On a fresh launch used_pane is false here, so this is the ownership half of the
+    # KTD4 predicate; a redelivery seeds used_pane true and inspects whatever the ownership.
+    if used_pane or not session_owned(unit):
+        guard_pane_before_write(unit, pane_id)
     used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     accepted = took_the_task(unit)
     if not accepted:

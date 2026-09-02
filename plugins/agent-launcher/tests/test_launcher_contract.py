@@ -1184,7 +1184,8 @@ def test_staged_text_reaches_no_sink_verbatim(
 def test_opencode_guard_reads_before_the_picker_types(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The input guard runs before the OpenCode picker writes into an unowned pane."""
+    """The input guard runs before the OpenCode picker writes into an unowned pane -- and
+    the send carries its own adjacent inspection, so the unowned OpenCode path reads twice."""
     typed: list[list[str]] = []
     # An opencode pane's own glyph is ">": the menu rows and the staged draft all carry it, and
     # the last classified block is the box.
@@ -1233,8 +1234,104 @@ def test_opencode_guard_reads_before_the_picker_types(
     monkeypatch.setattr(launcher, "took_the_task", lambda *a, **k: True)
     unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt", effort="high")
     launcher.launch(unit)
-    assert order == ["guard", "picker"]
+    assert order == ["guard", "picker", "guard"]
     assert typed == []
+
+
+def test_the_send_inspection_is_taken_after_the_preflight(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REL-08: the read that authorises the send is taken immediately before the send, after
+    the preflight, so a person typing during the preflight's declared bounds cannot defeat
+    the guard. At the frozen revision the order is guard-then-preflight."""
+    unit, _recorded, _sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=_claude_pane("❯ "),
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    order: list[str] = []
+    real_guard = launcher.guard_pane_before_write
+    real_preflight = launcher.verify_unit_preflight
+
+    def recording_guard(unit: Any, pane_id: str) -> None:
+        order.append("guard")
+        real_guard(unit, pane_id)
+
+    def recording_preflight(*args: object, **kwargs: object) -> dict[str, Any]:
+        order.append("preflight")
+        return real_preflight(*args, **kwargs)
+
+    monkeypatch.setattr(launcher, "guard_pane_before_write", recording_guard)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", recording_preflight)
+    launcher.launch(unit)
+    assert order == ["preflight", "guard"]
+    assert unit.launch_receipt["input_box"] == "empty"
+
+
+def test_second_opencode_read_before_the_send_stops_a_late_staged_draft(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REL-08: an unowned OpenCode launch reads twice -- once before the picker, once
+    immediately before the send -- so a draft staged between them still stops the send.
+    The classifier carries no OpenCode entry (the picker residual holds that custody), so
+    the second read's stop is modelled at the guard boundary while the read sites are
+    real: the run stub serves an empty composer to the first read and a staged draft to
+    the second. At the frozen revision there is one read, it is empty, and the send is
+    made."""
+    dumps = iter([_claude_pane("❯ "), _claude_pane(f"❯ {STAGED_SLASH_COMMAND}")])
+    ansi_reads: list[list[str]] = []
+    sends: list[str] = []
+    receipt = {"tab_id": "w80:t1", "agent_name": "oc-2", "pane_id": "w80:p9", "reused": False}
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+            ansi_reads.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, next(dumps), "")
+        if cmd[:3] == ["herdr", "pane", "run"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            tabs = {"result": {"tabs": [{"tab_id": "w80:t1", "label": "t"}]}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        if cmd[:3] == ["herdr", "pane", "current"]:
+            pane = {"result": {"pane": {"workspace_id": "w80"}}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        launcher, "verify_unit_identity", lambda *a, **k: ([], [], "opencode", True)
+    )
+    order: list[str] = []
+
+    def guard(unit: Any, pane_id: str) -> None:
+        order.append("guard")
+        # Read through the real inspection so the stop is driven by what the pane returned,
+        # not by the call count: the classifier has no OpenCode entry, so the read is
+        # classified in the pane's vendor-neutral claude shape.
+        inspection = launcher.pane_input_inspection(pane_id, vendor="claude")
+        if inspection.state is launcher.ComposerState.STAGED:
+            raise launcher.StagedInputError("second read found staged input")
+
+    monkeypatch.setattr(launcher, "guard_pane_before_write", guard)
+
+    def picker(*_args: object, **_kwargs: object) -> tuple[str, bool]:
+        order.append("picker")
+        return "high", True
+
+    monkeypatch.setattr(launcher, "drive_opencode_variant_selection", picker)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append("send"))
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
+    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt", effort="high")
+    with pytest.raises(launcher.StagedInputError, match="second read"):
+        launcher.launch(unit)
+    assert len(ansi_reads) == 2
+    assert sends == []
+    assert order == ["guard", "picker", "guard"]
 
 
 def test_a_reused_pane_with_an_empty_box_below_an_echo_is_not_stopped(

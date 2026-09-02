@@ -387,9 +387,14 @@ class RunBranchResolutionError(RuntimeError):
 # The run-file shape this Orchestrate writes and understands. Bumped when a key changes meaning in
 # a way an older Orchestrate would misread rather than ignore -- `status_map` becoming a
 # (Stage, Status) pair in 4.0.0 is exactly that: an older version reads the pair as an unmapped
-# prefix and announces nothing, silently.
-RUN_FILE_CONTRACT = "2026-08-31.stage-status-pair"
-KNOWN_RUN_FILE_CONTRACTS = frozenset({"", RUN_FILE_CONTRACT})
+# prefix and announces nothing, silently -- and whenever ``Unit`` gains a field, because every
+# Orchestrate before 4.2.0 reads a unit row with a bare ``Unit(**raw)``: it passes this gate on a
+# string it knows and then dies in a TypeError on the key it does not. The string is bound to the
+# Unit field set by ``UNIT_FIELDS_BY_CONTRACT`` in ``tests/test_orchestrate_board_writeback.py``.
+# Every string this Orchestrate ever wrote stays in the known set, so its own older run files
+# still open; the empty string is a run file older than the contract key itself.
+RUN_FILE_CONTRACT = "2026-09-02.permission-declared"
+KNOWN_RUN_FILE_CONTRACTS = frozenset({"", "2026-08-31.stage-status-pair", RUN_FILE_CONTRACT})
 
 
 class RunFileContractError(RuntimeError):

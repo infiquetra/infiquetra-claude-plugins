@@ -2,6 +2,35 @@
 
 ## 2026-09-02
 
+### The run-file contract string is bound to the Unit field set by a test  {#907-run-file-contract-bound-to-unit-fields}
+
+**Decision.** `RUN_FILE_CONTRACT` in
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` moves to a new dated string
+whenever `Unit` gains or loses a field, not only when a key changes meaning. The binding is
+`UNIT_FIELDS_BY_CONTRACT` in `tests/test_orchestrate_board_writeback.py`: a table from each
+contract string ever issued to the exact field tuple it was issued for. The test fails when the
+current field tuple is not the one recorded for the current string, when the current string is
+not the newest, or when any issued string is missing from `KNOWN_RUN_FILE_CONTRACTS`.
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:** terminal review
+`docs/code-reviews/2026-09-02-issue-907-terminal-code-review-result.v1.json` F05 and F21.
+
+**Why.** Every Orchestrate before 4.2.0 reads a unit row with a bare `Unit(**raw)`. It passes
+the contract gate on a string it knows and then dies in a TypeError on a key it does not, which
+is exactly the failure the contract key exists to turn into a named refusal with an update
+remedy. `permission_declared` shipped under the unchanged 2026-08-31 string, so the changelog's
+"4.1.0 is the oldest reader" line was enforced by nothing. A rule that lives only in a comment
+above the constant had already been missed once; the table makes the omission a red test.
+
+**Rejected.** Deriving the contract string from a hash of the field names (a rename would bump
+the contract for a file an older reader could still open, and the string would stop naming the
+change); relying on the forward-compatible `read_unit` alone (it protects this version reading
+newer files, not older versions reading this one).
+
+**Revisit when.** Every installed Orchestrate is at or above 4.2.0, whose `read_unit` drops
+unknown keys with a notice; from then on an added field needs no contract bump, only a removed
+or re-typed one, and the table can shrink to the meaning-changing entries.
+
 ### A run coordination plan lives outside `docs/plans/`  {#907-run-plan-outside-plans-corpus}
 
 **Decision.** Relocate `2026-08-30-agent-launcher-907-run-plan.md` from `docs/plans/` to

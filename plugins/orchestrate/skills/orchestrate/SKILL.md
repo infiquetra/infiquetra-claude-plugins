@@ -146,9 +146,17 @@ Operator-owned requests prevent that resubmission.
 ## State
 
 One file, `.orchestrate/run.json`: run id, source, base commit, the verbatim review result and routing
-state, and per unit its name, vendor, model, effort, account, task, role, owned paths, outstanding fix requests,
-dependencies, worktree, branch, tab, Herdr agent name, status, `variant`, `launch_receipt`, and `parked_state`. If
-session state is wrong, `herdr agent list` is the real truth.
+state, and per unit its name, vendor, model, effort, account, `permission` (`auto` or `bypass`),
+`permission_declared` (whether the plan row named that posture or the unit inherited the default), task,
+role, owned paths, outstanding fix requests, dependencies, worktree, branch, tab, Herdr agent name, status,
+`variant`, `launch_receipt`, and `parked_state`. If session state is wrong, `herdr agent list` is the real
+truth.
+
+The file names its own shape under a `contract` key. A run file this Orchestrate writes cannot be opened
+by an Orchestrate older than 4.2.0: the older one refuses it by name and tells you to update, rather than
+reading it wrong. This Orchestrate still opens every run file an older one wrote. So after updating
+Orchestrate, finish or `clean` a run with the version that started it, or update every seat that will
+touch the run.
 
 `start` adds `.orchestrate/` to the driven repository's local `.git/info/exclude`, preserving every
 existing rule and never duplicating its own. The run record and task material therefore stay local

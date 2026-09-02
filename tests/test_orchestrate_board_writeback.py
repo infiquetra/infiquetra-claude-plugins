@@ -1250,7 +1250,116 @@ class TestAFailedWritebackOutlivesTheInvocationThatSawIt:
         assert json.loads(run_path.read_text())["writeback_failed"] == {}
 
 
+# The Unit field set each run-file contract string was issued for. A contract names the shape
+# an older Orchestrate would misread: a 4.0.x reader passes the contract gate on a string it
+# knows and then dies in a bare ``Unit(**raw)`` on a key it does not (terminal review F05/F21).
+# So the string moves whenever Unit gains or loses a field, and this table is the binding.
+UNIT_FIELDS_BY_CONTRACT: dict[str, tuple[str, ...]] = {
+    "2026-08-31.stage-status-pair": (
+        "name",
+        "vendor",
+        "task",
+        "task_file",
+        "model",
+        "effort",
+        "account",
+        "permission",
+        "setup",
+        "launch_args",
+        "workspace",
+        "merge",
+        "role",
+        "lifecycle",
+        "paths",
+        "fix_requests",
+        "after",
+        "serialize",
+        "worktree",
+        "branch",
+        "branched_from",
+        "tab_id",
+        "pane_id",
+        "agent_name",
+        "status",
+        "note",
+        "variant",
+        "launch_receipt",
+        "parked_state",
+    ),
+    "2026-09-02.permission-declared": (
+        "name",
+        "vendor",
+        "task",
+        "task_file",
+        "model",
+        "effort",
+        "account",
+        "permission",
+        "permission_declared",
+        "setup",
+        "launch_args",
+        "workspace",
+        "merge",
+        "role",
+        "lifecycle",
+        "paths",
+        "fix_requests",
+        "after",
+        "serialize",
+        "worktree",
+        "branch",
+        "branched_from",
+        "tab_id",
+        "pane_id",
+        "agent_name",
+        "status",
+        "note",
+        "variant",
+        "launch_receipt",
+        "parked_state",
+    ),
+}
+
+
 class TestTheRunFileNamesItsOwnContract:
+    def test_the_contract_string_moves_with_the_unit_field_set(
+        self, orchestrate: ModuleType
+    ) -> None:
+        """Terminal review F05/F21: ``permission_declared`` shipped under the 2026-08-31
+        string, so an installed 4.0.1 accepted the file and raised a bare TypeError instead
+        of the named refusal. The current field set must be the one recorded for the
+        current contract string; a new field without a new string fails here."""
+        fields = tuple(orchestrate.Unit.__dataclass_fields__)
+        assert orchestrate.RUN_FILE_CONTRACT in UNIT_FIELDS_BY_CONTRACT, (
+            "record the Unit field set for the new RUN_FILE_CONTRACT in UNIT_FIELDS_BY_CONTRACT"
+        )
+        assert fields == UNIT_FIELDS_BY_CONTRACT[orchestrate.RUN_FILE_CONTRACT], (
+            "Unit gained or lost a field: bump RUN_FILE_CONTRACT to a new dated string and "
+            "record the field set it was issued for"
+        )
+        assert max(UNIT_FIELDS_BY_CONTRACT) == orchestrate.RUN_FILE_CONTRACT, (
+            "the current contract must be the newest dated string"
+        )
+        assert set(UNIT_FIELDS_BY_CONTRACT) <= set(orchestrate.KNOWN_RUN_FILE_CONTRACTS), (
+            "every contract this Orchestrate ever wrote must still be readable"
+        )
+        assert "" in orchestrate.KNOWN_RUN_FILE_CONTRACTS
+
+    def test_a_reader_that_knows_only_the_previous_contract_refuses_this_run_file(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The backward half F05 names: the contract gate an installed 4.0.1 runs is
+        ``contract not in {"", "2026-08-31.stage-status-pair"}``. A run file this version
+        writes must trip that gate, so the older reader stops with RunFileContractError and
+        its update remedy instead of reaching ``Unit(**raw)``."""
+        previous_reader_knows = frozenset({"", "2026-08-31.stage-status-pair"})
+        _write_run(repo, [_unit("work-alpha")])
+        monkeypatch.chdir(repo)
+        orchestrate.Run.load().save()
+        payload = json.loads((repo / ".orchestrate" / "run.json").read_text())
+        assert payload["contract"] not in previous_reader_knows
+        assert "permission_declared" in payload["units"][0]
+
     def test_a_run_file_from_a_newer_orchestrate_is_refused_not_read(
         self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

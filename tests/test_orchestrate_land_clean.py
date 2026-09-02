@@ -564,17 +564,154 @@ class TestLandCleanReapsWhatTheRuleAllows:
                 )
             ],
         )
-        failed = subprocess.CompletedProcess(["herdr"], 3, "", "multiplexer unavailable")
-        monkeypatch.setattr(orchestrate, "close_run_session", lambda _unit: failed)
+        real_run = orchestrate.run
+
+        def selective_run(cmd: list[str], **kwargs: object) -> Any:
+            if cmd[:3] == ["herdr", "tab", "close"]:
+                return subprocess.CompletedProcess(cmd, 3, "", "herdr refused; pane is busy")
+            if cmd[:3] == ["herdr", "tab", "list"]:
+                tabs = {"result": {"tabs": [{"tab_id": "w1:t1", "label": "t"}]}}
+                return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(orchestrate, "run", selective_run)
         monkeypatch.chdir(repo)
 
         assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
         output = capsys.readouterr().out
-        failure = "tab close failed (3) for w1:t1: multiplexer unavailable"
+        failure = "tab close failed (3) for w1:t1: herdr refused; pane is busy"
 
         assert wt_alpha.exists()
         assert orchestrate.Run.load().unit("alpha").note == failure
         assert f"kept alpha: {failure}" in output
+
+    def test_clean_reports_an_unowned_tab_as_left_open_and_never_closes_it(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """REL-07: a unit that reaches cleanup holding a borrowed tab (the U6 staged-input
+        shape) keeps its tab open, is reported as left open -- never closed -- and retains
+        the run record. At the frozen revision the sweep printed `closed` for this unit,
+        force-removed the worktree, and deleted the run record with zero Herdr calls."""
+        wt = _worktree(repo, "borrowed")
+        _write_run(
+            repo,
+            [
+                _unit_row(
+                    "borrowed",
+                    wt,
+                    "done",
+                    tab_id="w1:t-borrowed",
+                    launch_receipt={
+                        "tab_id": "w1:t-borrowed",
+                        "owned": False,
+                        "input_box": "staged",
+                    },
+                )
+            ],
+        )
+        herdr_calls: list[list[str]] = []
+        real_run = orchestrate.run
+
+        def selective_run(cmd: list[str], **kwargs: object) -> Any:
+            if cmd[0] == "herdr":
+                herdr_calls.append(cmd)
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(orchestrate, "run", selective_run)
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(all=True)) == 0
+        out = capsys.readouterr().out
+
+        assert "closed: nothing" in out
+        assert "left open (not owned)" in out
+        assert "w1:t-borrowed" in out
+        assert not any(c[:3] == ["herdr", "tab", "close"] for c in herdr_calls), (
+            "a tab Orchestrate does not own is never closed"
+        )
+        assert wt.exists(), "the borrowed session may still be standing in this worktree"
+        assert (repo / ".orchestrate" / "run.json").exists(), (
+            "--all retains the run record that names the tab the operator must close by hand"
+        )
+
+    def test_every_keep_cause_prints_its_own_reason(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """REL-06: one unit per keep cause, each printed with its own reason and none under
+        the aggregate sentence."""
+        wt_fixer = _worktree(repo, "fixer")
+        _commit(wt_fixer, "fixer.txt")
+        wt_runner = _worktree(repo, "runner")
+        wt_silent = _worktree(repo, "silent")
+        wt_unlanded = _worktree(repo, "unlanded")
+        _commit(wt_unlanded, "unlanded.txt")
+        wt_closer = _worktree(repo, "closer")
+        _commit(wt_closer, "closer.txt")
+        wt_borrowed = _worktree(repo, "borrowed")
+        _commit(wt_borrowed, "borrowed.txt")
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-closer")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-borrowed")
+        _git(repo, "checkout", "main")
+        _write_run(
+            repo,
+            [
+                _unit_row(
+                    "fixer",
+                    wt_fixer,
+                    "done",
+                    fix_requests=[{"fix_id": "fix-1", "owner": "human", "touched_paths": ["x"]}],
+                ),
+                _unit_row("runner", wt_runner, "running"),
+                _unit_row("silent", wt_silent, "done"),
+                _unit_row("unlanded", wt_unlanded, "done"),
+                _unit_row(
+                    "closer",
+                    wt_closer,
+                    "done",
+                    tab_id="w1:t1",
+                    launch_receipt={"tab_id": "w1:t1", "owned": True},
+                ),
+                _unit_row(
+                    "borrowed",
+                    wt_borrowed,
+                    "done",
+                    tab_id="w1:t-borrowed",
+                    launch_receipt={"tab_id": "w1:t-borrowed", "owned": False},
+                ),
+            ],
+        )
+        real_run = orchestrate.run
+
+        def selective_run(cmd: list[str], **kwargs: object) -> Any:
+            if cmd[:3] == ["herdr", "tab", "close"]:
+                return subprocess.CompletedProcess(cmd, 1, "", "herdr refused; pane is busy")
+            if cmd[:3] == ["herdr", "tab", "list"]:
+                tabs = {"result": {"tabs": [{"tab_id": "w1:t1", "label": "t"}]}}
+                return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(orchestrate, "run", selective_run)
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        out = capsys.readouterr().out
+
+        assert "kept fixer: fix request outstanding" in out
+        assert "kept runner: not done" in out
+        assert "kept silent: committed nothing to land" in out
+        assert "kept unlanded: not on the run branch" in out
+        assert "kept closer: tab close failed (1) for w1:t1: herdr refused; pane is busy" in out
+        assert "kept borrowed: tab left open (not owned): tab w1:t-borrowed" in out
+        assert "kept (not done, or its work not on the run branch):" not in out
 
     def test_it_never_deletes_branches(
         self,

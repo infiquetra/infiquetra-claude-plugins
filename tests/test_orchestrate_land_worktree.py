@@ -510,7 +510,9 @@ def test_plain_clean_keeps_a_symlinked_conflict_pointer_and_its_victim_worktree(
 
     label = f"conflict worktree at {conflict_path}"
     assert "closed: nothing" in cleaned.stdout
-    assert f"kept (not done, or its work not on the run branch): {label}" in cleaned.stdout
+    # Issue 907 U7: every keep prints its own reason; a conflict-worktree label no longer
+    # rides under the unit aggregate sentence, which named the wrong cause for it.
+    assert f"kept {label}: conflict worktree" in cleaned.stdout
 
 
 def test_clean_merged_reaps_an_unrecorded_numbered_landing_worktree(

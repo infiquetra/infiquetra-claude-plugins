@@ -4117,6 +4117,26 @@ def clean_remote_branches(
     return report
 
 
+def _reap_keep_reason(unit: Unit, r: Run) -> str:
+    """The true reason a ``--merged`` sweep kept this unit.
+
+    Mirrors ``reapable``'s gate order -- a change there must be reflected here, or the
+    printed reason silently stops being the truth. The routed-fix gate is reap's own, one
+    line above the call.
+    """
+    if is_review_controller(unit):
+        slot = r.review_slot(unit)
+        if slot["review_resubmit_pending"] or bool(slot["operator_fix_requests"]):
+            return "review controller still owed a resubmission"
+    if unit.status != DONE or not unit.branch:
+        return "not done"
+    if r.unresolvable_branch:
+        return "run branch unresolved"
+    if landed(unit.branch, r) is None:
+        return "committed nothing to land"
+    return "not on the run branch"
+
+
 def reap(
     r: Run,
     *,
@@ -4156,17 +4176,30 @@ def reap(
             continue
         if unit.fix_requests:
             kept.append(unit.name)
+            if kept_reasons is not None:
+                kept_reasons[unit.name] = "fix request outstanding"
             continue
         if merged_only and not reapable(unit, r):
             kept.append(unit.name)
+            if kept_reasons is not None:
+                kept_reasons[unit.name] = _reap_keep_reason(unit, r)
             continue
         if unit.tab_id:
             close_result = close_run_session(unit)
-            if close_result is not None and close_result.returncode != 0:
+            if close_result is None:
+                # The launcher did not create this tab, so it is never closed here. Report it
+                # as left open -- never as closed -- and keep the unit: the run record is
+                # what names the tab the operator must close by hand, and the session in it
+                # may still be standing in this unit's worktree.
+                if kept_reasons is not None:
+                    kept_reasons[unit.name] = f"tab left open (not owned): tab {unit.tab_id}"
+                kept.append(unit.name)
+                continue
+            if close_result.returncode != 0:
                 detail = (close_result.stderr or close_result.stdout or "").strip()
                 failure = tab_close_failure(unit.tab_id, close_result.returncode, detail)
-                if failure not in unit.note.split("; "):
-                    append_unit_note(unit, failure)
+                # The note was already recorded by close_run_session, the single owner; a
+                # repeated failure must not stack a second copy on it.
                 if kept_reasons is not None:
                     kept_reasons[unit.name] = failure
                 kept.append(unit.name)
@@ -4193,9 +4226,13 @@ def reap(
             # A conflicted merge is, by definition, not merged. Name the recovery surface in the
             # ordinary kept report so `clean --merged` cannot look like it silently swept it up.
             kept.append(label)
+            if kept_reasons is not None:
+                kept_reasons[label] = "conflict worktree"
         elif conflict_path.exists():
             if not live_linked_worktree_at(conflict_path, operator_worktree=root):
                 kept.append(label)
+                if kept_reasons is not None:
+                    kept_reasons[label] = "conflict worktree"
             else:
                 # Protected by live_linked_worktree_at immediately above: the record names an
                 # exact separate linked worktree, not a symlink or another untrusted path.
@@ -4208,6 +4245,8 @@ def reap(
                     r.save()
                 else:
                     kept.append(label)
+                    if kept_reasons is not None:
+                        kept_reasons[label] = "conflict worktree removal failed"
         else:
             # The directory was removed by hand. Clear the pointer so clean reports the filesystem
             # truth. `land` independently inspects and prunes the canonical path's Git registration
@@ -4228,14 +4267,20 @@ def reap(
                 closed.append(label)
             else:
                 kept.append(label)
+                if kept_reasons is not None:
+                    kept_reasons[label] = "landing worktree removal failed"
             continue
         if not live_linked_worktree_at(candidate, operator_worktree=root):
             kept.append(f"landing path at {candidate}")
+            if kept_reasons is not None:
+                kept_reasons[f"landing path at {candidate}"] = "landing worktree"
             continue
         if merged_only:
             recovered = resolved_retained_land(r, candidate)
             if isinstance(recovered, str) or r.resolved_branch is None:
                 kept.append(label)
+                if kept_reasons is not None:
+                    kept_reasons[label] = "landing worktree"
                 continue
             _, recovered_tip, _ = recovered
             published = run(
@@ -4244,6 +4289,8 @@ def reap(
             )
             if published.returncode != 0:
                 kept.append(label)
+                if kept_reasons is not None:
+                    kept_reasons[label] = "landing worktree"
                 continue
         # Protected by live_linked_worktree_at above: the discovered candidate is an exact
         # separate linked worktree; `--merged` additionally proves its merge was published.
@@ -4252,6 +4299,8 @@ def reap(
             closed.append(label)
         else:
             kept.append(label)
+            if kept_reasons is not None:
+                kept_reasons[label] = "landing worktree removal failed"
     return closed, kept
 
 

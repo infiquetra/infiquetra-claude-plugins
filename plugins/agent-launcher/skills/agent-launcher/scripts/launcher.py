@@ -927,7 +927,10 @@ def close_run_session(unit: Any) -> subprocess.CompletedProcess[str] | None:
             return subprocess.CompletedProcess(proc.args, 0, proc.stdout, proc.stderr)
         err = (proc.stderr or proc.stdout or "").strip()
         failure = tab_close_failure(unit.tab_id, proc.returncode, err)
-        if failure not in unit.note.split("; "):
+        # Membership is a substring, never a split on the separator: the failure message
+        # itself carries the separator whenever Herdr's stderr does, so a split can never
+        # match it and a repeated failure would stack copies on the note.
+        if failure not in unit.note:
             append_unit_note(unit, failure)
     return proc
 

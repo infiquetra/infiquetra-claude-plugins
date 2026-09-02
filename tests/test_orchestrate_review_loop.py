@@ -758,6 +758,12 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """REL-04/ARCH-01/REL-05: the real close_run_session drives the note through a run stub,
+    twice in a row -- a failed close followed by the operator's retry of `clean`. The
+    recording has one owner (close_run_session, whose membership test is a substring: the
+    failure message itself contains the note separator, so a split on it can never match),
+    and one copy of the failure stands after both passes. At the frozen revision the first
+    pass left two copies, because both dedup sites appended under a split test."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
@@ -776,8 +782,17 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
         status="done",
     )
     run_record = orchestrate.Run(run_id="review-run", source="test", base="main", units=[unit])
-    failed = subprocess.CompletedProcess(["herdr"], 1, "", "multiplexer unavailable")
-    monkeypatch.setattr(orchestrate, "close_run_session", lambda _unit: failed)
+    real_run = orchestrate.run
+
+    def selective_run(cmd: list[str], **kwargs: object) -> Any:
+        if cmd[:3] == ["herdr", "tab", "close"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "herdr refused; pane is busy")
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            tabs = {"result": {"tabs": [{"tab_id": "w1:t1", "label": "t"}]}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(orchestrate, "run", selective_run)
     monkeypatch.chdir(repo)
     run_record.save()
 
@@ -787,13 +802,14 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
     saved = orchestrate.Run.load().unit("worker")
 
     assert worktree.exists()
-    failure = "tab close failed (1) for w1:t1: multiplexer unavailable"
+    failure = "tab close failed (1) for w1:t1: herdr refused; pane is busy"
     assert saved.note == failure
     assert f"kept worker: {failure}" in first_output
     assert "kept (not done, or its work not on the run branch): worker" not in first_output
 
     assert orchestrate.cmd_clean(args) == 0
-    capsys.readouterr()
+    second_output = capsys.readouterr().out
+    assert f"kept worker: {failure}" in second_output
     assert orchestrate.Run.load().unit("worker").note == failure
 
 

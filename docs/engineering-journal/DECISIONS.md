@@ -2,6 +2,20 @@
 
 ## 2026-09-02
 
+### Issue 907 ships Orchestrate 4.1.0 against Agent Launcher 1.2.2  {#907-release-numbers}
+
+**Decision.** Keep main's three declared dependencies — agent-launcher, mission-control
+`>=2.15.1`, and saga `>=0.151.0`. Raise the agent-launcher floor to the companion version
+this branch ships. Number orchestrate `4.1.0` and agent-launcher `1.2.2`. Carry main's
+`4.0.0` and `4.0.1` CHANGELOG entries beneath the branch entry. Do not ship the branch's
+old single-dependency manifest.
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:** operator Decision 3 on
+`docs/plans/2026-09-01-issue-907-terminal-validation-repair-plan.md`.
+**Why.** Publishing the branch's one-dependency contract would silently withdraw two
+floors already declared on `origin/main`.
+**Rejected.** Shipping orchestrate `4.0.2` with only `agent-launcher >=1.2.1`.
+**Revisit when.** The next companion bump.
+
 ### `input_box_text_chars` is the visible length of the absorbed draft  {#907-input-box-visible-length}
 
 **Decision.** The receipt count is the visible length of what the parser absorbed: characters

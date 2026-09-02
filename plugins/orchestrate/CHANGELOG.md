@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.1.0] - 2026-09-02
+
+### Changed
+
+- **The agent-launcher floor is a command-by-state matrix, not an import-time side
+  effect (#907).** Eight commands — `roster`, `saga`, `start`, `expand`, `go`,
+  `review-result`, `land`, and `clean` — refuse a companion below the declared
+  `>=1.2.2` floor, or a missing or unusable companion, before any pane write,
+  session or worktree creation, or tab close. `--help` survives either fault.
+  `status` and `check` degrade to liveness-unknown when the companion is missing
+  or unusable. `wait`, `settle`, and `adopt` refuse without Herdr reads.
+- **A staged-input stop retries the same pane (#907).** The unit stays `PENDING`
+  with its tab, pane, and receipt; a later `go` re-prompts that pane and creates
+  no session. `already has tab` does not apply to a staged unit.
+- **Run files tolerate unknown unit keys with a named notice (#907).** An older
+  Orchestrate still cannot read a file this version writes; the compatibility
+  floor for a reader of this run-file shape is 4.1.0.
+
 ## [4.0.2] - 2026-08-31
 
 ### Fixed

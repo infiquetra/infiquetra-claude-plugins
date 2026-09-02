@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.2] - 2026-09-02
+
+### Fixed
+
+- **The composer row rule is one classification per physical row (#907).** A row
+  continues an open block when it is bordered or when it is unbordered and
+  indented past the marker column; a blank, a horizontal rule, a marker, or a
+  row at or left of the marker ends the block.
+- **A resend inspects when the pane is unowned or the launcher already typed
+  into it (#907).** The inspection sits immediately before the write it
+  authorises.
+- **Adjacent glyph-led rows stay `unclassifiable` when the viewport cannot prove
+  a new box (#907).**
+- **`input_box_text_chars` is the visible length of the absorbed draft (#907).**
+  One definition, recorded only when the box is staged.
+
 ## [1.2.1] - 2026-08-31
 
 ### Fixed

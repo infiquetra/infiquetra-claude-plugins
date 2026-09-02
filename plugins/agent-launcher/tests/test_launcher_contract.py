@@ -2980,7 +2980,7 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     orchestrate_src = (
         REPO / "plugins" / "orchestrate" / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
     ).read_text(encoding="utf-8")
-    assert "## [1.2.1] - 2026-08-31" in changelog
+    assert "## [1.2.2] - 2026-09-02" in changelog
     assert "selects the last block positionally" in changelog
     assert "`unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`" in changelog
     normalized_changelog = " ".join(changelog.split())

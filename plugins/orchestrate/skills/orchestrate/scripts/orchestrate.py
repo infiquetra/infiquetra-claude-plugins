@@ -1538,6 +1538,17 @@ def _launcher_cache_version(path: Path) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
+class _LauncherFloorFailure(SystemExit):
+    """A launcher that loads but sits below the floor Orchestrate declares for it.
+
+    Still a ``SystemExit`` so every existing caller reads it the same way; ``remedy`` names
+    this fault's own remedy, which differs by cause (update for a stale install).
+    """
+
+    def __init__(self, message: str, remedy: str) -> None:
+        super().__init__(f"{message.rstrip('.')}. {remedy}")
+
+
 def _validated_agent_launcher(path: Path) -> Path:
     """Enforce Orchestrate's declared companion-plugin version floor at runtime."""
     manifest = path.parents[3] / ".claude-plugin" / "plugin.json"
@@ -1550,7 +1561,10 @@ def _validated_agent_launcher(path: Path) -> Path:
     if version < minimum:
         required = ".".join(str(part) for part in minimum)
         actual = ".".join(str(part) for part in version)
-        raise SystemExit(f"agent-launcher {actual} is installed; Orchestrate requires >={required}")
+        raise _LauncherFloorFailure(
+            f"agent-launcher {actual} is installed; Orchestrate requires >={required}",
+            _UPDATE_REMEDIATION,
+        )
     return path
 
 
@@ -1623,24 +1637,43 @@ def _subprocess_run(
     return proc
 
 
+_INSTALL_REMEDIATION = "claude plugin install agent-launcher@infiquetra-plugins"
+_UPDATE_REMEDIATION = "claude plugin update agent-launcher@infiquetra-plugins"
 _REMEDIATION_MESSAGE = (
-    "agent-launcher plugin not found. Install the companion plugin: "
-    "claude plugin install agent-launcher@infiquetra-plugins"
+    f"agent-launcher plugin not found. Install the companion plugin: {_INSTALL_REMEDIATION}"
 )
+# The companion fault, composed per cause: a stale install carries the update remedy, a
+# missing or unusable one carries the install remedy, and each names its own cause.
 _AGENT_LAUNCHER_ERROR: str | None = None
+_COMPANION_FAULT_PRINTED = False
 
 
 def _agent_launcher_error(detail: str) -> str:
-    """One failure contract for every unusable companion-plugin state."""
-    return f"{detail.rstrip('.')}. {_REMEDIATION_MESSAGE}"
+    """One failure contract for a companion that cannot be used at all."""
+    return f"{detail.rstrip('.')}. Install the companion plugin: {_INSTALL_REMEDIATION}"
 
 
 def _agent_launcher_required(*_args: Any, **_kwargs: Any) -> Any:
     raise SystemExit(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE)
 
 
+def _print_companion_fault_once() -> None:
+    """Print the companion fault once per process, for a read-only degraded command."""
+    global _COMPANION_FAULT_PRINTED
+    if _COMPANION_FAULT_PRINTED:
+        return
+    _COMPANION_FAULT_PRINTED = True
+    print(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE, file=sys.stderr)
+
+
 def assert_agent_launcher_available() -> None:
-    """Fail fast before creating any worktree, session, or mutating run state."""
+    """Refuse before any pane write, session or worktree creation, or tab close.
+
+    This is the KTD7 matrix's write side: it fires whenever the companion is below the
+    declared floor (stale: update it) or was not ingested at all (missing or unusable:
+    install or repair it). Read-only commands never call it, so a broken companion never
+    kills a status or a check while a unit is running.
+    """
     if _AGENT_LAUNCHER_ERROR:
         raise SystemExit(_AGENT_LAUNCHER_ERROR)
     if not _AGENT_LAUNCHER_AVAILABLE:
@@ -1666,9 +1699,14 @@ def _ingest_agent_launcher() -> bool:
         return False
     try:
         _validated_agent_launcher(script)
+    except _LauncherFloorFailure as exc:
+        # A stale launcher is still ingested, so read-only commands keep their Herdr reads
+        # through it; the floor gates only the commands that would write a pane, create a
+        # session or worktree, or close a tab, and this fault carries the update remedy.
+        _AGENT_LAUNCHER_ERROR = str(exc)
     except SystemExit as exc:
-        # A stale but loadable launcher can still support recovery commands such as clean. The
-        # declared floor gates commands that create or expand work, not module import or status.
+        # Orchestrate's own manifest could not name a floor. The launcher is still ingested
+        # for reads; writes are gated behind this cause and the install remedy.
         _AGENT_LAUNCHER_ERROR = _agent_launcher_error(str(exc))
     # launcher.py has a ``__main__`` CLI. When orchestrate.py is the entry point,
     # ingest would otherwise run that CLI against orchestrate's argv (``wait``,
@@ -1682,7 +1720,7 @@ def _ingest_agent_launcher() -> bool:
         exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
     except (SystemExit, Exception) as exc:
         _AGENT_LAUNCHER_ERROR = _agent_launcher_error(
-            f"agent-launcher at {script} is unusable: {exc}"
+            f"agent-launcher at {script} is unusable: {type(exc).__name__}: {exc}"
         )
         return False
     return True
@@ -2598,6 +2636,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
 
 def cmd_review_result(args: argparse.Namespace) -> int:
     """Persist one typed result verbatim, then act only on its routing fields."""
+    assert_agent_launcher_available()  # routing resubmits reach `say`: gate before any write
     try:
         raw_result = Path(args.file).read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as exc:
@@ -2799,7 +2838,13 @@ def status_cell(text: str) -> str:
 
 def cmd_status(args: argparse.Namespace) -> int:
     r = Run.load()
-    live = {u.name: poll(u) for u in r.units if u.status == RUNNING}
+    if _AGENT_LAUNCHER_AVAILABLE:
+        live = {u.name: poll(u) for u in r.units if u.status == RUNNING}
+    else:
+        # The companion was not ingested, so Herdr cannot be asked: print the fault once and
+        # read liveness as unknown -- absence must not read as gone (the API-04 trade).
+        _print_companion_fault_once()
+        live = {u.name: "unknown" for u in r.units if u.status == RUNNING}
     print(f"run {r.run_id}   base {r.base[:8]}   {r.source}\n")
     if r.unresolvable_branch:
         print(f"WARNING: run branch {r.unresolvable_branch!r} does not resolve\n")
@@ -3446,6 +3491,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     incomplete. 4: repairs landed but could not be resubmitted to the recorded Code Review
     controller. A caller scripting this has to be able to tell those failures apart.
     """
+    assert_agent_launcher_available()  # reaching `say` and `close_run_session`: gate first
     r = Run.load()
     if not r.branch:
         raise SystemExit("this run has no run branch; it predates `land` -- start a new run")
@@ -4329,6 +4375,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
     their work is on the run branch, and leaving them open for the rest of the run is how a
     workspace ends up with a dozen idle tabs nobody can tell apart.
     """
+    assert_agent_launcher_available()  # reaching `close_run_session`: gate first
     r = Run.load()
     if r.unresolvable_branch:
         print(
@@ -4402,17 +4449,28 @@ def cmd_check(args: argparse.Namespace) -> int:
         findings.append(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
 
     # One herdr round for the whole run, not one per row. A pending or failed unit has no session,
-    # so it is never matched against the list at all.
-    agents = live_agents()
+    # so it is never matched against the list at all. Without an ingested companion Herdr cannot
+    # be asked: the fault prints once and every reading is unknown, never gone.
+    agents: list[dict[str, Any]] | None
+    if _AGENT_LAUNCHER_AVAILABLE:
+        agents = live_agents()
+    else:
+        _print_companion_fault_once()
+        agents = None
     for unit in r.units:
-        if branch_error is None and has_delivery_warning(unit) and not produced_anything(unit, r):
+        if (
+            _AGENT_LAUNCHER_AVAILABLE
+            and branch_error is None
+            and has_delivery_warning(unit)
+            and not produced_anything(unit, r)
+        ):
             findings.append(
                 f"DELIVERY WARNING {unit.name} -- sent its task but was never observed starting, "
                 "and its branch has no commits"
             )
         if unit.status not in (RUNNING, DONE):
             continue
-        state = poll(unit, agents)
+        state = poll(unit, agents) if agents is not None else "unknown"
         if unit.status == DONE:
             if branch_error is None and not produced_anything(unit, r):
                 findings.append(

@@ -51,6 +51,15 @@ def _set_plugin_version(root: Path, version: str) -> None:
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def _git_out(cwd: Path, *args: str) -> str:
+    got = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    return got.stdout.strip()
+
+
 def _install_fake_agents(tmp_path: Path) -> Path:
     binary_dir = tmp_path / "bin"
     binary_dir.mkdir(exist_ok=True)
@@ -136,8 +145,21 @@ def test_orchestrate_skill_matches_the_deferred_floor_failure_contract() -> None
     section = skill[skill.index("**Single launch seam") : skill.index("Unsupported post-launch")]
     assert "plugin manifest" in section
     assert "read-only recovery commands" in section
-    assert all(command in section for command in ("`roster`", "`start`", "`expand`", "`go`"))
+    assert all(
+        command in section
+        for command in (
+            "`roster`",
+            "`saga`",
+            "`start`",
+            "`expand`",
+            "`go`",
+            "`review-result`",
+            "`land`",
+            "`clean`",
+        )
+    )
     assert EXPECTED_REMEDIATION in section
+    assert "claude plugin update agent-launcher@infiquetra-plugins" in section
 
 
 def test_orchestrate_skill_states_the_staged_input_recovery_runbook() -> None:
@@ -324,7 +346,8 @@ def test_read_only_help_survives_a_stale_launcher_while_roster_enforces_the_floo
     assert roster_result.returncode != 0
     output = roster_result.stderr + roster_result.stdout
     assert "agent-launcher 1.2.0 is installed; Orchestrate requires >=1.2.1" in output
-    assert EXPECTED_REMEDIATION in output
+    # Issue 907 U8 (ARCH-02): a stale install prescribes the update, never the install.
+    assert "claude plugin update agent-launcher@infiquetra-plugins" in output
     assert "Traceback" not in output
 
 
@@ -495,3 +518,370 @@ def test_installed_cache_discovery_selects_and_validates_the_highest_numeric_ver
     )
     assert result.returncode == 0, result.stderr + result.stdout
     assert "claude" in result.stdout
+
+
+# --- Issue 907 U8: the companion floor is a command-by-state matrix (KTD7) ---------------------
+
+
+FAKE_HERDR = """#!/usr/bin/env python3
+import json
+import os
+import sys
+with open(os.environ["HERDR_LOG"], "a") as fh:
+    fh.write(" ".join(sys.argv[1:]) + "\\n")
+argv = sys.argv[1:]
+if argv[:2] == ["agent", "list"]:
+    print(json.dumps({"result": {"agents": [{"name": "alpha", "agent_status": "working"}]}}))
+elif argv[:2] == ["tab", "list"]:
+    print(json.dumps({"result": {"tabs": []}}))
+elif argv[:2] == ["pane", "current"]:
+    print(json.dumps({"result": {"pane": {"workspace_id": "w1"}}}))
+sys.exit(0)
+"""
+
+MATRIX_INVOCATIONS = {
+    "--help": ["--help"],
+    "start": ["start", "--plan", "plan.md"],
+    "roster": ["roster"],
+    "saga": ["saga", "plan"],
+    "expand": ["expand", "--plan", "plan.md"],
+    "review-result": ["review-result", "--file", "result.json"],
+    "go": ["go"],
+    "status": ["status"],
+    "settle": ["settle", "--interval", "0"],
+    "wait": ["wait", "--timeout", "1"],
+    "land": ["land"],
+    "announce": ["announce", "alpha"],
+    "collect": ["collect"],
+    "clean": ["clean"],
+    "check": ["check"],
+    "adopt": ["adopt"],
+    "diff": ["diff"],
+    "park": ["park", "--unit", "alpha", "--evidence", "blocked"],
+    "resume": ["resume", "--unit", "alpha"],
+}
+
+GATED_SUBCOMMANDS = (
+    "roster",
+    "saga",
+    "start",
+    "expand",
+    "go",
+    "review-result",
+    "land",
+    "clean",
+)
+
+PANE_WRITES = (("pane", "run"), ("agent", "prompt"), ("tab", "close"))
+
+
+def _declared_floor() -> str:
+    manifest = json.loads(_read(ORCHESTRATE_ROOT / ".claude-plugin" / "plugin.json"))
+    requirement = next(
+        entry["version"]
+        for entry in manifest["dependencies"]
+        if isinstance(entry, dict) and entry.get("name") == "agent-launcher"
+    )
+    assert requirement.startswith(">=")
+    return requirement.removeprefix(">=")
+
+
+def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes]:
+    """One installed layout per companion state: orchestrate plus a companion at the floor,
+    below it, or broken at import; a git repo holding one RUNNING unit; a recording fake
+    herdr on PATH. Returns the orchestrate script, the repo, and the run-file snapshot."""
+    cache = tmp_path / f"cache-{state}" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    launcher_install = _install_plugin(
+        cache, "agent-launcher", _declared_floor(), parts=(".claude-plugin", "skills")
+    )
+    if state == "below-floor":
+        _set_plugin_version(launcher_install, "1.0.0")
+    if state == "unusable":
+        composer = launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py"
+        composer.write_text("raise RuntimeError('simulated roster drift')\n", encoding="utf-8")
+
+    repo = tmp_path / f"repo-{state}"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "base.txt").write_text("base\n")
+    _git(repo, "add", "base.txt")
+    _git(repo, "commit", "-m", "base")
+    _git(repo, "branch", "orch/r1")
+    _git(repo, "branch", "orch/r1-alpha")
+    _git(repo, "remote", "add", "origin", str(repo))
+    (repo / "plan.md").write_text("- plan\n")
+    (repo / "result.json").write_text("{}\n")
+    run_file = repo / ".orchestrate" / "run.json"
+    run_file.parent.mkdir()
+    snapshot = json.dumps(
+        {
+            "run_id": "r1",
+            "source": "matrix",
+            "base": _git_out(repo, "rev-parse", "main"),
+            "branch": "orch/r1",
+            "units": [
+                {
+                    "name": "alpha",
+                    "vendor": "claude",
+                    "task": "x",
+                    "branch": "orch/r1-alpha",
+                    "status": "running",
+                    "tab_id": "w1:t1",
+                    "pane_id": "w1:p1",
+                    "launch_receipt": {"tab_id": "w1:t1", "owned": True, "input_box": "empty"},
+                }
+            ],
+        }
+    ).encode()
+    run_file.write_bytes(snapshot)
+
+    bin_dir = tmp_path / f"bin-{state}"
+    bin_dir.mkdir()
+    herdr = bin_dir / "herdr"
+    herdr.write_text(FAKE_HERDR, encoding="utf-8")
+    herdr.chmod(0o755)
+    agents = bin_dir / "agents"
+    agents.write_text("#!/bin/sh\nprintf 'Tools:\\n  claude  Claude\\n\\n'\n", encoding="utf-8")
+    agents.chmod(0o755)
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+    return script, repo, snapshot, bin_dir
+
+
+def _run_matrix_command(
+    tmp_path: Path, script: Path, repo: Path, snapshot: bytes, bin_dir: Path, command: str
+) -> tuple[int, str, list[str]]:
+    """Run one matrix invocation: fresh run record, fresh herdr log, combined output."""
+    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
+    if command == "adopt":
+        # adopt only reaches its liveness read when a run branch is unrecorded; give it
+        # one for this invocation and take it away again so `check` sees a clean repo.
+        _git(repo, "branch", "orch/r1-orphan", "main")
+    log = tmp_path / f"herdr-{command}-{repo.name}.log"
+    if log.exists():
+        log.unlink()
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "HERDR_LOG": str(log),
+    }
+    proc = _run_installed_orchestrate(
+        script, MATRIX_INVOCATIONS[command], cwd=repo, env_overrides=env
+    )
+    if command == "adopt":
+        _git(repo, "branch", "-D", "orch/r1-orphan")
+    calls = (
+        [line.split() for line in log.read_text(encoding="utf-8").splitlines()]
+        if log.exists()
+        else []
+    )
+    return proc.returncode, proc.stderr + proc.stdout, calls
+
+
+def _assert_no_pane_write(calls: list[str], command: str, state: str) -> None:
+    for call in calls:
+        assert tuple(call[:2]) not in PANE_WRITES, (
+            f"{state}/{command}: a gated command reached a pane write: {' '.join(call)}"
+        )
+
+
+@pytest.mark.parametrize("state", ["at-floor", "below-floor", "unusable"])
+@pytest.mark.parametrize("command", list(MATRIX_INVOCATIONS))
+def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) -> None:
+    """SEC-03/API-02: the companion floor as a command-by-state matrix. A below-floor or
+    missing companion never reaches a pane write, a creation, or a tab close through the
+    gated commands; --help, status and check survive every companion state."""
+    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, state)
+    code, output, calls = _run_matrix_command(tmp_path, script, repo, snapshot, bin_dir, command)
+
+    if command == "--help":
+        assert code == 0, f"{state}/--help: {output}"
+        return
+    if state == "at-floor":
+        assert "claude plugin update agent-launcher" not in output, (
+            f"{state}/{command}: the gate fired at floor: {output}"
+        )
+        assert EXPECTED_REMEDIATION not in output, f"{state}/{command}: {output}"
+        if command in ("status", "check"):
+            assert code == 0, f"{state}/{command}: {output}"
+            assert any(c[:2] == ["agent", "list"] for c in calls), (
+                f"{state}/{command}: liveness was not asked of herdr"
+            )
+        return
+    if state == "below-floor":
+        if command in GATED_SUBCOMMANDS:
+            assert code != 0, f"{state}/{command}: ran against a below-floor companion"
+            assert "claude plugin update agent-launcher@infiquetra-plugins" in output, (
+                f"{state}/{command}: no update remedy: {output}"
+            )
+            assert EXPECTED_REMEDIATION not in output, (
+                f"{state}/{command}: the install remedy serves a stale install: {output}"
+            )
+            _assert_no_pane_write(calls, command, state)
+        elif command in ("status", "check"):
+            assert code == 0, f"{state}/{command}: {output}"
+            assert EXPECTED_REMEDIATION not in output and "unusable" not in output, (
+                f"{state}/{command}: a stale companion printed a fault: {output}"
+            )
+            assert any(c[:2] == ["agent", "list"] for c in calls), (
+                f"{state}/{command}: the ingested companion did not read liveness"
+            )
+        else:
+            assert "claude plugin update agent-launcher" not in output, (
+                f"{state}/{command}: refused: {output}"
+            )
+        return
+    # unusable: nothing was ingested
+    if command in GATED_SUBCOMMANDS:
+        assert code != 0, f"{state}/{command}: ran against an unusable companion"
+        assert "simulated roster drift" in output or "not found" in output, (
+            f"{state}/{command}: no cause named: {output}"
+        )
+        assert EXPECTED_REMEDIATION in output, f"{state}/{command}: {output}"
+        _assert_no_pane_write(calls, command, state)
+    elif command in ("status", "check"):
+        assert code == 0, f"{state}/{command}: a read-only command died: {output}"
+        assert output.count("simulated roster drift") == 1, (
+            f"{state}/{command}: the fault was not printed exactly once: {output}"
+        )
+        assert not any(c[:2] == ["agent", "list"] for c in calls), (
+            f"{state}/{command}: liveness was asked without a companion"
+        )
+        if command == "status":
+            assert "unknown" in output, f"{state}/{command}: liveness not unknown: {output}"
+    elif command in ("wait", "settle", "adopt"):
+        assert code != 0, f"{state}/{command}: ran without the companion's Herdr reads"
+        assert "simulated roster drift" in output, f"{state}/{command}: {output}"
+    else:
+        # The ungated commands run to their own semantics; the matrix only promises they
+        # are never refused by the companion.
+        assert "simulated roster drift" not in output, f"{state}/{command}: {output}"
+
+
+@pytest.mark.parametrize("plugin_root", ["sibling", "grandparent"])
+def test_plugin_root_discovery_selects_the_highest_numeric_version(
+    tmp_path: Path, plugin_root: str
+) -> None:
+    """TEST-03 / O16 / O17 / O18: with the parent walk unable to resolve a launcher, the
+    CLAUDE_PLUGIN_ROOT branch is the only route, and it picks the highest numeric version
+    -- never the 1.9.0 entry whose script raises."""
+    cache_a = tmp_path / "cache-a" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache_a, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    cache_b = tmp_path / "cache-b" / MARKETPLACE
+    older = _install_plugin(cache_b, "agent-launcher", "1.9.0", parts=(".claude-plugin", "skills"))
+    newer = _install_plugin(cache_b, "agent-launcher", "1.10.0", parts=(".claude-plugin", "skills"))
+    _set_plugin_version(older, "1.2.1")
+    _set_plugin_version(newer, "1.2.1")
+    old_script = older / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    old_script.write_text("raise RuntimeError('lower cache entry selected')\n", encoding="utf-8")
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+
+    if plugin_root == "sibling":
+        root = cache_b / "orchestrate"
+    else:
+        root = cache_b / "orchestrate" / "3.2.1"
+    path = f"{_install_fake_agents(tmp_path)}:{os.environ.get('PATH', '')}"
+    result = _run_installed_orchestrate(
+        script,
+        ["roster"],
+        cwd=tmp_path,
+        env_overrides={"PATH": path, "CLAUDE_PLUGIN_ROOT": str(root)},
+    )
+    output = result.stderr + result.stdout
+    assert result.returncode == 0, output
+    assert "claude" in result.stdout
+    assert "lower cache entry selected" not in output
+
+
+def test_bad_agent_launcher_root_override_exits_with_the_named_message(tmp_path: Path) -> None:
+    """O21: a bad AGENT_LAUNCHER_ROOT names the missing file, not a manifest failure."""
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+    empty_root = tmp_path / "not-a-plugin"
+    empty_root.mkdir()
+
+    result = _run_installed_orchestrate(
+        script, ["roster"], cwd=tmp_path, env_overrides={"AGENT_LAUNCHER_ROOT": str(empty_root)}
+    )
+    output = result.stderr + result.stdout
+    assert result.returncode != 0
+    assert "does not contain skills/agent-launcher/scripts/launcher.py" in output
+    assert "cannot verify agent-launcher manifest" not in output
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    ["^1.2.1", "1.2.1", ">=1.2.1,<2.0.0"],
+    ids=["caret-range", "bare-version", "compound-range"],
+)
+def test_malformed_floor_requirements_exit_with_the_named_message(
+    tmp_path: Path, requirement: str
+) -> None:
+    """TEST-11's floor-regex half / O3: a requirement that is not a numeric >= floor is
+    refused by name, in every malformed shape."""
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    # The malformed floor is only reached once a launcher exists to check; discovery
+    # happens before the floor.
+    _install_plugin(cache, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills"))
+    manifest = orch_install / ".claude-plugin" / "plugin.json"
+    payload = json.loads(_read(manifest))
+    next(
+        entry
+        for entry in payload["dependencies"]
+        if isinstance(entry, dict) and entry.get("name") == "agent-launcher"
+    )["version"] = requirement
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+
+    result = _run_installed_orchestrate(script, ["roster"], cwd=tmp_path)
+    output = result.stderr + result.stdout
+    assert result.returncode != 0
+    assert "must be a numeric >= floor" in output
+
+
+def test_each_companion_fault_names_its_own_cause_and_remedy(tmp_path: Path) -> None:
+    """ARCH-02 / REL-02: below floor prescribes the update, missing prescribes the
+    install, unusable names the exception type."""
+    # missing: no companion installed at all
+    cache = tmp_path / "cache-missing" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+    result = _run_installed_orchestrate(script, ["roster"], cwd=tmp_path)
+    missing_output = result.stderr + result.stdout
+    assert result.returncode != 0
+    assert "not found" in missing_output
+    assert EXPECTED_REMEDIATION in missing_output
+
+    # below floor: update, never install
+    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "below-floor")
+    result = _run_installed_orchestrate(
+        script, ["roster"], cwd=repo, env_overrides={"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    )
+    below_output = result.stderr + result.stdout
+    assert result.returncode != 0
+    assert "is installed; Orchestrate requires >=" in below_output
+    assert "claude plugin update agent-launcher@infiquetra-plugins" in below_output
+    assert "not found" not in below_output
+
+    # unusable: the exception type is named
+    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "unusable")
+    result = _run_installed_orchestrate(
+        script, ["roster"], cwd=repo, env_overrides={"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    )
+    unusable_output = result.stderr + result.stdout
+    assert result.returncode != 0
+    assert "RuntimeError: simulated roster drift" in unusable_output
+    assert EXPECTED_REMEDIATION in unusable_output

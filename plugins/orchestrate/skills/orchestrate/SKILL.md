@@ -83,10 +83,13 @@ bypass the background launch flags (`--no-focus --current --herdr --herdr-contro
 operator UI focus. The launch contract lives in `plugins/agent-launcher/`; Orchestrate does not
 keep a private copy. Orchestrate declares its Agent Launcher floor in its plugin manifest and reads
 that same declaration at runtime. Discovery and import never kill `--help`, `status`, or other
-read-only recovery commands merely because the companion is stale or unusable. `roster`, `start`,
-`expand`, and `go` enforce the floor before any session or worktree is created and report the same
-named failure plus the supported remediation
-(`claude plugin install agent-launcher@infiquetra-plugins`).
+read-only recovery commands merely because the companion is stale or unusable. `roster`, `saga`,
+`start`, `expand`, `go`, `review-result`, `land`, and `clean` enforce the floor before any pane
+write, session or worktree creation, or tab close, and each fault names its own cause and remedy:
+a companion below the floor refuses with `claude plugin update agent-launcher@infiquetra-plugins`,
+a missing or unusable one with `claude plugin install agent-launcher@infiquetra-plugins`. `status`
+and `check` survive a missing or unusable companion by reading liveness as `unknown` and printing
+the fault once; `wait`, `settle`, and `adopt` need the companion's Herdr reads and refuse without it.
 **A staged-input stop is retryable through the same pane.** When a launch refuses to prompt because
 the pane's composer holds an unsent operator draft, the unit stops `PENDING` with its tab, pane and
 launch receipt recorded and the draft's size — never its text — in the note. The recovery has two

@@ -2,6 +2,33 @@
 
 ## 2026-09-02
 
+### A run coordination plan lives outside `docs/plans/`  {#907-run-plan-outside-plans-corpus}
+
+**Decision.** Relocate `2026-08-30-agent-launcher-907-run-plan.md` from `docs/plans/` to
+`docs/runs/` without changing one byte of its contents. Leave every frozen citation of
+the old path alone.
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:** operator ruling on the held
+`tests/test_plan_artifact_conformance.py` failure.
+
+**Why.** `docs/plans/**/*.md` is the saga plan-conformance corpus; placement alone
+decides membership. The accepted plan is a saga implementation plan (Implementation
+Units, Key Technical Decisions, U1..U14). The relocated document is a run
+coordination plan — a run-contract preamble, seven issue lanes L1..L7, a runtime
+checkpoint, a release-surface section, coexistence, stop conditions. Those are two
+artifact kinds. The repo already separates kinds by directory (reviews, code-reviews,
+handoffs, work-sessions, evidence). The document's frontmatter and L1..L7 labels are
+true and are cited downstream; editing them to satisfy the corpus lint would falsify
+the record.
+
+**Rejected.** Renaming L1..L7 to U1..U7 — that would falsify every downstream citation
+and collide with this run's own U1..U14. Dropping `backend: inline` — that would
+delete a true statement to pass a lint. Widening the conformance regex — that would
+change a shipped plugin outside this issue's scope.
+
+**Revisit when.** A later issue owns a first-class run-plan schema, or the saga
+conformance corpus is deliberately widened to include `docs/runs/`.
+
 ### Issue 907 ships Orchestrate 4.1.0 against Agent Launcher 1.2.2  {#907-release-numbers}
 
 **Decision.** Keep main's three declared dependencies — agent-launcher, mission-control

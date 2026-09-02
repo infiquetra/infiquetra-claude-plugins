@@ -59,7 +59,7 @@ Merged `origin/main` (`f30d8678`) with no rebase.
 ## Follow-on units U15 and U16 (operator-bounded gate repairs)
 
 Recorded after this session file was first written. Commits: U15 `2b7b8519`, U16 `ff7efa78`.
-The plan-conformance failure on `docs/plans/2026-08-30-agent-launcher-907-run-plan.md` remains held.
+U18 relocated `docs/plans/2026-08-30-agent-launcher-907-run-plan.md`, contents unchanged, to `docs/runs/2026-08-30-agent-launcher-907-run-plan.md`.
 
 ## Next step
 

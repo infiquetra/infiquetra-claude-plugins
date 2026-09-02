@@ -164,6 +164,17 @@ def test_orchestrate_skill_matches_the_deferred_floor_failure_contract() -> None
     assert "claude plugin update agent-launcher@infiquetra-plugins" in section
 
 
+def test_orchestrate_readme_and_command_agree_the_launcher_floor_is_enforced() -> None:
+    """DOCC-04: origin/main's two docs must not keep the pre-U8 'nothing checks' sentences."""
+    readme = _read(ORCHESTRATE_ROOT / "README.md")
+    command = _read(ORCHESTRATE_ROOT / "commands" / "orchestrate.md")
+    assert "nothing verifies them" not in readme
+    assert "no code checks" not in command
+    for text in (readme, command):
+        assert "agent-launcher" in text
+        assert "status" in text and "check" in text
+
+
 def test_orchestrate_skill_states_the_staged_input_recovery_runbook() -> None:
     """REL-12: the operator-facing runbook for a staged-input stop. Prose is compared with
     whitespace flattened so line wrapping cannot mask a claim."""

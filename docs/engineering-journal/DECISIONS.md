@@ -88,6 +88,8 @@ discovery; killing `--help` at import; allowing an unusable companion to escape 
 traceback.
 
 **Revisit when.** A new Orchestrate subcommand reaches Herdr, or the companion floor moves.
+README and `commands/orchestrate.md` now describe this matrix (U13 / DOCC-04); they must not
+again claim the agent-launcher floor is unchecked.
 
 ### Fail open on a fully styled composer until an independent authorship signal exists  {#907-styled-composer-trade}
 

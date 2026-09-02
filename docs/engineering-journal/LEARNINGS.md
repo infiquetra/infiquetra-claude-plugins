@@ -21,6 +21,25 @@
 
 ## 2026-09-02
 
+### Installer-facing docs can claim a floor is unchecked after code already enforces it  {#907-docs-lag-runtime-floor}
+
+**Context.** `origin/main`'s orchestrate README and command document said the agent-launcher
+floor was declared for the installer and nothing verifies it, after U8 already enforced the
+KTD7 command-by-state matrix on this branch.
+**Evidence.** `git show origin/main:plugins/orchestrate/README.md` (the "nothing verifies them"
+sentence) and `commands/orchestrate.md` (the "no code checks" sentence); finding DOCC-04.
+The merged tree still held both sentences until U13. `SKILL.md` already described the matrix.
+**Mechanism.** Those two files exist only on `origin/main`. The merge brought the pre-enforcement
+claim onto a branch that had already closed the dead-`status` inversion. A reader of README
+or the slash-command doc would conclude the floor is decorative.
+**Fix (or queued).** U13 replaced each false sentence with the KTD7 matrix (surviving `--help`,
+`status`, and `check`; write / create / close refuse) and left the mission-control floor as an
+installer declaration. A contract test forbids the two pre-enforcement phrases.
+**Generalizable rule.** When a runtime floor lands on a branch, correct the installer-facing
+docs that live only on main in the same serial run as the merge, or the published story
+reverts to the claim the code just retired.
+**Refs.** DECISIONS `{#907-agent-launcher-floor-owner}`; plan unit U13 / DOCC-04.
+
 ### A finding satisfied by building its mirror image is not repaired  {#907-verification-order}
 
 **Context.** Two repair rounds on `work/cp907-launcher-session-contract` closed a finding by

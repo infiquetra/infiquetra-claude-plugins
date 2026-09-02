@@ -497,11 +497,14 @@ land in `Planning`; `work`, `fix` and `codereview` in `Active`. That is all five
 `Verify` or `Retro` — those begin only after conditions a run cannot observe — and a `status_map`
 override naming either stage is refused at submission, not merely absent from the default map.
 
-**Install saga 0.151.0 or later and mission-control 2.15.1 or later before relying on this.** Both
-floors are declared in `plugin.json`; **only saga's is enforced** — a saga below its floor is
+**Install saga 0.151.0 or later and mission-control 2.15.1 or later before relying on this.**
+Both floors are declared in `plugin.json`; saga's is enforced — a saga below its floor is
 refused before any submission, because an older saga silently drops the `Stage` half and reports
-success. The mission-control floor, like the agent-launcher one beside it, is a declaration the
-installer reads and no code checks.
+success. The agent-launcher floor is enforced at runtime as a command-by-state matrix:
+`--help` survives a stale or missing companion, `status` and `check` degrade to
+liveness-unknown when it is missing or unusable, and every pane-write, session-create or
+tab-close command refuses with an update or install remedy. The mission-control floor is a
+declaration the installer reads.
 
 Read the exit code, not the prose. `land` and `announce` both exit **2** when a card was not
 updated, and every failure prints its reason and whether a retry can clear it. A failure survives

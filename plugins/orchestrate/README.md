@@ -91,11 +91,14 @@ only after conditions a run cannot observe.
 
 **Install order matters.** saga 0.151.0 or later and mission-control 2.15.1 or later must be
 installed before board writeback is relied on. `plugin.json` declares three floors — saga,
-mission-control and agent-launcher — and **only saga's is checked at runtime**: a resolved saga
-below its floor is refused before any submission is made. The mission-control and agent-launcher
-floors are declared for the installer and nothing verifies them, so an install below either one
-fails later and less clearly. `land` and `announce` exit 2 when a card was not updated, print the
-reason, say whether a retry can clear it, and name which saga and schema were used.
+mission-control and agent-launcher. A resolved saga below its floor is refused before any
+submission is made. The agent-launcher floor is enforced at runtime as a command-by-state
+matrix: `--help` survives a stale or missing companion; `status` and `check` degrade to
+liveness-unknown when the companion is missing or unusable; every command that writes a pane,
+creates a session or worktree, or closes a tab refuses with an update or install remedy. The
+mission-control floor is declared for the installer. `land` and `announce` exit 2 when a card
+was not updated, print the reason, say whether a retry can clear it, and name which saga and
+schema were used.
 
 ## Boundaries
 

@@ -687,6 +687,12 @@ class TestLandCleanReapsWhatTheRuleAllows:
                     tab_id="w1:t-borrowed",
                     launch_receipt={"tab_id": "w1:t-borrowed", "owned": False},
                 ),
+                # cmd_settle's shape for a review controller: done, no branch of its own
+                # (terminal review F26).
+                _unit_row("settled", None, "done", branch=None),
+                # A branch git does not know: landed() answers False for a different reason
+                # than "not on the run branch" (terminal review F37).
+                _unit_row("ghost", wt_silent, "done", branch="orch/r1-no-such-branch"),
             ],
         )
         real_run = orchestrate.run
@@ -711,7 +717,82 @@ class TestLandCleanReapsWhatTheRuleAllows:
         assert "kept unlanded: not on the run branch" in out
         assert "kept closer: tab close failed (1) for w1:t1: herdr refused; pane is busy" in out
         assert "kept borrowed: tab left open (not owned): tab w1:t-borrowed" in out
+        assert "kept settled: done, with no branch of its own to measure" in out
+        assert "kept settled: not done" not in out
+        assert (
+            "kept ghost: git could not compare branch orch/r1-no-such-branch against the run branch"
+            in out
+        )
+        assert "kept ghost: not on the run branch" not in out
         assert "kept (not done, or its work not on the run branch):" not in out
+
+    def test_a_worktree_that_cannot_be_removed_keeps_the_unit_and_the_run_record(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Terminal review F27: reap reported a unit closed without checking whether
+        `git worktree remove` succeeded, and `clean --all` then deleted the run record that
+        was the only thing naming the worktree. A failed removal that leaves the directory
+        behind keeps the unit with the reason, and the run state is retained."""
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "checkout", "main")
+        _write_run(repo, [_unit_row("alpha", wt_alpha, "done")])
+        real_run = orchestrate.run
+
+        def refuse_removal(cmd: list[str], **kwargs: object) -> Any:
+            if cmd[:3] == ["git", "worktree", "remove"]:
+                return subprocess.CompletedProcess(cmd, 128, "", "fatal: simulated removal failure")
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(orchestrate, "run", refuse_removal)
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, all=True)) == 0
+        out = capsys.readouterr().out
+
+        assert "closed: nothing" in out
+        assert "kept alpha: worktree removal failed (128): fatal: simulated removal failure" in out
+        assert "run state retained because cleanup kept work" in out
+        assert (repo / ".orchestrate" / "run.json").exists()
+        assert wt_alpha.exists()
+
+    def test_a_worktree_already_gone_when_removal_reports_failure_is_still_closed(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Counter-case for F27, matching the landing-worktree rule: a nonzero removal whose
+        directory is nevertheless gone is a removal, not a keep."""
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "checkout", "main")
+        _write_run(repo, [_unit_row("alpha", wt_alpha, "done")])
+        real_run = orchestrate.run
+
+        def remove_then_complain(cmd: list[str], **kwargs: object) -> Any:
+            if cmd[:3] == ["git", "worktree", "remove"]:
+                real_run(cmd, **kwargs)
+                return subprocess.CompletedProcess(cmd, 1, "", "warning after the fact")
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(orchestrate, "run", remove_then_complain)
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        out = capsys.readouterr().out
+        assert "closed: alpha" in out
+        assert "worktree removal failed" not in out
+        assert not wt_alpha.exists()
 
     def test_it_never_deletes_branches(
         self,

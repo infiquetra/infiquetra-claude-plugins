@@ -5019,12 +5019,27 @@ def _reap_keep_reason(unit: Unit, r: Run) -> str:
         slot = r.review_slot(unit)
         if slot["review_resubmit_pending"] or bool(slot["operator_fix_requests"]):
             return "review controller still owed a resubmission"
-    if unit.status != DONE or not unit.branch:
+    if unit.status != DONE:
         return "not done"
+    if not unit.branch:
+        # cmd_settle records the review controller in exactly this shape: done, with no branch
+        # of its own. It is not "not done" (terminal review F26); it has nothing to reap.
+        return "done, with no branch of its own to measure"
     if r.unresolvable_branch:
         return "run branch unresolved"
     if landed(unit.branch, r) is None:
         return "committed nothing to land"
+    # landed()'s single False covers two causes: the branch carries commits the run branch does
+    # not, and git could not answer at all. Ask the same question once more here so the printed
+    # reason names the true one (terminal review F37).
+    comparison = run(
+        ["git", "rev-list", "--count", f"{r.resolved_run_ref()}..{unit.branch}"], check=False
+    )
+    if comparison.returncode != 0:
+        detail = (comparison.stderr or comparison.stdout or "").strip().splitlines()
+        return f"git could not compare branch {unit.branch} against the run branch" + (
+            f": {detail[0]}" if detail else ""
+        )
     return "not on the run branch"
 
 
@@ -5096,7 +5111,18 @@ def reap(
                 kept.append(unit.name)
                 continue
         if unit.worktree and Path(unit.worktree).exists():
-            run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
+            removed = run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
+            if removed.returncode != 0 and os.path.lexists(unit.worktree):
+                # Mirror the landing-worktree treatment: a removal that failed and left the
+                # directory behind keeps the unit, so the run record still names the worktree
+                # and `clean --all` does not delete the only record of it (terminal review F27).
+                detail = (removed.stderr or removed.stdout or "").strip()
+                if kept_reasons is not None:
+                    kept_reasons[unit.name] = (
+                        f"worktree removal failed ({removed.returncode}): {detail}"
+                    )
+                kept.append(unit.name)
+                continue
         if branches and unit.branch:
             run(["git", "branch", "-D", unit.branch], check=False)
         closed.append(unit.name)

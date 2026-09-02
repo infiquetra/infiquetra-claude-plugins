@@ -1851,3 +1851,82 @@ class TestOpenCodeLaunchAndVariantRecipe:
         receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=False)
 
         assert receipt["readiness"] is False
+
+
+class TestRunFileCompatibility:
+    """Issue 907 U9 (API-05): run files tolerate unknown unit keys, so a run written by a
+    newer Orchestrate loads with a named notice instead of a TypeError."""
+
+    def test_an_unknown_unit_key_loads_with_a_named_notice(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        row = _unit("alpha", status="pending", branch=None)
+        row["vibrance"] = "high"
+        _write_run(repo, [row])
+        monkeypatch.chdir(repo)
+
+        loaded = orchestrate.Run.load().unit("alpha")
+
+        assert loaded.name == "alpha"
+        assert not hasattr(loaded, "vibrance"), "the unknown key must not reach the unit"
+        notice = capsys.readouterr()
+        combined = notice.out + notice.err
+        assert "alpha" in combined
+        assert "vibrance" in combined
+        version = json.loads(
+            (
+                orchestrate._plugin_root(Path(orchestrate.__file__))
+                / ".claude-plugin"
+                / "plugin.json"
+            ).read_text()
+        )["version"]
+        assert version in combined
+
+    def test_a_known_key_set_loads_silently(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.Run.load().unit("alpha").name == "alpha"
+        assert capsys.readouterr().out == ""
+        assert capsys.readouterr().err == ""
+
+    def test_a_load_and_save_round_trip_writes_no_version_key(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+
+        r = orchestrate.Run.load()
+        r.save()
+        raw = json.loads((repo / ".orchestrate" / "run.json").read_text())
+        assert not any("version" in key for key in raw), raw
+        assert not any("version" in key for key in raw["units"][0]), raw
+
+    def test_the_plugin_layout_helper_names_both_layouts(self, orchestrate: ModuleType) -> None:
+        """ARCH-07: one helper owns the plugin layout depth, and it resolves the same
+        relative depth in the repository layout and the installed cache."""
+        repo_script = SCRIPT
+        assert orchestrate._plugin_root(Path(repo_script)) == SCRIPT.parents[3]
+        cache_script = (
+            Path("/cache/marketplace/agent-launcher/1.10.0")
+            / "skills"
+            / "agent-launcher"
+            / "scripts"
+            / "launcher.py"
+        )
+        assert orchestrate._plugin_root(cache_script) == Path(
+            "/cache/marketplace/agent-launcher/1.10.0"
+        )

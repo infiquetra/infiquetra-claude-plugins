@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import importlib.util
 import json
 import os
 import shutil
@@ -885,3 +887,111 @@ def test_each_companion_fault_names_its_own_cause_and_remedy(tmp_path: Path) -> 
     assert result.returncode != 0
     assert "RuntimeError: simulated roster drift" in unusable_output
     assert EXPECTED_REMEDIATION in unusable_output
+
+
+LAUNCHER_ONLY_NAMES = (
+    "ComposerState",
+    "ComposerInspection",
+    "inspect_composer",
+    "guard_pane_before_write",
+    "pane_input_inspection",
+    "record_wrapper_identity",
+    "await_ready",
+    "send",
+)
+
+
+def test_a_launcher_that_fails_mid_file_binds_nothing(tmp_path: Path) -> None:
+    """CORR-11 / REL-11: a launcher that dies partway through its own import leaves the
+    namespace exactly as it was -- run is still the fallback and no launcher-only name is
+    live. At the frozen revision the partial exec left every name it had bound."""
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    launcher_install = _install_plugin(
+        cache, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills")
+    )
+    launcher_script = launcher_install / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    launcher_script.write_text(
+        launcher_script.read_text(encoding="utf-8") + "\n1 / 0\n", encoding="utf-8"
+    )
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+    spec = importlib.util.spec_from_file_location("_orchestrate_midfile_probe", script)
+    assert spec is not None and spec.loader is not None
+    orch = importlib.util.module_from_spec(spec)
+    sys.modules["_orchestrate_midfile_probe"] = orch
+    try:
+        spec.loader.exec_module(orch)
+        assert orch.run is orch._subprocess_run, "a failed ingest left the launcher's run bound"
+        for name in LAUNCHER_ONLY_NAMES:
+            assert not hasattr(orch, name), f"{name} survived a failed ingest"
+    finally:
+        sys.modules.pop("_orchestrate_midfile_probe", None)
+
+
+def test_installed_orchestrate_help_describes_orchestrate(tmp_path: Path) -> None:
+    """ARCH-08 / API-09 / DOCC-12: --help describes Orchestrate, never the ingested
+    launcher's docstring."""
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    _install_plugin(cache, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills"))
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+
+    result = _run_installed_orchestrate(script, ["--help"], cwd=tmp_path)
+    output = result.stderr + result.stdout
+    assert result.returncode == 0, output
+    assert "Run a plan of units across herdr agent sessions" in output
+    assert "Shared single-session launch contract" not in output
+
+
+def _top_level_bindings(tree: ast.Module) -> set[str]:
+    """The names a module binds at its own top level, outside any conditional block."""
+
+    def assign_names(target: ast.expr) -> set[str]:
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, ast.Tuple):
+            return {name for elt in target.elts for name in assign_names(elt)}
+        return set()
+
+    bound: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            bound.add(node.name)
+        elif isinstance(node, ast.Assign):
+            bound.update(name for t in node.targets for name in assign_names(t))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            bound.add(node.target.id)
+        elif isinstance(node, ast.Import):
+            bound.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            bound.update(alias.asname or alias.name for alias in node.names)
+    return bound
+
+
+def test_the_degraded_stub_roster_covers_every_referenced_launcher_name() -> None:
+    """ARCH-18 / TEST-10 / O13: the roster is test-bound by the reviewer's AST method.
+    Every launcher-provided name Orchestrate's own code references must have a binding in
+    the degraded fallback, or a failed ingest leaves that reference unbound."""
+    orch_tree = ast.parse(
+        _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "scripts" / "orchestrate.py")
+    )
+    launcher_tree = ast.parse(
+        _read(PLUGIN_ROOT / "skills" / "agent-launcher" / "scripts" / "launcher.py")
+    )
+    provided = _top_level_bindings(launcher_tree)
+    own = _top_level_bindings(orch_tree)
+    referenced = {node.id for node in ast.walk(orch_tree) if isinstance(node, ast.Name)}
+    degraded: set[str] = set()
+    for node in ast.walk(orch_tree):
+        if isinstance(node, ast.If) and "not _ingest_agent_launcher()" in ast.unparse(node.test):
+            for sub in node.body:
+                if isinstance(sub, ast.Assign):
+                    degraded.update(t.id for t in sub.targets if isinstance(t, ast.Name))
+                elif isinstance(sub, ast.ClassDef):
+                    degraded.add(sub.name)
+    missing = (provided & referenced) - degraded - own
+    assert not missing, f"launcher names referenced with no degraded binding: {sorted(missing)}"

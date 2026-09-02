@@ -866,6 +866,15 @@ def spill_unit(unit: Unit, run_id: str) -> dict[str, Any]:
     return data
 
 
+def _orchestrate_version() -> str:
+    """This Orchestrate's own version, from the same manifest the companion floor is read from."""
+    manifest = _plugin_root(Path(__file__).resolve()) / ".claude-plugin" / "plugin.json"
+    try:
+        return str(json.loads(manifest.read_text(encoding="utf-8"))["version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "unknown"
+
+
 def read_unit(raw: dict[str, Any]) -> Unit:
     """One unit from its record row, reading a spilled task back transparently.
 
@@ -877,7 +886,25 @@ def read_unit(raw: dict[str, Any]) -> Unit:
     I/O error -- raises rather than being absorbed: absorbing it also drops the pointer, so the
     next save would make the loss permanent and the unit could be launched with no instructions.
     If the file contains a leading Orchestrate ownership marker, the marker is stripped so the
-    unit's in-memory task text is restored cleanly; unmarked hand-authored briefs load verbatim."""
+    unit's in-memory task text is restored cleanly; unmarked hand-authored briefs load verbatim.
+
+    A key this Unit does not know is dropped with a one-line notice naming the unit, the key
+    and this Orchestrate's version: a run file written by a newer Orchestrate loads (its
+    unknown fields are ignored) instead of dying with a TypeError. Nothing about the writer
+    is known or recorded, and no version is ever written into the run file -- which makes
+    this release the oldest Orchestrate that reads this release's run files.
+    """
+    known = set(Unit.__dataclass_fields__)
+    unknown = [key for key in raw if key not in known]
+    if unknown:
+        for key in unknown:
+            print(
+                f"WARNING: unit {raw.get('name', '?')} carries unknown key {key!r}; this "
+                f"Orchestrate {_orchestrate_version()} ignores it (written by a newer "
+                "Orchestrate)",
+                file=sys.stderr,
+            )
+        raw = {key: value for key, value in raw.items() if key in known}
     unit = Unit(**raw)
     if unit.lifecycle is not None:
         # Normalise here rather than in the plan guard alone: review-result, land, status and reap
@@ -1497,6 +1524,18 @@ def _resubmit_one(
     return True
 
 
+def _plugin_root(script: Path) -> Path:
+    """The plugin root above a script, in both layouts this plugin ships in.
+
+    The relative depth is the same in the repository and the installed cache:
+    <plugin-root>/<skills>/<plugin-name>/scripts/<file>, so three parents above a script is
+    always the plugin root -- the cache's version directory plays the same role. Every
+    other place that needs a sibling plugin or a plugin manifest goes through here, so the
+    layout is named once.
+    """
+    return script.parents[3]
+
+
 def _version_tuple(value: str) -> tuple[int, int, int]:
     """Parse the numeric three-part plugin versions used by this repository."""
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
@@ -1508,7 +1547,7 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
 def _declared_agent_launcher_floor(manifest: Path | None = None) -> tuple[int, int, int]:
     """Read the one authoritative companion floor from Orchestrate's own manifest."""
     if manifest is None:
-        manifest = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+        manifest = _plugin_root(Path(__file__).resolve()) / ".claude-plugin" / "plugin.json"
     try:
         payload = json.loads(manifest.read_text(encoding="utf-8"))
         dependencies = payload["dependencies"]
@@ -1533,7 +1572,7 @@ def _declared_agent_launcher_floor(manifest: Path | None = None) -> tuple[int, i
 def _launcher_cache_version(path: Path) -> tuple[int, int, int]:
     """Sort cache entries numerically, matching ``sort -V`` rather than lexical ordering."""
     try:
-        return _version_tuple(path.parents[3].name)
+        return _version_tuple(_plugin_root(path).name)
     except SystemExit:
         return (0, 0, 0)
 
@@ -1551,7 +1590,7 @@ class _LauncherFloorFailure(SystemExit):
 
 def _validated_agent_launcher(path: Path) -> Path:
     """Enforce Orchestrate's declared companion-plugin version floor at runtime."""
-    manifest = path.parents[3] / ".claude-plugin" / "plugin.json"
+    manifest = _plugin_root(path) / ".claude-plugin" / "plugin.json"
     try:
         payload = json.loads(manifest.read_text(encoding="utf-8"))
         version = _version_tuple(str(payload["version"]))
@@ -1581,7 +1620,12 @@ def _agent_launcher_script() -> Path | None:
         return candidate
     here = Path(__file__).resolve()
     repo_candidate = (
-        here.parents[4] / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+        _plugin_root(here).parent
+        / "agent-launcher"
+        / "skills"
+        / "agent-launcher"
+        / "scripts"
+        / "launcher.py"
     )
     if repo_candidate.is_file():
         return repo_candidate
@@ -1687,6 +1731,9 @@ def _ingest_agent_launcher() -> bool:
     module. ``exec`` into ``globals()`` makes those names the ones the extracted
     functions look up, so the patches still apply. Importing a second module
     would hide them. A missing plugin must not kill every subcommand at import.
+    The exec is atomic: a launcher that fails partway through its own import binds
+    nothing (the namespace is restored), and a successful ingest restores this
+    module's own ``__doc__``, so ``--help`` keeps describing Orchestrate.
     """
     global _AGENT_LAUNCHER_ERROR
     try:
@@ -1716,13 +1763,22 @@ def _ingest_agent_launcher() -> bool:
     # where its sibling composer.py lives -- the loader resolves the parser from this frame's
     # co_filename -- so it must stay the launcher's real path. A placeholder makes every
     # ingested launch stop with the named wrong-directory message.
+    snapshot = dict(globals())
+    own_doc = globals()["__doc__"]
     try:
         exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
     except (SystemExit, Exception) as exc:
+        # The exec is atomic: a launcher that fails partway through its own import binds
+        # nothing, not a subset of its names over this module's own definitions.
+        globals().clear()
+        globals().update(snapshot)
         _AGENT_LAUNCHER_ERROR = _agent_launcher_error(
             f"agent-launcher at {script} is unusable: {type(exc).__name__}: {exc}"
         )
         return False
+    # The exec binds the launcher's module docstring into this namespace, so --help would
+    # describe the launcher; Orchestrate keeps describing Orchestrate.
+    globals()["__doc__"] = own_doc
     return True
 
 
@@ -2024,7 +2080,7 @@ def _controller_candidates() -> list[Path]:
     the installed-plugin layouts, mirroring ``SAGA_INSTALL``: each vendor keeps its own cache, so
     each gets its own glob. ``glob`` resolves symlinks, which is what agy's install is."""
     here = Path(__file__).resolve()
-    paths = [here.parents[4] / "saga" / "scripts" / "reconcile_controller.py"]
+    paths = [_plugin_root(here).parent / "saga" / "scripts" / "reconcile_controller.py"]
     for pattern in (
         "~/.claude/plugins/cache/*/saga/*/scripts/reconcile_controller.py",
         "~/.codex/plugins/cache/*/saga/*/scripts/reconcile_controller.py",

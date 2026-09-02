@@ -47,6 +47,9 @@ This section records what I verified on 2026-09-01 against the worktree at `HEAD
 | Worktree reuse on a retried `go` | Read `make_worktree` in `orchestrate.py` | An existing path prints `worktree already there` and is reused; a retry through `cmd_go` needs no worktree change |
 | Transcript recency without a creation time | Read `transcript_account` at `launcher.py:993` | With `since=None` every transcript for the worktree is admitted; the receipt records no creation time, so a redelivery's preflight has no floor (U6 states the trade) |
 | Tests that pin the number of composer reads | `grep` for `--format` over `plugins/agent-launcher/tests/test_launcher_contract.py` and `tests/test_orchestrate_launch_and_land.py` | Only `test_empty_reused_box_is_prompted_exactly_as_today` (`:619-633`, exactly one ANSI read, unowned Claude) and `test_freshly_created_pane_takes_no_inspection_path` (zero reads, owned); the Orchestrate OpenCode tests count no reads |
+| Whether a rule glyph is also a border glyph | Read `composer.py:37-39` | `─`, `━`, `═` are rule glyphs only; none is in `_LEADING_BORDER_GLYPHS`. An unbordered full-width rule row at column 0 is therefore a terminator even without the rule class, so the live Claude captures cannot observe C18; the artifact's bordered-box input can |
+| Floor requirement parsing | Read `_declared_agent_launcher_floor` at `orchestrate.py:1508-1530` | `re.fullmatch(r">=(\d+\.\d+\.\d+)")`; a caret range and a bare version fail both `fullmatch` and `search`, so only a compound range such as `>=1.2.1,<2.0.0` distinguishes the O3 mutant |
+| Which discovery branch the existing cache test reaches | Read `_agent_launcher_script` at `orchestrate.py:1557-1599` against `tests/test_agent_launcher_plugin.py:384` | The parent walk finds the sibling cache entry, so the `CLAUDE_PLUGIN_ROOT` branch (`:1574-1586`) is never entered; O16, O17 and O18 are observable only from a layout the parent walk cannot resolve |
 
 I did not capture a live multi-row draft, because staging text in another session's composer is a pane write into a session this planner does not own. The styling assumption inside CORR-01 therefore stays unverified live; the truncation half of the same finding is proven without it.
 
@@ -120,7 +123,7 @@ One function classifies each physical row of the viewport, in this precedence, a
 | Unbordered, content column greater than the marker column, not led by any vendor glyph | `indented` | Continues the block when it directly follows the block; makes an empty block `ambiguous_empty` only when a `blank` intervened |
 | Anything else (content at or left of the marker column, or led by another vendor's glyph) | `terminator` | Ends the block; separator |
 
-Paired borders: when a leading border glyph was consumed, at most one trailing border glyph is removed from the right after whitespace trimming.
+Paired borders: when a leading border glyph was consumed, at most one trailing border glyph is removed from the right after whitespace trimming. Every class is decided on the row after border stripping, so a bordered row whose content is only rule glyphs is `rule`, not `bordered`, and ends the block.
 
 ### Guard placement in `launch()` and `redeliver()` (U3, U4, U6)
 
@@ -195,12 +198,12 @@ Rewrite the continuation, termination and ambiguity rules in `composer.py` as th
 - Happy path: unbordered two-row and three-row Claude and Codex drafts classify `staged` with the full joined text; bordered wrapped rows classify `staged` including a styled second row.
 - Idle shapes: both live Claude captures classify `empty`; the Claude fixture classifies `empty`; an empty marker followed by two blank rows classifies `empty`; an echo, a blank row and an empty marker classify `empty`.
 - Ambiguity: Codex `› ` then blank then indented footer classifies `unclassifiable`; the glyph-led last-row shape classifies `unclassifiable`.
-- Edge: a bordered draft ending in a box-drawing character keeps that character; a bordered box whose only content is one border glyph is `staged`, not `empty`; a bordered row flush at the marker column continues the block.
+- Edge: a bordered draft ending in a box-drawing character keeps that character; a bordered box whose only content is one border glyph is `staged`, not `empty`; a bordered row flush at the marker column continues the block; a bordered box whose second row is a horizontal rule and whose third row is indented text (the artifact's C18 input, `│ ❯ x │` over `│    ──── │` over `│   y │`) classifies `staged` with text `x`, never `x────y`.
 - Border rosters: a parametrised test over every glyph in `_LEADING_BORDER_GLYPHS` and `_TRAILING_BORDER_GLYPHS`, so removing any one glyph fails a named case.
 - Direct unit tests for `_unstyled_text` with a two-row input whose join is observable, so changing the separator fails.
 - Integration through the real `guard_pane_before_write` with `run` stubbed: the CORR-01 and CORR-02 panes raise `StagedInputError`; both live captures prompt with receipt `input_box = "empty"`.
 
-**Mutation or behavioural proof:** Before commit, apply and confirm killed: C23 (`ambiguous_empty` on any blank), C2 (blank row continues), C18 (drop the rule clause), C20 (drop the column comparison), C13 (drop pre-marker separation), C21 and C22 (shrink either border roster), the `_unstyled_text` join separator, and the trailing-strip loop restored to unbounded. Each must fail at least one test whose name says which clause it pins. Record the kill list in the commit message.
+**Mutation or behavioural proof:** Before commit, apply each mutant to the rewritten classifier and confirm the named observer fails; a mutant whose named observer stays green is a plan defect, not a pass. C23 (any blank after an empty block makes it `ambiguous_empty`, whatever follows): the idle shape `empty marker followed by two blank rows` reads `unclassifiable` instead of `empty`. C2 (a blank row continues the block): `test_status_footer_after_blank_is_not_counted_as_staged_input` reads `ninecharsmodel footer status`, and the Codex footer-after-spacer ambiguity scenario reads `staged`. C18 (drop the rule class): the bordered-box-with-rule edge scenario reads `x────y`; the live Claude captures cannot observe this mutant, because an unbordered full-width rule at column 0 is a terminator either way (grounding table). C20 (drop the column comparison for unbordered rows): `test_first_noncontinuation_terminates_the_composer_block` reads `draftordinary output…`; the artifact's own C20 input no longer distinguishes under KTD1, because a bordered row continues by containment. C13 (a marker row no longer records that a separator occurred): `test_an_empty_live_box_below_an_echo_reads_empty` and the echo-blank-empty-marker idle scenario read `unclassifiable` instead of `empty`. C21 and C22 (shrink either border roster): the parametrised roster case for the removed glyph. The `_unstyled_text` join separator: the direct two-row unit test. The trailing strip restored to unbounded: the draft-ending-in-a-box-drawing-character edge scenario loses its last character. Record the kill list, with each observer's name, in the commit message.
 
 **Verification:** The eleven counter-cases pass unchanged; every restored test passes; the plugin test module and `tests/test_agent_launcher_plugin.py` pass; the kill list is complete.
 
@@ -303,7 +306,7 @@ Move the authorising inspection next to the write it authorises, one read per wr
 
 **Evidence before edit:** Two tests, both failing at the frozen revision. Ordering, Claude path: `_prepare_guard_launch` with `verify_unit_preflight` wrapped, not replaced, so it records `preflight` into the same order list the guard stub records `guard` into; assert `["preflight", "guard"]`. At the frozen revision the order is `["guard", "preflight"]`. Second read, OpenCode path: a `run` stub whose ANSI pane read returns an empty composer on the first read and a staged draft on the second, `drive_opencode_variant_selection` stubbed, `send` stubbed; assert `StagedInputError` and no send. At the frozen revision there is one read, it is empty, and the send is made. The empty-then-staged sequence reproduces only on the OpenCode path, because only there does the repair add a read; on the Claude path the repair is a move and the read count stays one, so a sequence stub there sees one empty read before and after the edit.
 
-**Approach:** Keep the identity read where it is. Under the OpenCode branch keep the inspection immediately before the picker. Remove the inspection at `launcher.py:1396` and place it immediately before the first `send`, after `verify_unit_preflight`, under the KTD4 predicate U3 restored for the loop (`used_pane` is false before the first send of a fresh launch, so this reads `not session_owned(unit)` there). Document in the `launch()` docstring that an unowned OpenCode launch reads twice and why. Rewrite the assertion in `test_opencode_guard_reads_before_the_picker_types` to `["guard", "picker", "guard"]` in this unit; its name still holds.
+**Approach:** Keep the identity read where it is. Under the OpenCode branch keep the inspection immediately before the picker. Remove the inspection at `launcher.py:1396` and place it immediately before the first `send`, after `verify_unit_preflight`, under the KTD4 predicate U3 restored for the loop. At this unit the predicate's `used_pane` half is unobservable before the first send: `used_pane` is always false there on a fresh launch, so the site reads as `not session_owned(unit)` and only the ownership half can be bound here. The `used_pane` half at this site becomes observable when U6 seeds it true on a redelivery, and U6's `used_pane=False` mutant is the kill that binds it. Document in the `launch()` docstring that an unowned OpenCode launch reads twice and why. Rewrite the assertion in `test_opencode_guard_reads_before_the_picker_types` to `["guard", "picker", "guard"]` in this unit; its name still holds.
 
 **Patterns to follow:** `_make_fake_run` at `test_launcher_contract.py:424`, extended with a sequence of pane dumps for the OpenCode test; the order-list shape of `test_opencode_guard_reads_before_the_picker_types`.
 
@@ -318,7 +321,7 @@ Move the authorising inspection next to the write it authorises, one read per wr
 - Ordering: `preflight` then `guard` on Claude; `guard`, `picker`, `guard` on OpenCode, with the two OpenCode inspections both recorded and the picker between them.
 - Owned session: zero inspections before the first send.
 
-**Mutation or behavioural proof:** Move the send inspection back above the preflight and confirm the Claude ordering test fails; remove the pre-send inspection and confirm the OpenCode empty-then-staged test fails; remove the pre-picker inspection and confirm the OpenCode ordering test fails; drop the ownership half of the predicate so an owned fresh session is inspected, and confirm `test_freshly_created_pane_takes_no_inspection_path` fails.
+**Mutation or behavioural proof:** Move the send inspection back above the preflight and confirm the Claude ordering test fails; remove the pre-send inspection and confirm the OpenCode empty-then-staged test fails and `test_empty_reused_box_is_prompted_exactly_as_today` records zero reads; remove the pre-picker inspection and confirm the OpenCode ordering test fails; replace the pre-send predicate with `if True:` so an owned fresh session is inspected, and confirm `test_freshly_created_pane_takes_no_inspection_path` records one ANSI read where it asserts none. Dropping only the ownership half is not a kill at this site: what remains is `used_pane`, which is false on a fresh launch, so the owned first send stays uninspected and that test stays green; the `used_pane` half is bound in U6.
 
 **Verification:** Both ordering assertions pass; the Claude read count stays one; no existing receipt assertion changes.
 
@@ -352,11 +355,11 @@ Make the standalone launcher fail the same way Orchestrate does when `composer.p
 
 **Test scenarios:**
 
-- Happy path: standalone and ingested loads succeed and the module name is identical across two processes.
+- Happy path: standalone and ingested loads succeed; the module name equals the documented digest form of the resolved path in one process, and is identical across two processes.
 - Failure: a `RuntimeError`, a `ValueError`, and a failed module-level assertion in `composer.py` each produce the named stop standalone and through Orchestrate.
 - Edge: a placeholder compile filename produces the named stop naming the wrong path.
 
-**Mutation or behavioural proof:** Narrow the handler back to three types and confirm the standalone `RuntimeError` test fails; restore `abs(hash(path))` and confirm the two-process name test fails.
+**Mutation or behavioural proof:** Narrow the handler back to three types and confirm the standalone `RuntimeError` test fails; restore `abs(hash(path))` and confirm the single-process digest assertion fails. The two-process identity assertion alone is not a deterministic kill, because string hashing is randomised per process only when `PYTHONHASHSEED` is unset; the digest assertion fails the mutant in every environment.
 
 **Verification:** Both subprocess tests pass; the source-grep assertion is gone.
 
@@ -422,7 +425,7 @@ Make `clean` and `land --clean` truthful and drive the real close function in te
 
 **Invariant, both sides:** A failed close keeps the worktree and records the failure exactly once; a successful close removes the worktree; a tab the launcher does not own is never closed and never reported closed.
 
-**Evidence before edit:** Drive the real `close_run_session` with `run` stubbed to return exit 1 and stderr containing `; `, then the real `reap`; assert one copy of the note. At the frozen revision there are two. Drive `cmd_clean --all` over a `PENDING` unit with an unowned tab; assert the output says left open. At the frozen revision it says `closed`.
+**Evidence before edit:** Drive the real `close_run_session` with `run` stubbed to return exit 1 and stderr containing `; `, then the real `reap`, twice in a row against the same unit (a failed close followed by the operator's retry of `clean`); assert one copy of the failure in the note after both passes. At the frozen revision there are two copies after the first pass. Drive `cmd_clean --all` over a `PENDING` unit with an unowned tab; assert the output says left open. At the frozen revision it says `closed`.
 
 **Approach:** Leave the recording in `close_run_session` and remove the duplicate in `reap`, or the reverse, but one owner. Test membership without splitting the note. Populate `kept_reasons` for every keep cause (`fix request outstanding`, `not done`, `not on the run branch`, `conflict worktree`, `landing worktree`, `tab close failed`, `tab left open (not owned)`). Print `closed` only for tabs a non-`None` close result closed.
 
@@ -435,11 +438,11 @@ Make `clean` and `land --clean` truthful and drive the real close function in te
 **Test scenarios:**
 
 - Happy path: close succeeds, worktree removed, `closed: <unit>`.
-- Failure: close fails with `; ` in stderr, one note, worktree kept, `kept <unit>: tab close failed …`.
+- Failure: close fails with `; ` in stderr, run twice; one note after both passes, worktree kept, `kept <unit>: tab close failed …` printed on each pass.
 - Edge: unowned tab, no Herdr call, `left open (not owned): <unit> tab <id>`, worktree handled per the merged rule, run state retained under `--all`.
 - Reasons: one unit per keep cause, each printed with its own reason and none under the aggregate sentence.
 
-**Mutation or behavioural proof:** Delete the dedup guard in the surviving owner and confirm the `; ` test fails; make `reap` treat `None` as closed again and confirm the unowned test fails; remove the `session_owned` check at the top of `close_run_session` and confirm the unowned test's no-Herdr-call assertion fails.
+**Mutation or behavioural proof:** Delete the dedup guard in the surviving owner and confirm the two-pass `; ` test records two copies (a single pass cannot observe this mutant once only one writer remains, which is why the test runs the close twice); make `reap` treat `None` as closed again and confirm the unowned test fails; remove the `session_owned` check at the top of `close_run_session` and confirm the unowned test's no-Herdr-call assertion fails.
 
 **Verification:** No test stubs `close_run_session`; the L4 survivor from the artifact is dead.
 
@@ -473,13 +476,13 @@ Replace the five-call-site gate with the KTD7 matrix and give each companion fau
 
 **Test scenarios:**
 
-- Matrix: eighteen subcommands times three states, asserting exit code, the message class, and that the fake `herdr` recorded no `pane run`, `agent prompt` or `tab close` for a gated command.
+- Matrix: eighteen subcommands times three states, asserting exit code, the message class, and that the fake `herdr` recorded no `pane run`, `agent prompt` or `tab close` for a gated command. For `status` and `check` the matrix also asserts the liveness route: below floor the fake records `herdr agent list` and the output carries no companion fault; unusable, the output carries the fault exactly once and the fake records no `agent list`.
 - Direction not fixed: `status` and `check` with a `RUNNING` unit exit 0 in all three states; `--help` exits 0 in all three states.
-- Discovery: `CLAUDE_PLUGIN_ROOT` sibling and grandparent layouts select the highest numeric version; a bad `AGENT_LAUNCHER_ROOT` exits with its named message.
-- Floor parsing: a caret range and a bare version in the manifest each exit with the named message.
+- Discovery: two cache roots, so the parent walk cannot find the launcher: Orchestrate installed under one root with no agent-launcher beside it, agent-launcher `1.9.0` (its script replaced by a `raise`) and `1.10.0` under the other root, and `CLAUDE_PLUGIN_ROOT` pointing into the second root so that the sibling or grandparent branch is the only route; `roster` exits 0 and selects `1.10.0` in both layouts. A bad `AGENT_LAUNCHER_ROOT` exits with the `does not contain skills/agent-launcher/scripts/launcher.py` message, asserted by text.
+- Floor parsing: a caret range, a bare version and the compound range `>=1.2.1,<2.0.0` in the manifest each exit with the `must be a numeric >= floor` message.
 - Messages: below floor contains `update` and does not contain `not found`; missing contains `install`; unusable contains the exception type.
 
-**Mutation or behavioural proof:** Confirm killed: O5 (return `False` on floor failure — `status` degrades where it should run), O16 and O17 (first-match and lexical selection), O18 (delete the `CLAUDE_PLUGIN_ROOT` branch), O21 (drop the `AGENT_LAUNCHER_ROOT` exit), O3 (`re.search`), removing any one command from the gated set, and adding `status` or `check` to the gated set (the direction-not-fixed test fails).
+**Mutation or behavioural proof:** Confirm killed, each by the observer named: O5 (return `False` on floor failure): below-floor `status` prints the companion fault and records no `agent list`, failing the matrix's liveness-route assertion. O16 (`matches[0]`) and O17 (sort by string): the two-root discovery test selects `1.9.0` and its `raise` surfaces as a load fault, so `roster` exits non-zero. O18 (delete the `CLAUDE_PLUGIN_ROOT` branch): the two-root test finds no launcher and `roster` exits with the missing message; the existing single-root test cannot observe O16 through O18 because its parent walk resolves the same entry. O21 (drop the `AGENT_LAUNCHER_ROOT` exit): the bad-override test still exits non-zero but with `cannot verify agent-launcher manifest`, failing the text assertion. O3 (`re.search`): the compound range parses to `1.2.1` and `roster` runs, failing the floor-parsing expectation; the caret and bare inputs fail both `fullmatch` and `search` and cannot observe O3. Removing any one command from the gated set: that command's below-floor matrix cell runs. Adding `status` or `check` to the gated set: the direction-not-fixed test fails.
 
 **Verification:** The matrix passes; the three surviving mutants named in the artifact are dead; the skill paragraph and the test agree.
 

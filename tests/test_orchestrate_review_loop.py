@@ -1113,11 +1113,14 @@ def test_unowned_review_dispatch_with_empty_sends(
     assert fixer.status == "running"
 
 
-def test_owned_review_dispatch_sends_without_a_read(
+def test_owned_review_dispatch_inspects_once_before_its_send(
     orchestrate: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The direction not fixed: an owned worker is not inspected, matching launch."""
+    """Terminal review F06: an owned worker is inspected too. The launcher's owned exemption
+    covers only the first write into a pane created seconds earlier; this write lands hours
+    or days later into a session the operator has been watching, so it goes through
+    should_guard_pane_write with wrote_before true. One read, one prompt, then running."""
     controller = _controller(orchestrate)
     fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
     fixer.launch_receipt = {"owned": True}
@@ -1127,14 +1130,42 @@ def test_owned_review_dispatch_sends_without_a_read(
         _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
         agents=_live(fixer),
     )
-    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [])
+    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [_claude_composer_pane("❯ ")])
 
     dispatched = orchestrate.dispatch_review_routing(routing)
 
     assert dispatched == ["api-builder"]
-    assert _pane_reads(recorded) == []
+    assert len(_pane_reads(recorded)) == 1
     assert len(_prompt_calls(recorded)) == 1
     assert fixer.status == "running"
+    assert fixer.launch_receipt["input_box"] == "empty"
+
+
+def test_owned_review_dispatch_with_draft_refuses(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consequence F06 names: a draft in an owned worker's composer stops the dispatch
+    instead of being concatenated onto and submitted."""
+    controller = _controller(orchestrate)
+    fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
+    fixer.launch_receipt = {"owned": True}
+    run = _run(orchestrate, fixer, controller)
+    routing = orchestrate.route_review_result(
+        run,
+        _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
+        agents=_live(fixer),
+    )
+    recorded = _record_herdr_boundary(
+        orchestrate, monkeypatch, [_claude_composer_pane("❯ operator draft that was never sent")]
+    )
+
+    dispatched = orchestrate.dispatch_review_routing(routing)
+
+    assert dispatched == []
+    assert _prompt_calls(recorded) == []
+    assert "already holds staged input" in fixer.note
+    assert fixer.status != "running"
 
 
 def test_adopted_review_dispatch_without_a_receipt_is_unowned(
@@ -1170,7 +1201,9 @@ def test_unowned_land_resubmit_with_draft_refuses(
     orchestrate: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The land path: an unowned controller holding a draft is not resubmitted."""
+    """The land path: an unowned controller holding a draft is not resubmitted. The stop
+    is recorded on the controller and reported, never raised out of the land loop
+    (terminal review F23), and the pending flag stays set for the next land."""
     controller = _controller(orchestrate)
     controller.launch_receipt = {"owned": False}
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
@@ -1183,8 +1216,7 @@ def test_unowned_land_resubmit_with_draft_refuses(
     )
     prior_status = controller.status
 
-    with pytest.raises(orchestrate.StagedInputError, match="already holds staged input"):
-        orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
+    assert orchestrate.resubmit_review_if_ready(run, "0123456789abcdef") is False
 
     assert _prompt_calls(recorded) == []
     assert "already holds staged input" in controller.note
@@ -1192,22 +1224,66 @@ def test_unowned_land_resubmit_with_draft_refuses(
     assert run.review_resubmit_pending is True
 
 
-def test_owned_land_resubmit_sends_without_a_read(
+def test_owned_land_resubmit_inspects_once_before_its_send(
     orchestrate: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The direction not fixed: an owned controller is resubmitted with no pane read."""
+    """Terminal review F06 on the land path: an owned controller is inspected before the
+    resubmission, exactly one read, then sent."""
     controller = _controller(orchestrate)
     controller.launch_receipt = {"owned": True}
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
     run = _run(orchestrate, worker, controller)
     run.review_resubmit_pending = True
-    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [])
+    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [_claude_composer_pane("❯ ")])
 
     resubmitted = orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
 
     assert resubmitted is True
-    assert _pane_reads(recorded) == []
+    assert len(_pane_reads(recorded)) == 1
     assert len(_prompt_calls(recorded)) == 1
     assert controller.status == "running"
     assert run.review_resubmit_pending is False
+
+
+def test_a_staged_stop_on_one_controller_does_not_block_the_other_controllers_resubmit(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Terminal review F23: two scoped controllers both owed a resubmission. The first holds
+    an operator draft; the second is clear. The stop is recorded on the first, printed with
+    its name, and left pending for the next land; the second is still resubmitted. At the
+    frozen revision the first controller's StagedInputError escaped the loop and the second
+    was skipped silently, on every subsequent land, in the same order."""
+    first = _controller(orchestrate)
+    first.name, first.lifecycle, first.pane_id = "review-a", "a", "pane-a"
+    first.launch_receipt = {"owned": True}
+    second = _controller(orchestrate)
+    second.name, second.lifecycle, second.pane_id = "review-b", "b", "pane-b"
+    second.launch_receipt = {"owned": True}
+    run = _run(orchestrate, first, second)
+    run.write_review_slot(first, review_resubmit_pending=True)
+    run.write_review_slot(second, review_resubmit_pending=True)
+    recorded = _record_herdr_boundary(
+        orchestrate,
+        monkeypatch,
+        [
+            _claude_composer_pane("❯ operator draft that was never sent"),
+            _claude_composer_pane("❯ "),
+        ],
+    )
+
+    resubmitted = orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
+
+    assert resubmitted is True
+    prompts = _prompt_calls(recorded)
+    assert len(prompts) == 1
+    assert prompts[0][3] == second.agent_name
+    assert second.status == "running"
+    assert run.review_slot(second)["review_resubmit_pending"] is False
+    assert first.status == "done"
+    assert run.review_slot(first)["review_resubmit_pending"] is True
+    assert "already holds staged input" in first.note
+    out = capsys.readouterr().out
+    assert "review-a" in out and "already holds staged input" in out

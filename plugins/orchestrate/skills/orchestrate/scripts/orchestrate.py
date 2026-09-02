@@ -1449,16 +1449,22 @@ def route_review_result(
     return routing
 
 
-def _send_with_unowned_guard(unit: Unit, text: str) -> None:
-    """Inspect an unowned pane immediately before the write ``say`` would make.
+def _send_with_pane_guard(unit: Unit, text: str) -> None:
+    """Inspect the pane immediately before the write ``say`` would make.
 
-    Ownership-scoped exactly as ``launch`` is: a session the launcher created is
-    not inspected (owned workers and an owned controller keep their current send).
-    An adopted unit with no receipt is unowned. An inconclusive inspection still
-    sends -- that is the documented trade in ``guard_pane_before_write``.
+    The rule is the launcher's own ``should_guard_pane_write``, called with ``wrote_before``
+    true: every unit this sender reaches -- a live worker taking a routed repair, a controller
+    taking a resubmission -- was prompted by its launch, so this launcher has already written
+    into the session and a person may have typed since. That differs from ``launch`` on
+    purpose. The launcher's owned exemption covers only the first write into a pane created
+    seconds earlier; these writes land hours or days later into a session the operator has
+    been watching, so ownership alone exempts nothing here (terminal review F06). An adopted
+    unit with no receipt is unowned and inspected for that reason too. A unit with no pane
+    cannot be inspected and is prompted through its agent handle as before. An inconclusive
+    inspection still sends -- that is the documented trade in ``guard_pane_before_write``.
     """
     pane_id = unit.pane_id
-    if pane_id and not session_owned(unit):
+    if pane_id and should_guard_pane_write(unit, wrote_before=True):
         guard_pane_before_write(unit, pane_id)
     say(unit, pane_id, text)
 
@@ -1469,7 +1475,7 @@ def dispatch_review_routing(
     sender: Callable[[Unit, str], None] | None = None,
 ) -> list[str]:
     """Send routed requests to live workers; replacement units launch through ordinary ``go``."""
-    send_one = sender or _send_with_unowned_guard
+    send_one = sender or _send_with_pane_guard
     dispatched: list[str] = []
     for unit, request in routing.dispatches:
         try:
@@ -1580,13 +1586,19 @@ def _resubmit_one(
         "Resubmit that exact revision through this same Code Review controller and emit the next "
         "complete typed result for `review-result` collection."
     )
-    send_one = sender or _send_with_unowned_guard
+    send_one = sender or _send_with_pane_guard
     try:
         send_one(controller, task)
     except StagedInputError as exc:
+        # Record and report, never raise: raising escaped the multi-controller loop in
+        # resubmit_review_if_ready and skipped every later controller in silence, on every
+        # subsequent land, in the same order (terminal review F23). The pending flag stays
+        # set, so the next land retries this controller once its composer is clear, exactly
+        # as dispatch_review_routing already treats a worker holding a draft.
         if str(exc) not in controller.note:
             append_unit_note(controller, str(exc))
-        raise
+        print(f"  {controller.name} resubmission withheld: {exc}")
+        return False
     controller.status = RUNNING
     append_unit_note(controller, f"resubmitted landed revision {revision}")
     r.write_review_slot(controller, review_resubmit_pending=False)
@@ -1871,6 +1883,7 @@ if not _ingest_agent_launcher():
     append_unit_note = _agent_launcher_required
     say = _agent_launcher_required
     session_owned = _agent_launcher_required
+    should_guard_pane_write = _agent_launcher_required
     guard_pane_before_write = _agent_launcher_required
     models = _agent_launcher_required
     favourites = _agent_launcher_required

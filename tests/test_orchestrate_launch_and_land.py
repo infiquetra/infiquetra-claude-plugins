@@ -1881,9 +1881,7 @@ class TestRunFileCompatibility:
         assert module_path is not None
         version = json.loads(
             (
-                orchestrate._plugin_root(Path(module_path))
-                / ".claude-plugin"
-                / "plugin.json"
+                orchestrate._plugin_root(Path(module_path)) / ".claude-plugin" / "plugin.json"
             ).read_text()
         )["version"]
         assert version in combined

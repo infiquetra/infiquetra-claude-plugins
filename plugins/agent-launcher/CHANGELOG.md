@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.4.0] - 2026-09-02
+
+### Changed
+
+- **Every line that enters a session goes through one door, `PaneWriter.write`, and that
+  door owns the inspection (#907).** Both raw Herdr write calls exist only inside the class;
+  the OpenCode picker's two keystrokes, each setup slash command, the task, each resend, and
+  every prompt Orchestrate sends later are calls on the same writer, which inspects before
+  each write from its own record of having written. An uninspected write can no longer be
+  introduced by forgetting a flag. `say()` is removed. On an owned OpenCode launch the picker
+  opening is the one exempt first write; the variant selection and the task are inspected.
+- **`redeliver` retries an undelivered prompt as well as a staged-input stop, refuses by exit
+  code, and reads the session's status in the same vocabulary as delivery (#907).** A receipt
+  with `prompt_delivered: false` is retryable. Refusals -- an empty `--prompt`, another task's
+  receipt, neither retryable marker, no pane -- exit 2 before any Herdr call; a retry whose
+  prompt was not observed to be taken exits 1; success exits 0. A session reporting `done`,
+  `unknown` or no status has not started and is retried; only a visibly started one is refused.
+  The dead `pane_id` alias is gone; the README documents the receipt's key set.
+- **The composer parser is handed at most `PANE_INSPECT_MAX_LINES` rows, never a byte cut
+  (#907).** A byte cut could land inside the marker row and turn a staged draft into `not_found`.
+- **The picker refusal reports the count of options, not the scraped tokens (#907).**
+- **The OpenCode variant confirmation records where the token was seen (#907).**
+  `variant_confirmed_from` is `session` or `picker_menu_only`; the preflight confirms the
+  variant only in the first case.
+- **The pane-typing door's timeout names the ambiguity like the prompt door (#907).**
+- **The delivery warning names the recovery (#907).**
+
 ## [1.3.0] - 2026-09-02
 
 ### Added
@@ -19,7 +46,9 @@
   session's two resends -- and every write of a redelivery -- went out with no composer
   inspection. The rule has one owner, `should_guard_pane_write`, which Orchestrate's later
   senders call too. The 1.2.2 line below describing the resend rule as "unowned or the launcher
-  already typed into it" described the defective predicate.
+  already typed into it" described the defective predicate. *In this release the OpenCode
+  picker's two writes sat outside the rule and never set the write flag, so an owned OpenCode
+  launch still made three uninspected writes; 1.4.0 closes that by construction.*
 - **`redeliver()` refuses a session that has left idle (#907).** It inherits the resend loop's
   own precondition: a working, blocked or gone session may already hold the task, so the retry
   route closes as `prompt_undelivered` for the operator to check instead of risking a second

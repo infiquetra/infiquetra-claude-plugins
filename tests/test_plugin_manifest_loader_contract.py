@@ -97,12 +97,12 @@ def test_the_shape_check_accepts_what_the_loader_accepts() -> None:
         assert check_dependencies_shape({"dependencies": accepted}) == [], accepted
 
 
-# The agent-launcher release that introduced the behaviour Orchestrate requires: the guarded
-# redelivery door (`redeliver()` inspecting every write and refusing a session that left idle)
-# and the shared `should_guard_pane_write` predicate Orchestrate's senders call. Bump this only
-# when Orchestrate starts depending on something a newer launcher release introduced -- not
-# when the launcher ships a patch Orchestrate does not need (terminal review F29).
-AGENT_LAUNCHER_FLOOR_RELEASE = "1.3.0"
+# The agent-launcher release that introduced the behaviour Orchestrate requires: the single
+# pane-write door `PaneWriter` that Orchestrate's senders construct, `session_has_started` and
+# `agent_row` that `redrive` reads, and a `redeliver()` that accepts an undelivered receipt. Bump
+# this only when Orchestrate starts depending on something a newer launcher release introduced --
+# not when the launcher ships a patch Orchestrate does not need (terminal review F29).
+AGENT_LAUNCHER_FLOOR_RELEASE = "1.4.0"
 
 
 def _version_tuple(text: str) -> tuple[int, ...]:

@@ -1,5 +1,34 @@
 # Changelog
 
+## [4.3.0] - 2026-09-02
+
+### Added
+
+- **`redrive --unit <name>` (#907).** The one door back for a unit recorded
+  `prompt_undelivered`: once its session is idle, the unit is re-prompted through the
+  launcher's inspected writer; a session that has visibly started is refused with its tab
+  named. Gated on the companion floor like the other write commands, which are now seven.
+
+### Changed
+
+- **The agent-launcher floor is `>=1.4.0` (#907).** That release carries `PaneWriter`, the
+  single pane-write door this version's senders construct, and the retry door `redrive` uses.
+- **Review dispatch and land resubmission write through the launcher's `PaneWriter` (#907).**
+  Orchestrate owns no pane-write door of its own.
+- **`land` exits 4 when a review resubmission is withheld on staged input (#907).** The stop
+  reaches the failure handler again; with several controllers, each still gets its turn and
+  the withheld ones are raised together. The command document carries `land`'s full exit-code
+  table, pinned against the command's return statements.
+- **After ingest, Orchestrate verifies every launcher name it binds (#907).** A launcher whose
+  manifest satisfies the floor but whose source lacks a required name refuses the write side
+  by name with the update remedy instead of a NameError at the first pane write.
+- **`permission_declared` defaults to false (#907).** A legacy unit row without the key reads
+  as not declared; only the plan parser sets it true.
+- **`land --clean` no longer says it merged nothing when every merged unit was kept, and a
+  keep reason names the tab the same pass already closed (#907).**
+- **The skill scopes the run-file downgrade refusal (#907):** 4.0.0 through 4.1.x refuse by
+  name; older than 4.0.0 opens the file blind.
+
 ## [4.2.0] - 2026-09-02
 
 ### Changed

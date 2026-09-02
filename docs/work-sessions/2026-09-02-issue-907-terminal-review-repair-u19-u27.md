@@ -93,7 +93,8 @@ two fixes, the row names which was taken.
 - **U22.** Must not happen: the retry door delivers a prompt that was already delivered. Must
   still happen: a receipt that records a staged stop is retried without a wrapper create.
 - **U23.** Must not happen: a below-floor companion reaches a pane write (matrix asserts no pane
-  write for every command in every state). Must still happen: `roster` and `saga` refuse when
+  write for every command in the below-floor and unusable states, extended to every command in those
+  states and the old-source state by the cycle-2 repair, U32). Must still happen: `roster` and `saga` refuse when
   nothing was ingested.
 - **U25.** Must not happen: a failed removal is reported closed. Must still happen: a nonzero
   removal whose directory is gone is a removal, not a keep.

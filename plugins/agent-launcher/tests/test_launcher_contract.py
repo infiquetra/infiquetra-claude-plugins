@@ -3720,7 +3720,14 @@ def test_orchestrate_declares_agent_launcher_dependency_and_breaking_version() -
             encoding="utf-8"
         )
     )
-    assert floors.get("agent-launcher") == f">={launcher_manifest['version']}", declared
+    # Not lockstep (cycle 2, F51): the floor names the release Orchestrate requires and is
+    # owned by tests/test_plugin_manifest_loader_contract.py; here only that the packaged
+    # launcher satisfies it, so a fresh install of both plugins can write.
+    floor = floors.get("agent-launcher")
+    assert isinstance(floor, str) and floor.startswith(">="), declared
+    floor_tuple = tuple(int(part) for part in floor[2:].split("."))
+    shipped = tuple(int(part) for part in str(launcher_manifest["version"]).split("."))
+    assert floor_tuple <= shipped, (floor, launcher_manifest["version"])
 
 
 def test_skill_cleanup_example_redirects_receipt() -> None:
@@ -4001,7 +4008,9 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     orchestrate_src = (
         REPO / "plugins" / "orchestrate" / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
     ).read_text(encoding="utf-8")
+    assert "## [1.4.0] - 2026-09-02" in changelog
     assert "## [1.3.0] - 2026-09-02" in changelog
+    assert "PaneWriter" in changelog
     assert "## [1.2.2] - 2026-09-02" in changelog
     assert "`redeliver` subcommand" in changelog
     assert "selects the last block positionally" in changelog

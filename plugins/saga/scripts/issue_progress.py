@@ -38,6 +38,25 @@ def _list_lines(label: str, values: Sequence[str] | None) -> list[str]:
     return lines
 
 
+_OVERRIDE_LABELS: dict[str, str] = {
+    "doc-review": "doc review override",
+    "review-gate": "review gate override",
+}
+
+
+def _override_line(gate: str | None, rationale: str | None) -> str | None:
+    """Return the rendered override line for *gate* or raise when the gate is absent/unknown.
+
+    A rationale without a known gate is refused — the caller must name which gate
+    was waived. An absent rationale yields None (no line).
+    """
+    if not rationale:
+        return None
+    if gate not in _OVERRIDE_LABELS:
+        raise ValueError(f"override requires a known gate {sorted(_OVERRIDE_LABELS)}; got {gate!r}")
+    return f"- {_OVERRIDE_LABELS[gate]}: {rationale}"
+
+
 def render_issue_comment(
     *,
     event: str,
@@ -56,6 +75,7 @@ def render_issue_comment(
     doc_review_fixes: Sequence[str] | None = None,
     doc_review_findings: Sequence[str] | None = None,
     doc_review_override: str | None = None,
+    review_gate_override: str | None = None,
     handoff_maturity: str | None = None,
     handoff_source: str | None = None,
     next_action: str | None = None,
@@ -67,6 +87,20 @@ def render_issue_comment(
 
     title = EVENT_TITLES.get(event, event.replace("-", " ").title())
     lines = [f"### {title}", "", f"- issue: {issue_ref}", f"- selected destination: {destination}"]
+    override_candidates: list[str | None] = []
+    if doc_review_override is not None or review_gate_override is not None:
+        # What makes a gate-less waiver impossible is the FLAG SPLIT, not a runtime refusal: there
+        # are exactly two override parameters and each one carries its gate's name as a literal
+        # here, so an unnamed waiver has nowhere to enter. `_override_line`'s raise is a defensive
+        # guard for a direct caller, and is unreachable from this path by construction — the
+        # earlier note credited it with enforcing the property, which reads as a runtime check that
+        # never runs.
+        if doc_review_override is not None:
+            override_candidates.append(_override_line("doc-review", doc_review_override))
+        if review_gate_override is not None:
+            override_candidates.append(_override_line("review-gate", review_gate_override))
+    # The legacy direct values, still supported for a caller that validated them itself. The
+    # helper above is the canonical path for everything it covers.
     for candidate in (
         _line("summary", summary),
         _line("plan", plan_path),
@@ -82,7 +116,6 @@ def render_issue_comment(
             "doc review blocked",
             None if doc_review_blocked is None else ("yes" if doc_review_blocked else "no"),
         ),
-        _line("doc review override", doc_review_override),
         _line("deployment status", deploy_status),
         _line("workflow", workflow_url),
         _line("evidence", evidence_link),
@@ -90,6 +123,9 @@ def render_issue_comment(
     ):
         if candidate:
             lines.append(candidate)
+    for cand in override_candidates:
+        if cand:
+            lines.append(cand)
     lines.extend(_list_lines("doc review fixes", doc_review_fixes))
     lines.extend(_list_lines("doc review findings", doc_review_findings))
     lines.extend(_checks_lines(checks_run))
@@ -132,6 +168,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--doc-review-findings", help="pipe-separated list of doc review findings")
     parser.add_argument("--doc-review-override")
+    parser.add_argument("--review-gate-override")
     parser.add_argument("--deploy-status")
     parser.add_argument("--workflow-url")
     parser.add_argument("--evidence-link")
@@ -157,6 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             doc_review_blocked=args.doc_review_blocked,
             doc_review_findings=_split_pipe(args.doc_review_findings),
             doc_review_override=args.doc_review_override,
+            review_gate_override=args.review_gate_override,
             handoff_maturity=args.handoff_maturity,
             handoff_source=args.handoff_source,
             next_action=args.next_action,

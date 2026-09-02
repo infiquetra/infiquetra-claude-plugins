@@ -45,8 +45,13 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.148.0"  # W10 (sdlc#91): office-hours + ideate state and
-    # test the Intake no-issue-creation boundary; successor to W8 c2's (sdlc#89) Verify-precondition 0.147.0
+    assert plugin_json["version"] == "0.155.0"  # cycle-2 repair of the integrated review's
+    # WK2-WK4 findings: the /qa preamble and certificate comment issue #930 named, the halt/allowlist
+    # attribution, a CLI for the build-unit tier resolver, validation of an explicit plan tier, and
+    # three guard tests that could not fail. Successor to issue #930's maintenance sweep at 0.154.0
+    # — teardown as fifth ceremony call, first-time move, gated/allowlist separation,
+    # and the full artifact_pointer path.
+    # Successor to issue #929's build-unit tier resolution at 0.153.0
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -74,7 +79,10 @@ def test_fleet_lease_runtime_adapters_are_retired_from_the_package() -> None:
 
 
 def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
-    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    # The "$CC_WORKFLOWS_SCRIPTS_DIR/..." expansions are quoted in the command blocks
+    # (review A01/S05), so match quote-tolerantly: strip double quotes from both the
+    # skill text and the needles. Presence and ordering stay the pinned contract.
+    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md").replace('"', "")
     for required in (
         "execution_spec.py settlement",
         "execution_spec.py lease",
@@ -87,10 +95,12 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
         "A missing structured result is `silent-no-op`",
         "This is at-least-once and preserves the stable idempotency key",
     ):
-        assert required in work_skill
+        assert required.replace('"', "") in work_skill
     reserve = work_skill.index("workflow_emitter.py reserve")
     attest = work_skill.index("workflow_emitter.py attest", reserve)
-    launch = work_skill.index('Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })', attest)
+    launch = work_skill.index(
+        "Workflow({ scriptPath: docs/workflows/<topic>.workflow.js })", attest
+    )
     release = work_skill.index("workflow_emitter.py release", launch)
     assert reserve < attest < launch < release
 

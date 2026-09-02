@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.148.0",
+      "version": "0.155.0",
       "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
       "author": {
         "name": "Infiquetra",
@@ -321,7 +321,28 @@
         "sessions"
       ],
       "category": "development"
+    },
+    {
+      "name": "cc-workflows",
+      "source": "./plugins/cc-workflows",
+      "version": "1.0.0",
+      "description": "Claude Code Workflow execution for Infiquetra plans: the workflow-script emitter, the driver-owned lease and settlement contracts, and the Workflow protocol, extracted from Saga (#925).",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "cc-workflows",
+        "cc-workflows-ultracode",
+        "workflow",
+        "execution-spec",
+        "emitter",
+        "explicit-invocation"
+      ],
+      "category": "development"
     }
   ],
-  "version": "3.0.0"
+  "version": "3.1.0"
 }

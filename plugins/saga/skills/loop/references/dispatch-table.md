@@ -69,7 +69,9 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 | Saga `lifecycle_phase` | `phase_status` | Handoff maturity | Next command |
 |---|---|---|---|
 | (none) | — | `idea-ready` / `requirements-ready` | `/plan` |
-| `ideation` / `brainstorm` | any | — | `/plan` (settle HOW) |
+| `ideation` | any | — | `/plan` (settle HOW) |
+| `brainstorm` | any | `pending-confirmation` | `/brainstorm` |
+| `brainstorm` | any | `requirements-ready` | `/plan` (settle HOW) |
 | `plan` | `complete` | `plan-ready` | `/doc-review` (readiness) |
 | `plan` | `pending` / `in_progress` | — | `/plan` (finish the plan) |
 | `review` | `complete`, no P0/P1 | `plan-ready` | `/work` |

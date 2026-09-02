@@ -74,6 +74,29 @@ unit can settle. A single idle observation is only a gap between turns. `status`
 delivery warnings and units that committed nothing instead of silently treating an idle session as
 successful work.
 
+## Board writeback
+
+A run file may carry an `issues` mapping (unit name to `owner/repo#N`) and an optional `status_map`.
+With it, `land` writes each merged unit's phase boundary back to that unit's issue card and
+`announce` covers the boundaries `land` does not. Without the mapping, this is a no-op.
+
+Orchestrate never writes GitHub itself. Every write is a submission through saga's
+`reconcile_controller`, which owns the certificate gate and the replay key and stops at Mission
+Control's `flow set-field --correction`.
+
+A move is a `(Stage, Status)` pair, and the unit's name prefix picks the rung — `plan` and
+`docreview` in `Planning`, `work`, `fix` and `codereview` in `Active`. There are five rungs. Nothing
+reaches `Verify` or `Retro`, including through a `status_map` override, because those stages begin
+only after conditions a run cannot observe.
+
+**Install order matters.** saga 0.151.0 or later and mission-control 2.15.1 or later must be
+installed before board writeback is relied on. `plugin.json` declares three floors — saga,
+mission-control and agent-launcher — and **only saga's is checked at runtime**: a resolved saga
+below its floor is refused before any submission is made. The mission-control and agent-launcher
+floors are declared for the installer and nothing verifies them, so an install below either one
+fails later and less clearly. `land` and `announce` exit 2 when a card was not updated, print the
+reason, say whether a retry can clear it, and name which saga and schema were used.
+
 ## Boundaries
 
 Orchestrate coordinates sessions; it does not prove that a child followed its instructions, impose a

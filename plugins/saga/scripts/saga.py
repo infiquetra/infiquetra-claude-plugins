@@ -681,6 +681,27 @@ class SagaSaveError(ValueError):
     """A save was rejected for violating a saga invariant (non-zero exit)."""
 
 
+class SagaTickEnvelopeWriteError(OSError):
+    """The tick envelope never reached disk: NO tick exists for this save.
+
+    Whether the stranded-document remedy applies depends on the prior chain: only when
+    no earlier tick references the plan document is it left on disk with nothing
+    referencing it; when an earlier tick already records the plan path, the document
+    stays tracked and only THIS save's tick is missing (cycle-2 C02/D04).
+    """
+
+
+class SagaTickIndexWriteError(OSError):
+    """The tick envelope IS on disk; only the state.json index rewrite failed.
+
+    ``restore`` reads the envelope directly and never opens state.json, so the tick
+    is tracked. The message must not claim the plan lost its tick (review F05/F05u).
+    Re-running the same save rebuilds the index but is NOT idempotent: each save
+    allocates a fresh envelope, so the re-run appends one additional tick carrying the
+    same state (cycle-2 C01/D03/P01/U09).
+    """
+
+
 def _orchestration_rank(mode: str) -> int | None:
     """Tier rank of an orchestration mode (inline < team-execution < cc-workflows-ultracode).
 
@@ -823,11 +844,23 @@ def save(
     _assert_orchestration_provenance(saga, merged, prior)
 
     saga_dir = root / SAGAS_DIR / merged.saga_id
-    saga_dir.mkdir(parents=True, exist_ok=True)
-    envelope_path = _allocate_envelope_path(saga_dir, _timestamp(moment))
-    envelope_path.write_text(render_envelope(merged), encoding="utf-8")
+    # Two distinct writes, two distinct failures (review F05): the envelope goes down
+    # first, then the state.json index rewrite. Only an envelope-phase failure leaves
+    # the plan document with no tick; an index-only failure still leaves a tracked tick
+    # because ``restore`` reads the envelope directly and never opens state.json.
+    try:
+        saga_dir.mkdir(parents=True, exist_ok=True)
+        envelope_path = _allocate_envelope_path(saga_dir, _timestamp(moment))
+        envelope_path.write_text(render_envelope(merged), encoding="utf-8")
+    except OSError as exc:
+        raise SagaTickEnvelopeWriteError(str(exc)) from exc
 
-    state_path = update_index(root, merged, now=moment)
+    try:
+        state_path = update_index(root, merged, now=moment)
+    except OSError as exc:
+        raise SagaTickIndexWriteError(
+            f"tick envelope written to {envelope_path}, then: {exc}"
+        ) from exc
     return {
         "saga_id": merged.saga_id,
         "envelope_path": str(envelope_path),
@@ -1005,6 +1038,14 @@ def read_ticks(root: Path, saga_id: str) -> list[Saga]:
         key=lambda p: envelope_sort_key(p.name),
     )
     return [parse_envelope(p.read_text(encoding="utf-8")) for p in files]
+
+
+def _normalized_plan_path(root: Path, plan_path: str) -> Path:
+    """Return a lexical absolute path for comparing recorded plan references."""
+    path = Path(plan_path)
+    if not path.is_absolute():
+        path = root / path
+    return Path(os.path.abspath(path))
 
 
 def _scan_legacy(root: Path) -> list[dict[str, Any]]:
@@ -1483,7 +1524,9 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         blockers=args.blockers,
         open_questions=_split_list(args.open_questions),
         checks_run=_split_list(args.checks_run),
-        gate_verdicts=ABSENT if args.gate_verdict is None else list(args.gate_verdict),
+        gate_verdicts=ABSENT
+        if args.gate_verdict is None
+        else _validated_gate_verdicts(args.gate_verdict),
         gate_divergence=ABSENT if args.gate_divergence is None else list(args.gate_divergence),
         source=args.source,
         summary=args.summary,
@@ -1491,6 +1534,18 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         remaining=args.remaining,
         notes=args.notes,
     ), frozenset(explicit)
+
+
+def _validated_gate_verdicts(verdicts: list[str]) -> list[str]:
+    """Validate each ``gate:state:ref`` via ``parse_gate_verdict``; refuse on ValueError."""
+    validated: list[str] = []
+    for entry in verdicts:
+        try:
+            parse_gate_verdict(entry)
+        except ValueError as exc:
+            raise SagaSaveError(str(exc)) from exc
+        validated.append(entry)
+    return validated
 
 
 def _add_save_parser(sub: Any) -> None:
@@ -1645,6 +1700,72 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = save(root, incoming, explicit_fields=explicit_fields)
         except SagaSaveError as exc:
             print(f"error: {exc}", file=sys.stderr)
+            return 2
+        except SagaTickIndexWriteError as exc:
+            # The envelope landed BEFORE the index rewrite failed, so the tick EXISTS:
+            # ``restore`` reads the envelope directly and never opens state.json. The
+            # message must name the failure that actually occurred — never claim the
+            # plan lost its tick (review F05/F05u/F05d) and never claim the re-run is
+            # idempotent: a save always allocates a fresh envelope, so the re-run
+            # appends one additional tick carrying the same state (cycle-2
+            # C01/D03/P01/U09).
+            message = f"error: failed to rewrite the saga state.json index: {exc}"
+            if args.plan_path:
+                message += (
+                    f" — the plan document {args.plan_path} IS still referenced by the"
+                    " tick envelope on disk (restore reads it directly). Once the write"
+                    " failure is cleared, re-run the same save: it rebuilds the index"
+                    " and appends one additional tick carrying the same state — harmless"
+                    " to restore, but visible to saga.py ticks, which then report both."
+                )
+            print(message, file=sys.stderr)
+            return 2
+        except SagaTickEnvelopeWriteError as exc:
+            # The envelope never reached disk, so THIS save's tick does NOT exist. Name
+            # the stranded document only after scanning the full prior chain for the
+            # normalized plan path; when any earlier tick records the document, only
+            # this tick is missing (issue #923, plan KTD2; cycle-3 defect A2).
+            message = f"error: failed to write the saga tick: {exc}"
+            if args.plan_path:
+                try:
+                    prior_ticks = read_ticks(root, incoming.saga_id)
+                except (OSError, ValueError, TypeError, KeyError) as read_exc:
+                    message += (
+                        " — this save's tick envelope was never written, and the prior"
+                        f" tick chain could not be inspected ({read_exc}). Check whether"
+                        f" it references the plan document {args.plan_path} before"
+                        " treating the document as stranded."
+                    )
+                else:
+                    requested_path = _normalized_plan_path(root, args.plan_path)
+                    is_tracked = any(
+                        tick.plan_path is not None
+                        and _normalized_plan_path(root, tick.plan_path) == requested_path
+                        for tick in prior_ticks
+                    )
+                    if is_tracked:
+                        message += (
+                            " — this save's tick envelope was never written, but an earlier"
+                            f" tick still references the plan document {args.plan_path}; the"
+                            " document is tracked. Re-run the save to append this tick."
+                        )
+                    else:
+                        message += (
+                            f" — the plan document {args.plan_path} now has NO saga tick"
+                            " referencing it. Re-run the save before routing onward."
+                        )
+            print(message, file=sys.stderr)
+            return 2
+        except OSError as exc:
+            # Any other filesystem failure: exit non-zero, but make no claim about
+            # whether a tick exists — only the two writes above can say that.
+            message = f"error: failed to write the saga tick: {exc}"
+            if args.plan_path:
+                message += (
+                    f" — check whether a tick envelope was written for the plan document"
+                    f" {args.plan_path} (saga.py restore) before treating it as stranded."
+                )
+            print(message, file=sys.stderr)
             return 2
         print(json.dumps(result, indent=2))
         return 0

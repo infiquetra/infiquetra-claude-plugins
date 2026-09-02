@@ -77,6 +77,26 @@ def _options_of(argv: list[str]) -> dict[str, str]:
     return opts
 
 
+def _identity_of(argv: list[str]) -> dict[str, str]:
+    """The `field` identity the REAL controller records for this argv.
+
+    Load-bearing rather than decorative. `board_progression.assignment_identity` joins a
+    submission's field names, sorted, with `+`, and `authorize_and_write` puts the result in the
+    record's `field`. Orchestrate reads it back to prove the saga that executed the call actually
+    carried both halves -- a saga older than the pair contract drops `payload["assignments"]`,
+    writes only `--field Status`, and reports `written`. A fake that omitted `field` was the shape
+    of that older saga, so it made every test agree with the defect instead of catching it.
+    """
+    opts = _options_of(argv)
+    if opts.get("--op") != "set-field-status":
+        return {}
+    payload = json.loads(opts.get("--payload", "{}") or "{}")
+    assignments = payload.get("assignments")
+    if not assignments:
+        return {"field": "Status"}
+    return {"field": "+".join(sorted(str(field) for field, _option in assignments))}
+
+
 class FakeReconcileController:
     """Stand-in for the ``reconcile_controller`` subprocess, with a switchable failure mode.
 
@@ -101,6 +121,7 @@ class FakeReconcileController:
                 cmd, 1, stdout="", stderr="transient controller failure"
             )
         record = {"status": "written", "key": "fake", "op_kind": _options_of(argv)["--op"]}
+        record.update(_identity_of(argv))
         return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(record) + "\n", stderr="")
 
     def ops(self) -> list[str]:
@@ -257,7 +278,7 @@ class TestAConflictCannotUnannounceAnEarlierMerge:
         assert fake_controller.ops() == ["set-field-status", "issue-progress-comment"]
         assert fake_controller.numbers() == ["101", "101"]
         comment_opts = _options_of(fake_controller.calls[1])
-        assert comment_opts["--target-state"] == "orchestrate:r1:work-alpha:Active"
+        assert comment_opts["--target-state"] == "orchestrate:r1:work-alpha:Active/Implementing"
         assert "work-alpha" in json.loads(comment_opts["--payload"])["body"]
 
     def test_the_announcement_survives_the_nonzero_return(
@@ -399,9 +420,17 @@ class TestAFailedWritebackIsVisibleInLandsResult:
 
 
 class TestALaterLandDoesNotSilentlyRedriveAFailedWriteback:
-    """The retry door is `announce`, named at the failure: a next land owes nothing."""
+    """The retry door is `announce`, named at the failure: a next land re-drives nothing.
 
-    def test_a_second_land_calls_nothing_and_succeeds(
+    It does not follow that a next land owes NOTHING, which is what this class asserted before.
+    `land` announces only the units it merged in that invocation, so a second land merged nothing,
+    attempted no write, found no failure and exited **0** — over a card that was still wrong, with
+    the wrongness now invisible because the invocation that saw it had ended. Reporting is not
+    re-driving: the run file carries the outstanding unit, every later land names it, and the exit
+    code keeps saying so until an `announce` actually clears it.
+    """
+
+    def test_a_second_land_re_drives_nothing_but_still_reports_the_failure(
         self,
         orchestrate: ModuleType,
         repo: Path,
@@ -416,9 +445,26 @@ class TestALaterLandDoesNotSilentlyRedriveAFailedWriteback:
         assert len(fake_controller.calls) == 1
 
         capsys.readouterr()
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_land(argparse.Namespace()) == 2
+        # THE ORIGINAL PURPOSE, unchanged: no second controller call was made.
         assert len(fake_controller.calls) == 1, "the failed writeback is announced, not re-driven"
-        assert "already there: work-alpha" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "already there: work-alpha" in out
+        assert "BOARD WRITEBACK STILL OUTSTANDING: work-alpha" in out
+        assert "retry with `orchestrate.py announce work-alpha`" in out
+
+    def test_a_land_with_no_outstanding_failure_still_exits_zero(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_controller: FakeReconcileController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Control: exit 2 must discriminate, not be what a second land always returns."""
+        _write_run(repo, [_unit("work-alpha")], {"work-alpha": "infiquetra/orch#101"})
+        monkeypatch.chdir(repo)
+        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_land(argparse.Namespace()) == 0
 
 
 # ----------------------------------------------------------------- the unchanged happy paths
@@ -450,8 +496,8 @@ class TestANormalLandAnnouncesOncePerLandedUnit:
             if _options_of(call)["--op"] == "issue-progress-comment"
         ]
         assert comment_states == [
-            "orchestrate:r1:work-alpha:Active",
-            "orchestrate:r1:work-beta:Active",
+            "orchestrate:r1:work-alpha:Active/Implementing",
+            "orchestrate:r1:work-beta:Active/Implementing",
         ]
         assert _on(repo, "orch/r1", "work-alpha.txt")
         assert _on(repo, "orch/r1", "work-beta.txt")

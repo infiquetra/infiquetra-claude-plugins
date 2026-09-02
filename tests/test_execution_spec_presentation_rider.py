@@ -51,6 +51,11 @@ def _load(name: str, path: Path) -> ModuleType:
 
 
 ES = _load("execution_spec", EXECUTION_SPEC_SCRIPT)
+# The workflow-emission internals moved to the cc-workflows plugin (#925/U4).
+EMITTER = _load(
+    "cc_workflows_emitter",
+    ROOT / "plugins" / "cc-workflows" / "skills" / "cc-workflows" / "scripts" / "emitter.py",
+)
 _load("lifecycle_state", SCRIPT_DIR / "lifecycle_state.py")
 
 
@@ -279,7 +284,7 @@ def test_verifier_prompt_builder_is_untouched_by_the_rider() -> None:
     spec = _spec([_panel_unit()])
     unit = spec.unit_by_id("U1")
     assert unit is not None
-    assert ES.PRESENTATION_RIDER not in ES._verifier_prompt(unit)
+    assert ES.PRESENTATION_RIDER not in EMITTER._verifier_prompt(unit)
 
 
 # --- LENS 3 / degenerate inputs ---------------------------------------------------------------

@@ -49,8 +49,202 @@ cache candidate during discovery; allowing an unusable companion to escape as a 
 **Rejected.** Selecting the last classifiable block, because scrollback can replace the live box; treating every styled row as empty, because it prompts into real drafts; treating every styled row as staged, because it hard-stops idle panes; assigning an unverified plain-marker fallback to every vendor.
 
 **Revisit when.** Herdr exposes cursor position or composer state, a vendor publishes a stable placeholder protocol, or a live capture verifies a stable Muse or OpenCode marker.
+### Orchestrate's `landed` rung is retired rather than gated or remapped  {#927-landed-rung-retired}
+
+**Decision.** `landed` is removed from `DEFAULT_STATUS_MAP`. It is not gated on the W-D2 condition
+and it is not remapped to another rung. Two guards, not one: a test pins that **no** entry in
+`DEFAULT_STATUS_MAP` reaches the `Verify` or `Retro` stage, and `announce_units` refuses any rung
+naming either stage at the submission itself. The second exists because the first cannot see the
+third door — a run file's `status_map` override never passes through the map, and it is validated
+for liveness alone, so `("Verify", "Awaiting verification")` sailed through as a live pair. A unit
+whose prefix names the retired key now produces a failure record naming the retirement rather than
+the silent "no status mapped" skip, so removing the key does not convert a loud error into
+silence.
+**Date:** 2026-08-31 · **Issue:** #927 (F-04, cycle-1 integrated review) · **Origin:** routed to
+human by the review; the operator returned it to this cycle with a derived, reversible ruling.
+**Why gating is infeasible, measured rather than argued.** W-D2 admits `Verify` only after merge
+**plus** the applicable non-production deployment — or, when nothing deploys, after installed or
+published artifact verification. Orchestrate can check neither conjunct. `cmd_land` merges unit
+branches onto the **run** branch `orch/<run-id>`, never the default branch, so a `landed` boundary is
+not a merge in W-D2's sense at all. And `deployment`, `deployed`, `non-production` and `nonprod`
+appear only inside one comment quoting the rule — four occurrences, no code reading, computing or
+receiving any of them — so there is no deployment or artifact signal to gate on. (The first draft of
+this entry said "once combined" and was simply wrong on the count; the claim that carries the
+argument is that none is a runtime signal, and that one holds.) A gate would be permanently false: a dead key with extra
+code around it, which reads like a safeguard and is not one.
+**Why not remap.** `Active`/`Integrating` would be better behaviour and was considered. Issue #919's
+approved board transition contract carries no `Integrating` row, so adding one **extends** a contract
+the operator approved — that is his call. Retiring only **removes** a violation and adds nothing, so
+it stays inside the approved contract. This is the whole difference between repair and extension.
+**Safety.** Before this change `landed` mapped to `Done`, which is not a live `Status` option, so
+every write the rung ever made halted before reaching a card — it has never once worked, and
+retiring it loses nothing that functioned. No unit in the repository is named `landed-*`, so live
+impact is zero; such a unit now takes the ordinary unmapped skip.
+**Revisit when.** The operator approves an `Integrating` row on the board transition contract, or
+Orchestrate gains a real merge-plus-deployment signal. **Reversible at any time before merge** by
+restoring the key with the approved rung.
+**Refs.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`;
+`tests/test_orchestrate_status_map_contract.py::test_no_rung_reaches_the_verify_stage_by_any_door`;
+issue #919's board transition table; `infiquetra-sdlc` #89 (W8) requirement R69.
+
+### Orchestrate reads Mission Control's shipped schema document rather than importing its resolver  {#927-orchestrate-reads-the-shipped-schema}
+
+**Decision.** `orchestrate.stage_statuses()` resolves the board vocabulary by reading the
+`workflows.stage_flow.stage_statuses` block out of the `config/sdlc-schema.json` that the installed
+mission-control plugin ships, rather than importing `sdlc_manager` and calling `_stage_flow_rules()`.
+Installs are searched newest-version-first across both plugin roots, and an unresolvable schema is a
+loud failure rather than a skip.
+**Date:** 2026-08-31 · **Issue:** #927 (U5) · **Origin:** disclosed as a judgment call at
+pull-request-open; adjudicated "half-holds" by the cycle-1 integrated review and corrected here.
+**Why.** `_resolve_sdlc_schema` reaches GitHub through a `gh` child before falling back to the
+vendored copy. Board writeback is a guest of the run: it must never make a `land` wait on the
+network, and it must work offline. Reading the document keeps Orchestrate free of a vocabulary of
+its **own**, which is the property that actually failed before — the hard-coded `STATUS_LADDER` went
+stale on both fields and every write halted silently.
+**What this does NOT buy, corrected.** The first version of this decision claimed "the vocabulary
+still has exactly one source". That is false: the shipped document is mission-control's *offline*
+source, not its only one, and the two have already diverged once (live `schema_version` 2026-08-30.6
+against a vendored 2026-08-29, `stage_statuses` byte-identical at the time). A rung that is
+live-but-newer than the installed plugin therefore fails loud here rather than being submitted
+blind, which is the safe direction but is not the same as agreement.
+**Rejected.** Importing `sdlc_manager` (a network call in a path that must degrade silently, plus
+the import weight of a very large module); vendoring `fleet_commons.plugin_resolution` into
+Orchestrate, which is the repository's real resolution ladder and is what saga's own board path uses
+— rejected for THIS change only, as a dependency-direction change wider than the repair, and it is
+the right long-term answer.
+**Revisit when.** Orchestrate vendors the fleet-core shim for any other reason, or a live-versus-
+vendored schema divergence actually bites a run.
+**Refs.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`; issue #927;
+[`{#927-pair-rides-the-payload}`](#927-pair-rides-the-payload).
+
+### A cross-plugin submission is verified from the executor's own record, not from the caller's intent  {#927-verify-the-executor-not-the-intent}
+
+**Decision.** Orchestrate checks the `field` identity in the record its submission comes back with,
+and treats a converged-looking record that does not name the whole pair as a failure. Its
+`plugin.json` declares `saga >= 0.151.0` and `mission-control >= 2.15.1`, and the changelog states
+the install order.
+**Date:** 2026-08-31 · **Issue:** #927 · **Origin:** the cycle-1 integrated review's only P0.
+**Why.** Orchestrate does not execute board writes — it shells out to whichever saga
+`reconcile_controller.py` resolves on the machine, which is not the saga in the checkout under
+review. A saga older than the pair contract has no `normalize_assignments`: it drops
+`payload["assignments"]`, writes `--field Status` alone, mints the pre-pair key and returns
+`written`. Every downstream signal then agreed the move landed, the progress comment asserted a
+`board stage:` line for a Stage that never moved, and `land` exited 0. The record already carried
+the discriminator and nothing read it. **A version declaration alone would not have been enough** —
+it is advisory, and the resolver was selecting 0.136.0 out of sixty installed copies because its
+glob sorted lexicographically. Declaration, version-ordered resolution and record verification are
+three answers to one question and all three are needed.
+**Generalizable.** When a caller hands work to a runtime-resolved executor it does not version, the
+caller must verify from something the executor *emitted*, not from what the caller sent.
+**Rejected.** Trusting the declared dependency (advisory, and unenforced at runtime); importing
+saga's helper to compare (Orchestrate cannot import a plugin that may be absent); probing the saga's
+version before each call (an extra process spawn per unit, and a version string is a weaker witness
+than the record the operation itself produced).
+**Revisit when.** The plugin host enforces declared dependency versions at load time.
+**Refs.** `announce_units`, `_pair_was_executed`, `pair_identity` in
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`;
+`tests/test_orchestrate_board_writeback.py`.
+
+### The (Stage, Status) pair rides the existing payload, and both replay-key sites widen together  {#927-pair-rides-the-payload}
+
+**Decision.** A lifecycle-field submission may carry N assignments as `payload["assignments"]`, a list of `[field, option]` pairs. `board_progression.normalize_assignments` reads it, `assignment_identity` renders the whole submission's replay identity, and both key-minting sites — `authorize_and_write` and `reconcile_controller.reconcile_op` — call the same helper. An absent `assignments` key falls back to today's exact single-field behaviour, argv and ledger key included. `default_board_writer` emits one `--field`/`--option` per assignment in **one** `flow set-field --correction` invocation, and on a non-zero exit parses Mission Control's stdout report to name the landed and the unlanded assignment.
+**Date:** 2026-08-31 · **Issue:** #927 (U5) · **Origin:** operator ruling W-D1, 2026-08-30; plan Decision A.
+**Why.** `Ready` is a valid option on neither live board field, so no single-field write can express the required first move; the pair is the only shape that satisfies the contract. `payload` is `dict[str, Any]` and already flows caller → controller → `authorize_and_write` → writer, so the pair costs **no signature change** on the submission path. Keying the whole submission is correctness, not tidiness: with a single-field key a `(Stage, Status)` pair and a `Status`-only write to the same option mint the identical identity, so whichever runs second is recorded `skipped` as already-applied — a success-shaped record for a move that never landed, silently. Widening only the controller would have left `authorize_and_write` minting the narrow key at its own site.
+**Rejected.** *Widening `_reconcile_call` alone* — the argv is built in `board_progression`, so a one-field writer emits one flag whatever the caller passes. *Two writer calls, one per field* — widens the half-applied window and splits one logical move across two ledger keys, so a re-drive can re-land one half alone. It was also rejected here for "doubling the discovery pass", and that cost is **retracted**: `flow_set_fields_bulk` calls `_set_lifecycle_field_cross_board` once per assignment and each does its own cross-board discovery, so one invocation saves a process spawn, a CLI parse and an authorization pass — not a discovery pass. The two surviving reasons are sufficient on their own. *Calling `sdlc_manager.py` directly from Orchestrate* — discards the certificate gate, the ledger and the replay key. *A new `set-field-pair` op-kind* — dead API surface needing its own certificate registry entry, reversibility tier and inverse descriptor, the same reasoning that already rejected `set-field-stage` in [`{#812-correction-field-named-identity}`](#812-correction-field-named-identity). *Making the replay key caller-supplied* — `authorize_and_write` has three callers and only one is the controller, so it would break the other two or duplicate the minting logic at three sites, and it would reach into `/outcome`.
+**Revisit when.** A submission needs more than two assignments and the `+`-joined identity becomes hard to read, or Mission Control makes a multi-assignment call atomic — at which point the stdout-parsing half of this decision can be dropped.
+**Refs.** LEARNINGS [`{#927-stale-vocabulary-silent-halt}`](LEARNINGS.md#927-stale-vocabulary-silent-halt); `plugins/saga/scripts/board_progression.py`, `plugins/saga/scripts/reconcile_controller.py`; `tests/test_saga_board_first_move.py`.
+
+### Orchestrate 4.0.0 is a MAJOR bump, following the repository's own observability test  {#927-orchestrate-major-bump}
+
+**Decision.** The Orchestrate release carrying the `(Stage, Status)` pair is **4.0.0**, not 3.1.0.
+**Date:** 2026-08-31 · **Issue:** #927 (G-03, cycle-2 integrated review) · **Origin:** routed to the operator by the review; the operator ruled 4.0.0 and asked that the reasoning be recorded so it can be flipped.
+**Why.** [`{#removed-default-is-breaking}`](#removed-default-is-breaking) sets the test as whether a caller can observe the change; where none can, minor is defensible. Callers can observe four of these independently. An existing run file whose `status_map` holds a pre-pair single string made `land` exit **0** before and exits **2** now. The progress comment's rendered body gained a `board stage:` line, and the announce discriminator's shape changed with it, so a boundary announced under the old shape mints a different key. `STATUS_LADDER` was deleted outright. And `mapped_status` was retyped from `str | None` to `tuple[str, str] | None` and now raises where it returned. The release's own changelog heading already conceded the point in the words "two observable changes for an existing run file". Two hard install obligations — saga 0.151.0, mission-control 2.15.1 — sit on top, and are now enforced rather than merely declared.
+**Rejected.** *Keeping 3.1.0 and writing an exception to the precedent* — an exception to a recorded rule is the operator's to write, and nobody had written one; following the rule is compliance rather than a decision. *Splitting the release so the observable half ships separately* — the observable changes are the repair, not a separable feature.
+**Revisit when.** The precedent itself is revised, or a future release finds the observability test too coarse to be useful.
+**Refs.** `plugins/orchestrate/.claude-plugin/plugin.json`, `plugins/orchestrate/CHANGELOG.md`, `.claude-plugin/marketplace.json`; DECISIONS [`{#removed-default-is-breaking}`](#removed-default-is-breaking).
+
+### The Retro precondition is left as issue #919 approved it  {#927-retro-precondition-unchanged}
+
+**Decision.** `work/SKILL.md`'s `Retro` / `Ready to close` trigger keeps its stated precondition — child closed, repository gate green at the merged commit — with **no** added wait for verification. Considered and declined, not overlooked.
+**Date:** 2026-08-31 · **Issue:** #927 (G-19, cycle-2 integrated review) · **Origin:** routed to the operator by the review; the operator declined the change.
+**Why.** Issue #919's approved board transition contract defines that rung with exactly those two conditions and no wait. Adding one **extends** a contract the operator approved, which is the operator's call rather than a repair's. The review's concern is legitimate — a card can reach the terminal rung before anyone has verified the delivered artifact — and it is recorded here rather than silently dropped so a later reader can weigh it without rediscovering it.
+**Rejected.** *Adding a verification wait as part of this repair* — it would put an unapproved row into an approved contract under the cover of a fix cycle.
+**Revisit when.** Issue #919's transition contract is next amended, or a delivered-terminal move is observed landing on a card whose artifact nobody verified.
+**Refs.** `plugins/saga/skills/work/SKILL.md` §4.4; issue #919.
+
+### The zero-direct-write guard discriminates on reaching GitHub, not on naming the operation  {#927-guard-discriminates-on-reaching-github}
+
+**Decision.** `tests/test_saga_no_direct_write.py` asks whether a path reaches GitHub's project fields without Mission Control's executor. A fenced `reconcile_controller.py reconcile --op set-field-status` block, or a call into `board_progression.authorize_and_write` / `default_board_writer`, is a legal **submission**. The projectV2 item-field mutation, `gh project item-edit`, a hand-built single-select option payload, or a `gh api graphql` aimed at a projectV2 field mutation is an offense anywhere under `plugins/` except `plugins/mission-control/`. Naming the op kind — literally or through the certificate constant — in a module with no submission seam is also an offense. The scan root is the whole fleet.
+**Date:** 2026-08-31 · **Issue:** #927 (U1) · **Origin:** operator ruling W-D1, superseding the W7 reading recorded in `infiquetra-sdlc`.
+**Why.** The W7 discriminator was lexical presence of `set-field-status`, and under W-D1 that is inverted: the submission it forbade is now mandatory. Merely widening the lexical scan would have forbidden the sanctioned submission fleet-wide — itself a defect. The one-plugin scope is separately why Orchestrate's leftover `codereview` → `Verify` writer never failed the guard: `infiquetra-sdlc` #88 named four Saga commands, its acceptance criterion scoped the search to the Saga plugin, and the implementing commit touched no Orchestrate file.
+**Rejected.** Widening the lexical scan without re-aiming it; keeping the scan at `plugins/saga/`; exempting Orchestrate by name rather than by whether it routes through the executor.
+**Revisit when.** A plugin other than Mission Control has a legitimate reason to hold GitHub project-field credentials, or the submission seam gains a fourth door.
+**Refs.** `tests/test_saga_no_direct_write.py`; issue #927; `infiquetra-sdlc` #88, #89.
 
 ## 2026-08-30
+
+### The Claude Code Workflow capability extracts at the typed spec contract, not a clean cut  {#918-extraction-seam-typed-spec-contract}
+
+**Decision.** The workflow-script emission path lives in a fifteenth plugin, `plugins/cc-workflows` (`emitter.py`, the frozen `workflow_emitter.py` lease CLI, and the protocol prose). The seam is the execution spec: the emitter reads Saga's `execution_spec.py` (never a copy) through a resolution shim mirroring `fleet_commons_shim` (env override, repo walk-up, installed registry, cache sibling, loud miss); Saga's `execution_spec.py` delegates `emit`/`settlement`/`lease` back through an owner-aware cache keyed to the calling module instance, because test suites load several `execution_spec` instances per process and `sys.modules` names only one winner. The private surface crossing the boundary is declared in `SUBSTRATE_SURFACE` and pinned both ways.
+**Date:** 2026-08-30 · **Issue:** #918 (U4, #925) · **Origin:** Wave-1 plan KTD6-8; repair cycle 1 (F10a surface pin, F16 shim ladder coverage).
+**Why.** The emitter and the spec schema change together; copying the schema would create two truths. Instance-keyed delegation keeps every loaded engine coherent with its own emitter. A declared surface keeps eleven private names from growing the boundary silently.
+**Rejected.** Moving the spec schema into the plugin; a global `sys.modules`-winner cache (stale bindings across instances); leaving the shim ladder untested (it shipped at twenty percent).
+**Revisit when.** The emitter needs a substrate name not in `SUBSTRATE_SURFACE`, or the plugin ships standalone enough to need version negotiation (F31 deferred to release).
+**Refs.** Issue #925; `plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py`, `saga_spec_shim.py`; `tests/test_cc_workflows_shim.py`, `tests/test_cc_workflows_emitter_surface.py`.
+
+### Generated Workflow artifacts live in docs/workflows/, plan documents stay in docs/plans/  {#918-docs-workflows-convention}
+
+**Decision.** The top-level `docs/plans/*.workflow.js` and `docs/plans/*-spec.json` artifacts (forty-one files) moved to `docs/workflows/` with identical stems; `docs/plans/` retains plan documents and the ideation subtree. Write-path conventions in the plan/work skills, operator-choice, execution-spec, and saga-spec repointed in the same commit, and every live pointer migrated atomically — guarded since repair cycle 1 by a recursive scan of `plugins/**/*.md` (changelogs excluded) plus an inverted stale-pointer check (no `docs/plans/` artifact reference may resolve to a moved artifact).
+**Date:** 2026-08-30 · **Issue:** #918 (U4, #925) · **Origin:** Wave-1 plan sub-part B (P-D3); repair cycle 1 (F09d, F17, F18).
+**Why.** `docs/plans/` was contracting toward "plan documents only" while carrying generated scripts and specs; the conformance check over plan docs had to special-case them. Stems survive so `orchestration_ref` semantics are unchanged on this machine; ticks on other machines are documented as a migration limit (KTD7).
+**Rejected.** Moving the ideation subtree or non-plan markdown (deferred by the review's scope ruling); renaming stems (would break refs); a bulk-rewrite of historical citations in changelogs and the journal.
+**Revisit when.** A new artifact class lands under `docs/plans/`, or the plan-doc conformance pass grows to cover `docs/workflows/`.
+**Refs.** Issue #925; `tests/test_workflow_extraction.py` write-path guard and stale-pointer inversion.
+
+### The pre-answer carrier is versioned, explicit-invocation-gated, and inline-only by default  {#918-pre-answer-carrier-contract}
+
+**Decision.** `plan_pre_answers.v1` admits exactly two decision fields (`backend`, `destination`) plus `caller` metadata. Operator ruling in repair cycle 1, stricter than #808: the carrier applies ONLY `inline` automatically; `team-execution` and `cc-workflows-ultracode` are legal plan values but require explicit operator invocation, so the carrier stops and surfaces rather than applying. Carrier discipline: the fence info string must be exactly `json`; at most one carrier (a second stops); duplicate JSON keys stop; an unparseable `json` block is a malformed carrier and stops (not an absence). Schema tokens follow a two-case rule: a non-v1 token inside the family is refused whole; a foreign family is not a carrier and is ignored. The validator is runnable (`plan_pre_answers.py`, stdin or `--invocation-file`, exit 2 on stop) and Plan's Phase 0.7 names that invocation.
+**Date:** 2026-08-30 · **Issue:** #918 (U3, #924) · **Origin:** Wave-1 plan KTD4-5; repair cycle 1 operator ruling (F03), F02u/F06t runnability.
+**Why.** A carrier that could auto-apply a Workflow-capable backend would bypass the explicit-invocation boundary #808 exists to hold. Silent first-wins, last-value-wins, or absence-on-malformed would each let a conflict resolve itself without the operator.
+**Rejected.** Carrier admission of `team-execution` (ruled); widening `extract_carrier` to any schema-bearing block (the two-case rule narrows prose to code instead); keeping the conformance check and validator test-only (harness substitution).
+**Revisit when.** A v2 carrier schema, a third decision field, or an operator decision to admit richer backends through the carrier.
+**Refs.** Issue #924; `plugins/saga/scripts/plan_pre_answers.py`; `plugins/saga/references/saga-spec.md` §15; `plugins/saga/skills/plan/SKILL.md` §0.7; `tests/test_plan_pre_answers.py`.
+
+### Retire stale Brainstorm contract data and pin lifecycle order mechanically  {#916-lifecycle-shaping-maintenance}
+
+**Decision.** Brainstorm's `engine_offer.py` / `engine_session_runner.py` / "retired runner" prose is replaced by the behavioural Dialogue ownership rule (synthesis, judgment, private model, operator exchange stay in this session; only bounded read-only helpers delegate; Orchestrate owns cross-vendor transport). Lifecycle ordering is pinned by a mechanical check over the duplicated block in four skills (ideate, loop, office-hours, plan), not by editing any skill's prose. Shaping is stated once in `saga-spec.md` §4 as an Operations board Status, not a Saga phase/command/automatic consequence, cross-referencing plan §0.6 and noting Office Hours' lowercase generic use. The dispatch line count described as volatile has no live target and nothing was removed.
+**Date:** 2026-08-30 · **Issue:** #916 (B4) · **Origin:** Run plan §U4; KTD6; amendment 2026-08-30 correcting duplication set to four; preflight F1/F2.
+**Why.** The retired names couple the contract to deleted history; the behavioural rule is what matters. The lifecycle block lives in four high-traffic skills, so single-sourcing would edit them inside a low-risk unit. Shaping and Saga lifecycle are different fields; stating once in the spec prevents accidental coupling. The volatile count's absence is a finding, not a removal.
+**Rejected.** Growing blacklist of implementation names; editing any of the six lifecycle skills' prose; adding a `/saga:shaping` command or automatic Brainstorm-to-board transition; broadening to dispatch-table redesign.
+**Revisit when.** A new lifecycle command enters the duplicated block, or a new board Status collides with a Saga phase name.
+**Refs.** Issue #916; amendment; `plugins/saga/skills/brainstorm/SKILL.md` Dialogue ownership; `tests/test_saga_lifecycle_consistency.py`; `plugins/saga/references/saga-spec.md` §4; `tests/test_orchestrate_review_transport.py` STAGE_SKILLS.
+
+### Brainstorm evidence is three layers: deterministic, per-dimension scenarios, mutation proof  {#915-evidence-three-layers}
+
+**Decision.** Evidence is three layers, each matched to what it can honestly prove. Deterministic contract tests cover mechanics with exactly one correct result and are mechanically proven to assert no question, wording, or order. Scenario evaluations, stored as data with `product_size` and `consequence` independent, score judgment per material dimension via a pure `grade()` with no aggregate; grading is deferred. A model-judged finding cannot block alone: `is_blocking()` requires reproducible scenario plus second-grader agreement or operator adjudication. A fixed `calibration.json` set surfaces drift against a floor. Eight mutation proofs weaken each critical safeguard and prove the named check goes red.
+**Date:** 2026-08-30 · **Issue:** #915 (B3) · **Origin:** Run plan §U3; KTD5; operator rulings.
+**Why.** Deterministic tests can prove mechanics, scenarios can show judgment per dimension, mutation can prove guards are not decorative — but no deterministic test may assert a question and no single model judge may block alone (R17/R20). Prior art `engine_benchmark` gives the data-suite + injectable-runner shape; `lint_test_shape` gives the AST mechanism; `_mutate_source` gives the in-memory mutation.
+**Rejected.** Markdown rubrics as carrier (R19 needs data); aggregate quality number (R19 forbids); synthesized transcript labelled `captured` (harness substitution); live judge in CI (R23 requires offline).
+**Revisit when.** Captured transcripts become available from the parked checkpoint — they add `transcript: captured` cases without changing the offline machinery — or new critical safeguards are declared.
+**Refs.** Issue #915; `plugins/saga/references/brainstorm-evidence-model.md`; `tests/data/brainstorm/`; `tests/test_brainstorm_evidence_model.py`, `tests/test_brainstorm_scenarios.py`, `tests/test_brainstorm_mutation_proofs.py`.
+
+### Brainstorm adaptive judgment model: consequence-calibrated, privately tracked, bounded helpers  {#914-judgment-adaptive-model-bounded-helpers}
+
+**Decision.** Rigor is calibrated from concrete consequence factors actually present in scope — data sensitivity, granted authority, untrusted input, reversibility/blast radius, safety, financial/legal/operational consequence, recovery, auditability/consent — separately from product size, never from a domain name, with no named tiers. Concerns are privately classified Clear/Partial/Missing/Not material as a changing heuristic for the next question; the map is never persisted, rendered, or surfaced. Question selection grounds repository facts first, then asks only when the answer could materially change scope, acceptance, safeguards, or route, preferring greatest consequence × uncertainty, one at a time; the new rule orders/filters idle questions only and never filters a found rigor gap. Phase 1 fan-out: Lightweight 0 helpers; Standard/Deep at most one `Explore` scout and one `saga:readonly-verifier` claim verifier, each requiring a distinct evidence question, read-only by tool omission, not worktree-isolated for the survey scout.
+**Date:** 2026-08-30 · **Issue:** #914 (B2) · **Origin:** Run plan §U2; KTD4; preflight F1.
+**Why.** Product size alone mis-ranks a small credential-sensitive change; consequence must be measured separately. The helper ceiling prevents unbounded fan-out while the distinct-question guard prevents duplication. The `read-only-verify` table's class contract cannot admit a survey spawn, so the scout is recorded outside it with its `Bash` residual stated.
+**Rejected.** Named assurance levels (rejected, factors named directly); a `read-only-survey` row in the in-scope table (would falsify the table's class); "structurally cannot write" for the Explore scout (Explore retains Bash, ladder says so); putting the scout in the table and rewriting the class contract.
+**Revisit when.** New consequence factors enter the product domain, or helper evidence needs justify a higher count with the same distinct-question discipline.
+**Refs.** Issue #914; KTD4; `plugins/saga/skills/brainstorm/SKILL.md` Phases 0.4/1.1/1.2/1.3, `plugins/saga/references/sandbox-spawn-sites.md`, `tests/test_sandbox_spawn_sites.py`, `tests/test_tier_resolver.py`.
+
+### Brainstorm continuity contract: checkpoint, maturity, and resume are one ordered rule  {#913-continuity-checkpoint-maturity-resume}
+
+**Decision.** Brainstorm records the producing capability `brainstorm` and activity identity `brainstorm-<topic-slug>-<UTC YYYYMMDDTHHMMSSZ>` plus optional `.orchestrate/run.json` `run_id` on the artifact, writes a `pending-confirmation` checkpoint at Phase 2.5 Path B before any readiness claim, promotes it to `requirements-ready` only on fresh confirmation, and applies an explicitly ordered three-tier resume (exact producer-fact match → legacy labelled inference → empty scan) in both `brainstorm/SKILL.md` Phase 0.1 and `resume/SKILL.md` Phase 0. Legacy inference is labelled `inferred`, operator-confirmed, and never backfills the file. Routes 1–4 are gated on declared `maturity: requirements-ready`; artifact-free exploration writes nothing.
+**Date:** 2026-08-30 · **Issue:** #913 (B1) · **Origin:** Run plan `docs/plans/2026-08-30-issue-912-saga-brainstorm-improvement-run-plan.md` §U1; preflight F3/F4.
+**Why.** The four continuity facts did not hold — producer unrecorded, gate undeclared, artifact-free indistinguishable from handoff, telemetry unreachable — and the `maturity` path rule promoted an unconfirmed checkpoint. KTD1 makes the checkpoint the artifact file itself (no new store), KTD2 keeps the lint coverage by repointing the marker, and KTD7 makes `handoff_envelope.infer_maturity` frontmatter-aware.
+**Rejected.** A checkpoint under `.claude/saga/` (a Brainstorm state store, forbidden by R2); a sidecar file (second ambiguity source); deleting the interaction-rules marker (produces two lint violations); gating only in skill prose instead of in `infer_maturity`.
+**Revisit when.** Brainstorm gains a Saga-tick write path, or the section contract stabilizes additional frontmatter keys that must join the producer facts.
+**Refs.** Issue #913; KTD1/KTD2/KTD7; `plugins/saga/skills/brainstorm/SKILL.md` Phases 0.1/0.2/2.5/3/4, `plugins/saga/skills/brainstorm/references/requirements-sections.md` Metadata, `plugins/saga/references/saga-spec.md` §3.2/§3.3, `plugins/saga/scripts/handoff_envelope.py`.
 
 ### Prepared-issue readiness accepts any Stage-configured Status plus Blocked; the entry option is a default, not a closed set (sdlc#91)  {#w10-readiness-stage-scoped-r91}
 

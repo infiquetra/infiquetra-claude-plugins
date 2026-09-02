@@ -81,8 +81,164 @@ commands unimportable; discover early, enforce at the first operation that needs
 **Second finding, same run.** The module named after the plugin — `tests/test_agent_launcher_plugin.py` — holds release surfaces (manifest version, marketplace registration, packaged files) plus installed-layout fail-fast subprocess tests; direct launcher behavior tests live in `plugins/agent-launcher/tests/test_launcher_contract.py` and the orchestrate test files. Reading only the plugin-named module understates behavior coverage; reading only the plugin directory misses the installed-layout and drift guards.
 **Generalizable rule.** When a receipt carries two booleans with adjacent meanings, read each one's docstring before keying a guard on either — the bit whose name matches your intuition is not always the bit that names your case; and a test file named for the thing it tests is a claim about location, not coverage.
 **Refs.** Issues #897, #907; run plan `docs/plans/2026-08-30-agent-launcher-907-run-plan.md`, Findings 1 and 3.
+### Three guard tests could not fail, and each failed the same way: the assertion named its own subject  {#927-unfailable-guard-tests}
+
+**Context.** The cycle-1 integrated Saga Code Review on run cp919 found three separate tests whose whole job was to forbid something, and which could not report it. All three were green on every possible tree.
+**Evidence.** `tests/test_work_build_unit_tier.py` asserted `'"sonnet"' not in text or '"medium"' not in text or "resolve_build_unit_tier" in text` — the third disjunct greps for the name of the function the file under test *defines*, so the disjunction is always true; the review proved it by hard-coding the tier pair at the spawn site and watching the file stay green at nine passed. The same file's no-inheritance test passed a `host_tier` argument that `resolve_build_unit_tier` accepted and discarded by construction. `tests/test_work_gate_integrity.py` reduced a single-sourcing contract to `assert "same" in collapsed.lower()`.
+**Mechanism.** Each assertion was written against a property the author could see, then loosened until it passed, and the loosening happened to reference something guaranteed present — the subject's own name, a discarded parameter, an ordinary English word. An absence assertion has no natural failing case to check it against, so nothing pushes back when the pattern stops discriminating. The tier test is the sharpest: the disjunct that made it unfailable was added to stop a false positive, and it worked by naming the file's own definition.
+**Fix.** All three re-aimed, and each now ships with a **control test that proves the pattern discriminates** — a positive sample it must match and a negative it must not. The dead `host_tier` parameter was deleted and non-inheritance re-proved from the signature and from a hostile environment. Commit on `work/cp919-wk2-4-gate-integrity`, saga 0.155.0.
+**What surprised.** Two of the three were written in the same change as the feature they guard, by an author who had the failing case in hand minutes earlier.
+**Generalizable rule.** A test that asserts an absence needs a companion that asserts the detector fires. Without it you have not tested the property, you have tested that your pattern found nothing — and those are the same observation. Be especially suspicious of a disjunct added to silence a false positive: check what it is guaranteed to match.
+**Refs.** `tests/test_work_build_unit_tier.py`, `tests/test_work_gate_integrity.py`, `tests/test_orchestrate_status_map_contract.py`; issues #927, #929, #930.
+
+### A caller that hands work to a runtime-resolved executor must verify from what the executor emitted  {#927-verify-the-executor-not-the-intent-learning}
+
+**Context.** Orchestrate 3.1.0 submits a `(Stage, Status)` board pair by shelling out to whichever saga `reconcile_controller.py` resolves on the machine. The pair contract was built, tested end to end, and mutation-proved — in the saga in the checkout.
+**Evidence.** The review's reliability lens executed the *base* saga against the exact payload Orchestrate sends and captured the argv with the `Stage` assignment absent; the deployment lens ran the resolver's own glob and found it selected saga 0.136.0 out of sixty installed copies, because the candidate list sorted lexicographically. A pre-pair saga ignores `payload["assignments"]`, writes `--field Status` alone, and returns `written`.
+**Mechanism.** Every test proved the contract inside one process tree. The seam that breaks it is a *version* seam across a subprocess boundary, and nothing in the caller looked at what came back — `_write_converged` read only `status`. The discriminator was in the record the whole time (`field` is the composite identity from a pair-aware saga, a bare `Status` from an older one) and no code read it.
+**Fix.** Three answers, all needed: verify the returned `field` identity, order candidate installs by parsed version rather than string, and declare the dependency in `plugin.json`. A declaration alone is advisory; version ordering alone still trusts the callee.
+**Generalizable rule.** When a caller cannot version its callee, it must verify from something the callee *emitted*, not from what it sent. In-process tests cannot see this class at all, so look for it wherever a plugin shells out to another plugin.
+**Refs.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`; DECISIONS [`{#927-verify-the-executor-not-the-intent}`](DECISIONS.md#927-verify-the-executor-not-the-intent); issue #927.
+
+### A guard whose assertion is a disjunction is only as strong as its weakest operand  {#927-disjunction-weakest-operand}
+
+**Evidence.** Four guards in run cp919 survived the mutation of the very thing they were written to
+pin, and three of the four failed the same way. `tests/test_work_build_unit_tier.py`:
+`assert "AskUserQuestion" not in phase2 or "Build-unit tier" in phase2` — the repair that added the
+guard also added that heading, so the second operand was unconditionally true and a questionnaire
+seeded into the tier dispatch passed. `tests/test_work_prose_contracts.py`:
+`assert '"halt"' in sec or "'halt'" in sec or "halt" in sec.lower()`, where the third operand
+subsumes the first two and is true of almost any prose on the subject. And, from cycle 1,
+`or "resolve_build_unit_tier" in text` — the name of the function the file under test defines.
+
+**Mechanism.** A disjunction passes when *any* operand holds, so adding an operand can only ever
+weaken it. The dangerous shape is a disjunct whose truth is guaranteed by the surrounding artifact:
+a heading the same change introduced, a function name the module under test necessarily defines, a
+lowercase substring of the concept being asserted. That is not a loose assertion, it is a
+tautology — and it reports the same green as a working guard, which is worse than no guard, because
+it claims a safety that does not exist.
+
+**A fourth failed differently and is worth naming separately.**
+`tests/test_orchestrate_board_writeback.py` pinned a version-ordering repair by re-deriving it:
+`sorted(paths, key=lambda p: (_version_rank(p), str(p)), reverse=True)` — the resolver's own sort
+key, copied into the assertion. Reverting the resolver to a lexicographic sort left it green,
+because the test never called the resolver. A test that restates an implementation asserts that the
+implementation equals itself.
+
+**Generalizable rule.** An assertion pinning a property must (a) call the real thing rather than
+restate it, and (b) be paired with a control that proves it can fail — a fixture carrying exactly
+what the guard forbids, or a slice-length check proving the guard is not reading an empty region.
+If the assertion needs a disjunction to pass, one operand is probably doing no work; delete it and
+see whether the test still passes.
+
+
+### A stale second copy of a vocabulary plus a skip-on-mismatch makes every write invisible  {#927-stale-vocabulary-silent-halt}
+
+**Context.** Orchestrate has written board rungs since the 75-unit run whose card never moved. The writeback was allowlisted, idempotency-keyed, tested, and called. It still never moved a card, and nobody noticed for months.
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` at `1c1c04a9` carried `STATUS_LADDER = ("Idea", "Shaping", "Ready", "Active", "Verify", "Done")` and submitted those values with `--field Status` (the default when `payload=None`, `reconcile_controller.py:232`). Zero of the six is a live `Status` option in `workflows.stage_flow.stage_statuses`; three of them (`Shaping`, `Active`, `Verify`) are live *Stage* options, which is coincidence, not design. `_set_lifecycle_field_cross_board` halts before the first write on an unresolvable option.
+**Mechanism.** Two independent decisions combined. First, the ladder was a **second copy** of a vocabulary whose authority lives in `config/sdlc-schema.json`, so it could drift without anything failing. Second, `announce_units` **skipped** any value not on its own ladder with a `skipped` record — and `_failed_writebacks` deliberately treats a skip as a designed no-op, so the run's exit code stayed clean. A stale copy that fails loud is a bug report; a stale copy that skips is silence.
+**Fix.** #927 U5: the ladder is deleted and the vocabulary resolved from the schema document Mission Control ships; an unresolvable rung is now a failure record, not a skip. `tests/test_orchestrate_status_map_contract.py` pins liveness against the schema rather than a list.
+**Validation.** `tests/test_orchestrate_board_writeback.py::TestStatusMapping::test_the_defaults_never_leave_the_live_vocabulary` fails on a stale rung where the old ladder-membership assertion passed on all six.
+**What surprised.** The old assertion `set(DEFAULT_STATUS_MAP.values()) <= set(STATUS_LADDER)` was green the whole time and could never have been anything else: it compared the copy against itself.
+**Generalizable rule.** A test that checks a value against a constant defined in the same file proves only internal consistency. Point membership assertions at the external authority, and make an unresolvable value fail rather than skip — a skip is how a dead code path survives review.
+**Refs.** DECISIONS [`{#927-pair-rides-the-payload}`](DECISIONS.md#927-pair-rides-the-payload); issue #927.
+
+### A bash-only code-fence pattern does not skip other fences, it mis-pairs them  {#927-fence-info-string-mispairing}
+
+**Context.** The zero-direct-write guard scans fenced blocks in skill files. Its fence pattern was `` ```(?:bash|sh|shell)?\n(.*?)``` ``. Adding submissions to `plan/SKILL.md` and `work/SKILL.md` made the guard report one submission in a file that had two, and zero in a file that had three.
+**Evidence.** `tests/test_saga_no_direct_write.py:_fenced_blocks` before the #927 repair. Both skill files carry ```` ```json ```` and ```` ```python ```` blocks between the submissions.
+**Mechanism.** On a ```` ```json ```` opener the optional group matches nothing, then the pattern demands `\n` and sees `j`, so the match fails **at that position**. The scan does not skip the block — it advances and pairs that block's *closing* fence with the *next* opening one, so everything between them is swallowed and everything after is offset. The failure mode is silent under-reporting, which in a guard reads as a clean tree.
+**Fix.** `r"```[A-Za-z0-9_+.-]*\n(.*?)```"` — match any info string, then filter on content.
+**Generalizable rule.** When a scanner walks paired delimiters, the opener pattern must match **every** opener, including the ones you do not care about. Narrowing the opener to the interesting subset silently re-pairs the delimiters rather than filtering them, and a scanner that under-reports is worse than one that over-reports.
+**Refs.** Issue #927 U1.
 
 ## 2026-08-30
+
+### Fenced skill blocks run in fresh shells — every consumer block must self-assign its variables  {#918-fresh-shell-block-scope}
+
+**Context.** Repair cycle 1 of issue #918 replaced two working literal script paths in `plugins/saga/skills/work/SKILL.md` with `$CC_WORKFLOWS_SCRIPTS_DIR`, assigned once in the pre-submit block. Cycle 2 (revision `76533cbe`) found the release and renew blocks — separate fenced blocks an agent runs in a NEW shell after the Workflow tool returns — expanded it to empty, so the lease protocol never closed.
+**Evidence.** Cycle-2 findings A01/U01; the lens ran the release line verbatim in a fresh shell and it died `can't open file '/workflow_emitter.py'`, exit 2. `grep -rn CC_WORKFLOWS_SCRIPTS_DIR tests/` returned nothing, which is why the gate could not see the regression.
+**Mechanism.** A fenced block in a skill is a copy-and-run unit; nothing is inherited from any earlier block. A variable assigned in block N is out of scope in block N+1 the moment a tool call or a copy-paste boundary sits between them.
+**Fix.** The release and renew blocks re-establish the launch identity themselves: the scripts dir with its env-var-wins default, the invocation id read from the newest on-disk `.saga/workflow-lease-*.json` metadata artifact (never a fresh mint — a new id would release a lease that was never reserved), and every variable expansion is quoted. Two guards pin it in `tests/test_workflow_extraction.py` (sub-part D): a structural check that every consuming block assigns the variable before first use, and a fresh-shell subprocess proof that runs the blocks as written with inherited variables stripped.
+**Validation.** Both guards red when the repeated assignment is deleted from either block, green restored; the intact blocks run under `env -i`, recover a real lease artifact, and complete through the release and renew commands. The wiring pin (`tests/test_saga_plugin.py`) matches quote-tolerantly so quoting cannot break it again.
+**Generalizable rule.** In skills, treat every fenced block as a fresh shell: any variable a block consumes must be assigned inside that same block before first use, and quoted at the point of expansion.
+**Refs.** Issue #918 repair cycle 2; findings A01/U01/S05; `{#918-vacuous-guard-class}`.
+
+### A malformed-carrier stop must be gated on carrier shape  {#918-carrier-shape-gate}
+
+**Context.** Cycle 1 of issue #918 added a malformed-carrier stop to `plan_pre_answers.py` so an unparseable `json` fence could never pass as no carrier. Cycle 2 found the stop applied to EVERY `json` fence before checking whether the block declared the carrier family — halting `/plan` on two of this repository's own committed documents that carry illustrative or truncated JSON and no carrier at all.
+**Evidence.** Cycle-2 findings C03/P02/S01 at `76533cbe`; controller reproduction: `python3 plugins/saga/scripts/plan_pre_answers.py --invocation-file docs/brainstorms/2026-08-12-orchestrate-codex-phase-requirements.md` exited 2 on a document with no carrier.
+**Mechanism.** A stop added to police a carrier shape fired on the carrier's TRANSPORT instead: any fence using the same info string. The discipline the stop protected (malformed is never indistinguishable from absent) applies only to blocks that look like carriers; an unrelated malformed JSON example is prose, exactly as a foreign schema family is.
+**Fix.** Gate both malformed stops (parse failure and duplicate keys) on `_is_carrier_shaped` — the raw block text names the `plan_pre_answers` family on a token boundary, case-insensitively, the same membership test the parsed-token path uses. The multi-carrier stop was already correctly scoped and shows the intended shape.
+**Validation.** Two new tests in `tests/test_plan_pre_answers.py` (unrelated malformed fences — parse-failure, duplicate-keys, truncated array — apply nothing and stop nothing; a non-carrier malformed fence before a valid carrier no longer suppresses it); removing the gate turns them red, the existing carrier-shaped malformed tests stay green in both directions.
+**Generalizable rule.** A validator stop must be scoped to the entity it polices: gate on the shape of the thing being validated, never on the transport that merely carries it.
+**Refs.** Issue #918 repair cycle 2; findings C03/P02/S01; saga-spec §15.
+
+### An assertion's substring must not live in the test's own fixture  {#918-handler-own-words}
+
+**Context.** Cycle 1's F05 repair added an index-failure test asserting `"index" in err`. Cycle 2 (finding T01) showed the substring was satisfied by the fixture's own filename (`docs/plans/2026-08-30-index-failure-plan.md`), which the error interpolates — swapping the handler for an unrelated exception left all five tests passing.
+**Evidence.** Cycle-2 obligation-3 violation at `76533cbe`; the lens mutation: `except SagaTickIndexWriteError` → `except NotImplementedError` left the file green while coverage showed the index handler unexecuted.
+**Mechanism.** Error messages interpolate the caller's arguments, and fixture paths are caller arguments. Any asserted substring that also occurs in a fixture path, flag value, or other echoed input proves the input echoed, not that the intended branch ran.
+**Fix.** Renamed the fixture to a path containing no `index` and asserted the index handler's OWN words — `rewrite the saga state.json index` and `IS still referenced by the` — plus the absence of the false idempotency claim. The review's own mutation (handler swapped out) now fails the test, because the generic OSError branch cannot produce those phrases.
+**Validation.** Mutation red/green cycle in repair cycle 2; the same standard was re-applied to every assertion added that round before commit (obligation 3).
+**Generalizable rule.** Before asserting a substring of an error or log line, check that no fixture path, flag, or other echoed input contains it — assert the handler's own words, and keep the fixture name free of every asserted token.
+**Refs.** Issue #918 repair cycles 1–2; findings T01, F05; `{#918-save-failure-two-writes}`.
+
+### A guard that matches flat literals passes vacuously against wrapped prose  {#918-vacuous-guard-class}
+
+**Context.** Repair cycle 1 of issue #918's integrated review (revision `5ec8ea76`) found the `#808` counterfactual-branch guard in `tests/test_workflow_extraction.py` comparing three flat phrase literals against lowered file text.
+**Evidence.** Review finding F02; mutation run in the review: restoring the merge-base counterfactual branches into `operator-choice.md:55-57` and `execution-strategy.md:158-159` left the suite green (65 passed), while the same restore into `work/SKILL.md:53` failed — the guard worked only where the phrase did not wrap a line.
+**Mechanism.** Prose wraps; literals do not. A substring test over raw text silently accepts any phrase broken by a newline or double space, so the guard protected half the explicit-invocation boundary while reporting full coverage. The test's green state was evidence of its own literalness, not of the contract.
+**Fix.** Collapse whitespace runs (`" ".join(text.lower().split())`) before matching, for both the counterfactual-absence guard and the unconditional-sentence guard; mutation proof re-run (wrapped counterfactual restored → guard fails; restored tree → passes).
+**Validation.** `uv run pytest tests/test_workflow_extraction.py` green with the armed guard; mutant cycle red/green as above.
+**Generalizable rule.** Any guard that matches prose must normalize whitespace before comparing — and a guard's mutation proof must restore the defect in the shape the prose actually takes (wrapped), not the shape the test happens to write.
+**Refs.** Issue #918 repair cycle 1; finding F02; `{#918-extraction-seam-typed-spec-contract}`.
+
+### A non-zero save exit has two distinct truths — name the write that failed  {#918-save-failure-two-writes}
+
+**Context.** Saga's `save` writes the tick envelope first, then rewrites the `state.json` index; `restore` reads the envelope directly and never opens the index. The CLI's single OSError handler claimed every failure left the plan with NO tick.
+**Evidence.** Review findings F05/F05u/F05d at `5ec8ea76`; reproduction: pre-creating `state.json.tmp` as a directory exits 2 with the false no-tick message while `restore` returns the tick (`phase_status: complete`). The claim was repeated on four surfaces: the runtime message, its comment, `plan/SKILL.md` Phase 5.3, and the changelog entry.
+**Mechanism.** One handler over two ordered writes inherits only the first write's truth. The index-only path produced a false durable-state fact, and the prescribed remedy (re-run the save) would append a duplicate tick — a false halt plus a redundant write, not corruption, but exactly the kind of confident falsehood an agent acts on.
+**Fix.** Split the failure into `SagaTickEnvelopeWriteError` (no tick — stranded-document remedy correct) and `SagaTickIndexWriteError` (tick tracked — message says so, re-run rebuilds the index idempotently); generic OSError makes no tick claim. All four prose surfaces corrected in the same commit.
+**Validation.** New index-only regression test in `tests/test_saga_plan_save_and_routing.py` (the review's own repro); mutation flipping the index message back to the false claim fails it; envelope-phase test still green.
+**Generalizable rule.** When one handler covers an ordered multi-write transaction, split the error by which write failed before composing any operator-facing claim — a message that asserts state must be conditioned on the write that establishes it.
+**Refs.** Issue #918 repair cycle 1; findings F05/F05u/F05d.
+
+### A volatile line count with no live target must be recorded, not manufactured  {#916-dispatch-line-count-no-target}
+
+**Context.** The design record described a volatile hand-maintained Brainstorm source-line count in a dispatch table. At Saga 0.148.0 the target does not exist: `plugins/saga/references/sandbox-spawn-sites.md` has no Brainstorm row and no `~line` Brainstorm surface exists, verified at `3b2b7083`.
+**Evidence.** Preflight F1 at `e26b5c69`; `grep -rn "~line" plugins/saga/references/sandbox-spawn-sites.md` shows four rows (code-review, qa, investigate, resume) and no brainstorm; `grep -rn "brainstorm" plugins/saga/skills/brainstorm/` shows no line reference. The duplicated lifecycle block F2 appears in four skills (ideate L15, loop L26, office-hours L27, plan L19), not three — Strategy has only inline mentions, founder-review a variant.
+**Mechanism.** A volatile count that never existed cannot be removed — manufacturing a removal would be a vacuous edit that hides the finding. The correct fix is to record the finding and retire the count concept, while pinning the lifecycle ordering mechanically rather than by prose edit (KTD6).
+**Fix.** Recorded F1 and F2 in `LEARNINGS.md` and commit message; left `sandbox-spawn-sites.md` Brainstorm surface untouched (one new verifier row added by B2 for different reason); added mechanical `tests/test_saga_lifecycle_consistency.py` discovering block by shape; added Shaping distinction once in `saga-spec.md`.
+**Generalizable rule.** When a design record names a volatile value, verify it against the live tree before acting — a count with no live target is a finding to record, not a line to delete.
+**Refs.** Issue #916 (B4); F1/F2; run plan §U4.
+
+### Authored cases are design input; mislabelled captured transcripts are the failure  {#915-evidence-authored-vs-captured}
+
+**Context.** B3's scenario harness must distinguish authored case data (idea seed, independent variables, expected per-dimension outcome) from captured transcripts (evidence of real behaviour). The checkpoint that could have produced captured transcripts is parked, so all six cases are `transcript: none` and the suite must be green that way.
+**Evidence.** `tests/data/brainstorm/scenarios.json` six cases, `rubric.json` five dimensions, `calibration.json` three cases at `e26b5c69`; `plugins/saga/scripts/engine_benchmark.py` grader is never model-graded; `scripts/lint_test_shape.py` flags a fake-only module via AST.
+**Mechanism.** A synthesized transcript labelled `captured` is a harness-substitution failure: it presents a fabricated conversation as evidence. The correct shape is authored data as design input (permitted) plus an explicit `transcript: none|captured` label, with the offline suite proving grading/gating machinery rather than any given brainstorm's quality. `lint_test_shape` catches a fake grader without a production import, so every evidence module path-loads a real `plugins/saga/scripts/` target.
+**Fix.** Built three layers: deterministic AST check (no question-shaped assert), scenario data with independent `product_size`/`consequence`, per-dimension `grade()` with no aggregate, `is_blocking()` requiring reproducible + second-grader agreement or adjudication, calibration drift floor, eight mutation proofs. Reference `plugins/saga/references/brainstorm-evidence-model.md` records prior-art verdicts and what the suite does not prove.
+**Generalizable rule.** Separate design input (authored cases) from evidence (captured transcripts) with an explicit label, and prove the label's honesty mechanically — a suite that is green with `transcript: none` proves its machinery, not a conversation.
+**Refs.** Issue #915 (B3); R17/R19/R20/R22/R23; run plan §U3.
+
+### A bounded helper ceiling needs a distinct-question guard, not just a count  {#914-judgment-helper-ceiling-distinct-question}
+
+**Context.** Brainstorm's Phase 1 context scan permitted parallel `Explore` agents with no count ceiling and no distinct-question requirement, so a Standard/Deep run could fan out arbitrarily and two helpers could chase the same evidence.
+**Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:17` and `:139-140` at `e84be5f2`; `plugins/saga/references/sandbox-spawn-sites.md` had four in-scope rows and no Brainstorm row; `tests/test_sandbox_spawn_sites.py` `IN_SCOPE_SKILLS` hardcoded four skills (D6).
+**Mechanism.** A count ceiling alone still permits two helpers on one question — the waste is not the number but the duplication. The guard must tie each helper to a distinct evidence question, and the inventory must enforce its own class contract: the in-scope table is `read-only-verify` only, so a survey-class `Explore` scout filed there would be false.
+**Fix.** Bounded helpers: Lightweight 0, Standard/Deep at most one `Explore` scout and one `saga:readonly-verifier` claim verifier, each requiring a distinct evidence question. Added one `judgment` row for the verifier; recorded the scout outside the table as survey-class, read-only by omission of `Edit`/`Write`/`NotebookEdit` with `Bash` retained (residual stated, no "structurally cannot write"), not worktree-isolated. Added `brainstorm` to `IN_SCOPE_SKILLS`.
+**Generalizable rule.** When bounding fan-out, bound by count *and* by distinct work — a ceiling without a distinct-question guard still permits duplication, and an inventory table's class contract must be kept truthful even when it means recording a helper outside the table.
+**Refs.** Issue #914 (B2); KTD4; run plan §U2.
+
+### A deferred telemetry write on a path that never writes is an unreachable promise  {#913-continuity-telemetry-unreachable}
+
+**Context.** Brainstorm instructed a `gate_id` record "on the next `saga.py save` call" while never performing that save, so the measurement vanished with no observable failure and no demonstrated consumer.
+**Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:46-50` at `5660c719`; `plugins/saga/references/gate-divergence-instrumentation.md:65` still listed `brainstorm-<decision>` as a gate example; production lint `lint_gate_absence_contract.py` failed when the marker was deleted in a scratch copy (F3).
+**Mechanism.** A telemetry consumer tied to a write boundary the producer never hits is not optional telemetry but a leaked promise — the section-scoped lint makes deleting the marker a second failure, so the telemetry paragraph and its id had to be separated.
+**Fix.** Removed the telemetry paragraph, kept and repointed the marker to `brainstorm-interrogation-gate` (KTD2), and removed the `brainstorm-<decision>` gate example. Added the durable `pending-confirmation` checkpoint and frontmatter-aware `infer_maturity` (KTD7) so an unconfirmed artifact no longer hands off as `requirements-ready`.
+**Generalizable rule.** When a measurement rides a write path its producer never exercises, delete the instruction rather than deferring it — and keep any lint coverage that was sharing the same marker.
+**Refs.** Issue #913 (B1); KTD1/KTD2/KTD7; run plan `docs/plans/2026-08-30-issue-912-saga-brainstorm-improvement-run-plan.md` §U1.
 
 ### Leaving a stale adjacent section does not license a "same as" claim against it  {#w19-no-sameness-claim-against-stale-rows}
 

@@ -155,8 +155,8 @@ already landed some units.
 `/work` lands the deferred operator-choice helper (operator-choice §7), **narrowed by issue #808**.
 Compute the cheapest-correct **Saga** backend (`inline` or `team-execution`), pre-select that Saga
 backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default or
-automatic backend and never a generic interchangeable execution backend. If `recommended` is
-`cc-workflows-ultracode`, **do not pre-select** it. Enter a Claude Code Workflow only by **explicit
+automatic backend and never a generic interchangeable execution backend; **do not pre-select** it —
+the recommender never returns it (issue #840 C5). Enter a Claude Code Workflow only by **explicit
 invocation**. Before calling the CLI, **probe Workflow-tool availability with `ToolSearch`** (needed
 if the operator later invokes a Workflow) and pass the result as `--workflow-availability-source
 probed`; fall back to the `asserted` default only when a live probe isn't possible on this host. Call
@@ -200,12 +200,38 @@ an overlap job (consensus AND fan-out) still offers both — escalation stays on
 §3.3).
 
 Surface the recommendation with `AskUserQuestion` (or channel-inline), rendering the **two Saga
-backends** (`inline` and `team-execution`). If `recommended` is `cc-workflows-ultracode`, **do not
-pre-select** it — pre-select `team-execution` when a gated size/risk/consensus trigger fired,
-otherwise `inline`. Do not add `cc-workflows-ultracode` as a third interchangeable choice. If the
+backends** (`inline` and `team-execution`): pre-select `team-execution` when a gated size/risk/
+consensus trigger fired, otherwise `inline`. Do not add `cc-workflows-ultracode` as a third
+interchangeable choice. If the
 operator **explicitly invokes** `cc-workflows-ultracode` but it turns out unavailable, HALT with a
 recovery line pointing at `team-execution` or `inline` — never silently substitute. Record the
 operator's pick via the saga's `--orchestration-mode` (Phase 1.4) — that is the durable home for the
 choice (operator-choice §6). Pass the helper's `recommended` value — the bare enum string, since
 `--orchestration-recommended` takes `choices=ORCHESTRATION_MODES`, not the JSON object — even when
 the pre-select differs, so R12 telemetry still sees recommended-vs-chosen.
+
+## Build-unit tier resolution — `resolve_build_unit_tier()` (Phase 2)
+
+When Work directly launches a build unit (an Implementation Unit executed as a direct build unit),
+resolve its `{model, effort}` by running the resolver:
+
+```bash
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+  --plan-model <model> --plan-effort <effort>      # explicit plan tier
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+  --work-shape <shape>                             # no explicit tier
+```
+
+An explicit `{model, effort}` on the plan unit wins on **precedence** — and is validated against the
+same vocabulary the shape path resolves from, so a model or effort the registry does not carry is
+refused rather than passed through to a spawn. Otherwise the work shape is selected and resolved
+through the shared registry: `plugins/fleet-core/scripts/fleet_commons/tier_policy.json` via
+`tier_resolver` / `tier_defaults`. When a unit declares neither a tier nor a work shape, the selected
+shape is `mechanical` — bounded, specified work per `/work`'s own execution context and the middle
+rung that bounds either-direction error (KTD7) — so the resolver with neither argument resolves the
+`mechanical` row from `tier_policy.json`, not a literal at the spawn site. Values stay in that
+registry; this file only names the shape-selection rule — `resolve_build_unit_tier` in
+`lifecycle_state.py` is the single delegation seam behind the subcommand. **The resolver takes no
+host or session input at all**, which is what makes inheritance impossible: it cannot consult a host
+tier it is never given. Record the resolved tier in the Phase-4 work-session execution evidence for
+both the explicit and defaulted case.

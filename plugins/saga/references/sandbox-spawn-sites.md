@@ -20,7 +20,7 @@ Three classes:
 
 ## In-scope: verify/review-class skill spawns
 
-Each of these four skills spawns verify- or review-class sub-agents whose job is to *check*, not
+Each of these skills spawns verify- or review-class sub-agents whose job is to *check*, not
 *build*. Each now names `subagent_type: saga:readonly-verifier` and `isolation: "worktree"` at its
 spawn site.
 
@@ -30,9 +30,11 @@ spawn site.
 | `qa` | `plugins/saga/skills/qa/SKILL.md` | Phase 2 parallel verification (~lines 170-171) | `judgment` |
 | `investigate` | `plugins/saga/skills/investigate/SKILL.md` | Phase 2 parallel read-only sub-agents (~lines 211-216) | `read-only-survey` |
 | `resume` | `plugins/saga/skills/resume/SKILL.md` | Phase 3b Tier-2 synthesis dispatch (~lines 232-233) | `judgment` |
+| `brainstorm` | `plugins/saga/skills/brainstorm/SKILL.md` | Phase 1.1 claim verifier | `judgment` |
 
 Also in-scope (already wired, U2, not this unit's edit): the three verifier-emitting sites inside
-`plugins/saga/scripts/execution_spec.py` — `_emit_verify_panel`, `_emit_verify_loop_singleton`, and
+`plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py` — `_emit_verify_panel`,
+`_emit_verify_loop_singleton`, and
 the parallel-layer thunk's inlined iterate-to-consensus loop — each emits `agentType:
 'saga:readonly-verifier'` and `isolation: 'worktree'` in every verifier `agent()` call
 unconditionally (KTD6). Resolver work-shape: `judgment` (verify/refute-class work — same shape as
@@ -54,6 +56,18 @@ test_spawn_site_enumeration_routes_through_resolver` fails the moment a new bare
 | `/agy:delegate` junior-draft loop (`plugins/agy/scripts/agy_delegate.py`) | Settled decision `{#agy-delegated-build-no-jail}` (`docs/engineering-journal/DECISIONS.md`): this loop deliberately uses post-hoc verification (diff review after the fact), not pre-hoc isolation. Do not re-jail it. |
 | `mechanical-executor` agent (`plugins/saga/agents/mechanical-executor.md`) | Already Bash-only — no Edit/Write tool in its toolset. No additional `mutation_policy: read-only` restriction is needed; it has nothing further to omit. |
 | Builder leaves (any unit whose job is to write code/docs) | R1 default: ambient x read-write. A builder leaf must write — sandboxing it would break its own contract. This is today's unsandboxed behavior, unchanged. |
+
+## Brainstorm Phase 1.1 grounding scout (survey-class, outside in-scope table)
+
+The Phase 1.1 repository-grounding scout is a survey-class spawn, read-only by tool omission
+(`subagent_type: Explore`), deliberately **not** worktree-isolated because it only reads the
+repository. Its read-only posture is by omission of `Edit`/`Write`/`NotebookEdit`, with `Bash`
+retained — the same posture the `Explore` rung of the fallback ladder below documents. The retained
+`Bash` is the residual: the scout could still invoke shell tools, so it is read-only by omission,
+not by a worktree fence. Filing it in the in-scope table would wrongly claim the
+`read-only-verify` profile (`saga:readonly-verifier` plus `isolation: "worktree"`).
+
+The scout is a survey-class read spawn. Isolation was considered and not adopted, because filing it under the `read-only-verify` profile would wrongly claim a `saga:readonly-verifier`-plus-worktree posture it does not carry, and the run's settled decisions are not reopened by a maintenance unit. The residual is concrete: a Bash-capable agent in the live tree can run `git checkout` or `git restore`, which is the accidental-clobber class recorded at `docs/engineering-journal/DECISIONS.md` under the sandbox-spawn decision and at `docs/engineering-journal/LEARNINGS.md` under the verifier-clobber incident. Commit or stash before a Brainstorm that will launch a scout against uncommitted work. Note the asymmetry openly: rung 1 of this file's own fallback ladder pairs `Explore` with `isolation: "worktree"`, so the scout is deliberately less isolated than a degraded claim verifier.
 
 ## Ad-hoc spawn rule
 
@@ -114,7 +128,8 @@ index as `fallback_depth` into whatever verdict or tick it records: first-choice
 `general-purpose` rung is `fallback_depth: 2` — alongside the `verifier_identity` of the agent type
 actually spawned. The panel gate summary keys off exactly these two fields to render an explicit
 "fallback tier N" marker naming the degraded reporter (see
-`render_fallback_tier_marker` in `execution_spec.py`), so a run that quietly degraded its verifier
+`render_fallback_tier_marker` in `plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py`),
+so a run that quietly degraded its verifier
 cannot pass as a first-choice pass. Workflow `agent()` calls need no manual recording — the emitter
 stamps `fallback_depth: 0` because an unresolvable `agentType` fails the call outright rather than
 descending. This is attribution only; the ladder's order and contract are unchanged (binding

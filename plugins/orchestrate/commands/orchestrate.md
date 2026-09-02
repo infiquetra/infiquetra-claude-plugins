@@ -481,6 +481,34 @@ branches into each other. Say so in the plan — `"merge": false` on each of tho
 remembering it at `land` time. `land` has no other way to know, and it merges everything finished
 that does not say otherwise.
 
+## Board writeback — what `land` and `announce` do to a card
+
+A run file may carry an `issues` mapping (unit name to `owner/repo#N`) and an optional `status_map`.
+With it, `land` writes each unit it merged back to that unit's issue card, and `announce` is the
+door for the boundaries `land` does not cover. Without an `issues` mapping this is a no-op and
+nothing about the run changes.
+
+**Orchestrate never writes GitHub.** Every write is a submission through saga's
+`reconcile_controller`, which owns the certificate gate and the replay key and stops at Mission
+Control's `flow set-field --correction`. Mission Control alone executes.
+
+**A move is a `(Stage, Status)` pair.** A unit's name prefix picks the rung: `plan` and `docreview`
+land in `Planning`; `work`, `fix` and `codereview` in `Active`. That is all five. Nothing reaches
+`Verify` or `Retro` — those begin only after conditions a run cannot observe — and a `status_map`
+override naming either stage is refused at submission, not merely absent from the default map.
+
+**Install saga 0.151.0 or later and mission-control 2.15.1 or later before relying on this.** Both
+floors are declared in `plugin.json`; **only saga's is enforced** — a saga below its floor is
+refused before any submission, because an older saga silently drops the `Stage` half and reports
+success. The mission-control floor, like the agent-launcher one beside it, is a declaration the
+installer reads and no code checks.
+
+Read the exit code, not the prose. `land` and `announce` both exit **2** when a card was not
+updated, and every failure prints its reason and whether a retry can clear it. A failure survives
+the invocation: a later `land` re-reports any unit still outstanding rather than exiting 0 over a
+card it never fixed. Each writeback also names, on stderr, which saga executed it and which schema
+validated the rung — several copies of each are usually installed.
+
 ## Phase 6 — report
 
 What each unit produced, and what merged. If a session went idle without doing the work, say so

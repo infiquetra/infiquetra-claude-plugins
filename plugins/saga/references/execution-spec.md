@@ -7,12 +7,16 @@ Claude Code workflow script **or** the team-execution markdown protocol. Saga st
 [`operator-choice.md`](./operator-choice.md) §3.1) selects *which emitter runs*, not the
 authoring.
 
-The spec schema and the workflow-script emitter live in
-[`../scripts/execution_spec.py`](../scripts/execution_spec.py). The second emitter (the
-`## Team Structure` markdown) is U11's `team_emitter.py`, fed by the same spec.
+The spec schema lives in
+[`../scripts/execution_spec.py`](../scripts/execution_spec.py). The workflow-script emission
+path is extracted to the cc-workflows plugin
+(`plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py`, #925/U4); `execution_spec.py`
+keeps the typed integration contract that delegates `emit` / `settlement` / `lease` to it. The
+second emitter (the `## Team Structure` markdown) is U11's `team_emitter.py`, fed by the same
+spec.
 
 The worked reference — a hand-authored harness of exactly this shape — is the campaign's own
-sibling `docs/plans/2026-06-21-saga-tiering-and-execution-campaign.workflow.js`. Authoring it
+sibling `docs/workflows/2026-06-21-saga-tiering-and-execution-campaign.workflow.js`. Authoring it
 by hand validated the spec by walking it (KTD1) before this emitter automated it.
 
 ## Spec shape
@@ -392,21 +396,13 @@ actual generated script, not a description of it:
    prompts (KTD2 — a thin pointer to the plan, not a prose transcription); wire `depends_on` barriers and
    optional `verify` panels. Surface the tier table for operator review.
 
-2. **Validate (HARD BLOCK)** — run the validator. A non-zero exit means the spec is malformed; do NOT
-   proceed until fixed. Common failures: `depends_on` cycle, fan-out with no `targets` (R10), pilot tier
-   mismatch (R3), `verify.n` above `VERIFY_N_CAP`, two unit_ids that sanitize to the same JS var.
+2. **Validate (HARD BLOCK)** — run the validator per the cc-workflows authoring protocol
+   (`plugins/cc-workflows/skills/cc-workflows/SKILL.md`, Step 4). A non-zero exit means the spec is
+   malformed; do NOT proceed until fixed (review F09: the commands live with the capability, single
+   source).
 
-   ```bash
-   python3 plugins/saga/scripts/execution_spec.py validate docs/plans/<name>-spec.json
-   ```
-
-3. **Emit** — write the `.workflow.js` beside the spec (`emit` re-validates, so a malformed spec fails here
-   too):
-
-   ```bash
-   python3 plugins/saga/scripts/execution_spec.py emit docs/plans/<name>-spec.json \
-     -o docs/plans/<name>.workflow.js
-   ```
+3. **Emit** — write the `.workflow.js` beside the spec per the same protocol (Step 5); `emit`
+   re-validates, so a malformed spec fails here too.
 
 4. **Approve** — surface the now-emitted `.workflow.js` and the per-unit tier table for explicit operator
    confirmation. The operator must confirm the tier assignments and the control-flow structure; a rejection
@@ -418,7 +414,7 @@ actual generated script, not a description of it:
    ```bash
    python3 plugins/saga/scripts/saga.py save \
      --orchestration-mode cc-workflows-ultracode \
-     --orchestration-ref docs/plans/<name>-spec.json \
+     --orchestration-ref docs/workflows/<name>-spec.json \
      --orchestration-recommended <recommend_execution_backend() output>
    ```
 

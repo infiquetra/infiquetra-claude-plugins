@@ -55,6 +55,20 @@ def launcher_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return binary
 
 
+def _no_host_herdr(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the herdr reading a fresh launch takes before any stub these tests set.
+
+    ``launch()`` snapshots the target workspace's tabs to decide whether it created the tab, and
+    an unowned session is then identity-checked against ``herdr agent list``. Left unstubbed the
+    snapshot asks whatever herdr is on PATH. On the operator's machine that was a live herdr: it
+    answered, the receipt tab was absent from its list, ownership was proved and the identity
+    check never ran. A runner has no herdr, so ownership was unprovable, the identity check ran
+    and stopped the launch before the stage the test was about (issue 907, U34). An empty snapshot
+    is the fresh-tab case these tests describe, and it is the same answer on every host.
+    """
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda *_a, **_k: frozenset())
+
+
 def test_orchestrate_has_no_private_launcher_copy() -> None:
     text = ORCHESTRATE.read_text(encoding="utf-8")
     assert "def agent_argv(" not in text
@@ -306,6 +320,7 @@ def test_malformed_receipt_stops_launch(
     wrapper.write_text("#!/bin/sh\necho not-json\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    _no_host_herdr(launcher, monkeypatch)
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     unit = launcher.LaunchRequest(name="broken", vendor="codex", worktree=str(tmp_path))
     with pytest.raises(SystemExit, match="JSON"):
@@ -319,6 +334,7 @@ def test_nonzero_wrapper_exit_stops_launch(
     wrapper.write_text("#!/bin/sh\necho fail >&2\nexit 3\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    _no_host_herdr(launcher, monkeypatch)
     unit = launcher.LaunchRequest(name="failing", vendor="codex", worktree=str(tmp_path))
     with pytest.raises(SystemExit, match="command failed"):
         launcher.launch(unit)
@@ -337,6 +353,7 @@ def test_hanging_create_stops_at_the_deadline(
     wrapper.write_text("#!/bin/sh\nsleep 5\ncat <<'EOF'\n" + json.dumps(receipt) + "\nEOF\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    _no_host_herdr(launcher, monkeypatch)
     monkeypatch.setattr(launcher, "LAUNCH_CREATE_SECONDS", 0.5)
     # Stub the post-create stages so that, with the timeout removed, the launch proceeds past the
     # create into a differently-worded stop instead of blocking the test out on a real one.
@@ -394,6 +411,7 @@ def test_genuine_wrapper_exit_124_preserves_its_receipt(
     wrapper.write_text("#!/bin/sh\nprintf '%s\\n' '" + json.dumps(receipt) + "'\nexit 124\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    _no_host_herdr(launcher, monkeypatch)
     unit = launcher.LaunchRequest(name="worker", vendor="codex", worktree=str(tmp_path))
     with pytest.raises(SystemExit, match=r"command failed \(124\)"):
         launcher.launch(unit)
@@ -414,6 +432,7 @@ def test_create_within_the_deadline_is_unaffected(
     wrapper.write_text("#!/bin/sh\ncat <<'EOF'\n" + json.dumps(receipt) + "\nEOF\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    _no_host_herdr(launcher, monkeypatch)
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(
         launcher,
@@ -1776,6 +1795,7 @@ def test_prompt_delivery_failure_records_undelivered(
     wrapper.write_text("#!/bin/sh\ncat <<'EOF'\n" + json.dumps(receipt) + "\nEOF\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    _no_host_herdr(launcher, monkeypatch)
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(launcher, "send", lambda *a, **k: None)
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: False)
@@ -3639,6 +3659,7 @@ def test_failed_launch_persists_tab_id_for_close(
     )
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    _no_host_herdr(launcher, monkeypatch)
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(
         launcher,

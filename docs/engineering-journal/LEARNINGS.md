@@ -21,6 +21,43 @@
 
 ## 2026-09-02
 
+### A test that reaches a host binary is green where the binary lives and red where it does not  {#907-host-binary-leak-is-invisible-to-the-local-gate}
+
+**Context.** Pull request 951, the issue 907 branch, went red in CI at a revision where the local
+gate had just reported green: two launcher tests expected a stubbed stop and got `herdr did not
+list the session; cannot verify agent kind` instead. One of them exists on `main` and passes
+there, so the branch broke it.
+**Evidence.** With the directory holding `herdr` removed from PATH, both tests fail locally with
+the CI message; with a tripwire `herdr` on PATH that logs `PYTEST_CURRENT_TEST`, twenty-one tests
+across `plugins/agent-launcher/tests/test_launcher_contract.py`,
+`tests/test_orchestrate_drift_and_adopt.py` and `tests/test_orchestrate_account.py` were found
+invoking it, nineteen of them passing either way. Fixed in the U34 commit on the issue 907
+branch.
+**Mechanism.** A fresh launch takes two herdr readings before any stage the tests stub: it
+snapshots the workspace's tabs to decide whether it created the tab, and it identity-checks an
+unowned session against `herdr agent list`. The tests prepended a fake `agents` wrapper to PATH
+and stubbed `await_ready` and `verify_unit_preflight`, but not the snapshot. On the operator's
+machine the snapshot reached the live herdr, the receipt tab was absent from its list, the tab
+was judged owned and the identity check was skipped -- so the stubbed stop fired as expected.
+A runner has no herdr: the snapshot returned nothing, ownership was unprovable, the identity
+check ran and stopped the launch one stage earlier. The local gate ran the same code and could
+not tell, because the variable was what the host had installed, not what the tree contained.
+**Fix.** Each leaking test pins the reading it left live -- the snapshot to an empty set, the
+agent list to an empty list -- and a root `conftest.py` shadows `herdr` with a shim that exits
+non-zero for the whole pytest session, so any future test that depends on the host's herdr fails
+on its first local run. Tests that need a herdr already put their own fake ahead on PATH; tests
+that need it absent already replace PATH.
+**Validation.** The two named tests fail with herdr unreachable before the fix and pass with it
+unreachable after; the tripwire run over the affected files records zero invocations after the
+fix; the full gate for U34 ran with the herdr directory scrubbed from PATH.
+**Generalizable rule.** A test that shells out is only hermetic if every binary it can reach is
+one it put there. "It passes locally" is evidence about the host as much as about the code;
+before trusting a green run for a subprocess-driving test, run it once with the host's copy of
+each binary made unreachable, or make the suite do that for you.
+**Refs.** [[#907-flag-per-call-site-fails-at-the-next-site]] (the same branch, the same
+lesson about discipline versus construction); `feedback_harness_substitution_hides_the_defect`
+in operator memory (the inverse failure: a stub standing in for the component under test).
+
 ### A per-call-site flag is a discipline, and the fourth call site forgets it  {#907-flag-per-call-site-fails-at-the-next-site}
 
 **Context.** Cycle 1 of the issue 907 terminal review found the pane-write guard's write flag

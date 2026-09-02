@@ -109,7 +109,22 @@ def _unit(name: str, **over: Any) -> dict[str, Any]:
     }
 
 
-class TestCheck:
+class _NoLiveSessions:
+    """The no-live-session baseline, pinned rather than assumed.
+
+    ``check`` and ``adopt`` each take one ``herdr agent list`` reading and match units against
+    it. These classes describe a temporary repository with no session at all, but until this
+    fixture existed they asked the herdr on PATH -- the operator's live one here, none on a
+    runner -- and got the empty answer only by luck of what that herdr was tracking (issue 907,
+    U34). ``TestHerdrIsOptional`` deliberately leaves the reading live under a PATH of its own.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_live_sessions(self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(orchestrate, "live_agents", lambda *_a, **_k: [])
+
+
+class TestCheck(_NoLiveSessions):
     def test_a_clean_run_reports_nothing(
         self,
         orchestrate: ModuleType,
@@ -390,7 +405,7 @@ class TestHerdrIsOptional:
         orchestrate.cmd_adopt(argparse.Namespace(yes=False))
 
 
-class TestAdopt:
+class TestAdopt(_NoLiveSessions):
     """No live session exists in a temporary repository: these all exercise the no-matched-agent
     path, which is the one where a branch is all the evidence there is."""
 

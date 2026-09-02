@@ -21,6 +21,21 @@
 
 ## 2026-09-02
 
+### Entries new versus origin/main belong under today's date heading  {#907-journal-newest-first-vs-origin}
+
+**Context.** Eight issue 907 journal entries were filed under `## 2026-08-31` because
+that is their Origin date, and that heading already exists on `origin/main`.
+**Evidence.** `scripts/lint_journal_order.py --base-ref origin/main` reported those
+eight as new entries outside the newest section.
+**Mechanism.** The new-entry guard compares against the base ref, not the entry's
+Origin date. An older Origin date is not a license to open or extend a heading
+that the base already carries.
+**Fix (or queued).** U16 moved the eight into the existing `## 2026-09-02` section
+without changing their prose.
+**Generalizable rule.** A journal entry that is new versus the merge base goes
+under today's heading even when its Origin date is older.
+**Refs.** Issue #907 unit U16.
+
 ### A helper's annotation must follow a fourth return element  {#907-annotation-follows-return}
 
 **Context.** U8's matrix helper started returning the fake `herdr`/`agents` PATH
@@ -81,8 +96,6 @@ reproducer first, then the named counter-cases, then every listed mutant.
 its opposite.
 **Refs.** DECISIONS `{#907-staged-input-redeliver}`, `{#907-agent-launcher-floor-owner}`;
 plan KTD6 and KTD7.
-
-## 2026-08-31
 
 ### Terminal indentation is shared by input and status chrome  {#907-composer-indentation-ambiguity}
 
@@ -159,6 +172,9 @@ mutant and is not a proof of positional selection.
 **Second finding, same run.** The module named after the plugin — `tests/test_agent_launcher_plugin.py` — holds release surfaces (manifest version, marketplace registration, packaged files) plus installed-layout fail-fast subprocess tests; direct launcher behavior tests live in `plugins/agent-launcher/tests/test_launcher_contract.py` and the orchestrate test files. Reading only the plugin-named module understates behavior coverage; reading only the plugin directory misses the installed-layout and drift guards.
 **Generalizable rule.** When a receipt carries two booleans with adjacent meanings, read each one's docstring before keying a guard on either — the bit whose name matches your intuition is not always the bit that names your case; and a test file named for the thing it tests is a claim about location, not coverage.
 **Refs.** Issues #897, #907; run plan `docs/plans/2026-08-30-agent-launcher-907-run-plan.md`, Findings 1 and 3.
+
+## 2026-08-31
+
 ### Three guard tests could not fail, and each failed the same way: the assertion named its own subject  {#927-unfailable-guard-tests}
 
 **Context.** The cycle-1 integrated Saga Code Review on run cp919 found three separate tests whose whole job was to forbid something, and which could not report it. All three were green on every possible tree.

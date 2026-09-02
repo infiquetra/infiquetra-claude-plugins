@@ -49,8 +49,6 @@ the first owned tab. Clearing identity to make the retry possible was the other 
 **Rejected.** A new run-file field; a `requeue` subcommand; a second create under any `go`
 branch.
 
-## 2026-08-31
-
 ### Treat unproven composer continuation geometry as inconclusive  {#907-composer-structural-continuations}
 
 **Decision.** One classification per physical row (KTD1). A row continues an open block when
@@ -116,6 +114,9 @@ again claim the agent-launcher floor is unchecked.
 **Rejected.** Selecting the last classifiable block, because scrollback can replace the live box; treating every styled row as empty, because it prompts into real drafts; treating every styled row as staged, because it hard-stops idle panes; assigning an unverified plain-marker fallback to every vendor.
 
 **Revisit when.** Herdr exposes cursor position or composer state, a vendor publishes a stable placeholder protocol, or a live capture verifies a stable Muse or OpenCode marker. `docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` API-10 stays as this residual.
+
+## 2026-08-31
+
 ### Orchestrate's `landed` rung is retired rather than gated or remapped  {#927-landed-rung-retired}
 
 **Decision.** `landed` is removed from `DEFAULT_STATUS_MAP`. It is not gated on the W-D2 condition

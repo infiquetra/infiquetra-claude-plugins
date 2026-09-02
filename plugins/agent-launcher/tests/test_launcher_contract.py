@@ -2488,6 +2488,50 @@ def test_redeliver_admits_a_transcript_older_than_the_retry(
     assert launcher.ACCOUNT_MISMATCH not in unit.note
 
 
+def test_unterminated_osc_sequences_parse_in_linear_time(launcher: ModuleType) -> None:
+    """Terminal review F12: the OSC branch of ANSI_RE backtracked once per unterminated OSC
+    start, a clean quadratic -- 18.9 seconds at 8000 repeats on the frozen revision -- and
+    the 5-second timeout bounds only the herdr read, not this in-process parse. Sixteen
+    thousand unterminated starts must parse in well under a second, and the box below them
+    must still classify."""
+    hostile = ("\x1b]0;title" * 16000) + "\n\x1b[2m────\x1b[0m\n❯ draft\n"
+    started = time.perf_counter()
+    result = launcher.inspect_composer(hostile, vendor="claude")
+    elapsed = time.perf_counter() - started
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "draft"
+    assert elapsed < 2.0, f"quadratic backtracking is back: {elapsed:.2f}s"
+
+
+def test_the_bytes_handed_to_the_parser_are_capped_from_the_tail(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal review F12, the other half: the launcher hands inspect_composer at most
+    PANE_INSPECT_MAX_CHARS characters, taken from the tail because the live box is the last
+    block positionally. A viewport three times the cap loses its head, never its box."""
+    seen: list[str] = []
+    real = launcher.inspect_composer
+
+    def capture(text: str, *, vendor: str) -> Any:
+        seen.append(text)
+        return real(text, vendor=vendor)
+
+    cap = launcher.PANE_INSPECT_MAX_CHARS
+    dump = ("x" * (3 * cap)) + "\n❯ tail draft"
+    monkeypatch.setattr(launcher, "inspect_composer", capture)
+    monkeypatch.setattr(
+        launcher,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(["herdr"], 0, dump, ""),
+    )
+    inspection = launcher.pane_input_inspection("w1:p1", vendor="claude")
+    assert inspection.state is launcher.ComposerState.STAGED
+    assert inspection.text == "tail draft"
+    assert len(seen) == 1 and len(seen[0]) == cap
+    assert seen[0].endswith("❯ tail draft")
+    assert cap >= 16384
+
+
 def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:

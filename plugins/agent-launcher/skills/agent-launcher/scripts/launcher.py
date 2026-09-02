@@ -605,6 +605,12 @@ DELIVERY_WARNING = (
 # local socket round trip, so this is a bound on a wedged herdr rather than a wait for work.
 PANE_INPUT_READ_SECONDS = 5.0
 TAB_CLOSE_SECONDS = 10.0
+# The most characters of a pane read handed to the composer parser, taken from the tail: the
+# live box is the last block positionally, so the head of an oversized viewport is scrollback
+# the parse never needed. This bounds the in-process parse the way the read timeout bounds the
+# subprocess; the parser's own regex is linear, and this keeps a pathological viewport from
+# turning one inspection into seconds anyway (issue 907 terminal review F12).
+PANE_INSPECT_MAX_CHARS = 65536
 # How long to give one pane write. The two calls that put a line into a session were the only
 # Herdr calls with no bound, so a wedged daemon hung go and land mid-delivery, after the guard
 # had inspected the composer and before any status was written. A write is a local socket round
@@ -775,7 +781,7 @@ def pane_input_inspection(pane_id: str, *, vendor: str) -> Any:
         return ComposerInspection(ComposerState.READ_TIMEOUT)
     if proc.returncode != 0:
         return ComposerInspection(ComposerState.READ_FAILED)
-    return inspect_composer(proc.stdout, vendor=vendor)
+    return inspect_composer(proc.stdout[-PANE_INSPECT_MAX_CHARS:], vendor=vendor)
 
 
 def should_guard_pane_write(unit: Any, *, wrote_before: bool) -> bool:

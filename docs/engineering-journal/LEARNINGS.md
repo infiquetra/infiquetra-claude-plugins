@@ -21,6 +21,28 @@
 
 ## 2026-09-02
 
+### An unterminated OSC start makes a negated-BEL character class quadratic  {#907-osc-regex-quadratic}
+
+**Context.** The composer parser strips ANSI with one regex whose OSC branch was
+`\][^\x07]*(?:\x07|\x1b\\)`. Issue 907's terminal review (F12) measured `inspect_composer` at
+0.074 s for 500 unterminated OSC starts and 18.9 s for 8000, a clean quadratic, and noted that
+the five-second Herdr read timeout bounds only the subprocess, not this in-process parse.
+**Evidence.** `test_unterminated_osc_sequences_parse_in_linear_time` in
+`plugins/agent-launcher/tests/test_launcher_contract.py`: 16000 starts took 9.06 s on the old
+regex and under 0.2 s after the fix (commit for U26 of the repair round).
+**Mechanism.** `[^\x07]*` admits ESC, so from each unterminated `ESC ]` the body ran greedily to
+the end of the viewport looking for a BEL or `ESC \` that never came, then backtracked the whole
+way; the engine then retried from the next start and did it again. Excluding ESC from the body
+(`[^\x07\x1b]*`) stops each attempt at the very next escape, which is what the OSC grammar says
+anyway: an OSC body may contain neither BEL nor ESC. The launcher additionally hands the parser
+at most `PANE_INSPECT_MAX_CHARS` characters, taken from the tail because the live box is the last
+block, so a pathological viewport cannot turn one inspection into seconds through any other path.
+**Generalizable rule.** A negated character class that excludes the terminator but not the
+sequence's own introducer is a backtracking bomb on unterminated input; exclude both. And a
+timeout on the read is not a bound on the parse of what was read.
+**Refs.** Issue #907; terminal review
+`docs/code-reviews/2026-09-02-issue-907-terminal-code-review-result.v1.json` F12.
+
 ### A write flag derived from which door carried the write tracks the door, not the write  {#907-write-flag-tracked-the-door}
 
 **Context.** Issue 907's terminal Saga Code Review scored the branch that had already closed

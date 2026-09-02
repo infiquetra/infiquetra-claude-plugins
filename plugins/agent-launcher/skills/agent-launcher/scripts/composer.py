@@ -13,7 +13,11 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+# The OSC branch's body excludes ESC as well as BEL. An OSC body may not contain either, and
+# without the exclusion an unterminated OSC start scanned to the end of the viewport and back
+# once per start -- a clean quadratic, 18.9 seconds at 8000 repeats -- while the herdr read
+# timeout bounded nothing in-process (issue 907 terminal review F12).
+ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))")
 SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 
 # This is a complete roster, not a fallback table.  A vendor whose input box has not been

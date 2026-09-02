@@ -354,9 +354,12 @@ def test_installed_orchestrate_with_discoverable_launcher_passes_preflight(tmp_p
     assert EXPECTED_REMEDIATION not in err_and_out
 
 
-def test_read_only_help_survives_a_stale_launcher_while_roster_enforces_the_floor(
+def test_read_only_help_and_roster_survive_a_stale_launcher_while_go_enforces_the_floor(
     tmp_path: Path,
 ) -> None:
+    """Below the floor, ``--help`` and ``roster`` run -- roster writes nothing -- and the
+    first command that would write a pane, ``go``, refuses with the update remedy
+    (terminal review F24; DECISIONS ``{#907-agent-launcher-floor-owner}``)."""
     cache = tmp_path / "cache" / MARKETPLACE
     orch_install = _install_plugin(
         cache, "orchestrate", _declared_version("orchestrate"), parts=(".claude-plugin", "skills")
@@ -375,8 +378,17 @@ def test_read_only_help_survives_a_stale_launcher_while_roster_enforces_the_floo
     roster_result = _run_installed_orchestrate(
         script, ["roster"], cwd=tmp_path, env_overrides={"PATH": path}
     )
-    assert roster_result.returncode != 0
-    output = roster_result.stderr + roster_result.stdout
+    assert roster_result.returncode == 0, roster_result.stderr
+    roster_output = roster_result.stderr + roster_result.stdout
+    assert "claude plugin update agent-launcher" not in roster_output
+    assert "Traceback" not in roster_output
+    assert "claude" in roster_result.stdout
+
+    go_result = _run_installed_orchestrate(
+        script, ["go"], cwd=tmp_path, env_overrides={"PATH": path}
+    )
+    assert go_result.returncode != 0
+    output = go_result.stderr + go_result.stdout
     assert (
         f"agent-launcher 1.2.0 is installed; Orchestrate requires >={_declared_floor()}" in output
     )
@@ -610,9 +622,10 @@ MATRIX_INVOCATIONS = {
     "resume": ["resume", "--unit", "alpha"],
 }
 
+# The six commands the floor gates: each writes a pane, creates a session or worktree, or
+# closes a tab. A companion below the floor refuses them with the update remedy; a missing or
+# unusable one refuses them with the install remedy.
 GATED_SUBCOMMANDS = (
-    "roster",
-    "saga",
     "start",
     "expand",
     "go",
@@ -620,6 +633,11 @@ GATED_SUBCOMMANDS = (
     "land",
     "clean",
 )
+# The two informational commands: they read the wrapper's tool list and the saga install on
+# disk and write nothing, so a companion below the floor still serves them (terminal review
+# F24, matching the decision record's read-only bucket); only a companion that was never
+# ingested -- missing or unusable -- refuses them, with the install remedy.
+INGEST_ONLY_SUBCOMMANDS = ("roster", "saga")
 
 PANE_WRITES = (("pane", "run"), ("agent", "prompt"), ("tab", "close"))
 
@@ -771,6 +789,13 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
                 f"{state}/{command}: the install remedy serves a stale install: {output}"
             )
             _assert_no_pane_write(calls, command, state)
+        elif command in INGEST_ONLY_SUBCOMMANDS:
+            assert code == 0, f"{state}/{command}: a read-only command refused: {output}"
+            assert "claude plugin update agent-launcher" not in output, (
+                f"{state}/{command}: the floor gated a command that writes nothing: {output}"
+            )
+            assert EXPECTED_REMEDIATION not in output, f"{state}/{command}: {output}"
+            _assert_no_pane_write(calls, command, state)
         elif command in ("status", "check"):
             assert code == 0, f"{state}/{command}: {output}"
             assert EXPECTED_REMEDIATION not in output and "unusable" not in output, (
@@ -785,7 +810,7 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
             )
         return
     # unusable: nothing was ingested
-    if command in GATED_SUBCOMMANDS:
+    if command in GATED_SUBCOMMANDS or command in INGEST_ONLY_SUBCOMMANDS:
         assert code != 0, f"{state}/{command}: ran against an unusable companion"
         assert "simulated roster drift" in output or "not found" in output, (
             f"{state}/{command}: no cause named: {output}"
@@ -899,10 +924,19 @@ def test_malformed_floor_requirements_exit_with_the_named_message(
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
 
-    result = _run_installed_orchestrate(script, ["roster"], cwd=tmp_path)
+    # The malformed floor gates the write side: `go` refuses before it reads a run file.
+    # `roster` writes nothing and runs against an ingested companion whatever the floor says.
+    result = _run_installed_orchestrate(script, ["go"], cwd=tmp_path)
     output = result.stderr + result.stdout
     assert result.returncode != 0
     assert "must be a numeric >= floor" in output
+    roster = _run_installed_orchestrate(
+        script,
+        ["roster"],
+        cwd=tmp_path,
+        env_overrides={"PATH": f"{_install_fake_agents(tmp_path)}:{os.environ['PATH']}"},
+    )
+    assert "must be a numeric >= floor" not in roster.stderr + roster.stdout
 
 
 def test_each_companion_fault_names_its_own_cause_and_remedy(tmp_path: Path) -> None:
@@ -920,16 +954,22 @@ def test_each_companion_fault_names_its_own_cause_and_remedy(tmp_path: Path) -> 
     assert "not found" in missing_output
     assert EXPECTED_REMEDIATION in missing_output
 
-    # below floor: update, never install
+    # below floor: update, never install -- on the write side (`go`); `roster` writes nothing
+    # and is served by the stale companion (terminal review F24).
     script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "below-floor")
     result = _run_installed_orchestrate(
-        script, ["roster"], cwd=repo, env_overrides={"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        script, ["go"], cwd=repo, env_overrides={"PATH": f"{bin_dir}:{os.environ['PATH']}"}
     )
     below_output = result.stderr + result.stdout
     assert result.returncode != 0
     assert "is installed; Orchestrate requires >=" in below_output
     assert "claude plugin update agent-launcher@infiquetra-plugins" in below_output
     assert "not found" not in below_output
+    roster = _run_installed_orchestrate(
+        script, ["roster"], cwd=repo, env_overrides={"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    )
+    assert roster.returncode == 0, roster.stderr
+    assert "Orchestrate requires" not in roster.stderr + roster.stdout
 
     # unusable: the exception type is named
     script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "unusable")

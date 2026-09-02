@@ -1791,6 +1791,21 @@ def _print_companion_fault_once() -> None:
     print(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE, file=sys.stderr)
 
 
+def assert_agent_launcher_ingested() -> None:
+    """Refuse a read-only command only when no companion was ingested at all.
+
+    The KTD7 matrix's read side for the two informational commands, ``roster`` and ``saga``:
+    they list vendors and saga capabilities and never write a pane, create a session or
+    worktree, or close a tab, so a companion that is merely below the floor still serves
+    them -- exactly as it serves ``wait``, ``settle`` and ``adopt``. A missing or unusable
+    companion has nothing to read with and refuses with the install remedy. Gating these
+    two on the floor was a smaller instance of the fail-closed regression this plugin
+    already shipped once (terminal review F24), and it contradicted the decision record.
+    """
+    if not _AGENT_LAUNCHER_AVAILABLE:
+        raise SystemExit(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE)
+
+
 def assert_agent_launcher_available() -> None:
     """Refuse before any pane write, session or worktree creation, or tab close.
 
@@ -1832,9 +1847,10 @@ def _ingest_agent_launcher() -> bool:
     try:
         _validated_agent_launcher(script)
     except _LauncherFloorFailure as exc:
-        # A stale launcher is still ingested, so read-only commands keep their Herdr reads
-        # through it; the floor gates only the commands that would write a pane, create a
-        # session or worktree, or close a tab, and this fault carries the update remedy.
+        # A stale launcher is still ingested, so read-only commands -- status, check, wait,
+        # settle, adopt, roster, saga -- keep their Herdr reads through it; the floor gates
+        # only the six commands that would write a pane, create a session or worktree, or
+        # close a tab, and this fault carries the update remedy.
         _AGENT_LAUNCHER_ERROR = str(exc)
     except SystemExit as exc:
         # Orchestrate's own manifest could not name a floor. The launcher is still ingested
@@ -3210,7 +3226,7 @@ def saga_capabilities(vendor: str) -> list[str]:
 
 def cmd_saga(args: argparse.Namespace) -> int:
     """Show how each vendor invokes a saga capability, and whether it has saga at all."""
-    assert_agent_launcher_available()
+    assert_agent_launcher_ingested()
     for name, _ in roster():
         caps = saga_capabilities(name)
         if not caps:
@@ -3227,7 +3243,7 @@ def cmd_saga(args: argparse.Namespace) -> int:
 
 def cmd_roster(args: argparse.Namespace) -> int:
     """Print the agents this machine can run, asked now rather than remembered."""
-    assert_agent_launcher_available()
+    assert_agent_launcher_ingested()
     rows = roster()
     if not rows:
         print("could not read the wrapper's tool list; check that it runs and prints `Tools:`")

@@ -138,11 +138,18 @@ covered.
 
 **Decision.** The manifest still owns the numeric floor (KTD7). Policy is a matrix, not an
 import-time side effect. Below floor: the launcher is ingested so read-only commands keep
-their Herdr reads, and every command that writes a pane, creates a session or worktree, or
-closes a tab refuses with an update remedy. Missing or unusable: nothing is ingested;
-`status` and `check` degrade to liveness-unknown; `wait`, `settle`, `adopt`, `roster`,
-`saga`, `start`, `expand`, `go`, `review-result`, `land`, and `clean` refuse with the
-missing or unusable message. `--help` and the other non-live commands run either way.
+their Herdr reads -- that bucket is `status`, `check`, `wait`, `settle`, `adopt`, `roster`
+and `saga` -- and the six commands that write a pane, create a session or worktree, or
+close a tab -- `start`, `expand`, `go`, `review-result`, `land`, and `clean` -- refuse with
+an update remedy. Missing or unusable: nothing is ingested; `status` and `check` degrade to
+liveness-unknown; `wait`, `settle`, `adopt`, `roster`, `saga`, `start`, `expand`, `go`,
+`review-result`, `land`, and `clean` refuse with the missing or unusable message. `--help`
+and the other non-live commands run either way. *Amended 2026-09-02:* between 2026-08-31 and
+the issue 907 terminal review, `roster` and `saga` were wired to the write-side gate and
+refused below floor too; the terminal review's F08, F19 and F24 found the record, the README
+and the command document disagreeing with the code and with `SKILL.md`. The code was brought
+back to this record (`assert_agent_launcher_ingested`), because the two commands write
+nothing, and the matrix test now pins both buckets by name.
 
 **Date:** 2026-08-31 · **Issue:** #907 · **Origin:**
 `docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` API-01, API-02,

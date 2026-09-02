@@ -502,8 +502,10 @@ Both floors are declared in `plugin.json`; saga's is enforced — a saga below i
 refused before any submission, because an older saga silently drops the `Stage` half and reports
 success. The agent-launcher floor is enforced at runtime as a command-by-state matrix:
 `--help` survives a stale or missing companion, `status` and `check` degrade to
-liveness-unknown when it is missing or unusable, and every pane-write, session-create or
-tab-close command refuses with an update or install remedy. The mission-control floor is a
+liveness-unknown when it is missing or unusable, and the six pane-write, session-create or
+tab-close commands -- `start`, `expand`, `go`, `review-result`, `land`, and `clean` -- refuse
+with an update or install remedy. `roster` and `saga` write nothing, so a stale companion still
+serves them; only a missing or unusable one refuses them. The mission-control floor is a
 declaration the installer reads.
 
 Read the exit code, not the prose. `land` and `announce` both exit **2** when a card was not

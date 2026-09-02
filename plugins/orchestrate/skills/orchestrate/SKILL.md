@@ -83,9 +83,9 @@ bypass the background launch flags (`--no-focus --current --herdr --herdr-contro
 operator UI focus. The launch contract lives in `plugins/agent-launcher/`; Orchestrate does not
 keep a private copy. Orchestrate declares its Agent Launcher floor in its plugin manifest and reads
 that same declaration at runtime. Discovery and import never kill `--help`, `status`, or other
-read-only recovery commands merely because the companion is stale or unusable. Six commands write
+read-only recovery commands merely because the companion is stale or unusable. Seven commands write
 a pane, create a session or worktree, or close a tab -- `start`, `expand`, `go`, `review-result`,
-`land`, and `clean` -- and those six enforce the floor before doing so; each fault names its own
+`land`, `clean`, and `redrive` -- and those seven enforce the floor before doing so; each fault names its own
 cause and remedy: a companion below the floor refuses with
 `claude plugin update agent-launcher@infiquetra-plugins`, a missing or unusable one with
 `claude plugin install agent-launcher@infiquetra-plugins`. `roster` and `saga` write nothing, so a
@@ -100,6 +100,12 @@ exits. Clear the composer and rerun `go`: the retry re-prompts that same pane an
 session, and `already has tab` never applies to a staged unit, so nothing needs editing by hand.
 Or give the unit up: `clean` closes the tab when Orchestrate owns it and reports a tab it does not
 own as left open, never as closed.
+**A unit recorded `prompt_undelivered` has one door back: `redrive --unit <name>`.** That status
+means the task was sent and the session was never observed to start; `go` skips the unit because it
+has a tab, and `settle` reads only running units. Read the tab first. If the session is idle and
+never took the task, `redrive` re-prompts it through the same inspected writer `go` uses; if the
+session has visibly started, `redrive` refuses and names the tab, because it may already hold the
+task.
 Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step, not a license to bypass `expand` or `go`. A branch in the run's
 `orch/<run-id>-<unit>` series with no row in the table is flagged as unrecorded drift by `status` and

@@ -1827,6 +1827,9 @@ def assert_agent_launcher_ingested() -> None:
 def assert_agent_launcher_available() -> None:
     """Refuse before any pane write, session or worktree creation, or tab close.
 
+    The seven commands that call this: ``start``, ``expand``, ``go``, ``review-result``,
+    ``land``, ``clean``, and ``redrive``.
+
     This is the KTD7 matrix's write side
     (``docs/engineering-journal/DECISIONS.md`` ``{#907-agent-launcher-floor-owner}``):
     it fires whenever the companion is below the declared floor (stale: update it) or
@@ -1914,6 +1917,8 @@ if not _ingest_agent_launcher():
     close_run_session = _agent_launcher_required
     tab_close_failure = _agent_launcher_required
     verify_unit_preflight = _agent_launcher_required
+    agent_row = _agent_launcher_required
+    session_has_started = _agent_launcher_required
     append_unit_note = _agent_launcher_required
     PaneWriter = _agent_launcher_required
     session_owned = _agent_launcher_required
@@ -5834,6 +5839,49 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_redrive(args: argparse.Namespace) -> int:
+    """Re-prompt a unit recorded as sent-but-never-started, once its session is idle.
+
+    ``prompt_undelivered`` was a terminal bucket: ``go`` skips a unit with a tab, ``settle``
+    reads only running units, and nothing returned it to pending (cycle 2, F76). This is the
+    one door out. It writes a pane, so it gates on the companion floor like the other write
+    commands, and it goes through the launcher's ``redeliver`` -- the same inspected writer
+    as every other write, and the same never-started gate: a session that visibly started may
+    already hold the task and is refused with the tab named for the operator to read.
+    """
+    assert_agent_launcher_available()
+    r = Run.load()
+    unit = r.unit(args.unit)
+    if unit.status != PROMPT_UNDELIVERED:
+        raise SystemExit(
+            f"{unit.name} is {unit.status!r}, not {PROMPT_UNDELIVERED!r}; redrive only "
+            "re-prompts a unit whose prompt was never observed to be taken"
+        )
+    if not unit.pane_id:
+        raise SystemExit(f"{unit.name}: no pane recorded; relaunch it under a new name instead")
+    row = agent_row(unit)
+    if session_has_started(row):
+        status = row.get("agent_status") if row is not None else None
+        raise SystemExit(
+            f"{unit.name}: its session is {status!r}, so it may already hold the task; read "
+            f"tab {unit.tab_id} before prompting it again"
+        )
+    clear_delivery_warning(unit)
+    print(f"redriving {unit.name} ({unit.vendor}) into pane {unit.pane_id} -> {unit.task}")
+    try:
+        redeliver(unit, r.backend, review_elsewhere=r.reviews_separately())
+    except StagedInputError as exc:
+        unit.status = PENDING
+        if str(exc) not in unit.note:
+            append_unit_note(unit, str(exc))
+        print(f"  {unit.name} PENDING: {exc}")
+        r.save()
+        return 1
+    r.save()
+    print(f"  {unit.name}: {unit.status}")
+    return 0 if unit.status == RUNNING else 1
+
+
 def cmd_resume(args: argparse.Namespace) -> int:
     r = Run.load()
     unit, info = resume_unit(
@@ -6013,6 +6061,13 @@ def main(argv: list[str] | None = None) -> int:
         help="remote name (defaults to recorded parked remote, or origin)",
     )
     s.set_defaults(func=cmd_resume)
+
+    s = sub.add_parser(
+        "redrive",
+        help="re-prompt a unit recorded as sent-but-never-started once its session is idle",
+    )
+    s.add_argument("--unit", required=True, help="unit in the prompt_undelivered state")
+    s.set_defaults(func=cmd_redrive)
 
     args = p.parse_args(argv)
     return int(args.func(args))

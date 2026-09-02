@@ -57,14 +57,15 @@ The serialized receipt carries the result of the last inspection under `input_bo
 python3 "$S" redeliver --vendor <tool> --task <tab-name> --cwd "$PWD" --prompt <text> --receipt-json receipt.json > receipt-retry.json
 ```
 
-`redeliver` takes the tab, pane and ownership from the receipt the stop wrote and the task and launch settings from the same flags `launch` took. It refuses a receipt written for a different task name, a receipt that does not record a staged-input stop (`input_box` other than `staged` — a prompt that was delivered must not be sent twice), and a receipt with no pane. It never runs the wrapper create. It inspects the pane before its first write whatever the ownership, and it refuses to prompt a session that has left idle since the stop, because that session may already hold the task; that refusal is recorded on the receipt as `prompt_delivered: false` and the command exits nonzero. Orchestrate uses the same door: rerun `go` and a unit stopped on staged input is redelivered into its recorded pane rather than launched twice.
+`redeliver` takes the tab, pane and ownership from the receipt the stop wrote and the task and launch settings from the same flags `launch` took. Two receipt shapes are retryable: a staged-input stop (`input_box` is `staged`) and a prompt that was sent but never observed to be taken (`prompt_delivered` is `false`). It refuses, before any Herdr call and with exit code **2**, an empty `--prompt`, a receipt written for a different task name, a receipt that records neither retryable shape (a prompt that was delivered must not be sent twice), and a receipt with no pane. It never runs the wrapper create. It inspects the pane before its first write whatever the ownership, and it refuses to prompt a session that has visibly started since the stop (any Herdr status other than idle, done or unknown), because that session may already hold the task; that refusal is recorded on the receipt as `prompt_delivered: false` and the command exits **1**, as does any retry whose prompt was not observed to be taken. A delivered retry exits **0**. Orchestrate uses the same door: rerun `go` and a unit stopped on staged input is redelivered into its recorded pane rather than launched twice, and `redrive --unit` re-prompts a unit recorded `prompt_undelivered`.
 
 ## The surface Orchestrate binds
 
 Orchestrate does not import this plugin; it reads `launcher.py` and executes it into its own
 namespace, so the launcher's top-level names become Orchestrate's. The names Orchestrate relies
 on, and that this plugin therefore keeps stable across a minor release, are: `launch`,
-`redeliver`, `agent_argv`, `launcher`, `launchable`, `roster`, `live_agents`,
+`redeliver`, `agent_argv`, `agent_row`, `session_has_started`, `launcher`, `launchable`,
+`roster`, `live_agents`,
 `close_run_session`, `tab_close_failure`, `verify_unit_preflight`, `append_unit_note`,
 `PaneWriter`, `session_owned`, `should_guard_pane_write`, `guard_pane_before_write`, `models`,
 `favourites`, `has_delivery_warning`, `clear_delivery_warning`, `VENDOR_FLAGS`,

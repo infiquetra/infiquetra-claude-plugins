@@ -709,6 +709,100 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         )
         assert orchestrate._staged_input_stop(unit) is True
 
+    def test_redrive_reprompts_an_undelivered_unit_whose_session_is_idle(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Cycle 2, F76: prompt_undelivered had no door back. redrive re-prompts through the
+        launcher's redeliver -- the same inspected writer -- once the session is idle, and the
+        unit comes back running with the warning cleared."""
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="prompt_undelivered",
+                    branch=None,
+                    tab_id="w1:t1",
+                    pane_id="w1:p1",
+                    note=orchestrate.DELIVERY_WARNING,
+                    launch_receipt={
+                        "tab_id": "w1:t1",
+                        "pane": "w1:p1",
+                        "owned": True,
+                        "prompt_delivered": False,
+                    },
+                )
+            ],
+        )
+        monkeypatch.chdir(repo)
+        recorded = _staged_go_harness(
+            orchestrate,
+            monkeypatch,
+            repo,
+            existing_tabs=(),
+            agent_prompt_ok=True,
+            pane_dumps=[_claude_composer_pane("❯ ")],
+        )
+        assert orchestrate.cmd_redrive(argparse.Namespace(unit="alpha")) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.RUNNING
+        assert orchestrate.DELIVERY_WARNING not in saved.note
+        assert sum(1 for c in recorded if c[0] == "agents") == 0
+        assert sum(1 for c in recorded if c[:3] == ["herdr", "agent", "prompt"]) == 1
+        assert (
+            sum(1 for c in recorded if c[:3] == ["herdr", "pane", "read"] and "--format" in c) == 1
+        )
+        assert "redriving alpha" in capsys.readouterr().out
+
+    def test_redrive_refuses_a_session_that_has_started_and_a_unit_that_is_not_undelivered(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Counter-cases for F76: a started session may already hold the task, and any status
+        other than prompt_undelivered is not this door's business."""
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="prompt_undelivered",
+                    branch=None,
+                    tab_id="w1:t1",
+                    pane_id="w1:p1",
+                ),
+                _unit("beta", status="running", branch=None, tab_id="w1:t2", pane_id="w1:p2"),
+            ],
+        )
+        monkeypatch.chdir(repo)
+        prompts: list[list[str]] = []
+
+        def recording_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+            prompts.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(orchestrate, "run", recording_run)
+        monkeypatch.setattr(
+            orchestrate,
+            "agent_row",
+            lambda *_a, **_k: {
+                "agent_status": "working",
+                "pane_id": "w1:p1",
+                "interactive_ready": True,
+            },
+        )
+        with pytest.raises(SystemExit, match="may already hold the task; read tab w1:t1"):
+            orchestrate.cmd_redrive(argparse.Namespace(unit="alpha"))
+        with pytest.raises(SystemExit, match="not 'prompt_undelivered'"):
+            orchestrate.cmd_redrive(argparse.Namespace(unit="beta"))
+        assert [c for c in prompts if c[:3] == ["herdr", "agent", "prompt"]] == []
+        assert orchestrate.Run.load().unit("alpha").status == "prompt_undelivered"
+
     def test_a_fresh_pending_unit_goes_through_launch_never_redeliver(
         self,
         orchestrate: ModuleType,

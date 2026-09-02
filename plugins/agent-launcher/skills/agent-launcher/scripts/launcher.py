@@ -165,7 +165,9 @@ def launch_receipt_shape(unit: Any) -> dict[str, Any]:
         "pane": getattr(unit, "pane_id", None),
         "agent_name": getattr(unit, "agent_name", None),
         "reused": wrapper_reused(getattr(unit, "reused", False)),
-        "owned": session_owned(unit),
+        # The unit attribute, never session_owned(): that predicate prefers the receipt this
+        # dict is about to replace, so it would read the previous launch's answer (cycle 2, F58).
+        "owned": getattr(unit, "owned", False) is True,
         "permission": getattr(unit, "permission", None),
         "verified": False,
         "prompt_delivered": None,
@@ -598,7 +600,9 @@ DELIVERY_RESENDS = 2
 ACCOUNT_SETTLE_SECONDS = 10.0
 DELIVERY_WARNING = (
     "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
-    "trusting this unit -- it may have been prompted while still booting."
+    "trusting this unit -- it may have been prompted while still booting. If it is idle and "
+    "never took the task, redeliver it (Orchestrate: redrive --unit NAME, standalone: "
+    "launcher.py redeliver --receipt-json)."
 )
 
 # How long to give one pane read before the input-box inspection gives up. A pane read is a
@@ -665,6 +669,19 @@ def await_ready(unit: Any, seconds: float = LAUNCH_SETTLE_SECONDS) -> bool:
     return False
 
 
+# The Herdr statuses under which a session has not started anything. ``took_the_task`` and the
+# retry door's liveness gate read the same set (cycle 2, F48/F49): a strict "idle" comparison in
+# one place and this set in the other let a session reporting ``done`` or ``unknown`` -- never
+# started, in this vocabulary -- close the retry route for good.
+NEVER_STARTED_STATUSES = (None, "idle", "done", "unknown")
+
+
+def session_has_started(row: dict | None) -> bool:
+    """Whether a Herdr row shows a session that took something: any status outside the
+    never-started set. A missing row is not evidence of starting."""
+    return row is not None and row.get("agent_status") not in NEVER_STARTED_STATUSES
+
+
 def took_the_task(unit: Any, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
     """Did the session actually take the task? One that did stops being idle.
 
@@ -673,8 +690,7 @@ def took_the_task(unit: Any, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
     """
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        row = agent_row(unit)
-        if row is not None and row.get("agent_status") not in (None, "idle", "done", "unknown"):
+        if session_has_started(agent_row(unit)):
             return True
         time.sleep(1.0)
     return False
@@ -1330,8 +1346,8 @@ def verify_unit_preflight(
     else:
         unconfirmed.append("variant")
 
-    carried = getattr(unit, "launch_receipt", None)
-    receipt = carried if isinstance(carried, dict) else launch_receipt_shape(unit)
+    existing_receipt = getattr(unit, "launch_receipt", None)
+    receipt = existing_receipt if isinstance(existing_receipt, dict) else launch_receipt_shape(unit)
     receipt.update(
         {
             "unit_name": unit.name,
@@ -1557,12 +1573,14 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
             "clear the composer and relaunch the unit instead"
         )
     row = agent_row(unit)
-    status = None if row is None else row.get("agent_status")
-    if status != "idle":
-        seen = "gone from herdr" if row is None else f"{status or 'unknown'}, not idle"
+    if session_has_started(row):
+        # The same vocabulary as took_the_task: only a session that visibly started is refused.
+        # A row that is idle, done, unknown or missing has not started; a missing row is then
+        # the preflight's named stop, not a silent close of the retry route (cycle 2, F48/F49).
+        status = row.get("agent_status") if row is not None else None
         append_unit_note(
             unit,
-            f"redelivery withheld: the session was {seen}, so it may already hold the task; "
+            f"redelivery withheld: the session was {status}, so it may already hold the task; "
             "check the tab before prompting it again",
         )
         unit.status = PROMPT_UNDELIVERED
@@ -1854,31 +1872,46 @@ def close_owned_session(unit: Any, *, receipt: dict[str, Any] | None = None) -> 
         raise SystemExit(tab_close_failure(unit.tab_id, proc.returncode, err))
 
 
-def _adopt_staged_receipt(unit: LaunchRequest, receipt: dict[str, Any]) -> None:
-    """Take the session identifiers a staged-input stop recorded onto a fresh request.
+class RetryReceiptRefused(SystemExit):
+    """A receipt the retry door will not act on. Exits 2, distinct from an undelivered retry."""
+
+
+def _adopt_retry_receipt(unit: LaunchRequest, receipt: dict[str, Any]) -> None:
+    """Take the session identifiers a stop recorded onto a fresh request.
 
     The standalone retry door. The receipt is the only thing that knows which tab and pane
     the stop left behind and whether this launcher owns them, so those come from it; the
-    task text and launch settings come from the flags, exactly as ``launch`` took them. Three
-    refusals keep this from becoming a second delivery: a receipt for a different task name,
-    a receipt that records no staged-input stop (``launch`` may already have delivered its
-    prompt), and a receipt with no pane to prompt.
+    task text and launch settings come from the flags, exactly as ``launch`` took them. Two
+    shapes are retryable: a staged-input stop (``input_box`` is ``staged``) and a prompt that
+    was sent but never observed to be taken (``prompt_delivered`` is false) -- the second is
+    the undelivered bucket, which had no door of its own (cycle 2, F76). Four refusals keep
+    this from becoming a second delivery: no prompt to deliver, a receipt for a different task
+    name, a receipt that records neither retryable stop (a delivered prompt must not be sent
+    twice), and a receipt with no pane. Each exits 2 (cycle 2, F63/F64).
     """
+    if not unit.task.strip():
+        raise RetryReceiptRefused(
+            "cannot redeliver: --prompt is empty; a retry with nothing to deliver cannot succeed"
+        )
     recorded_name = receipt.get("unit_name")
     if recorded_name and recorded_name != unit.name:
-        raise SystemExit(
+        raise RetryReceiptRefused(
             f"cannot redeliver: receipt was written for task {recorded_name!r}, not {unit.name!r}"
         )
-    if receipt.get("input_box") != ComposerState.STAGED.value:
-        raise SystemExit(
-            "cannot redeliver: the receipt does not record a staged-input stop "
-            f"(input_box is {receipt.get('input_box')!r}); redeliver retries only that stop -- "
-            "a prompt that was delivered must not be sent twice, and anything else is a new "
-            "launch under a new task name"
+    staged = receipt.get("input_box") == ComposerState.STAGED.value
+    undelivered = receipt.get("prompt_delivered") is False
+    if not (staged or undelivered):
+        raise RetryReceiptRefused(
+            "cannot redeliver: the receipt records neither a staged-input stop (input_box is "
+            f"{receipt.get('input_box')!r}) nor an undelivered prompt (prompt_delivered is "
+            f"{receipt.get('prompt_delivered')!r}); a prompt that was delivered must not be "
+            "sent twice, and anything else is a new launch under a new task name"
         )
-    pane_id = receipt.get("pane") or receipt.get("pane_id")
+    # Only the canonical spelling: the shape writes ``pane`` and nothing writes ``pane_id``
+    # into a receipt (cycle 2, F61).
+    pane_id = receipt.get("pane")
     if not pane_id:
-        raise SystemExit(
+        raise RetryReceiptRefused(
             "cannot redeliver: the receipt records no pane; clear the composer and launch "
             "again under a new task name"
         )
@@ -2019,8 +2052,15 @@ def cli_main(argv: list[str] | None = None) -> int:
         return 0
     unit = _request_from_args(args)
     if args.cmd == "redeliver":
+        # Exit codes (cycle 2, F64): 0 delivered; 1 the retry ran and the prompt was not
+        # observed to be taken, or a stop was raised after the receipt was adopted (the receipt
+        # is printed first); 2 the receipt was refused before any Herdr call.
         receipt = _load_receipt(args.receipt_json)
-        _adopt_staged_receipt(unit, receipt)
+        try:
+            _adopt_retry_receipt(unit, receipt)
+        except RetryReceiptRefused as refused:
+            print(refused, file=sys.stderr)
+            return 2
         try:
             redeliver(unit)
         except SystemExit:

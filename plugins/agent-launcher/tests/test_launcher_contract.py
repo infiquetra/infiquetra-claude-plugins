@@ -666,7 +666,7 @@ def test_documents_state_the_count_definition_and_the_shipped_guard_rule() -> No
     skill = " ".join(SKILL_MD.read_text(encoding="utf-8").split())
     assert "never a second `launch`" in skill
     assert 'python3 "$S" redeliver' in skill
-    assert "a receipt that does not record a staged-input stop" in skill
+    assert "a receipt that records neither retryable shape" in skill
 
 
 def test_documented_opencode_permission_flag_matches_the_runtime_table(
@@ -2059,7 +2059,7 @@ def _prepare_redeliver_real_send(
     *,
     owned: bool,
     pane_dumps: list[str],
-    agent_status: str = "idle",
+    agent_status: str | None = "idle",
     accepted: bool = False,
 ) -> tuple[Any, list[list[str]], list[str], list[str]]:
     """A redelivery driven through the real send/say and the real guard, with only the
@@ -2235,19 +2235,58 @@ def test_redeliver_refuses_when_the_session_has_left_idle(
     assert unit.launch_receipt["input_box"] == "staged"
 
 
-def test_redeliver_refuses_when_the_session_is_gone(
+def test_redeliver_of_a_gone_session_is_the_preflights_named_stop(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The other arm of the same rule: no Herdr row at all is not idle either."""
+    """Cycle 2, F48/F49: a missing Herdr row is not evidence the session started, so the
+    retry gate does not close the route over it; the real preflight then stops by name
+    because Herdr does not list the session. No prompt goes out either way."""
+    real_preflight = launcher.verify_unit_preflight
     unit, recorded, pane_writes, _guard_calls = _prepare_redeliver_real_send(
-        launcher, monkeypatch, owned=False, pane_dumps=[_claude_pane("❯ ")]
+        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")]
     )
+    monkeypatch.setattr(launcher, "verify_unit_preflight", real_preflight)
     monkeypatch.setattr(launcher, "agent_row", lambda *_a, **_k: None)
-    launcher.redeliver(unit)
+    with pytest.raises(SystemExit, match="herdr did not list the session"):
+        launcher.redeliver(unit)
     assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
     assert pane_writes == []
+    assert "redelivery withheld" not in unit.note
+
+
+@pytest.mark.parametrize("status", ["done", "unknown", None])
+def test_redeliver_treats_done_and_unknown_as_never_started(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, status: str | None
+) -> None:
+    """Cycle 2, F48/F49: the retry gate uses took_the_task's vocabulary. A row reporting
+    done, unknown, or no status at all has not started, so the retry proceeds and is
+    inspected like any other; only a session that visibly started is refused."""
+    unit, recorded, _pane_writes, guard_calls = _prepare_redeliver_real_send(
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ ")],
+        accepted=True,
+        agent_status=status,  # type: ignore[arg-type]
+    )
+    launcher.redeliver(unit)
+    assert len([c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]) == 1
+    assert guard_calls == ["w1:p1"]
+    assert unit.status == launcher.RUNNING
+    assert "redelivery withheld" not in unit.note
+
+
+@pytest.mark.parametrize("status", ["working", "blocked", "waiting"])
+def test_redeliver_refuses_every_started_status(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    unit, recorded, _pane_writes, _guard_calls = _prepare_redeliver_real_send(
+        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")], agent_status=status
+    )
+    launcher.redeliver(unit)
+    assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
     assert unit.status == launcher.PROMPT_UNDELIVERED
-    assert "redelivery withheld" in unit.note
+    assert f"the session was {status}" in unit.note
 
 
 def test_redeliver_into_an_idle_session_still_sends(
@@ -2468,13 +2507,27 @@ def test_a_pane_typing_timeout_names_the_ambiguity_like_the_prompt_door(
         launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
 
 
+def test_the_receipt_shape_reads_ownership_from_the_unit_not_the_receipt_it_replaces(
+    launcher: ModuleType,
+) -> None:
+    """Cycle 2, F58: session_owned() prefers the receipt key, and the shape is built while
+    the unit still holds the previous launch's receipt. The shape reads the unit attribute
+    the caller just computed, so a stale receipt saying unowned cannot leak into a new one."""
+    unit = launcher.LaunchRequest(
+        name="worker", vendor="claude", worktree="/tmp/wt", launch_receipt={"owned": False}
+    )
+    info = {"tab_id": "w1:t-new", "agent_name": "worker-2", "pane_id": "w1:p1", "reused": False}
+    receipt = launcher.record_wrapper_identity(unit, info, preexisting=frozenset())
+    assert unit.owned is True
+    assert receipt["owned"] is True
+
+
 def test_wrapper_identity_receipt_is_the_shape_function_output(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Terminal review F15: the receipt the wrapper create records is
     launch_receipt_shape's dict, built once from the attributes just set, not a second
     hand-typed literal of the same ten keys."""
-    monkeypatch.setattr(launcher, "session_owned", lambda unit, receipt=None: unit.owned is True)
     unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
     info = {"tab_id": "w1:t-new", "agent_name": "worker-2", "pane_id": "w1:p1", "reused": "true"}
     receipt = launcher.record_wrapper_identity(unit, info, preexisting=frozenset())
@@ -2936,47 +2989,125 @@ def test_redeliver_cli_exits_nonzero_when_the_prompt_was_not_taken(
 
     monkeypatch.setattr(launcher, "redeliver", withheld)
     rc = launcher.cli_main(
-        ["redeliver", "--vendor", "claude", "--task", "worker", "--receipt-json", str(receipt_path)]
+        [
+            "redeliver",
+            "--vendor",
+            "claude",
+            "--task",
+            "worker",
+            "--prompt",
+            "do it",
+            "--receipt-json",
+            str(receipt_path),
+        ]
     )
     assert rc == 1
     assert json.loads(capsys.readouterr().out)["prompt_delivered"] is False
 
 
 @pytest.mark.parametrize(
-    ("over", "message"),
+    ("over", "prompt", "message"),
     [
-        ({"unit_name": "other"}, "written for task 'other'"),
-        ({"input_box": "empty"}, "does not record a staged-input stop"),
-        ({"prompt_delivered": True, "input_box": None}, "does not record a staged-input stop"),
-        ({"pane": None}, "records no pane"),
+        ({"unit_name": "other"}, "do it", "written for task 'other'"),
+        ({"input_box": "empty", "prompt_delivered": None}, "do it", "neither a staged-input stop"),
+        ({"prompt_delivered": True, "input_box": None}, "do it", "neither a staged-input stop"),
+        ({"pane": None}, "do it", "records no pane"),
+        ({"pane_id": "w1:p1", "pane": None}, "do it", "records no pane"),
+        ({}, "", "--prompt is empty"),
     ],
 )
-def test_redeliver_cli_refuses_a_receipt_that_is_not_a_staged_stop(
+def test_redeliver_cli_refuses_a_receipt_it_will_not_retry_with_exit_2(
     launcher: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys: Any,
     over: dict[str, Any],
+    prompt: str,
     message: str,
 ) -> None:
-    """Counter-cases for F07: the retry door is only for the staged-input stop. A receipt
-    for another task, one whose prompt was delivered, or one with no pane is refused before
-    any Herdr call -- a second delivery is the failure every other guard exists to prevent."""
+    """Counter-cases for F07, and cycle 2 F61/F63/F64: the retry door is only for a staged
+    stop or an undelivered prompt. A receipt for another task, one whose prompt was
+    delivered, one with no pane (the dead `pane_id` alias no longer counts), or an empty
+    prompt is refused before any Herdr call, with exit code 2 and the reason on stderr."""
     receipt_path = tmp_path / "receipt.json"
     receipt_path.write_text(json.dumps(_staged_receipt(**over)))
     monkeypatch.setattr(launcher, "run", lambda *_a, **_k: pytest.fail("herdr was called"))
     monkeypatch.setattr(launcher, "redeliver", lambda *_a, **_k: pytest.fail("redeliver ran"))
-    with pytest.raises(SystemExit, match=message):
-        launcher.cli_main(
-            [
-                "redeliver",
-                "--vendor",
-                "claude",
-                "--task",
-                "worker",
-                "--receipt-json",
-                str(receipt_path),
-            ]
-        )
+    rc = launcher.cli_main(
+        [
+            "redeliver",
+            "--vendor",
+            "claude",
+            "--task",
+            "worker",
+            "--prompt",
+            prompt,
+            "--receipt-json",
+            str(receipt_path),
+        ]
+    )
+    assert rc == 2
+    assert message in capsys.readouterr().err
+
+
+def test_redeliver_cli_accepts_an_undelivered_receipt(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    """Cycle 2, F76: a prompt that was sent but never observed to be taken is the other
+    retryable shape; the receipt's prompt_delivered false opens the door."""
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(_staged_receipt(input_box="empty", prompt_delivered=False)))
+    seen: list[Any] = []
+
+    def fake_redeliver(unit: Any, *_a: object, **_k: object) -> None:
+        seen.append(unit)
+        unit.status = launcher.RUNNING
+        unit.launch_receipt["prompt_delivered"] = True
+
+    monkeypatch.setattr(launcher, "redeliver", fake_redeliver)
+    rc = launcher.cli_main(
+        [
+            "redeliver",
+            "--vendor",
+            "claude",
+            "--task",
+            "worker",
+            "--prompt",
+            "do it",
+            "--receipt-json",
+            str(receipt_path),
+        ]
+    )
+    assert rc == 0 and len(seen) == 1
+    assert json.loads(capsys.readouterr().out)["prompt_delivered"] is True
+
+
+def test_a_retry_receipt_without_an_ownership_key_verifies_identity(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cycle 2, F62: a receipt that omits `owned` adopts as unowned, and an unowned delivery
+    verifies the session's identity against Herdr before anything else."""
+    receipt_path = tmp_path / "receipt.json"
+    receipt = _staged_receipt()
+    del receipt["owned"]
+    receipt_path.write_text(json.dumps(receipt))
+    identity_checks: list[str] = []
+    unit, _recorded, _pane_writes, _guard_calls = _prepare_redeliver_real_send(
+        launcher, monkeypatch, owned=False, pane_dumps=[_claude_pane("❯ ")], accepted=True
+    )
+
+    def recording_identity(
+        u: Any, _pane: Any, **_k: object
+    ) -> tuple[list[str], list[str], str, bool]:
+        identity_checks.append(u.name)
+        return [], [], "claude", True
+
+    monkeypatch.setattr(launcher, "verify_unit_identity", recording_identity)
+    adopted = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt", task="x")
+    launcher._adopt_retry_receipt(adopted, receipt)
+    assert adopted.owned is False
+    launcher.redeliver(adopted)
+    assert identity_checks == ["worker"]
 
 
 FAKE_HERDR_FOR_REDELIVER = """#!/usr/bin/env python3

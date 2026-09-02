@@ -174,9 +174,9 @@ covered.
 **Decision.** The manifest still owns the numeric floor (KTD7). Policy is a matrix, not an
 import-time side effect. Below floor: the launcher is ingested so read-only commands keep
 their Herdr reads -- that bucket is `status`, `check`, `wait`, `settle`, `adopt`, `roster`
-and `saga` -- and the six commands that write a pane, create a session or worktree, or
-close a tab -- `start`, `expand`, `go`, `review-result`, `land`, and `clean` -- refuse with
-an update remedy. Missing or unusable: nothing is ingested; `status` and `check` degrade to
+and `saga` -- and the commands that write a pane, create a session or worktree, or
+close a tab -- `start`, `expand`, `go`, `review-result`, `land`, `clean`, and (from 4.3.0)
+`redrive` -- refuse with an update remedy. Missing or unusable: nothing is ingested; `status` and `check` degrade to
 liveness-unknown; `wait`, `settle`, `adopt`, `roster`, `saga`, `start`, `expand`, `go`,
 `review-result`, `land`, and `clean` refuse with the missing or unusable message. `--help`
 and the other non-live commands run either way. *Amended 2026-09-02:* between 2026-08-31 and

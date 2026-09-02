@@ -49,6 +49,28 @@ that cannot be distinguished from vendor chrome are `unclassifiable`, never affi
 the accepted asymmetry runs the other way too, where an unbordered indented row directly below the
 marker with no separator row between is read as input, because no capture shows chrome there.
 
+## Launch receipt keys
+
+The receipt `launch` prints, and `redeliver` and `close` read, carries these keys. `close` needs
+`tab_id` and `owned`; `redeliver` needs `unit_name`, `pane`, `tab_id`, `owned`, `agent_name`, and
+one of the two retryable markers (`input_box` equal to `staged`, or `prompt_delivered` equal to
+`false`). There is no `pane_id` key; `pane` is the only spelling.
+
+| Key | Meaning |
+|---|---|
+| `unit_name`, `vendor` | The task name and vendor the launch was asked for. |
+| `tab_id`, `pane`, `agent_name` | The Herdr identifiers the wrapper returned. |
+| `owned` | True only when `tab_id` was absent from the workspace tab set snapshotted before the wrapper ran. |
+| `reused` | The wrapper joined a workspace that already existed; not ownership. |
+| `permission`, `permission_resolved` | The posture asked for, and the launch tokens it was confirmed against. |
+| `provider`, `model`, `variant`, `account`, `account_evidence` | Requested values; `account_evidence` is `statusline`, `transcript`, or `none`. |
+| `variant_confirmed_from` | OpenCode only: `session` when the variant was read back from a non-menu row, `picker_menu_only` otherwise. |
+| `kind`, `working_directory`, `workspace`, `readiness` | What Herdr reported at preflight. |
+| `confirmed_against_herdr`, `requested_only` | Which fields Herdr confirmed, and which remain the request echoed back. |
+| `verified` | True once the preflight ran. |
+| `prompt_delivered` | `true` once the session was observed to take the task, `false` when it was not, `null` before any prompt. |
+| `input_box`, `input_box_text_chars` | The last composer inspection; see the section above. |
+
 ## Boundaries
 
 - Preview with `--dry-run` before every creation. It confirms `cwd` and `herdr_workspace`; it does not confirm model, effort, or account. Stop if the working directory or Herdr workspace is wrong.

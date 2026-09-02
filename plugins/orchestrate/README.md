@@ -94,9 +94,9 @@ installed before board writeback is relied on. `plugin.json` declares three floo
 mission-control and agent-launcher. A resolved saga below its floor is refused before any
 submission is made. The agent-launcher floor is enforced at runtime as a command-by-state
 matrix: `--help` survives a stale or missing companion; `status` and `check` degrade to
-liveness-unknown when the companion is missing or unusable; the six commands that write a pane,
+liveness-unknown when the companion is missing or unusable; the seven commands that write a pane,
 create a session or worktree, or close a tab -- `start`, `expand`, `go`, `review-result`, `land`,
-and `clean` -- refuse with an update or install remedy; `roster` and `saga` write nothing and run
+`clean`, and `redrive` -- refuse with an update or install remedy; `roster` and `saga` write nothing and run
 against a stale companion, refusing only when none was ingested. The mission-control floor is
 declared for the installer. `land` and `announce` exit 2 when a card
 was not updated, print the reason, say whether a retry can clear it, and name which saga and

@@ -620,6 +620,7 @@ MATRIX_INVOCATIONS = {
     "diff": ["diff"],
     "park": ["park", "--unit", "alpha", "--evidence", "blocked"],
     "resume": ["resume", "--unit", "alpha"],
+    "redrive": ["redrive", "--unit", "alpha"],
 }
 
 # The six commands the floor gates: each writes a pane, creates a session or worktree, or
@@ -632,6 +633,7 @@ GATED_SUBCOMMANDS = (
     "review-result",
     "land",
     "clean",
+    "redrive",
 )
 # The two informational commands: they read the wrapper's tool list and the saga install on
 # disk and write nothing, so a companion below the floor still serves them (terminal review

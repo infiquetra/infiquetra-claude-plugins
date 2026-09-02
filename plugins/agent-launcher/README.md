@@ -29,12 +29,16 @@ Standard library only, so `python3` — not `uv run`.
 
 ## Input-box receipt contract
 
-For an unowned session, the launch receipt records composer inspection under `input_box`. Its
-complete value set is `empty`, `staged`, `unclassifiable`, `not_found`, `unsupported_vendor`,
-`read_failed`, and `read_timeout`. Only `staged` also carries `input_box_text_chars`; that number
-is the redacted count of characters positively recognized as staged, and the text itself is never
-written. Blank or indented rows that cannot be distinguished from vendor chrome are
-`unclassifiable`, never affirmative `empty`.
+For an unowned session, the launch receipt records composer inspection under `input_box`; an owned
+session is never inspected, so its receipt carries no `input_box` key. Its complete value set is
+`empty`, `staged`, `unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`, and
+`read_timeout`. Only `staged` also carries `input_box_text_chars`: the visible length of what the
+parser absorbed — visible characters after border stripping, rows joined without a separator, one
+character short at each wrapped-row boundary, and a lower bound of the draft's true length when a
+blank line inside the draft ends the absorption — never the text itself. Blank or indented rows
+that cannot be distinguished from vendor chrome are `unclassifiable`, never affirmative `empty`;
+the accepted asymmetry runs the other way too, where an unbordered indented row directly below the
+marker with no separator row between is read as input, because no capture shows chrome there.
 
 ## Boundaries
 

@@ -532,22 +532,69 @@ def test_composer_glyph_table_covers_the_launcher_vendor_roster(launcher: Module
     assert set(launcher.COMPOSER_GLYPH_BY_VENDOR) == set(launcher.VENDOR_FLAGS)
 
 
-def test_documented_input_box_receipt_schema_is_complete() -> None:
+def test_documented_input_box_receipt_schema_is_complete(launcher: ModuleType) -> None:
+    """API-06: the value set is derived from ComposerState, never a pinned copy of it."""
     skill = SKILL_MD.read_text(encoding="utf-8")
     readme = LAUNCHER_README.read_text(encoding="utf-8")
-    values = {
-        "empty",
-        "staged",
-        "unclassifiable",
-        "not_found",
-        "unsupported_vendor",
-        "read_failed",
-        "read_timeout",
-    }
+    values = [member.value for member in launcher.ComposerState]
     for surface in (skill, readme):
         assert "input_box" in surface
         assert "input_box_text_chars" in surface
         assert all(f"`{value}`" in surface for value in values)
+
+
+def test_input_box_text_chars_is_the_visible_length_of_the_absorbed_block(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DOCC-01 / SEC-08: the count is the visible length of the whole absorbed block, bound
+    through the real guard so the documented number cannot drift from the recorded one."""
+    row_one = "Stop before running U5 with Grok and Agy blocked. Direct host verification"
+    row_two = "found both real executables. Use the live roster."
+    unit, _recorded, _sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=f"❯ {row_one}\n  {row_two}",
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
+        launcher.launch(unit)
+    assert unit.launch_receipt["input_box_text_chars"] == len(row_one + row_two)
+
+
+def test_input_box_text_chars_counts_a_styled_remainder_not_only_the_unstyled_part(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DOCC-01: the count is the visible length, never the count of positively recognized
+    (unstyled) characters -- only `ok` is unstyled here, but the whole draft is withheld."""
+    unstyled = "ok"
+    styled = "the remainder of the draft is client-styled"
+    visible = f"{unstyled} {styled}"
+    dump = f"❯ {unstyled} \x1b[2m{styled}\x1b[0m"
+    unit, _recorded, _sends = _prepare_guard_launch(
+        launcher,
+        monkeypatch,
+        pane_dump=dump,
+        receipt_tab="w80:t1",
+        existing_tabs=("w80:t1",),
+    )
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
+        launcher.launch(unit)
+    assert unit.launch_receipt["input_box_text_chars"] == len(visible)
+    assert unit.launch_receipt["input_box_text_chars"] > len(unstyled)
+
+
+def test_documents_state_the_count_definition_and_the_owned_session_absence() -> None:
+    """DOCC-01, DOCC-10, DOCC-11, DOCC-02: both surfaces carry the KTD3 count definition,
+    the owned-session absence, and the accepted indented-row asymmetry. Prose is compared
+    with whitespace flattened so line wrapping cannot mask a claim."""
+    for path in (SKILL_MD, LAUNCHER_README):
+        flat = " ".join(path.read_text(encoding="utf-8").split())
+        assert "visible length of what the parser absorbed" in flat, path
+        assert "one character short at each wrapped-row boundary" in flat, path
+        assert "lower bound" in flat, path
+        assert "carries no `input_box` key" in flat, path
+        assert "read as input" in flat, path
 
 
 def test_documented_opencode_permission_flag_matches_the_runtime_table(
@@ -797,6 +844,9 @@ def test_ambiguous_composer_geometry_never_records_affirmative_empty(
     vendor: str,
     dump: str,
 ) -> None:
+    """Ambiguous geometry never claims `empty` -- and the `len(sends) == 1` assertion below is
+    the fail-open pin the accepted ambiguity trade requires: an inconclusive inspection still
+    prompts, because a styled operator draft is byte-identical to a styled placeholder."""
     unit, _recorded, sends = _prepare_guard_launch(
         launcher,
         monkeypatch,

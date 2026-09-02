@@ -97,18 +97,41 @@ def test_the_shape_check_accepts_what_the_loader_accepts() -> None:
         assert check_dependencies_shape({"dependencies": accepted}) == [], accepted
 
 
+# The agent-launcher release that introduced the behaviour Orchestrate requires: the guarded
+# redelivery door (`redeliver()` inspecting every write and refusing a session that left idle)
+# and the shared `should_guard_pane_write` predicate Orchestrate's senders call. Bump this only
+# when Orchestrate starts depending on something a newer launcher release introduced -- not
+# when the launcher ships a patch Orchestrate does not need (terminal review F29).
+AGENT_LAUNCHER_FLOOR_RELEASE = "1.3.0"
+
+
+def _version_tuple(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in text.split("."))
+
+
 def test_orchestrate_keeps_its_agent_launcher_floor() -> None:
-    """The array rewrite must not quietly drop the version floor issue 841 established."""
+    """The array rewrite must not quietly drop the version floor issue 841 established, and
+    the floor names the release that introduced the required behaviour rather than
+    whatever the launcher's current version happens to be: lockstep would force an
+    Orchestrate bump for every launcher patch and stop saying which release is required."""
     manifest = json.loads(
         (REPO_ROOT / "plugins/orchestrate/.claude-plugin/plugin.json").read_text()
     )
     declared = manifest["dependencies"]
     assert isinstance(declared, list)
     floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
+    assert floors.get("agent-launcher") == f">={AGENT_LAUNCHER_FLOOR_RELEASE}", declared
+
+
+def test_the_declared_floor_is_not_above_the_launcher_this_repository_ships() -> None:
+    """The other direction: a floor the packaged launcher cannot satisfy would refuse every
+    write command on a fresh install of both plugins from this marketplace."""
     launcher = json.loads(
         (REPO_ROOT / "plugins/agent-launcher/.claude-plugin/plugin.json").read_text()
     )
-    assert floors.get("agent-launcher") == f">={launcher['version']}", declared
+    assert _version_tuple(AGENT_LAUNCHER_FLOOR_RELEASE) <= _version_tuple(launcher["version"]), (
+        f"floor {AGENT_LAUNCHER_FLOOR_RELEASE} is above the shipped launcher {launcher['version']}"
+    )
 
 
 @pytest.mark.skipif(

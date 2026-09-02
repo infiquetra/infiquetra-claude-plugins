@@ -479,6 +479,8 @@ COMPOSER_MODULE = _load(
 # workspace wEV (Herdr 0.8.2): the marker row sits between two horizontal-rule rows with three
 # two-space-indented status rows below the lower rule. Captured 2026-09-02 from wEV:pG and
 # wEV:pQ; the plan's 2026-09-01 captures came from wEV:pM and wEV:p6, which no longer exist.
+# Every capture's origin, including the two older 2026-08-30 rows whose pane ids were never
+# recorded, is in the fixture's own `_provenance` block (terminal review F34).
 LIVE_CLAUDE_IDLE_KEYS = (
     "claude_live_idle_2026-09-02_herdr0.8.2_wEV-pG",
     "claude_live_idle_2026-09-02_herdr0.8.2_wEV-pQ",
@@ -3629,7 +3631,9 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     orchestrate_src = (
         REPO / "plugins" / "orchestrate" / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
     ).read_text(encoding="utf-8")
+    assert "## [1.3.0] - 2026-09-02" in changelog
     assert "## [1.2.2] - 2026-09-02" in changelog
+    assert "`redeliver` subcommand" in changelog
     assert "selects the last block positionally" in changelog
     assert "`unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`" in changelog
     normalized_changelog = " ".join(changelog.split())

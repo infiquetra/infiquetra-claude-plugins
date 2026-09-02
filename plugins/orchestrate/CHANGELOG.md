@@ -1,5 +1,39 @@
 # Changelog
 
+## [4.2.0] - 2026-09-02
+
+### Changed
+
+- **Run files carry contract `2026-09-02.permission-declared` (#907).** `Unit` gained
+  `permission_declared` in 4.1.0 under an unchanged contract string, so an installed 4.0.1
+  accepted the file and died in a bare `TypeError` instead of the named refusal. An Orchestrate
+  older than 4.2.0 now refuses a run file this version writes, by name, with the update remedy;
+  this version still opens every older run file. The contract string is bound to the `Unit`
+  field set by a test, so the next added field cannot ship without a bump.
+- **The agent-launcher floor is `>=1.3.0` (#907).** That release carries the guarded
+  redelivery door and the shared `should_guard_pane_write` predicate this version calls.
+- **Review dispatch and land resubmission inspect owned panes too (#907).** Every unit those
+  senders reach was prompted by its launch hours or days earlier, so ownership exempts nothing
+  there; the predicate is the launcher's, called with the write half true.
+- **A staged-input stop on one Code Review controller no longer aborts the multi-controller
+  resubmit loop (#907).** It is recorded on that controller, printed with its name, and left
+  pending for the next `land`; the other controllers are still resubmitted.
+- **`roster` and `saga` run against a companion below the floor (#907).** They write nothing.
+  Only the six commands that write a pane, create a session or worktree, or close a tab --
+  `start`, `expand`, `go`, `review-result`, `land`, `clean` -- gate on the floor; the two
+  informational commands refuse only when no companion was ingested at all.
+- **`clean --merged` prints the true keep reason for two more shapes (#907).** A done unit
+  with no branch of its own reads "done, with no branch of its own to measure", not "not
+  done"; a branch git cannot compare reads as a git failure, not "not on the run branch".
+- **`reap` checks `git worktree remove` (#907).** A removal that fails and leaves the directory
+  behind keeps the unit with the reason, so `clean --all` no longer deletes the only record
+  naming that worktree.
+
+### Fixed
+
+- **`SKILL.md` names both permission fields and the run-file reader floor; the README and the
+  command document name the floor-gated commands by bucket (#907).**
+
 ## [4.1.0] - 2026-09-02
 
 ### Changed

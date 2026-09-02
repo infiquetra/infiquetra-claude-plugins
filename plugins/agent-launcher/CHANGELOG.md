@@ -1,8 +1,47 @@
 # Changelog
 
+## [1.3.0] - 2026-09-02
+
+### Added
+
+- **`redeliver` subcommand (#907).** The standalone retry for a staged-input stop. It takes the
+  tab, pane and ownership from the receipt the stop wrote and the task from the same flags
+  `launch` takes; it refuses a receipt written for another task, one that does not record a
+  staged-input stop, or one with no pane; it never runs the wrapper create; and it exits
+  nonzero when the prompt was not observed to be taken. Before, the only visible recovery was
+  a second `launch`, which created a second session over the first owned tab.
+
+### Changed
+
+- **Every pane write after the first is inspected, whatever the ownership (#907).** The write
+  half of the guard predicate now records that the launcher wrote into the session, not which
+  door carried the line. Before, a successful `herdr agent prompt` left it false, so an owned
+  session's two resends -- and every write of a redelivery -- went out with no composer
+  inspection. The rule has one owner, `should_guard_pane_write`, which Orchestrate's later
+  senders call too. The 1.2.2 line below describing the resend rule as "unowned or the launcher
+  already typed into it" described the defective predicate.
+- **`redeliver()` refuses a session that has left idle (#907).** It inherits the resend loop's
+  own precondition: a working, blocked or gone session may already hold the task, so the retry
+  route closes as `prompt_undelivered` for the operator to check instead of risking a second
+  delivery.
+- **Both pane writes carry a timeout, `PANE_WRITE_SECONDS` (#907).** They were the only Herdr
+  calls with no bound. A prompt that times out is a named stop and never falls through to the
+  pane door.
+- **The composer parser is linear on unterminated OSC sequences, and is handed at most
+  `PANE_INSPECT_MAX_CHARS` characters from the tail of the pane (#907).**
+- **`say()` and `send()` return nothing; `pane_input_text()` is removed (#907).** No caller was
+  left that could use either safely.
+
 ## [1.2.2] - 2026-09-02
 
 ### Fixed
+
+- **A broken composer parser is one named stop in both entry modes (#907).** A parser file
+  that raises on import stops `launch` with the exception type and message, standalone and
+  ingested by Orchestrate, instead of escaping as a traceback.
+- **A failed tab close records its note once (#907).** `close_run_session` is the single
+  writer of the close-failure note and tests membership on the whole note, so repeated
+  failures no longer stack copies.
 
 - **The composer row rule is one classification per physical row (#907).** A row
   continues an open block when it is bordered or when it is unbordered and

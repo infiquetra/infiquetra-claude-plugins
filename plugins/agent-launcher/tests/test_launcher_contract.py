@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -142,12 +143,65 @@ def test_orchestrate_rejects_a_launcher_below_its_declared_floor(
         orch._validated_agent_launcher(script)
 
 
-def test_ingested_launcher_resolves_composer_without_a_caller_injected_global() -> None:
-    launcher_source = LAUNCHER.read_text(encoding="utf-8")
-    orchestrate_source = ORCHESTRATE.read_text(encoding="utf-8")
-    assert "_AGENT_LAUNCHER_SOURCE" not in launcher_source
-    assert "_AGENT_LAUNCHER_SOURCE" not in orchestrate_source
-    assert "_load_composer_module.__code__.co_filename" in launcher_source
+def test_ingested_launcher_resolves_composer_from_its_own_compile_path() -> None:
+    """ARCH-12: the caller's compile filename is the loader's only authority for where the
+    sibling composer.py lives. A placeholder produces the named stop naming the wrong
+    directory; the real path loads the parser. Replaces the source-grep assertion."""
+    source = LAUNCHER.read_text(encoding="utf-8")
+    with pytest.raises(SystemExit) as exc_info:
+        _exec_launcher_source(source, "wrong-dir/launcher.py")
+    message = str(exc_info.value)
+    assert "cannot load agent-launcher composer parser" in message
+    assert "file is missing" in message
+    assert "wrong-dir" in message
+    namespace = _exec_launcher_source(source, str(LAUNCHER))
+    assert namespace["COMPOSER_GLYPH_BY_VENDOR"]["claude"] == "❯"
+
+
+def _exec_launcher_source(source: str, compile_filename: str) -> dict[str, Any]:
+    """Exec launcher.py the way Orchestrate ingests it, into a sys.modules-registered module
+    namespace whose dataclasses can resolve their module, and clean the registration up."""
+    probe = ModuleType("_agent_launcher_compile_probe")
+    sys.modules["_agent_launcher_compile_probe"] = probe
+    try:
+        exec(compile(source, compile_filename, "exec"), probe.__dict__)
+    finally:
+        sys.modules.pop("_agent_launcher_compile_probe", None)
+    return probe.__dict__
+
+
+def _composer_module_name_probe() -> str:
+    """The composer module name one fresh process chose for this launcher's parser."""
+    code = (
+        "import importlib.util, sys\n"
+        "spec = importlib.util.spec_from_file_location('probe_launcher', sys.argv[1])\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "sys.modules['probe_launcher'] = module\n"
+        "spec.loader.exec_module(module)\n"
+        "print([n for n in sys.modules if n.startswith('_agent_launcher_composer')][0])\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code, str(LAUNCHER)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def test_composer_module_name_is_a_stable_digest_of_the_resolved_path() -> None:
+    """ARCH-09: the synthetic module name is the documented digest form of the resolved
+    composer path -- identical in every process, where abs(hash(path)) was randomised per
+    process. The digest assertion is the deterministic kill; the two-process equality is
+    the same guarantee observed across a process boundary."""
+    composer_path = (LAUNCHER.parent / "composer.py").resolve()
+    expected = (
+        "_agent_launcher_composer_" + hashlib.sha256(str(composer_path).encode()).hexdigest()[:16]
+    )
+    first = _composer_module_name_probe()
+    second = _composer_module_name_probe()
+    assert first == expected
+    assert first == second
 
 
 @pytest.mark.usefixtures("launcher_on_path")

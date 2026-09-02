@@ -1674,6 +1674,10 @@ def _ingest_agent_launcher() -> bool:
     # ingest would otherwise run that CLI against orchestrate's argv (``wait``,
     # ``clean``, …) and exit. The flag is this module's globals, not the environment.
     globals()["_AGENT_LAUNCHER_INGESTING"] = True
+    # Caller obligation: this compile filename is the ingested launcher's only authority for
+    # where its sibling composer.py lives -- the loader resolves the parser from this frame's
+    # co_filename -- so it must stay the launcher's real path. A placeholder makes every
+    # ingested launch stop with the named wrong-directory message.
     try:
         exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
     except (SystemExit, Exception) as exc:

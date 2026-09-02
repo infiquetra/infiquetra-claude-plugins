@@ -13,6 +13,7 @@ duplicate the canonical ``herdr`` skill.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -28,12 +29,20 @@ from typing import Any
 
 
 def _load_composer_module() -> Any:
-    """Load the sibling parser from this compiled launcher's own source directory."""
+    """Load the sibling parser from this compiled launcher's own source directory.
+
+    Any exception while executing composer.py becomes the same named ``SystemExit`` in both
+    entry modes -- standalone and ingested by Orchestrate -- carrying the exception type and
+    message. The synthetic module name is the digest of the resolved source path (sha256,
+    first 16 hex characters), so it is stable across processes. Identity comparisons on
+    ``ComposerState`` members and ``StagedInputError`` are valid only inside one load: two
+    loads produce distinct classes even from the same file.
+    """
     source = Path(_load_composer_module.__code__.co_filename).resolve()
     path = source.with_name("composer.py")
     if not path.is_file():
         raise SystemExit(f"cannot load agent-launcher composer parser from {path}: file is missing")
-    module_name = f"_agent_launcher_composer_{abs(hash(path))}"
+    module_name = f"_agent_launcher_composer_{hashlib.sha256(str(path).encode()).hexdigest()[:16]}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise SystemExit(f"cannot load agent-launcher composer parser from {path}")
@@ -41,8 +50,10 @@ def _load_composer_module() -> Any:
     sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
-    except (OSError, ImportError, SyntaxError) as exc:
-        raise SystemExit(f"cannot load agent-launcher composer parser from {path}: {exc}") from None
+    except Exception as exc:
+        raise SystemExit(
+            f"cannot load agent-launcher composer parser from {path}: {type(exc).__name__}: {exc}"
+        ) from None
     return module
 
 

@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 PLUGIN_ROOT = ROOT / "plugins" / "agent-launcher"
 ORCHESTRATE_ROOT = ROOT / "plugins" / "orchestrate"
@@ -354,6 +356,82 @@ def test_standalone_launcher_missing_composer_is_a_named_stop(tmp_path: Path) ->
     output = result.stderr + result.stdout
     assert "cannot load agent-launcher composer parser" in output
     assert "file is missing" in output
+    assert "Traceback" not in output
+
+
+BROKEN_COMPOSERS = [
+    ("raise RuntimeError('composer exploded')\n", "RuntimeError: composer exploded"),
+    ("raise ValueError('composer bad value')\n", "ValueError: composer bad value"),
+    (
+        'assert False, "composer contract violated"\n',
+        "AssertionError: composer contract violated",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("broken", "expected_detail"),
+    BROKEN_COMPOSERS,
+    ids=["runtime-error", "value-error", "assertion-error"],
+)
+def test_standalone_launcher_broken_composer_is_a_named_stop(
+    tmp_path: Path, broken: str, expected_detail: str
+) -> None:
+    """ARCH-05: any exception while loading composer.py becomes the named stop carrying the
+    exception type and message, with no traceback, in the standalone entry mode. At the
+    frozen revision the RuntimeError case dies with a traceback."""
+    launcher_install = _install_plugin(
+        tmp_path, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills")
+    )
+    composer = launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py"
+    composer.write_text(broken, encoding="utf-8")
+    script = launcher_install / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    output = result.stderr + result.stdout
+    assert "cannot load agent-launcher composer parser" in output
+    assert expected_detail in output
+    assert "Traceback" not in output
+
+
+@pytest.mark.parametrize(
+    ("broken", "expected_detail"),
+    BROKEN_COMPOSERS,
+    ids=["runtime-error", "value-error", "assertion-error"],
+)
+def test_ingested_launcher_broken_composer_uses_the_same_named_contract(
+    tmp_path: Path, broken: str, expected_detail: str
+) -> None:
+    """ARCH-05 through Orchestrate's ingest door: the loader's named stop, with the
+    exception type, is carried into the deferred unusable message."""
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", "3.2.1", parts=(".claude-plugin", "skills")
+    )
+    launcher_install = _install_plugin(
+        cache, "agent-launcher", "1.2.1", parts=(".claude-plugin", "skills")
+    )
+    composer = launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py"
+    composer.write_text(broken, encoding="utf-8")
+    script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+
+    help_result = _run_installed_orchestrate(script, ["--help"], cwd=tmp_path)
+    assert help_result.returncode == 0, help_result.stderr
+    assert "Traceback" not in help_result.stderr
+
+    roster_result = _run_installed_orchestrate(script, ["roster"], cwd=tmp_path)
+    assert roster_result.returncode != 0
+    output = roster_result.stderr + roster_result.stdout
+    assert "cannot load agent-launcher composer parser" in output
+    assert expected_detail in output
+    assert EXPECTED_REMEDIATION in output
     assert "Traceback" not in output
 
 

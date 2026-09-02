@@ -44,6 +44,9 @@ This section records what I verified on 2026-09-01 against the worktree at `HEAD
 | Prior revision | `git show 2fe7c954` of both scripts and the contract test file | The staged-input branch cleared six fields at `orchestrate.py:2648-2657`; the resend guard read `if used_pane:` at `launcher.py:1412`; the deleted test is at `test_launcher_contract.py:671` |
 | Release surfaces on `origin/main` | `git show origin/main:` of the orchestrate manifest, README and command document | Orchestrate 4.0.1 with three dependencies; README line 96 and `commands/orchestrate.md` line 504 state the floor is unverified |
 | Version pins the release unit must move | `grep` over `tests/` and `plugins/agent-launcher/tests/` | `tests/test_agent_launcher_plugin.py:96,309` and the derived floor at `:120`; cache-directory names at `:164,182,273,291,317,363,389` |
+| Worktree reuse on a retried `go` | Read `make_worktree` in `orchestrate.py` | An existing path prints `worktree already there` and is reused; a retry through `cmd_go` needs no worktree change |
+| Transcript recency without a creation time | Read `transcript_account` at `launcher.py:993` | With `since=None` every transcript for the worktree is admitted; the receipt records no creation time, so a redelivery's preflight has no floor (U6 states the trade) |
+| Tests that pin the number of composer reads | `grep` for `--format` over `plugins/agent-launcher/tests/test_launcher_contract.py` and `tests/test_orchestrate_launch_and_land.py` | Only `test_empty_reused_box_is_prompted_exactly_as_today` (`:619-633`, exactly one ANSI read, unowned Claude) and `test_freshly_created_pane_takes_no_inspection_path` (zero reads, owned); the Orchestrate OpenCode tests count no reads |
 
 I did not capture a live multi-row draft, because staging text in another session's composer is a pane write into a session this planner does not own. The styling assumption inside CORR-01 therefore stays unverified live; the truncation half of the same finding is proven without it.
 
@@ -62,12 +65,12 @@ Grouped by concern; identifiers are stable and never restart.
 
 **Guard placement**
 
-- R5. Every pane write into a session the launcher did not create, and every resend after a first send that typed into the pane, is immediately preceded by an inspection.
+- R5. Every pane write into a session the launcher did not create, every resend after a first send that typed into the pane, and every write of a redelivery into a pane whose staged text stopped an earlier attempt, is immediately preceded by an inspection.
 - R6. The receipt's `input_box_text_chars` has one documented definition that a test binds to the number the code records.
 
 **Orchestrate run state**
 
-- R7. A unit stopped for staged input keeps its session identifiers and receipt in the run record, and a later `go` relaunches it without hand-editing state.
+- R7. A unit stopped for staged input keeps its session identifiers and receipt in the run record, and a later `go` re-prompts the same pane without creating a second session and without hand-editing state.
 - R8. `clean` and `land --clean` report one true reason for every unit they keep, never report `closed` for a tab they did not close, and record a close failure exactly once.
 
 **Companion floor**
@@ -91,13 +94,13 @@ Grouped by concern; identifiers are stable and never restart.
 - KTD1. **One row classification with containment, not borders, as proof of continuation.** A row directly below an open block continues it when it is bordered, or when it is unbordered and indented past the marker column; a blank row, a horizontal rule, a marker row, or a row at or left of the marker column ends the block and separates it. Rationale: both real captures and both live captures are unbordered, so a border requirement (`composer.py:193`) can never fire for Claude or Codex, and the shapes vendors actually draw below a composer are separated by a rule (Claude, live) or a blank spacer (Codex, `LEARNINGS.md:28`). The accepted asymmetry is written down: an unbordered indented row with no separator is read as input, because no capture shows chrome there.
 - KTD2. **`ambiguous_empty` narrows to the footer-after-spacer shape; `adjacent_to_previous` stays.** An empty marker block followed by a blank row and then an indented unbordered row is `unclassifiable`, because that shape is either a Codex footer or a draft with a leading blank line. Trailing blank rows alone read `empty`. Rationale: CORR-05's ordinary shapes regress to `unclassifiable` only because a blank row today neither separates nor settles; the glyph-led adjacency case is mutation-proven and must not move.
 - KTD3. **`input_box_text_chars` is the visible length of what the parser absorbed.** The documents say what the code computes: visible characters after border stripping, rows joined without a separator, a lower bound when the draft contains a blank line, one short per wrapped row boundary. Rationale: the parser positively recognises only unstyled characters, but the operator wants the size of the withheld draft, and computing the unstyled count would report `2` for a thirty-character draft.
-- KTD4. **Resend guard condition is `not session_owned(unit) or used_pane`.** Rationale: ownership says who created the tab; `used_pane` says whether the launcher itself may have left text in the composer. Either half alone is the defect this run already shipped twice.
-- KTD5. **The inspection that authorises a pane write is taken immediately before that write.** Rationale: at `launcher.py:1396` one inspection precedes a picker, a preflight and a send that together can take fifty seconds of declared bounds; a person typing during that window defeats the guard. One extra local pane read per unowned launch is the whole cost.
-- KTD6. **A staged-input stop is a retryable state marked by the receipt, not by clearing identity.** A `PENDING` unit whose `launch_receipt["input_box"]` is `staged` is relaunched by `go`; the `already has tab` skip applies only to units without that marker; the stop message is appended to the note so earlier identifiers survive a relaunch. Rationale: both prior repairs broke one of the two invariants in brief section 4-C; this satisfies both without a new run-file field, which API-05 shows would break every older reader.
+- KTD4. **The write predicate is `not session_owned(unit) or used_pane`, evaluated immediately before every pane write.** Rationale: ownership says who created the tab; `used_pane` says whether the pane is known to hold or to have held text. It is false before the first write of a fresh launch, true after the launcher itself typed into the pane, and true from the start of a redelivery, because the stop that made the redelivery necessary was an inspection that found text. Either half alone is the defect this run already shipped twice, and the predicate is one expression so the first send, the resend and the redelivery cannot drift apart.
+- KTD5. **The inspection that authorises a pane write is taken immediately before that write.** Rationale: at `launcher.py:1396` one inspection precedes a picker, a preflight and a send that together can take fifty seconds of declared bounds; a person typing during that window defeats the guard. On every vendor but OpenCode the repair is a move and the read count stays one; on an unowned OpenCode launch the picker is a write of its own, so that path reads twice, once before the picker and once before the send.
+- KTD6. **A staged-input stop is a retryable state marked by the receipt, and the retry re-prompts the same pane through a launcher entry that never creates.** A `PENDING` unit whose `launch_receipt["input_box"]` is `staged` is redelivered by `go` through a new launcher function `redeliver(unit, backend, *, review_elsewhere)`, which repeats everything `launch()` does after the wrapper create against the pane the unit already records; the `already has tab` skip applies only to units without that marker; the stop message is appended to the note so earlier identifiers survive. Rationale: both prior repairs broke one of the two invariants in brief section 4-C. Calling `launch()` again would run the wrapper create, overwrite `tab_id` from the new receipt and drop the first owned tab off the unit, which is the prior validation artifact's finding REL-03 rebuilt through the retry door. Re-prompting the recorded pane satisfies both invariants without a new run-file field, which API-05 shows would break every older reader.
 - KTD7. **Floor policy is a command-by-state matrix, not a bound-function side effect.** Below floor: the launcher is ingested so read-only commands keep their Herdr reads, and every command that writes a pane, creates a session or worktree, or closes a tab refuses with an update remedy. Missing or unusable: nothing is ingested, and `status` and `check` degrade to liveness-unknown rather than dying. Rationale: my reachability map shows `status`, `check`, `wait`, `settle` and `adopt` all reach `live_agents`, so a naive fail-closed recreates the prior validation's dead-`status` finding; `clean` on a 1.0.0 companion loses evidence, so it cannot be a survivor.
 - KTD8. **Ingest is atomic and the stub roster is test-bound, not derived at runtime.** The module namespace is snapshotted before the exec and restored on any failure; a test compares the roster against the launcher names Orchestrate references. Rationale: the exec-into-globals seam is what lets tests patch `run` and `launch`, so it stays; deriving the roster at runtime would need the failed launcher's names, which is the thing that failed.
 - KTD9. **Run files tolerate unknown unit keys with a named notice.** Rationale: `permission_declared` already breaks every cached older reader; this branch cannot repair old readers, so it stops the next field from repeating the break and states the compatibility floor in the CHANGELOG.
-- KTD10. **Repairs land against the frozen revision; `origin/main` merges after them and before the release commit.** Recorded as Decision 4 for the operator; the plan is written so the alternative order changes only the position of U11.
+- KTD10. **Repairs land against the frozen revision; `origin/main` merges after them and before the release commit.** Recorded as Decision 4 for the operator. The alternative order is not free: it moves U11 first, and every unit's evidence-before-edit must then be re-run on the merged tree with each cited line re-resolved by symbol, because every probe and mutation in the artifact was measured against `dd3593ab` (Decision 4's cost table is the accurate statement of that cost).
 - KTD11. **Pre-existing findings outside the seven children are recorded with proposed custody, not repaired, unless the repair is one line inside a function a unit already rewrites.** Applied to ARCH-08 and ARCH-09 (repaired) and to ARCH-11, SEC-06, SEC-07, CORR-07, TEST-14 (follow-ups).
 
 ---
@@ -119,10 +122,16 @@ One function classifies each physical row of the viewport, in this precedence, a
 
 Paired borders: when a leading border glyph was consumed, at most one trailing border glyph is removed from the right after whitespace trimming.
 
-### Guard placement in `launch()` (U3, U4)
+### Guard placement in `launch()` and `redeliver()` (U3, U4, U6)
+
+Both entries share one delivery helper. `guard?` is the KTD4 predicate `not session_owned(unit) or used_pane`; `used_pane` starts false on a fresh launch and true on a redelivery, and `send` sets it when it types into the pane.
 
 ```
-identity read --> [opencode: guard --> picker] --> preflight --> guard --> send --> [idle? guard-if-unowned-or-used-pane --> resend]
+launch: create --> identity read if unowned --> [opencode: guard? --> picker] --> preflight --> guard? --> send --> [idle? guard? --> resend]
+```
+
+```
+redeliver: await ready --> identity read if unowned --> [opencode: guard? --> picker] --> preflight --> guard? --> send --> [idle? guard? --> resend]
 ```
 
 ### The floor matrix (U8)
@@ -142,9 +151,9 @@ stateDiagram-v2
     [*] --> PENDING
     PENDING --> RUNNING: launch delivered
     PENDING --> PENDING_staged: StagedInputError (identifiers and receipt kept, note appended)
-    PENDING_staged --> RUNNING: go relaunches, composer now empty
-    PENDING_staged --> PENDING_staged: go relaunches, composer still holds text
-    PENDING_staged --> reaped: clean (tab reported left open, not closed)
+    PENDING_staged --> RUNNING: go redelivers into the same pane, composer now empty
+    PENDING_staged --> PENDING_staged: go redelivers, composer still holds text (identifiers kept, note unchanged when the message repeats)
+    PENDING_staged --> reaped: clean (owned tab closed by Orchestrate; unowned tab never closed, reported left open)
 ```
 
 ---
@@ -250,7 +259,7 @@ Restore the pane-typing half of the resend condition and bind both directions.
 
 **Root cause:** `launcher.py:1419` reads `if not session_owned(unit):` where `2fe7c954:launcher.py:1412` read `if used_pane:`; `used_pane` is assigned at `launcher.py:1408` and `1421` and never read.
 
-**Invariant, both sides:** Ownership is about who created the tab, never who last typed; any write after a first send that typed into the pane re-inspects. The direction not being fixed: an owned session whose first send never touched the pane is not inspected on resend, which is the launch-time rule at `launcher.py:1394` applied consistently.
+**Invariant, both sides:** Ownership is about who created the tab, never who last typed; any write after a first send that typed into the pane re-inspects. The direction not being fixed: an owned session whose first send never touched the pane is not inspected on resend, and makes zero guard calls in the whole launch, which is the launch-time rule at `launcher.py:1394` applied consistently.
 
 **Evidence before edit:** Rebuild the artifact's `probe_resend.py` as a test: owned tab (receipt tab absent from the pre-existing set), vendor whose `herdr agent prompt` is refused so `say` types into the pane, `took_the_task` false, `agent_row` idle, pane read returning a bordered composer with text. Assert one guard call and a `StagedInputError` on the resend. It fails at the frozen revision with three pane writes and zero guard calls.
 
@@ -265,52 +274,53 @@ Restore the pane-typing half of the resend condition and bind both directions.
 **Test scenarios:**
 
 - Happy path: owned, first send typed into the pane, second send guarded and stopped when the composer holds text.
-- Direction not fixed: owned, first send through agent prompt, second send unguarded (guard call count one, from nowhere; the loop makes zero calls).
+- Direction not fixed: owned, first send through agent prompt, second send unguarded; guard call count zero in total, none before the first send and none from the loop. At the frozen revision this scenario already makes zero calls, and it stays at zero under KTD4; the test exists so the `if True:` mutant has something to fail.
+- Count on the fixed side: owned, first send typed into the pane, two resends while idle; guard calls zero before the first send and exactly one per resend.
 - Unowned, first send through agent prompt, second send guarded (existing test).
-- Failure: the guard raising on the resend leaves the unit `PENDING` with the identifiers intact (this is the `launch()`-side contract U6 relies on).
+- Failure: the guard raising on the resend propagates `StagedInputError` out of `launch()` with `tab_id`, `pane_id`, `agent_name` and `owned` intact and `launch_receipt["input_box"] == "staged"`; mapping that exception to `PENDING` is `cmd_go`'s side and is proven in U6.
 
-**Mutation or behavioural proof:** Confirm killed: revert to `if used_pane:` (unowned-after-agent-prompt test fails), revert to `if not session_owned(unit):` (owned-typed test fails), replace with `if True:` (owned-agent-prompt test fails), delete the guard (all three fail).
+**Mutation or behavioural proof:** Confirm killed: revert to `if used_pane:` (the unowned-after-agent-prompt test fails), revert to `if not session_owned(unit):` (the owned-typed test fails), replace with `if True:` (the owned-agent-prompt test fails, because the loop now makes one call where the test expects zero), delete the guard (the three guarded scenarios fail).
 
-**Verification:** Three resend tests pass; the `if True:` survivor from the artifact is dead.
+**Verification:** Every resend scenario above has a passing test; the `if True:` survivor from the artifact is dead because the zero-call test now exists.
 
-### U4. Inspect immediately before the first pane write on an unowned session
+### U4. Inspect immediately before each pane write on an unowned session
 
-Move the authorising inspection next to the write it authorises.
+Move the authorising inspection next to the write it authorises, one read per write.
 
-**Goal:** On an unowned session, the pane read that permits the first send is taken after the preflight, immediately before the send; for OpenCode, the picker write keeps its own preceding inspection.
+**Goal:** On an unowned session, the pane read that permits a write is taken immediately before that write: after the preflight for the send, and before the picker for OpenCode; an owned fresh session is still never inspected before its first send.
 
 **Findings closed:** REL-08, with SEC-09 as a duplicate.
 
 **Requirements:** R5.
 
-**Dependencies:** U3 (same function, same test harness).
+**Dependencies:** U3 (same predicate, same function, same harness).
 
-**Files:** `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` (`launch()` at `launcher.py:1390-1408`), `plugins/agent-launcher/tests/test_launcher_contract.py`.
+**Files:** `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` (`launch()` at `launcher.py:1390-1408`), `plugins/agent-launcher/tests/test_launcher_contract.py` (including the rewrite of `test_opencode_guard_reads_before_the_picker_types` at `:926`).
 
 **Root cause:** One inspection at `launcher.py:1396` precedes the OpenCode picker, `verify_unit_preflight` and the send; the declared bounds between them sum to about fifty seconds.
 
-**Invariant, both sides:** Every pane write on an unowned session is immediately preceded by an inspection; an owned session is not inspected before its first send (unchanged).
+**Invariant, both sides:** Every pane write on an unowned session is immediately preceded by an inspection, so on that path the read count equals the write count: one on Claude and every other vendor, two on OpenCode. An owned fresh session is inspected zero times before its first send (unchanged).
 
-**Evidence before edit:** Write a test whose stubbed pane read returns an empty composer on the first read and a staged draft on the second, with a preflight stub that records ordering; assert the send is refused. At the frozen revision it is written, because only the first read is consulted.
+**Evidence before edit:** Two tests, both failing at the frozen revision. Ordering, Claude path: `_prepare_guard_launch` with `verify_unit_preflight` wrapped, not replaced, so it records `preflight` into the same order list the guard stub records `guard` into; assert `["preflight", "guard"]`. At the frozen revision the order is `["guard", "preflight"]`. Second read, OpenCode path: a `run` stub whose ANSI pane read returns an empty composer on the first read and a staged draft on the second, `drive_opencode_variant_selection` stubbed, `send` stubbed; assert `StagedInputError` and no send. At the frozen revision there is one read, it is empty, and the send is made. The empty-then-staged sequence reproduces only on the OpenCode path, because only there does the repair add a read; on the Claude path the repair is a move and the read count stays one, so a sequence stub there sees one empty read before and after the edit.
 
-**Approach:** Keep the identity read where it is; keep the pre-picker inspection under the OpenCode branch; add the inspection immediately before the first `send`. Document in the `launch()` docstring that two reads are possible and why.
+**Approach:** Keep the identity read where it is. Under the OpenCode branch keep the inspection immediately before the picker. Remove the inspection at `launcher.py:1396` and place it immediately before the first `send`, after `verify_unit_preflight`, under the KTD4 predicate U3 restored for the loop (`used_pane` is false before the first send of a fresh launch, so this reads `not session_owned(unit)` there). Document in the `launch()` docstring that an unowned OpenCode launch reads twice and why. Rewrite the assertion in `test_opencode_guard_reads_before_the_picker_types` to `["guard", "picker", "guard"]` in this unit; its name still holds.
 
-**Patterns to follow:** `_make_fake_run` at `test_launcher_contract.py:424`; extend it with a sequence of pane dumps.
+**Patterns to follow:** `_make_fake_run` at `test_launcher_contract.py:424`, extended with a sequence of pane dumps for the OpenCode test; the order-list shape of `test_opencode_guard_reads_before_the_picker_types`.
 
-**Prohibited overreach:** No re-inspection after `took_the_task` reports the task was taken; no lock; no staleness timestamp in the receipt; no change to the OpenCode picker.
+**Prohibited overreach:** No re-inspection after `took_the_task` reports the task was taken; no lock; no staleness timestamp in the receipt; no change to the OpenCode picker; no inspection on the owned fresh path; no second read on any vendor but OpenCode.
 
-**Counter-cases that must stay green:** Every existing `_prepare_guard_launch` test (one read, one send, same receipt values).
+**Counter-cases that must stay green:** `test_empty_reused_box_is_prompted_exactly_as_today` (exactly one ANSI read on the unowned Claude path), `test_freshly_created_pane_takes_no_inspection_path` (zero ANSI reads when owned), and every other `_prepare_guard_launch` test (one read, one send, same receipt values).
 
 **Test scenarios:**
 
-- Happy path: empty on both reads, one send, receipt `empty`.
-- Failure: empty then staged, send refused, receipt `staged` with the count, note appended.
-- OpenCode: inspection before the picker and before the send, both `unsupported_vendor`, picker and send proceed (documented fail-open).
+- Happy path: unowned Claude, one read taken after the preflight, one send, receipt `empty`.
+- Failure: unowned OpenCode, empty then staged, send refused, receipt `staged` with the count, note appended.
+- Ordering: `preflight` then `guard` on Claude; `guard`, `picker`, `guard` on OpenCode, with the two OpenCode inspections both recorded and the picker between them.
 - Owned session: zero inspections before the first send.
 
-**Mutation or behavioural proof:** Remove the pre-send inspection and confirm the empty-then-staged test fails; remove the pre-picker inspection and confirm the OpenCode ordering test fails.
+**Mutation or behavioural proof:** Move the send inspection back above the preflight and confirm the Claude ordering test fails; remove the pre-send inspection and confirm the OpenCode empty-then-staged test fails; remove the pre-picker inspection and confirm the OpenCode ordering test fails; drop the ownership half of the predicate so an owned fresh session is inspected, and confirm `test_freshly_created_pane_takes_no_inspection_path` fails.
 
-**Verification:** Guard-call ordering assertions pass; no existing receipt assertion changes.
+**Verification:** Both ordering assertions pass; the Claude read count stays one; no existing receipt assertion changes.
 
 ### U5. Launcher load seam: one named failure contract and a stable module name
 
@@ -350,45 +360,49 @@ Make the standalone launcher fail the same way Orchestrate does when `composer.p
 
 **Verification:** Both subprocess tests pass; the source-grep assertion is gone.
 
-### U6. Staged-input stop is retryable and keeps its evidence
+### U6. Staged-input stop is retryable through the same pane and keeps its evidence
 
-Satisfy both invariants of brief section 4-C at once and give the operator a runbook.
+Satisfy both invariants of brief section 4-C at once with one retry mechanism that never creates a second session, and give the operator a runbook.
 
-**Goal:** After a staged-input stop the unit keeps `tab_id`, `pane_id`, `agent_name`, `owned`, `reused` and the receipt; a later `go` relaunches it; the earlier identifiers survive in the note; the orchestrate skill tells the operator what to do.
+**Goal:** After a staged-input stop the unit keeps `tab_id`, `pane_id`, `agent_name`, `owned`, `reused` and the receipt; a later `go` re-prompts the same pane through a launcher entry that never runs the wrapper create; the earlier stop message survives in the note; the orchestrate skill tells the operator what to do.
 
 **Findings closed:** REL-01, REL-12, with API-01, CORR-03 and REL-10 as duplicates of REL-01.
 
-**Requirements:** R7.
+**Requirements:** R7, and R5 for the redelivery's first write.
 
-**Dependencies:** none within the branch; sequenced first among the Orchestrate units.
+**Dependencies:** U3 and U4. The post-create sequence they finalise is the one this unit moves into a shared helper, so their tests are the regression net for the move.
 
-**Files:** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` (`cmd_go` at `orchestrate.py:2669-2710`), `tests/test_orchestrate_launch_and_land.py`, `plugins/orchestrate/skills/orchestrate/SKILL.md`.
+**Files:** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` (`cmd_go` at `orchestrate.py:2669-2710`; the stub roster at `:1687-1715` gains `redeliver`), `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` (`launch()` at `launcher.py:1350-1433` split into the create step and a delivery helper; new `redeliver`; the `withheld` note line at `launcher.py:815`), `tests/test_orchestrate_launch_and_land.py`, `plugins/agent-launcher/tests/test_launcher_contract.py`, `plugins/orchestrate/skills/orchestrate/SKILL.md`.
 
-**Root cause:** The `except StagedInputError` branch at `orchestrate.py:2697-2700` keeps the identifiers, and the loop guard at `orchestrate.py:2681-2683` treats any `tab_id` as already launched; nothing in the file assigns `tab_id` back.
+**Root cause:** The `except StagedInputError` branch at `orchestrate.py:2697-2700` keeps the identifiers, and the loop guard at `orchestrate.py:2681-2683` treats any `tab_id` as already launched; nothing in the file assigns `tab_id` back. The only launcher entry that delivers a task is `launch()`, and it always runs the wrapper create first (`launcher.py:1359`) and overwrites `tab_id` from the new receipt (`launcher.py:1385`), so no retry through it can keep the first tab. That is why the plan's first draft, which forbade touching the launcher, could not prove invariant (1) after a retry: the boundary was wrong, and this unit redraws it.
 
-**Invariant, both sides:** (1) A session the wrapper genuinely created stays reachable after the stop: identifiers and receipt remain on the unit and the stop message with the pane id is appended, never overwritten. (2) The unit is relaunchable by `go` once the composer is cleared, without editing `.orchestrate/run.json`. The prior validation artifact `docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` finding REL-03 is invariant (1); this artifact's REL-01 is invariant (2).
+**Invariant, both sides:** (1) A session the wrapper genuinely created stays reachable after the stop and after every retry: the unit's `tab_id` is the tab the wrapper created, the receipt stays on the unit, the stop message with the pane id is appended and never overwritten, and no retry creates a second session. (2) The unit is relaunchable by `go` once the composer is cleared, without editing `.orchestrate/run.json`, and the retry prompts the pane the operator just cleared. The prior validation artifact `docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` finding REL-03 is invariant (1); this artifact's REL-01 is invariant (2). A retry that runs `launch()` again satisfies (2) and breaks (1) through a different door.
 
-**Evidence before edit:** Rewrite `test_staged_input_stop_returns_the_unit_to_retryable_pending` at `tests/test_orchestrate_launch_and_land.py:426` to drive `cmd_go` twice: first `launch` records identity then raises, second `launch` succeeds; assert two launch calls, status `running` after the second, and the first stop message still in the note. At the frozen revision it prints `already has tab` and makes one launch call.
+**Evidence before edit:** Rewrite `test_staged_input_stop_returns_the_unit_to_retryable_pending` at `tests/test_orchestrate_launch_and_land.py:426` to drive the real `launch()` with `run` stubbed at the Herdr boundary (the `_make_fake_run` shape from `test_launcher_contract.py:424`, recording every command, with `launcher` stubbed to `agents` and `await_ready` and `took_the_task` stubbed true): the wrapper create returns tab `w1:t1` and pane `w1:p1`, `herdr tab list` already holds `w1:t1` so the tab is unowned, and the ANSI pane read returns a staged Claude composer on the first `go` and an empty one on the second. Assert after the first `go`: status `PENDING`, `tab_id == "w1:t1"`, exactly one wrapper create recorded, the note contains the stop message naming `w1:p1`. Assert after the second `go`: status `RUNNING`, `tab_id` still `w1:t1`, still exactly one wrapper create, one `herdr agent prompt` recorded, the first stop message still in the note. At the frozen revision the second `go` prints `already has tab` and records no prompt.
 
-**Approach:** Per KTD6, the loop's `already has tab` skip excludes a `PENDING` unit whose receipt records `input_box == "staged"`; the stop branch appends the message with `append_unit_note` instead of assigning `unit.note`. Add a runbook section to the orchestrate skill: what the stop means, that the unit is `PENDING` with its tab recorded, the two exits (clear the composer and rerun `go`; or close the tab yourself and run `clean`), and that `clean` reports an unowned tab as left open.
+**Approach:** In the launcher, split `launch()` where the wrapper receipt has been recorded: the create step stays in `launch()`, and everything from `await_ready` to the resend loop moves into one helper `_deliver(unit, pane_id, backend, *, review_elsewhere, argv, since, used_pane)` that `launch()` calls with `used_pane=False` and `since=created_at`. Add `redeliver(unit, backend="inline", *, review_elsewhere=False)`: it requires `unit.pane_id` (a named `SystemExit` otherwise), never calls the wrapper, and calls `_deliver` with `argv=agent_argv(unit)` (the same function of the unit the create used), `since=None` and `used_pane=True`, so the KTD4 predicate inspects the first write whatever the ownership. The helper reaches every collaborator through module globals (`guard_pane_before_write`, `verify_unit_preflight`, `send`, `took_the_task`, `agent_row`, `await_ready`) so every existing stub still applies. In `cmd_go`, define the staged marker as status `PENDING`, a `pane_id`, and `launch_receipt["input_box"] == "staged"`; the `already has tab` skip excludes a marked unit; a marked unit goes through `redeliver` with a printed line naming the pane, everything else through `launch`; `make_worktree` already reuses an existing path. The stop branch appends the message with `append_unit_note` when it is not already a substring of the note (the message itself contains `; `, so a split on the separator can never match it), and the guard's own `staged input withheld` line at `launcher.py:815` is appended under the same substring test. Add `redeliver = _agent_launcher_required` to the stub roster. Add a runbook section to the orchestrate skill: what the stop means, that the unit is `PENDING` with its tab recorded, the two exits (clear the composer and rerun `go`, which re-prompts that same pane and creates nothing; or give the unit up, where `clean` closes a tab Orchestrate owns and reports a tab it does not own as left open), and that `already has tab` never applies to a staged unit.
 
-**Patterns to follow:** `_write_run` and `_unit` at `tests/test_orchestrate_launch_and_land.py:177,193`; the runbook prose shape of the existing floor paragraph at `SKILL.md:78-89`.
+**Redelivery trade, stated:** the receipt records no creation time, so the redelivery's preflight passes `since=None` and the transcript fallback of the account check has no recency floor. This cannot turn a true mismatch into a confirmation: the first attempt's preflight ran with the floor against the same pane, the statusline stays the primary evidence, and a session does not change account between attempts. The OpenCode picker is repeated on redelivery in the same way `send` already repeats the `setup` lines on every resend; a repeated selection of the same variant is untested live and sits with SEC-06 and SEC-07's custody.
 
-**Prohibited overreach:** No new `Unit` field, no new status value, no `requeue` subcommand, no change to `Run.eligible()`, no change to the launcher.
+**Patterns to follow:** `_make_fake_run` and `_prepare_guard_launch` at `test_launcher_contract.py:424,446` for Herdr-boundary stubs; `_write_run` and `_unit` at `tests/test_orchestrate_launch_and_land.py:177,193`; the runbook prose shape of the existing floor paragraph at `SKILL.md:78-89`.
 
-**Counter-cases that must stay green:** The `already has tab` skip still applies to a `PENDING` unit carrying a tab without the staged marker (write this test if it does not exist); `test_cmd_go_marks_unit_account_mismatch_on_verified_mismatch` in `tests/test_orchestrate_account.py`; every test in `TestExpansionAndCentralLauncher`.
+**Prohibited overreach:** No change to the create step, to `record_wrapper_identity`, to `send`, `say`, `session_owned`, the composer classification, or the resend predicate U3 restored; no second create under any branch of `cmd_go`; no closing of any tab from `cmd_go`; no new `Unit` field, no new status value, no `requeue` subcommand, no change to `Run.eligible()`; no new receipt key.
+
+**Counter-cases that must stay green:** every U3 and U4 test, unchanged (the move must not relocate a guard or add a read); `test_freshly_created_pane_takes_no_inspection_path`; the `already has tab` skip still applies to a `PENDING` unit carrying a tab without the staged marker (write this test if it does not exist); `test_cmd_go_marks_unit_account_mismatch_on_verified_mismatch` in `tests/test_orchestrate_account.py`; every test in `TestExpansionAndCentralLauncher`; every test in `TestOpenCodeLaunchAndVariantRecipe`, which drive the real `launch()` through Orchestrate.
 
 **Test scenarios:**
 
-- Happy path: stop then relaunch, two launch calls, running.
-- Idempotent stop: stop twice, the note carries one copy of each distinct stop message.
-- Direction not fixed: a `PENDING` unit with a tab and no staged marker is skipped with `already has tab`.
-- Evidence: after the relaunch, the note still names the first pane id.
-- Runbook: a documentation test that the orchestrate skill contains the staged-input recovery section and the `already has tab` sentence explains the staged case.
+- Happy path, unowned: the evidence test above; one create, same tab, `RUNNING` after the second `go`.
+- Happy path, owned: `herdr tab list` empty before the create so `w1:t1` is owned; `herdr agent prompt` refused so the first send types into the pane; the row stays idle; the resend guard from U3 finds text and stops. Second `go`: composer empty, one create in total, `tab_id` still `w1:t1`, `RUNNING`.
+- Repeated stop: the composer still holds text on the second `go`; the unit stays `PENDING`, keeps its identifiers, the note gains nothing when the message is identical and gains one line when the count differs.
+- Direction not fixed: a `PENDING` unit with a tab and no staged marker is skipped with `already has tab`; a fresh `PENDING` unit without a tab goes through `launch`, never `redeliver`.
+- Launcher level, `redeliver`: records no wrapper create and leaves `tab_id` unchanged; inspects before the first write on an owned unit, so a still-staged pane raises `StagedInputError` with no send; with an empty pane sends once and sets `RUNNING` and `prompt_delivered`; without a `pane_id` raises the named stop.
+- Evidence: after the relaunch, the note still names the first pane id and carries the `withheld` line once.
+- Runbook: a documentation test that the orchestrate skill contains the staged-input recovery section, says in plain words that the retry prompts the same pane and creates no session, and states the owned-versus-unowned `clean` outcome.
 
-**Mutation or behavioural proof:** Restore identity clearing from `2fe7c954` and confirm the evidence test fails; restore the unconditional skip and confirm the retry test fails.
+**Mutation or behavioural proof:** Confirm killed: restore identity clearing from `2fe7c954` (the first-`go` assertions on `tab_id` fail); restore the unconditional skip (the second-`go` assertions fail); make `cmd_go` call `launch` for a marked unit (the one-create assertion fails in both happy paths); make `redeliver` seed `used_pane=False` (the owned still-staged launcher test sends instead of stopping); make `redeliver` call the wrapper (the launcher-level no-create test fails); replace the substring membership with a `split("; ")` test (the repeated-stop test fails).
 
-**Verification:** Both invariants have a passing test; the runbook exists.
+**Verification:** Both invariants have a passing test at the Orchestrate level with the real create path; `redeliver` has its own launcher-level tests; the runbook exists; every U3 and U4 test is unchanged and green.
 
 ### U7. Cleanup reporting: one dedup owner, a reason for every keep, no false `closed`
 
@@ -425,7 +439,7 @@ Make `clean` and `land --clean` truthful and drive the real close function in te
 - Edge: unowned tab, no Herdr call, `left open (not owned): <unit> tab <id>`, worktree handled per the merged rule, run state retained under `--all`.
 - Reasons: one unit per keep cause, each printed with its own reason and none under the aggregate sentence.
 
-**Mutation or behavioural proof:** Delete the dedup guard in the surviving owner and confirm the `; ` test fails; make `reap` treat `None` as closed again and confirm the unowned test fails.
+**Mutation or behavioural proof:** Delete the dedup guard in the surviving owner and confirm the `; ` test fails; make `reap` treat `None` as closed again and confirm the unowned test fails; remove the `session_owned` check at the top of `close_run_session` and confirm the unowned test's no-Herdr-call assertion fails.
 
 **Verification:** No test stubs `close_run_session`; the L4 survivor from the artifact is dead.
 
@@ -465,7 +479,7 @@ Replace the five-call-site gate with the KTD7 matrix and give each companion fau
 - Floor parsing: a caret range and a bare version in the manifest each exit with the named message.
 - Messages: below floor contains `update` and does not contain `not found`; missing contains `install`; unusable contains the exception type.
 
-**Mutation or behavioural proof:** Confirm killed: O5 (return `False` on floor failure — `status` degrades where it should run), O16 and O17 (first-match and lexical selection), O18 (delete the `CLAUDE_PLUGIN_ROOT` branch), O21 (drop the `AGENT_LAUNCHER_ROOT` exit), O3 (`re.search`), and removing any one command from the gated set.
+**Mutation or behavioural proof:** Confirm killed: O5 (return `False` on floor failure — `status` degrades where it should run), O16 and O17 (first-match and lexical selection), O18 (delete the `CLAUDE_PLUGIN_ROOT` branch), O21 (drop the `AGENT_LAUNCHER_ROOT` exit), O3 (`re.search`), removing any one command from the gated set, and adding `status` or `check` to the gated set (the direction-not-fixed test fails).
 
 **Verification:** The matrix passes; the three surviving mutants named in the artifact are dead; the skill paragraph and the test agree.
 
@@ -489,7 +503,7 @@ Close the remaining seam findings inside the function U8 already touches.
 
 **Evidence before edit:** Append a division by zero to a copied launcher, import through the installed layout, and assert `run` is the fallback and no launcher name is live; at the frozen revision eight names are live. Run `--help` and assert the description is Orchestrate's; at the frozen revision it is the launcher's. Write a run file with an unknown key and assert a named notice; at the frozen revision it is a `TypeError`.
 
-**Approach:** Snapshot the module namespace before the exec and restore it on failure; save and restore `__doc__` around a successful exec. Add a test that walks both scripts with `ast` (the reviewer's method) and asserts every launcher-provided name Orchestrate references is in the roster. Replace the five integer indexes with one helper that names the layout. Make `read_unit` drop unknown keys with a one-line notice naming the key and the writing version, and state in the CHANGELOG that run files written by this release need this release or later.
+**Approach:** Snapshot the module namespace before the exec and restore it on failure; save and restore `__doc__` around a successful exec. Add a test that walks both scripts with `ast` (the reviewer's method) and asserts every launcher-provided name Orchestrate references is in the roster. Replace the five integer indexes with one helper that names the layout. Make `read_unit` drop unknown keys with a one-line notice naming the unit, the key and the reading Orchestrate version, taken from Orchestrate's own manifest (the file `_declared_agent_launcher_floor` already reads); nothing about the writer is known or recorded, and no version is written into the run file. State in the CHANGELOG that run files written by this release need this release or later.
 
 **Patterns to follow:** `test_orchestrate_ingests_this_script` in the plugin test module for the ingest shape.
 
@@ -503,7 +517,7 @@ Close the remaining seam findings inside the function U8 already touches.
 - Happy path: `--help` description equals Orchestrate's own docstring after a successful ingest.
 - Roster: removing any roster line fails the binding test.
 - Layout: the helper resolves both the repository and the installed-cache layout.
-- Run file: an unknown key loads with a notice; a known key set loads silently.
+- Run file: an unknown key loads with a notice that names the unit, the key and the reading version; a known key set loads silently; a load-and-save round trip writes no version key.
 
 **Mutation or behavioural proof:** Delete the snapshot restore and confirm the mid-file test fails; delete `tab_close_failure = _agent_launcher_required` and confirm the roster test fails (the O13 survivor).
 
@@ -535,7 +549,7 @@ Extend the composer inspection to the two Orchestrate dispatch paths.
 
 **Test scenarios:** unowned with draft refuses; unowned empty sends; owned sends without a read; adopted unit (no receipt) is treated as unowned.
 
-**Mutation or behavioural proof:** Remove the inspection and confirm the unowned-draft test fails.
+**Mutation or behavioural proof:** Remove the inspection and confirm the unowned-draft test fails; inspect regardless of ownership and confirm the owned-sends-without-a-read test fails.
 
 **Verification:** Both dispatch paths are covered; no owned-worker test gains a pane read.
 
@@ -641,9 +655,9 @@ U7 --> U8 --> U9 --> U10 --> U11 --> U12 --> U13 --> U14
 | U1 | — | composer only |
 | U2 | U1 | the count depends on the absorbed block |
 | U3 | — | serial only; same test module as U2 |
-| U4 | U3 | same function and harness |
+| U4 | U3 | same predicate, same function, same harness |
 | U5 | — | serial only; edits `launcher.py` after U4 |
-| U6 | — | first Orchestrate unit |
+| U6 | U3, U4 | moves the post-create sequence they finalise into the shared delivery helper; first Orchestrate unit |
 | U7 | U6 | same file; U6 makes a borrowed tab reach cleanup |
 | U8 | U7 | same file; matrix tests run the final `clean` |
 | U9 | U8 | same function |
@@ -653,7 +667,7 @@ U7 --> U8 --> U9 --> U10 --> U11 --> U12 --> U13 --> U14
 | U13 | U11, U8 | files exist only on the merged tree; only on Decision 2 yes |
 | U14 | all | release once, then the gate |
 
-Real independence: U1, U3, U6 and U8 touch disjoint regions and could be built in any order; the serial order above exists so that each file is edited by one unit at a time and each unit's evidence-before-edit runs on a tree that contains only earlier units.
+Real independence is narrower than the region map suggests. U1 and U3 touch disjoint files and could be built in either order; nothing else could. U6 needs U3 and U4's final `launch()`; U8's matrix test exercises the final `clean` from U7 and the staged-input `go` path from U6; U9 rewrites the function U8 gates. The serial order is normative: a worker follows the dependency table, not the region map.
 
 ---
 
@@ -741,6 +755,8 @@ The plan does not assume an answer to any of these. The worker does not resolve 
 | The merge moves line numbers cited here | Every citation is paired with a symbol name; the worker re-resolves by symbol |
 | The gate goes red on the bump guard | U14 commits before the gate, as the repository `CLAUDE.md` requires |
 | A second repair-review loop is improvised after the terminal review | R16 and the topology: the run stops on a non-accepting review |
+| Redelivery repeats the OpenCode picker on a session that already holds the variant | Untested live and recorded as such in U6; the picker is a setup step and `send` already repeats `setup` lines on every resend; SEC-06 and SEC-07 hold custody of the picker's composer interaction |
+| Moving the post-create sequence into a shared helper relocates a guard or a read | U3 and U4's tests stub collaborators by module name and count reads and guard calls; U6 lists them as counter-cases that must pass unchanged |
 
 ---
 
@@ -760,7 +776,7 @@ Totals: 60 repair rows across fourteen units, 23 duplicates, 5 pre-existing foll
 | 6 | `DOCC-01` | P1 | no | `SKILL.md:41` | `repair-unit:U2` | Upheld by re-execution: `│ ❯ ok<styled remainder> │` classifies `staged` with text length 30 while only `ok` is unstyled; `launcher.py:814` records `len(staged)` of the visible text. U2 pins one definition and rewrites `SKILL.md:41` and `README.md:34-36` to it. |
 | 7 | `DOCC-04` | P1 | no | `orchestrate.md:503` | `repair-unit:U13` | Upheld by `git show origin/main:plugins/orchestrate/README.md` line 96 and `commands/orchestrate.md` line 504, both read on 2026-09-01; the branch's README has no floor paragraph (grep returns nothing). U13 is gated on Decision 2; if the operator declines, this row becomes `out-of-scope-followup` with custody proposed as a docs issue against the orchestrate plugin. |
 | 8 | `DOCC-06` | P1 | yes | `LEARNINGS.md:62` | `repair-unit:U12` | Upheld at HEAD: `LEARNINGS.md:59`, `LEARNINGS.md:62` and `DECISIONS.md:47` still cite the 43-pane harness; the checked-in fixture holds two entries. U12 records the transparent residual the brief prescribes. |
-| 9 | `REL-01` | P1 | no | `orchestrate.py:2697` | `repair-unit:U6` | Upheld: the probe design (two `cmd_go` calls, first `launch` records identity then raises `StagedInputError`, second succeeds) is the reproducer U6 writes first. `2fe7c954:orchestrate.py:2648-2657` cleared six identity fields; the frozen revision clears none; `tests/test_orchestrate_launch_and_land.py:426` never attempts the retry. U6 satisfies both invariants in brief section 4-C. |
+| 9 | `REL-01` | P1 | no | `orchestrate.py:2697` | `repair-unit:U6` | Upheld: `2fe7c954:orchestrate.py:2648-2657` cleared six identity fields; the frozen revision clears none; `tests/test_orchestrate_launch_and_land.py:426` never attempts the retry. U6 rebuilds the two-`go` probe with `run` stubbed at the Herdr boundary so the wrapper create is real and counted, and satisfies both invariants of brief section 4-C by re-prompting the recorded pane through a new launcher entry rather than a second `launch()`. |
 | 10 | `SEC-01` | P1 | no | `launcher.py:1419` | `repair-unit:U3` | Upheld by reading `launcher.py:1419` (`if not session_owned(unit):`) against `2fe7c954:launcher.py:1412` (`if used_pane:`), and `used_pane` is assigned at `launcher.py:1408` and `1421` and never read. The artifact's end-to-end probe (three unguarded writes, zero guard calls, owned=True) is the reproducer U3 rebuilds as a test before editing. |
 | 11 | `SEC-02` | P1 | yes | `orchestrate.py:1387` | `repair-unit:U10` | Upheld by reading `orchestrate.py:1387` and `:1492`: both default senders call `say` with no inspection, and `guard_pane_before_write` has no caller in `orchestrate.py`. Marked pre-existing by the reviewer. U10 is gated on Decision 1; if declined, this row becomes `pre-existing-followup` with custody proposed as a new issue. |
 | 12 | `SEC-03` | P1 | no | `orchestrate.py:1667` | `repair-unit:U8` | Upheld by reading `orchestrate.py:1667-1684`: the floor failure is recorded and the stale launcher is still executed into globals, and only five commands (`orchestrate.py:2257,2366,2383,2560,2670`) call `assert_agent_launcher_available`. `review-result` and `land` reach `say` (my reachability map). U8 gates every pane-writing, creating, or closing command. |
@@ -811,8 +827,8 @@ Totals: 60 repair rows across fourteen units, 23 duplicates, 5 pre-existing foll
 | 57 | `TEST-05` | P2 | no | `launcher.py:801` | `repair-unit:U2` | Upheld: `test_ambiguous_composer_geometry_never_records_affirmative_empty` asserts `len(sends) == 1`. U2 keeps that assertion and names it as the fail-open pin the DECISIONS trade requires, so a reader of the test name knows the write still happens. |
 | 58 | `TEST-08` | P2 | no | `composer.py:37` | `repair-unit:U1` | Upheld by the artifact's C21 and C22 survivors. U1 parametrises the border-glyph tests over every glyph in both sets. |
 | 59 | `TEST-09` | P2 | no | `composer.py:191` | `repair-unit:U1` | Upheld by the artifact's C18, C20 and C13 survivors. U1's rule table gives each clause a distinguishing input; the four unobservable `_unstyled_text` survivors are recorded as accepted in U12 because the public parser consumes only truthiness. |
-| 60 | `TEST-10` | P2 | no | `launcher.py:914` | `repair-unit:U9` | Upheld by the artifact's L3, L4 and O13 survivors. The three untested lines land in three units: the composer exec-error branch in U5, the launcher-side dedup in U7, the stub-roster entry in U9's roster-binding test. |
-| 61 | `TEST-11` | P2 | no | `orchestrate.py:1524` | `repair-unit:U3` | Upheld by the artifact's L6 survivor (`if True:`) and O3 survivor (`re.search`). U3 binds the owned-and-not-typed direction; U8 binds the malformed-floor path. |
+| 60 | `TEST-10` | P2 | no | `launcher.py:914` | `repair-unit:U9` | Upheld by the artifact's L3, L4 and O13 survivors. Split: the three untested lines land in three units, and this row closes only when all three have landed. U5 carries the composer exec-error branch, U7 the launcher-side dedup, U9 the stub-roster entry through its roster-binding test; remaining slices in U5 and U7. |
+| 61 | `TEST-11` | P2 | no | `orchestrate.py:1524` | `repair-unit:U3` | Upheld by the artifact's L6 survivor (`if True:`) and O3 survivor (`re.search`). Split: U3 binds the owned-and-not-typed direction with a zero-call test; remaining slice in U8, which binds the malformed-floor path. This row closes only when both have landed. |
 | 62 | `API-07` | P3 | no | `plugin.json:20` | `repair-unit:U11` | Upheld by `git show origin/main:plugins/orchestrate/.claude-plugin/plugin.json` (4.0.1, three dependencies) against the branch (4.0.2, one). Resolved in the merge unit under Decision 3. |
 | 63 | `API-08` | P3 | no | `launcher.py:36` | `duplicate-of:ARCH-09` | Same synthetic-module seam; the per-load class identity is latent and is recorded, not engineered around. Resolved with ARCH-09 in U5. |
 | 64 | `API-09` | P3 | yes | `orchestrate.py:4825` | `duplicate-of:ARCH-08` | Same `--help` docstring leak, marked safe_auto. Repaired in U9. |

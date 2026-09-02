@@ -19,6 +19,31 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-09-02
+
+### A finding satisfied by building its mirror image is not repaired  {#907-verification-order}
+
+**Context.** Two repair rounds on `work/cp907-launcher-session-contract` closed a finding by
+inverting the broken rule, and every lens scored lower on `dd3593ab` than on the revision those
+rounds set out to improve.
+**Evidence.** The staged-input stop that once orphaned a session by clearing its identifiers
+became a permanent `already has tab` wedge (prior validation
+`docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` REL-03, rebuilt
+through the retry door). The import-time companion floor that once killed `--help` became
+fail-open for write commands (the same artifact's dead-`status` finding inverted). Both are
+reproducible from the tree: `git show 2fe7c954` vs `dd3593ab` of `cmd_go` and
+`_ingest_agent_launcher`.
+**Mechanism.** The one fix that was mutation-tested before commit, positional last-block
+selection, survived every later review. The fixes that landed before anything tried to break
+them did not. A two-sided rule needs a counter-case for the side it is not changing.
+**Fix (or queued).** Units U1–U9 of
+`docs/plans/2026-09-01-issue-907-terminal-validation-repair-plan.md` write the failing
+reproducer first, then the named counter-cases, then every listed mutant.
+**Generalizable rule.** Prove the direction you are not fixing, or the next repair will ship
+its opposite.
+**Refs.** DECISIONS `{#907-staged-input-redeliver}`, `{#907-agent-launcher-floor-owner}`;
+plan KTD6 and KTD7.
+
 ## 2026-08-31
 
 ### Terminal indentation is shared by input and status chrome  {#907-composer-indentation-ambiguity}
@@ -56,10 +81,25 @@ commands unimportable; discover early, enforce at the first operation that needs
 ### A terminal composer is positional structure, not the last text a heuristic can classify  {#907-composer-position-before-classification}
 
 **Context.** Issue 907's first repair grouped composer rows but selected the last block it could classify. Real Claude panes draw the live placeholder in a closed styled span, so the live block dropped out and an earlier scrollback echo became the answer.
-**Evidence.** The cycle-3 reliability capture set contains 43 real pane viewports. The old guard produced three false hard stops in one sweep and four in another, with only one genuine staged-input stop; the repaired parser produces zero false stops on the same bytes. Focused fixtures cover a classified echo above a closed-span live box, Codex and Grok glyphs, bordered composers, wrapped styled rows, and block termination.
+**Evidence.** The cycle-3 reliability capture set of 43 real pane viewports was a one-off
+sweep against bytes that are not in this repository and is not reproducible from the tree.
+The reproducible evidence is the two checked-in fixture entries
+(`claude_echo_above_empty`, `codex_closed_placeholder` in
+`plugins/agent-launcher/tests/fixtures/composer-panes.json`) and the two live idle Claude
+captures recorded there with pane provenance. Focused fixtures cover a classified echo above
+a closed-span live box, Codex and Grok glyphs, bordered composers, wrapped styled rows, and
+block termination.
 **Mechanism.** Classification and selection were in the wrong order. A composer is the lowest contiguous block carrying that client's verified marker. Whether its contents are empty, staged, or unclassifiable is a property of that already-selected block; classification cannot be used to choose a different block. Stubbing preflight in the first end-to-end tests also hid receipt reconstruction, so collaborator stubs must stay below the behavior-owning function.
 **Fix (or queued).** `composer.py` owns a bounded positional parser; `launcher.py` owns reads and prompt decisions. The last block always decides, rows stop at the first structural non-continuation, and one receipt object is updated in place.
-**Validation.** `test_echo_above_a_closed_span_placeholder_does_not_false_stop` and the external 43-pane harness pin the original false-stop shape. Reverting positional selection makes the focused regression fail.
+**Validation.** Reverting positional last-block selection fails these five tests, which is
+the mutation `docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json`
+DOCC-07 actually observed: `test_adjacent_staged_and_empty_marker_rows_are_ambiguous`,
+`test_ambiguous_composer_geometry_never_records_affirmative_empty`,
+`test_glyph_led_last_visual_row_never_turns_a_staged_draft_into_empty`,
+`test_a_draft_above_a_closed_placeholder_row_is_unclassifiable`, and
+`test_echo_above_closed_span_hint_does_not_fall_back_to_the_echo`. The previously named
+`test_echo_above_a_closed_span_placeholder_does_not_false_stop` stays green under that
+mutant and is not a proof of positional selection.
 **Generalizable rule.** When screen state has a location-defined authority, select by position first and classify second. In tests, stub the input source, not the function that rebuilds or persists the result.
 **Refs.** Issue #907; DECISIONS `{#907-styled-composer-trade}`.
 

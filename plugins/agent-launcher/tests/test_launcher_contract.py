@@ -2968,6 +2968,18 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     skill = SKILL_MD.read_text(encoding="utf-8")
     learnings = (REPO / "docs" / "engineering-journal" / "LEARNINGS.md").read_text(encoding="utf-8")
     decisions = (REPO / "docs" / "engineering-journal" / "DECISIONS.md").read_text(encoding="utf-8")
+    composer = (
+        REPO
+        / "plugins"
+        / "agent-launcher"
+        / "skills"
+        / "agent-launcher"
+        / "scripts"
+        / "composer.py"
+    ).read_text(encoding="utf-8")
+    orchestrate_src = (
+        REPO / "plugins" / "orchestrate" / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+    ).read_text(encoding="utf-8")
     assert "## [1.2.1] - 2026-08-31" in changelog
     assert "selects the last block positionally" in changelog
     assert "`unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`" in changelog
@@ -2976,3 +2988,24 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     assert "Claude, Codex, Grok, Agy, and Qwen" in skill
     assert "#907-composer-position-before-classification" in learnings
     assert "#907-styled-composer-trade" in decisions
+    assert "#907-composer-structural-continuations" in decisions
+    assert "#907-agent-launcher-floor-owner" in decisions
+    assert "#907-input-box-visible-length" in decisions
+    assert "#907-staged-input-redeliver" in decisions
+    assert "#907-composer-structural-continuations" in composer
+    assert "#907-agent-launcher-floor-owner" in orchestrate_src
+    assert "#907-input-box-visible-length" in composer
+    assert "#907-staged-input-redeliver" in orchestrate_src
+
+
+def test_journal_43_pane_citations_are_named_not_reproducible() -> None:
+    """DOCC-06: every 43-pane sentence says the sweep is not reproducible from the tree."""
+    journal = REPO / "docs" / "engineering-journal"
+    hits: list[str] = []
+    for path in journal.rglob("*.md"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            lowered = line.lower()
+            if "43-pane" in lowered or "43 real pane" in lowered:
+                hits.append(f"{path.relative_to(REPO)}:{line.strip()}")
+                assert "not reproducible" in lowered or "one-off" in lowered, hits[-1]
+    assert hits, "expected residual 43-pane wording in the journal"

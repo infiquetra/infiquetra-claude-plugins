@@ -1777,10 +1777,12 @@ def _print_companion_fault_once() -> None:
 def assert_agent_launcher_available() -> None:
     """Refuse before any pane write, session or worktree creation, or tab close.
 
-    This is the KTD7 matrix's write side: it fires whenever the companion is below the
-    declared floor (stale: update it) or was not ingested at all (missing or unusable:
-    install or repair it). Read-only commands never call it, so a broken companion never
-    kills a status or a check while a unit is running.
+    This is the KTD7 matrix's write side
+    (``docs/engineering-journal/DECISIONS.md`` ``{#907-agent-launcher-floor-owner}``):
+    it fires whenever the companion is below the declared floor (stale: update it) or
+    was not ingested at all (missing or unusable: install or repair it). Read-only
+    commands never call it, so a broken companion never kills a status or a check
+    while a unit is running.
     """
     if _AGENT_LAUNCHER_ERROR:
         raise SystemExit(_AGENT_LAUNCHER_ERROR)
@@ -1797,7 +1799,9 @@ def _ingest_agent_launcher() -> bool:
     would hide them. A missing plugin must not kill every subcommand at import.
     The exec is atomic: a launcher that fails partway through its own import binds
     nothing (the namespace is restored), and a successful ingest restores this
-    module's own ``__doc__``, so ``--help`` keeps describing Orchestrate.
+    module's own ``__doc__``, so ``--help`` keeps describing Orchestrate. Floor
+    policy after a successful ingest is
+    ``docs/engineering-journal/DECISIONS.md`` ``{#907-agent-launcher-floor-owner}``.
     """
     global _AGENT_LAUNCHER_ERROR
     try:
@@ -3498,6 +3502,7 @@ def _staged_input_stop(unit: Unit) -> bool:
     The marker routes `go`: a unit carrying it is redelivered into the pane the stop
     recorded, is never skipped as already launched, and never runs the wrapper create a
     second time -- a second create would overwrite the first owned tab off the unit.
+    Contract: ``docs/engineering-journal/DECISIONS.md`` ``{#907-staged-input-redeliver}``.
     """
     return (
         unit.status == PENDING

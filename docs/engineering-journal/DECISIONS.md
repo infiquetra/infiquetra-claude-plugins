@@ -1,54 +1,105 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-02
+
+### `input_box_text_chars` is the visible length of the absorbed draft  {#907-input-box-visible-length}
+
+**Decision.** The receipt count is the visible length of what the parser absorbed: characters
+after border stripping, rows joined without a separator, a lower bound when the draft contains
+a blank line, one short per wrapped row boundary. It is not the unstyled-run length.
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:**
+`docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` DOCC-01 / plan KTD3.
+
+**Why.** The parser positively recognises only unstyled characters, but the operator wants the
+size of the withheld draft. Computing the unstyled count reports `2` for a thirty-character
+draft.
+
+**Rejected.** Copying the unstyled length into the receipt; leaving the documents claiming a
+count the code does not compute.
+
+### A staged-input stop retries the same pane and never creates a second session  {#907-staged-input-redeliver}
+
+**Decision.** A `PENDING` unit whose receipt `input_box` is `staged` is redelivered by `go`
+through `redeliver`, which repeats everything after the wrapper create against the recorded
+pane. Identifiers and the receipt stay; the stop message is appended. The `already has tab`
+skip applies only to units without that marker.
+
+**Date:** 2026-09-02 · **Issue:** #907 · **Origin:**
+`docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` REL-03 (prior
+validation meaning) inverted on this branch / plan KTD6.
+
+**Why.** Calling `launch()` again would run the wrapper create, overwrite `tab_id`, and drop
+the first owned tab. Clearing identity to make the retry possible was the other mirror image.
+
+**Rejected.** A new run-file field; a `requeue` subcommand; a second create under any `go`
+branch.
+
 ## 2026-08-31
 
 ### Treat unproven composer continuation geometry as inconclusive  {#907-composer-structural-continuations}
 
-**Decision.** A composer continuation requires shared box-border geometry. Blank rows and mere
-indentation do not extend the input block because vendor status footers use those same shapes. If
-such a row follows an otherwise empty marker, or an empty marker is adjacent to another marker
-block, the result is `unclassifiable`, never affirmative `empty` or `staged`.
+**Decision.** One classification per physical row (KTD1). A row continues an open block when
+it is bordered, or when it is unbordered and indented past the marker column. A blank row, a
+horizontal rule, a marker row, or a terminator ends the block. `ambiguous_empty` is only the
+footer-after-spacer shape: an empty marker, a blank, then an indented unbordered row is
+`unclassifiable`. Trailing blank rows alone read `empty`. A draft the row rule absorbs reads
+`staged`. `adjacent_to_previous` stays.
 
-**Date:** 2026-08-31 · **Issue:** #907 · **Origin:** Terminal validation review findings
-CORR-01, CORR-02, CORR-03, SEC-01, TEST-02, and TEST-03.
+**Date:** 2026-08-31 · **Issue:** #907 · **Origin:**
+`docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` CORR-01, CORR-02,
+CORR-03, SEC-01, TEST-02, and TEST-03. The commit message of `dd3593ab` said five findings
+across four lenses; this entry originally named six across three. The identifiers above are
+scoped to that validation artifact, not to
+`docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json`.
 
-**Why.** The viewport cannot distinguish a multiline draft from indented pane chrome, or a new
-empty composer from a glyph-led final draft row, without a structural boundary. Guessing in either
-direction can submit operator text or hard-stop an idle pane.
+**Why.** Both real fixtures and the live idle Claude captures are unbordered, so a border
+requirement never fires for Claude or Codex. Vendor status footers use blank spacers and
+indent. Guessing in either direction can submit operator text or hard-stop an idle pane.
 
-**Rejected.** Treating every blank or indented row as input; treating every later glyph as a new
-box; preserving a fixed continuation-row limit. Each converts ambiguity into a false claim.
+**Rejected.** Treating every blank or indented row as input; treating every later glyph as a
+new box; requiring a border to continue; preserving a fixed continuation-row limit.
 
-**Revisit when.** Herdr exposes composer coordinates, cursor position, or another independent
-input-region signal.
+**Revisit when.** Checked-in captures exist for Grok, Agy, and Qwen composers, and for one
+bordered-vendor viewport. Also when Herdr exposes composer coordinates or cursor position.
+`docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` CORR-07 and the
+CORR-08 capture gap stay as this residual, not as a silent claim that those vendors are
+covered.
 
-### The Orchestrate manifest owns the Agent Launcher floor  {#907-agent-launcher-floor-owner}
+### The Orchestrate companion floor is a command-by-state matrix  {#907-agent-launcher-floor-owner}
 
-**Decision.** Orchestrate derives its runtime Agent Launcher minimum from the dependency declared in
-its own plugin manifest. Discovery and ingestion record companion faults without killing module
-import; commands that create or expand work enforce the recorded fault with one remediation.
+**Decision.** The manifest still owns the numeric floor (KTD7). Policy is a matrix, not an
+import-time side effect. Below floor: the launcher is ingested so read-only commands keep
+their Herdr reads, and every command that writes a pane, creates a session or worktree, or
+closes a tab refuses with an update remedy. Missing or unusable: nothing is ingested;
+`status` and `check` degrade to liveness-unknown; `wait`, `settle`, `adopt`, `roster`,
+`saga`, `start`, `expand`, `go`, `review-result`, `land`, and `clean` refuse with the
+missing or unusable message. `--help` and the other non-live commands run either way.
 
-**Date:** 2026-08-31 · **Issue:** #907 · **Origin:** Terminal validation review findings API-01,
-API-02, ARCH-03, ARCH-04, and TEST-01.
+**Date:** 2026-08-31 · **Issue:** #907 · **Origin:**
+`docs/code-reviews/2026-08-31-issue-907-validation-review-result.v1.json` API-01, API-02,
+ARCH-03, ARCH-04, and TEST-01.
 
-**Why.** Independent floor literals drift, while import-time enforcement removes the read-only
-commands needed to inspect and recover an existing run. The manifest is already the distribution
-contract and is available in both repository and installed layouts.
+**Why.** A naive fail-closed recreates the dead-`status` finding. A naive fail-open lets a
+below-floor companion reach pane writes. The manifest is already the distribution contract.
 
-**Rejected.** A second tuple constant in Python; caller-injected source globals; validating every
-cache candidate during discovery; allowing an unusable companion to escape as a traceback.
+**Rejected.** A second tuple constant in Python; validating every cache candidate during
+discovery; killing `--help` at import; allowing an unusable companion to escape as a
+traceback.
+
+**Revisit when.** A new Orchestrate subcommand reaches Herdr, or the companion floor moves.
 
 ### Fail open on a fully styled composer until an independent authorship signal exists  {#907-styled-composer-trade}
 
 **Decision.** The unowned-pane guard stops only on unambiguous, unstyled staged text. A non-empty live composer rendered entirely inside client styling is recorded as `unclassifiable` and the launch proceeds. Read failure, read timeout, missing composer, and unsupported vendor remain distinct receipt outcomes. The vendor glyph registry is complete against the launcher's vendor roster: Claude, Codex, Grok, Agy, and Qwen carry verified markers; Muse and OpenCode carry explicit `None` exemptions with their evidence rather than inheriting a guessed fallback.
 
-**Date:** 2026-08-30 · **Issue:** #907 · **Origin:** Terminal cycle-3 Code Review reliability finding and the operator-authorized final residual repair.
+**Date:** 2026-08-30 · **Issue:** #907 · **Origin:** `docs/code-reviews/2026-08-30-issue-907-cycle-3-review-result.v1.json` reliability finding and the operator-authorized final residual repair.
 
-**Why.** A viewport can render an operator draft and a client placeholder with byte-identical Select Graphic Rendition spans. Fail-closed would stop ordinary working launches, which the 43-pane capture harness measured directly. Claiming the box empty would be false. A distinct inconclusive outcome preserves the evidence without inventing certainty.
+**Why.** A viewport can render an operator draft and a client placeholder with byte-identical Select Graphic Rendition spans. Fail-closed would stop ordinary working launches. The cycle-3 43-pane sweep that first measured that cost was a one-off against captures outside the repository and is not reproducible from the tree; the two fixture entries and the two live idle Claude captures are the reproducible evidence. Claiming the box empty would be false. A distinct inconclusive outcome preserves the evidence without inventing certainty.
 
 **Rejected.** Selecting the last classifiable block, because scrollback can replace the live box; treating every styled row as empty, because it prompts into real drafts; treating every styled row as staged, because it hard-stops idle panes; assigning an unverified plain-marker fallback to every vendor.
 
-**Revisit when.** Herdr exposes cursor position or composer state, a vendor publishes a stable placeholder protocol, or a live capture verifies a stable Muse or OpenCode marker.
+**Revisit when.** Herdr exposes cursor position or composer state, a vendor publishes a stable placeholder protocol, or a live capture verifies a stable Muse or OpenCode marker. `docs/code-reviews/2026-08-31-issue-907-terminal-validation-result.v1.json` API-10 stays as this residual.
 ### Orchestrate's `landed` rung is retired rather than gated or remapped  {#927-landed-rung-retired}
 
 **Decision.** `landed` is removed from `DEFAULT_STATUS_MAP`. It is not gated on the W-D2 condition

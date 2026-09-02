@@ -194,6 +194,8 @@ def _is_horizontal_rule(text: str) -> bool:
 def _classify_row(line: str, *, glyph: str, marker_column: int | None) -> tuple[_RowClass, int]:
     """Classify one physical row of the viewport: the row rule, stated in one place.
 
+    Successor of ``_is_continuation``. The contract is
+    ``docs/engineering-journal/DECISIONS.md`` ``{#907-composer-structural-continuations}``.
     The shape is read after ANSI stripping, with ``\\xa0`` read as space. Every non-blank
     class is decided on the row's content after border pairing, so a bordered row whose
     content is only rule glyphs is a rule row, not a bordered one. ``marker_column`` is the
@@ -222,7 +224,9 @@ def _classify_row(line: str, *, glyph: str, marker_column: int | None) -> tuple[
 def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
     """Return structurally bounded marker blocks in pane order.
 
-    One class per physical row decides everything. A row directly below an open block
+    See ``docs/engineering-journal/DECISIONS.md``
+    ``{#907-composer-structural-continuations}``. One class per physical row decides
+    everything. A row directly below an open block
     continues it when it is bordered, or when it is unbordered and indented past the marker
     column; a blank, rule, marker or terminator row ends the block and separates it from the
     next. An empty block closed by a blank row is not settled until the next non-blank row
@@ -327,6 +331,8 @@ def _classify_block(block: _ComposerBlock, *, glyph: str) -> ComposerInspection:
     if staged:
         # Once any unstyled character proves operator input, the whole visible block is the
         # withheld draft. Styled wrapped rows belong to that same contiguous composer and count.
+        # Receipt length is that visible length:
+        # ``docs/engineering-journal/DECISIONS.md`` ``{#907-input-box-visible-length}``.
         return ComposerInspection(ComposerState.STAGED, visible)
     # A fully client-styled non-empty row is byte-indistinguishable from a styled operator draft.
     return ComposerInspection(ComposerState.UNCLASSIFIABLE)

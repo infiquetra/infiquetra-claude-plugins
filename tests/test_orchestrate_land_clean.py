@@ -762,6 +762,87 @@ class TestLandCleanReapsWhatTheRuleAllows:
         assert (repo / ".orchestrate" / "run.json").exists()
         assert wt_alpha.exists()
 
+    def test_a_kept_unit_names_the_tab_this_pass_already_closed(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Terminal review cycle 2, F71: the tab is closed before the removal is attempted, so
+        a keep reason that names only the worktree understates the side effects performed.
+        The reason names the closed tab too."""
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "checkout", "main")
+        _write_run(
+            repo,
+            [
+                _unit_row(
+                    "alpha",
+                    wt_alpha,
+                    "done",
+                    tab_id="w1:t1",
+                    launch_receipt={"tab_id": "w1:t1", "owned": True},
+                )
+            ],
+        )
+        real_run = orchestrate.run
+
+        def close_then_refuse_removal(cmd: list[str], **kwargs: object) -> Any:
+            if cmd[:3] == ["herdr", "tab", "close"]:
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if cmd[:3] == ["herdr", "tab", "list"]:
+                return subprocess.CompletedProcess(cmd, 0, json.dumps({"result": {"tabs": []}}), "")
+            if cmd[:3] == ["git", "worktree", "remove"]:
+                return subprocess.CompletedProcess(cmd, 128, "", "fatal: simulated removal failure")
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(orchestrate, "run", close_then_refuse_removal)
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        out = capsys.readouterr().out
+        assert (
+            "kept alpha: tab w1:t1 closed; worktree removal failed (128): "
+            "fatal: simulated removal failure" in out
+        )
+
+    def test_land_clean_says_every_merged_unit_was_kept_rather_than_merged_nothing(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Terminal review cycle 2, F70: `land --clean` printed "this land merged nothing"
+        whenever every unit it merged was kept. A merged unit kept for a tab it does not own
+        is reported as kept, and the sentence says so."""
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        _write_run(
+            repo,
+            [
+                _unit_row(
+                    "alpha",
+                    wt_alpha,
+                    "done",
+                    tab_id="w1:t-borrowed",
+                    launch_receipt={"tab_id": "w1:t-borrowed", "owned": False},
+                )
+            ],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        out = capsys.readouterr().out
+        assert "landed on orch/r1: alpha" in out or "alpha" in out
+        assert "this land merged nothing" not in out
+        assert "nothing reaped: every unit this land merged was kept" in out
+        assert "kept alpha: tab left open (not owned): tab w1:t-borrowed" in out
+
     def test_a_worktree_already_gone_when_removal_reports_failure_is_still_closed(
         self,
         orchestrate: ModuleType,

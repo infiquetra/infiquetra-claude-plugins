@@ -8,8 +8,10 @@ turns operator-owned work or finding metadata into another acceptance gate.
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -1253,8 +1255,8 @@ def test_unowned_land_resubmit_with_draft_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The land path: an unowned controller holding a draft is not resubmitted. The stop
-    is recorded on the controller and reported, never raised out of the land loop
-    (terminal review F23), and the pending flag stays set for the next land."""
+    is recorded on the controller, reported, and raised so `land` exits 4 (cycle 2, F42);
+    the pending flag stays set for the next land."""
     controller = _controller(orchestrate)
     controller.launch_receipt = {"owned": False}
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
@@ -1267,7 +1269,8 @@ def test_unowned_land_resubmit_with_draft_refuses(
     )
     prior_status = controller.status
 
-    assert orchestrate.resubmit_review_if_ready(run, "0123456789abcdef") is False
+    with pytest.raises(orchestrate.StagedInputError, match="already holds staged input"):
+        orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
 
     assert _prompt_calls(recorded) == []
     assert "already holds staged input" in controller.note
@@ -1325,9 +1328,9 @@ def test_a_staged_stop_on_one_controller_does_not_block_the_other_controllers_re
         ],
     )
 
-    resubmitted = orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
+    with pytest.raises(orchestrate.StagedInputError, match="withheld for review-a"):
+        orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
 
-    assert resubmitted is True
     prompts = _prompt_calls(recorded)
     assert len(prompts) == 1
     assert prompts[0][3] == second.agent_name
@@ -1338,3 +1341,87 @@ def test_a_staged_stop_on_one_controller_does_not_block_the_other_controllers_re
     assert "already holds staged input" in first.note
     out = capsys.readouterr().out
     assert "review-a" in out and "already holds staged input" in out
+    assert "resubmitted landed revision 0123456789abcdef through review-b" in out
+
+
+def test_land_exits_4_when_the_resubmission_is_withheld_on_staged_input(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Terminal review cycle 2, F42: at 7aa0e3b7 a withheld resubmission returned False into
+    land's success path and land exited 0, while every other resubmission failure exited 4.
+    The stop now reaches the failure handler: exit 4, the reason printed, the pending flag
+    kept; once the composer is clear the next land resubmits and exits 0."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _commit(repo, "base.txt")
+    base = _git_out(repo, "rev-parse", "HEAD")
+    _git(repo, "branch", "orch/review-run")
+    controller = _controller(orchestrate)
+    controller.launch_receipt = {"owned": False}
+    worker = _worker(orchestrate, "builder", "review-fixer", "src", live=False)
+    run = orchestrate.Run(
+        run_id="review-run",
+        source="test",
+        base=base,
+        branch="orch/review-run",
+        units=[worker, controller],
+        review_result=_result("repairs_requested"),
+        review_outcome="repairs_requested",
+        review_resubmit_pending=True,
+    )
+    run.save(repo / ".orchestrate" / "run.json")
+    monkeypatch.chdir(repo)
+    dumps = iter(
+        [_claude_composer_pane("❯ operator draft that was never sent"), _claude_composer_pane("❯ ")]
+    )
+    prompts: list[str] = []
+    real_run = orchestrate.run
+
+    def herdr_boundary(cmd: list[str], *a: Any, **k: Any) -> Any:
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            prompts.append(cmd[4])
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, next(dumps), "")
+        return real_run(cmd, *a, **k)
+
+    monkeypatch.setattr(orchestrate, "run", herdr_boundary)
+
+    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    first_output = capsys.readouterr().out
+    assert "REVIEW RESUBMIT FAILED" in first_output
+    assert "already holds staged input" in first_output
+    assert prompts == []
+    withheld = orchestrate.Run.load()
+    assert withheld.review_resubmit_pending is True
+    assert withheld.unit("code-review-controller").status == "done"
+
+    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+    assert len(prompts) == 1
+    assert orchestrate.Run.load().review_resubmit_pending is False
+
+
+def test_the_documented_land_exit_codes_are_the_ones_the_command_returns() -> None:
+    """Terminal review cycle 2, F66: two of land's exit codes were documented nowhere. The
+    command document carries the table; this reads the codes out of it and out of cmd_land's
+    own return statements and requires the two sets to be equal."""
+    doc = (SCRIPT.parents[3] / "commands" / "orchestrate.md").read_text(encoding="utf-8")
+    table = doc[doc.index("exit-code table:") :]
+    documented = {int(m) for m in re.findall(r"^\| (\d) \|", table, re.MULTILINE)}
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    land = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "cmd_land"
+    )
+    returned: set[int] = set()
+    for node in ast.walk(land):
+        if isinstance(node, ast.Return) and node.value is not None:
+            for constant in ast.walk(node.value):
+                if isinstance(constant, ast.Constant) and isinstance(constant.value, int):
+                    returned.add(constant.value)
+    assert documented == returned, (documented, returned)

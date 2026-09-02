@@ -1552,11 +1552,24 @@ def resubmit_review_if_ready(
     if pending:
         # Each scoped controller recovers independently. One controller still holding an operator
         # request or a live worker must not block another whose repairs are clear -- that would make
-        # two independent targets unable to recover at all (#877).
+        # two independent targets unable to recover at all (#877). A controller withheld on staged
+        # input does not block the others either, but it is still a resubmission this land did
+        # not make: once every controller has had its turn, the withheld ones are raised together
+        # so `land` exits 4 exactly as it does for any other resubmission failure (cycle 2, F42).
         sent = False
+        withheld: list[str] = []
         for candidate in pending:
-            if _resubmit_one(r, candidate, revision, sender=sender):
-                sent = True
+            try:
+                if _resubmit_one(r, candidate, revision, sender=sender):
+                    sent = True
+                    print(f"resubmitted landed revision {revision} through {candidate.name}")
+            except StagedInputError:
+                withheld.append(candidate.name)
+        if withheld:
+            raise StagedInputError(
+                f"resubmission withheld for {', '.join(withheld)}: the composer holds staged "
+                "input; clear it and land again"
+            )
         return sent
 
     controller = r.review_controller()
@@ -1594,15 +1607,16 @@ def _resubmit_one(
     try:
         send_one(controller, task)
     except StagedInputError as exc:
-        # Record and report, never raise: raising escaped the multi-controller loop in
-        # resubmit_review_if_ready and skipped every later controller in silence, on every
-        # subsequent land, in the same order (terminal review F23). The pending flag stays
-        # set, so the next land retries this controller once its composer is clear, exactly
-        # as dispatch_review_routing already treats a worker holding a draft.
+        # Record, report, and raise. The multi-controller loop in resubmit_review_if_ready
+        # catches this per controller so one staged composer never blocks the others (cycle 1,
+        # F23); the single-controller path lets it reach `land`'s failure handler, so a
+        # resubmission that was withheld exits 4 like every other resubmission failure instead
+        # of falling through to exit 0 (cycle 2, F42). The pending flag stays set either way, so
+        # the next land retries once the composer is clear.
         if str(exc) not in controller.note:
             append_unit_note(controller, str(exc))
         print(f"  {controller.name} resubmission withheld: {exc}")
-        return False
+        raise
     controller.status = RUNNING
     append_unit_note(controller, f"resubmitted landed revision {revision}")
     r.write_review_slot(controller, review_resubmit_pending=False)
@@ -4683,8 +4697,12 @@ def cmd_land(args: argparse.Namespace) -> int:
         r.save()
         if closed:
             print(f"reaped: {', '.join(closed)}")
-        else:
+        elif not landed_names:
             print("nothing to reap: this land merged nothing")
+        else:
+            # Everything this land merged was kept, each for a reason printed below; that is
+            # not "merged nothing" (cycle 2, F70).
+            print("nothing reaped: every unit this land merged was kept, for the reasons below")
         for name, reason in kept_reasons.items():
             print(f"kept {name}: {reason}")
     if resubmit_failed:
@@ -5088,6 +5106,7 @@ def reap(
             if kept_reasons is not None:
                 kept_reasons[unit.name] = _reap_keep_reason(unit, r)
             continue
+        tab_closed = False
         if unit.tab_id:
             close_result = close_run_session(unit)
             if close_result is None:
@@ -5108,16 +5127,20 @@ def reap(
                     kept_reasons[unit.name] = failure
                 kept.append(unit.name)
                 continue
+            tab_closed = True
         if unit.worktree and Path(unit.worktree).exists():
             removed = run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
             if removed.returncode != 0 and os.path.lexists(unit.worktree):
                 # Mirror the landing-worktree treatment: a removal that failed and left the
                 # directory behind keeps the unit, so the run record still names the worktree
                 # and `clean --all` does not delete the only record of it (terminal review F27).
+                # The tab, if this pass closed it, is named too, so the report matches the side
+                # effects performed (cycle 2, F71); a rerun closes an absent tab idempotently.
                 detail = (removed.stderr or removed.stdout or "").strip()
                 if kept_reasons is not None:
+                    closed_tab = f"tab {unit.tab_id} closed; " if tab_closed else ""
                     kept_reasons[unit.name] = (
-                        f"worktree removal failed ({removed.returncode}): {detail}"
+                        f"{closed_tab}worktree removal failed ({removed.returncode}): {detail}"
                     )
                 kept.append(unit.name)
                 continue

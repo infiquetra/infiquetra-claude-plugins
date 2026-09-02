@@ -2072,6 +2072,105 @@ def test_each_resend_after_a_pane_fallback_is_inspected_once(
     assert unit.status == launcher.PROMPT_UNDELIVERED
 
 
+def _prepare_redeliver(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    owned: bool,
+    pane_dump: str,
+) -> tuple[Any, list[list[str]], list[str]]:
+    """A unit carrying a staged-input stop's identifiers, with only the Herdr boundary
+    stubbed. Returns the unit, every recorded command, and the sends."""
+    recorded: list[list[str]] = []
+    sends: list[str] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, pane_dump, "")
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
+    monkeypatch.setattr(launcher, "send", lambda *a, **k: sends.append("send"))
+    monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": "idle",
+            "pane_id": "w1:p1",
+            "workspace_id": "w1",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+    unit = launcher.LaunchRequest(
+        name="worker",
+        vendor="claude",
+        worktree="/tmp/wt",
+        pane_id="w1:p1",
+        tab_id="w1:t1",
+        owned=owned,
+        launch_receipt={
+            "tab_id": "w1:t1",
+            "pane": "w1:p1",
+            "agent_name": "worker-2",
+            "owned": owned,
+            "input_box": "staged",
+        },
+    )
+    return unit, recorded, sends
+
+
+def test_redeliver_records_no_wrapper_create_and_keeps_the_tab(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry never runs the wrapper create: calling launch() again would create a second
+    session and overwrite the first owned tab (the prior validation artifact's REL-03,
+    rebuilt through the retry door)."""
+    unit, recorded, sends = _prepare_redeliver(
+        launcher, monkeypatch, owned=False, pane_dump=_claude_pane("❯ ")
+    )
+    launcher.redeliver(unit)
+    assert not any(cmd[0] == "agents" for cmd in recorded)
+    assert unit.tab_id == "w1:t1"
+    assert unit.status == launcher.RUNNING
+    assert unit.launch_receipt["prompt_delivered"] is True
+    assert unit.launch_receipt["input_box"] == "empty"
+    assert sends == ["send"]
+
+
+def test_redeliver_inspects_before_the_first_write_on_an_owned_unit(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The used_pane half of the pre-send predicate, observable only here: a redelivery
+    into a pane this launcher owns still inspects before its first write, because the stop
+    that made the redelivery necessary was an inspection that found text. A still-staged
+    pane raises with no send."""
+    unit, _recorded, sends = _prepare_redeliver(
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
+    )
+    with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
+        launcher.redeliver(unit)
+    assert sends == []
+    assert unit.launch_receipt["input_box"] == "staged"
+
+
+def test_redeliver_without_a_pane_id_is_a_named_stop(launcher: ModuleType) -> None:
+    """A unit that lost its pane id cannot be redelivered; the stop names the recovery."""
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
+    with pytest.raises(SystemExit, match="cannot redeliver"):
+        launcher.redeliver(unit)
+
+
 def test_close_without_receipt_tab_id_stops(launcher: ModuleType) -> None:
     unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-1")
     with pytest.raises(SystemExit, match="ownership"):

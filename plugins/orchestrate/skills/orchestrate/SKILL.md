@@ -87,6 +87,13 @@ read-only recovery commands merely because the companion is stale or unusable. `
 `expand`, and `go` enforce the floor before any session or worktree is created and report the same
 named failure plus the supported remediation
 (`claude plugin install agent-launcher@infiquetra-plugins`).
+**A staged-input stop is retryable through the same pane.** When a launch refuses to prompt because
+the pane's composer holds an unsent operator draft, the unit stops `PENDING` with its tab, pane and
+launch receipt recorded and the draft's size — never its text — in the note. The recovery has two
+exits. Clear the composer and rerun `go`: the retry re-prompts that same pane and creates no
+session, and `already has tab` never applies to a staged unit, so nothing needs editing by hand.
+Or give the unit up: `clean` closes the tab when Orchestrate owns it and reports a tab it does not
+own as left open, never as closed.
 Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step, not a license to bypass `expand` or `go`. A branch in the run's
 `orch/<run-id>-<unit>` series with no row in the table is flagged as unrecorded drift by `status` and

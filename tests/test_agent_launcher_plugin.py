@@ -140,6 +140,21 @@ def test_orchestrate_skill_matches_the_deferred_floor_failure_contract() -> None
     assert EXPECTED_REMEDIATION in section
 
 
+def test_orchestrate_skill_states_the_staged_input_recovery_runbook() -> None:
+    """REL-12: the operator-facing runbook for a staged-input stop. Prose is compared with
+    whitespace flattened so line wrapping cannot mask a claim."""
+    skill = _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "SKILL.md")
+    start = skill.index("**A staged-input stop is retryable")
+    end = skill.index("Unsupported post-launch")
+    assert start < end, "the runbook must sit in the launch-contract section"
+    section = " ".join(skill[start:end].split())
+    assert "PENDING" in section
+    assert "same pane" in section
+    assert "creates no session" in section
+    assert "left open" in section
+    assert "`already has tab`" in section
+
+
 def test_agent_launcher_packaged_files() -> None:
     expected = (
         ".claude-plugin/plugin.json",

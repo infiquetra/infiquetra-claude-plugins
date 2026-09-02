@@ -1692,6 +1692,7 @@ run = _subprocess_run
 if not _ingest_agent_launcher():
     _AGENT_LAUNCHER_AVAILABLE = False
     launch = _agent_launcher_required
+    redeliver = _agent_launcher_required
     agent_argv = _agent_launcher_required
     launcher = _agent_launcher_required
     launchable = _agent_launcher_required
@@ -2670,6 +2671,21 @@ def cmd_review_result(args: argparse.Namespace) -> int:
     return 0
 
 
+def _staged_input_stop(unit: Unit) -> bool:
+    """Whether this PENDING unit stopped on staged input and keeps the recorded pane to retry.
+
+    The marker routes `go`: a unit carrying it is redelivered into the pane the stop
+    recorded, is never skipped as already launched, and never runs the wrapper create a
+    second time -- a second create would overwrite the first owned tab off the unit.
+    """
+    return (
+        unit.status == PENDING
+        and bool(unit.pane_id)
+        and isinstance(unit.launch_receipt, dict)
+        and unit.launch_receipt.get("input_box") == "staged"
+    )
+
+
 def cmd_go(args: argparse.Namespace) -> int:
     assert_agent_launcher_available()
     r = Run.load()
@@ -2682,7 +2698,8 @@ def cmd_go(args: argparse.Namespace) -> int:
         return 0
     root = repo_root()
     for unit in ready[: args.limit] if args.limit else ready:
-        if unit.tab_id:
+        staged_stop = _staged_input_stop(unit)
+        if unit.tab_id and not staged_stop:
             print(f"  {unit.name}: already has tab {unit.tab_id}; not launching twice")
             continue
         empty = [d for d in unit.after if not produced_anything(r.unit(d), r)]
@@ -2695,12 +2712,23 @@ def cmd_go(args: argparse.Namespace) -> int:
         if not unit.account and r.account:
             unit.account = r.account
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
-        print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
+        if staged_stop:
+            print(
+                f"redelivering {unit.name} ({unit.vendor}) into pane {unit.pane_id} -> {unit.task}"
+            )
+            deliver = redeliver
+        else:
+            print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
+            deliver = launch
         try:
-            launch(unit, r.backend, review_elsewhere=r.reviews_separately())
+            deliver(unit, r.backend, review_elsewhere=r.reviews_separately())
         except StagedInputError as exc:
             unit.status = PENDING
-            unit.note = str(exc)
+            # Append, never overwrite: the guard's withheld line and an earlier stop message
+            # are facts a repeated stop must not erase. The membership test is a substring,
+            # not a split on the separator: the stop message itself contains the separator.
+            if str(exc) not in unit.note:
+                append_unit_note(unit, str(exc))
             print(f"  {unit.name} PENDING: {exc}")
         except AccountMismatchError as exc:
             unit.status = ACCOUNT_MISMATCH

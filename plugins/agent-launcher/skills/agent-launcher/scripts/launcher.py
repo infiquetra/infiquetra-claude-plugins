@@ -823,7 +823,12 @@ def guard_pane_before_write(unit: Any, pane_id: str) -> None:
     if receipt is not None:
         receipt["input_box"] = "staged"
         receipt["input_box_text_chars"] = len(staged)
-    append_unit_note(unit, f"staged input withheld: {len(staged)} chars, not cleared")
+    withheld_note = f"staged input withheld: {len(staged)} chars, not cleared"
+    # A repeated stop with the same count must not stack a duplicate line on the note. The
+    # membership test is a substring, not a split on the separator: the stop message itself
+    # contains the separator, so a split can never match it.
+    if withheld_note not in unit.note:
+        append_unit_note(unit, withheld_note)
     raise StagedInputError(
         f"{unit.name}: pane {pane_id} already holds staged input ({len(staged)} chars, "
         "withheld from the record); refusing to prompt so the dispatched task cannot be "
@@ -1358,6 +1363,76 @@ def _record_create_timeout(
     return f"new tabs after the create attempt: {created}"
 
 
+def _deliver(
+    unit: Any,
+    pane_id: str,
+    backend: str,
+    *,
+    review_elsewhere: bool,
+    argv: list[str],
+    since: float | None,
+    used_pane: bool,
+) -> None:
+    """Deliver the task into an existing pane: inspect, preflight, send, resend loop.
+
+    Every collaborator is reached through this module's globals, so every existing stub still
+    applies. ``since`` floors the transcript account fallback -- the create instant on a
+    fresh launch, None on a redelivery, which trades away the recency floor the receipt
+    cannot supply (the receipt records no creation time). ``used_pane`` seeds the KTD4
+    predicate: false before a fresh launch's first send, true from the start of a
+    redelivery, because the stop that made the redelivery necessary was an inspection
+    that found text.
+    """
+    ready = await_ready(unit)
+    identity = None
+    if not session_owned(unit):
+        identity = verify_unit_identity(unit, pane_id, ready=ready)
+    if unit.vendor == "opencode":
+        # The OpenCode picker is itself a pane write, so on an unowned session the inspection
+        # that authorises it sits immediately before it (KTD5); the send carries its own below.
+        if used_pane or not session_owned(unit):
+            guard_pane_before_write(unit, pane_id)
+        _, ready = drive_opencode_variant_selection(unit, pane_id)
+    verify_unit_preflight(unit, pane_id, ready=ready, argv=argv, since=since, identity=identity)
+    # The inspection that authorises the first pane write is taken immediately before that
+    # write, never before the preflight: the declared bounds between an earlier read and the
+    # send sum to about fifty seconds, and a person typing inside that window defeats the
+    # guard. On a fresh launch used_pane is false here, so this is the ownership half of the
+    # KTD4 predicate; a redelivery seeds used_pane true and inspects whatever the ownership.
+    if used_pane or not session_owned(unit):
+        guard_pane_before_write(unit, pane_id)
+    used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+    accepted = took_the_task(unit)
+    if not accepted:
+        # Resend only into a session that has still never left idle. A resend risks giving a unit
+        # its task twice, and the one reading that rules that out is a session which has not
+        # started anything: a swallowed prompt leaves it exactly there. Anything else -- working,
+        # blocked, or gone -- means it took something, so the send stands and the loop stops.
+        for _ in range(DELIVERY_RESENDS):
+            row = agent_row(unit)
+            if row is None or row.get("agent_status") != "idle":
+                break
+            # KTD4: ownership says who created the tab; used_pane says whether this launcher
+            # typed into it. Either half alone is the defect this run already shipped twice:
+            # an unowned pane can hold text somebody staged earlier, and a pane this launcher
+            # typed into can hold text staged since. Both re-inspect before every resend.
+            if used_pane or not session_owned(unit):
+                guard_pane_before_write(unit, pane_id)
+            used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere) or used_pane
+            accepted = took_the_task(unit)
+            if accepted:
+                break
+    if accepted:
+        unit.status = RUNNING
+        if isinstance(unit.launch_receipt, dict):
+            unit.launch_receipt["prompt_delivered"] = True
+    else:
+        unit.status = PROMPT_UNDELIVERED
+        append_unit_note(unit, DELIVERY_WARNING)
+        if isinstance(unit.launch_receipt, dict):
+            unit.launch_receipt["prompt_delivered"] = False
+
+
 def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
     """Create the session, then deliver the task with each pane write inspected at its own door.
 
@@ -1406,63 +1481,42 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
     pane_id = unit.pane_id
     if not pane_id:
         raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
-
-    ready = await_ready(unit)
-    identity = None
-    used_pane = False
-    if not session_owned(unit):
-        identity = verify_unit_identity(unit, pane_id, ready=ready)
-    if unit.vendor == "opencode":
-        # The OpenCode picker is itself a pane write, so on an unowned session the inspection
-        # that authorises it sits immediately before it (KTD5); the send carries its own below.
-        if used_pane or not session_owned(unit):
-            guard_pane_before_write(unit, pane_id)
-        _, ready = drive_opencode_variant_selection(unit, pane_id)
-    verify_unit_preflight(
+    _deliver(
         unit,
         pane_id,
-        ready=ready,
+        backend,
+        review_elsewhere=review_elsewhere,
         argv=argv,
         since=created_at,
-        identity=identity,
+        used_pane=False,
     )
-    # The inspection that authorises the first pane write is taken immediately before that
-    # write, never before the preflight: the declared bounds between an earlier read and the
-    # send sum to about fifty seconds, and a person typing inside that window defeats the
-    # guard. On a fresh launch used_pane is false here, so this is the ownership half of the
-    # KTD4 predicate; a redelivery seeds used_pane true and inspects whatever the ownership.
-    if used_pane or not session_owned(unit):
-        guard_pane_before_write(unit, pane_id)
-    used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
-    accepted = took_the_task(unit)
-    if not accepted:
-        # Resend only into a session that has still never left idle. A resend risks giving a unit
-        # its task twice, and the one reading that rules that out is a session which has not
-        # started anything: a swallowed prompt leaves it exactly there. Anything else -- working,
-        # blocked, or gone -- means it took something, so the send stands and the loop stops.
-        for _ in range(DELIVERY_RESENDS):
-            row = agent_row(unit)
-            if row is None or row.get("agent_status") != "idle":
-                break
-            # KTD4: ownership says who created the tab; used_pane says whether this launcher
-            # typed into it. Either half alone is the defect this run already shipped twice:
-            # an unowned pane can hold text somebody staged earlier, and a pane this launcher
-            # typed into can hold text staged since. Both re-inspect before every resend.
-            if used_pane or not session_owned(unit):
-                guard_pane_before_write(unit, pane_id)
-            used_pane = send(unit, pane_id, backend, review_elsewhere=review_elsewhere) or used_pane
-            accepted = took_the_task(unit)
-            if accepted:
-                break
-    if accepted:
-        unit.status = RUNNING
-        if isinstance(unit.launch_receipt, dict):
-            unit.launch_receipt["prompt_delivered"] = True
-    else:
-        unit.status = PROMPT_UNDELIVERED
-        append_unit_note(unit, DELIVERY_WARNING)
-        if isinstance(unit.launch_receipt, dict):
-            unit.launch_receipt["prompt_delivered"] = False
+
+
+def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
+    """Re-deliver the task into the pane a staged-input stop kept on the unit.
+
+    A staged-input stop is retryable: the unit keeps its tab, pane and receipt, and once the
+    operator clears the composer the retry prompts the same pane. This entry never runs the
+    wrapper create -- calling launch() again would create a second session and overwrite the
+    first owned tab (the prior validation artifact's REL-03 rebuilt through the retry door) --
+    and it seeds used_pane true, so the KTD4 predicate inspects the first write whatever the
+    ownership: the stop that made this retry necessary was an inspection that found text.
+    """
+    pane_id = getattr(unit, "pane_id", None)
+    if not pane_id:
+        raise SystemExit(
+            f"{unit.name}: cannot redeliver without the pane a staged-input stop recorded; "
+            "clear the composer and relaunch the unit instead"
+        )
+    _deliver(
+        unit,
+        pane_id,
+        backend,
+        review_elsewhere=review_elsewhere,
+        argv=agent_argv(unit),
+        since=None,
+        used_pane=True,
+    )
 
 
 # How long a line may be before typing it into a pane stops delivering it as an instruction.

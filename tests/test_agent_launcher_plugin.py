@@ -631,14 +631,15 @@ def _declared_floor() -> str:
         for entry in manifest["dependencies"]
         if isinstance(entry, dict) and entry.get("name") == "agent-launcher"
     )
-    assert requirement.startswith(">=")
+    assert isinstance(requirement, str) and requirement.startswith(">=")
     return requirement.removeprefix(">=")
 
 
-def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes]:
+def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes, Path]:
     """One installed layout per companion state: orchestrate plus a companion at the floor,
     below it, or broken at import; a git repo holding one RUNNING unit; a recording fake
-    herdr on PATH. Returns the orchestrate script, the repo, and the run-file snapshot."""
+    herdr on PATH. Returns the orchestrate script, the repo, the run-file snapshot, and
+    the PATH directory that holds the fake herdr and agents binaries."""
     cache = tmp_path / f"cache-{state}" / MARKETPLACE
     orch_install = _install_plugin(
         cache, "orchestrate", _declared_version("orchestrate"), parts=(".claude-plugin", "skills")
@@ -703,7 +704,7 @@ def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes]:
 
 def _run_matrix_command(
     tmp_path: Path, script: Path, repo: Path, snapshot: bytes, bin_dir: Path, command: str
-) -> tuple[int, str, list[str]]:
+) -> tuple[int, str, list[list[str]]]:
     """Run one matrix invocation: fresh run record, fresh herdr log, combined output."""
     (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
     if command == "adopt":
@@ -730,7 +731,7 @@ def _run_matrix_command(
     return proc.returncode, proc.stderr + proc.stdout, calls
 
 
-def _assert_no_pane_write(calls: list[str], command: str, state: str) -> None:
+def _assert_no_pane_write(calls: list[list[str]], command: str, state: str) -> None:
     for call in calls:
         assert tuple(call[:2]) not in PANE_WRITES, (
             f"{state}/{command}: a gated command reached a pane write: {' '.join(call)}"

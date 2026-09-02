@@ -21,6 +21,25 @@
 
 ## 2026-09-02
 
+### A helper's annotation must follow a fourth return element  {#907-annotation-follows-return}
+
+**Context.** U8's matrix helper started returning the fake `herdr`/`agents` PATH
+directory as a fourth element so gated commands could be invoked with a recording
+binary on PATH.
+**Evidence.** `uv run python -m mypy tests/test_agent_launcher_plugin.py
+--ignore-missing-imports` reported the 4-tuple return against
+`tuple[Path, Path, bytes]` and three unpack sites that already expected four
+values (`:746`, `:923`, `:934`).
+**Mechanism.** The call sites were updated when the helper gained `bin_dir`; the
+annotation was not. Mypy then treated every unpack as taking four values from a
+3-tuple.
+**Fix (or queued).** Annotate `_matrix_layout` as `tuple[Path, Path, bytes, Path]`.
+The call sites stay; they were already right.
+**Generalizable rule.** When a helper grows a return element, the annotation is
+the defect if the call sites already unpack the new shape. Do not edit the
+callers to match a stale signature.
+**Refs.** Issue #907 unit U15.
+
 ### Installer-facing docs can claim a floor is unchecked after code already enforces it  {#907-docs-lag-runtime-floor}
 
 **Context.** `origin/main`'s orchestrate README and command document said the agent-launcher

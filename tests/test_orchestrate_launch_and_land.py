@@ -667,16 +667,16 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         monkeypatch.chdir(repo)
         launched: list[str] = []
         redelivered: list[str] = []
-        monkeypatch.setattr(
-            orchestrate,
-            "launch",
-            lambda unit, *a, **k: launched.append(unit.name) or setattr(unit, "status", "running"),
-        )
-        monkeypatch.setattr(
-            orchestrate,
-            "redeliver",
-            lambda unit, *a, **k: redelivered.append(unit.name),
-        )
+
+        def fake_launch(unit: Any, *_a: object, **_k: object) -> None:
+            launched.append(unit.name)
+            unit.status = "running"
+
+        def fake_redeliver(unit: Any, *_a: object, **_k: object) -> None:
+            redelivered.append(unit.name)
+
+        monkeypatch.setattr(orchestrate, "launch", fake_launch)
+        monkeypatch.setattr(orchestrate, "redeliver", fake_redeliver)
         monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
@@ -1877,9 +1877,11 @@ class TestRunFileCompatibility:
         combined = notice.out + notice.err
         assert "alpha" in combined
         assert "vibrance" in combined
+        module_path = orchestrate.__file__
+        assert module_path is not None
         version = json.loads(
             (
-                orchestrate._plugin_root(Path(orchestrate.__file__))
+                orchestrate._plugin_root(Path(module_path))
                 / ".claude-plugin"
                 / "plugin.json"
             ).read_text()

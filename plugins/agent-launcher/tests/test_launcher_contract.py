@@ -965,7 +965,9 @@ def test_closed_hint_then_reopened_span_is_unclassifiable(launcher: ModuleType) 
 
 def _claude_marker_bytes() -> str:
     """The fixture's own Claude marker row, the bytes a live pane emits for an empty box."""
-    return CAPTURED_COMPOSERS["claude_echo_above_empty"].splitlines()[-1]
+    row = CAPTURED_COMPOSERS["claude_echo_above_empty"]
+    assert isinstance(row, str)
+    return row.splitlines()[-1]
 
 
 def test_unbordered_two_row_claude_draft_is_absorbed_whole(launcher: ModuleType) -> None:
@@ -1315,7 +1317,9 @@ def test_the_send_inspection_is_taken_after_the_preflight(
 
     def recording_preflight(*args: object, **kwargs: object) -> dict[str, Any]:
         order.append("preflight")
-        return real_preflight(*args, **kwargs)
+        receipt = real_preflight(*args, **kwargs)
+        assert isinstance(receipt, dict)
+        return receipt
 
     monkeypatch.setattr(launcher, "guard_pane_before_write", recording_guard)
     monkeypatch.setattr(launcher, "verify_unit_preflight", recording_preflight)

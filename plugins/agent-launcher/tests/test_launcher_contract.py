@@ -2338,14 +2338,28 @@ def test_unterminated_osc_sequences_parse_in_linear_time(launcher: ModuleType) -
     assert result.state is launcher.ComposerState.STAGED
     assert result.text == "draft"
     assert elapsed < 2.0, f"quadratic backtracking is back: {elapsed:.2f}s"
+    # Cycle 2, F65: a ratio at two sizes distinguishes linear from quadratic without depending
+    # on machine speed. Four times the input: linear is about 4x, quadratic about 16x.
+    small = ("\x1b]0;title" * 4000) + "\n❯ draft\n"
+    large = ("\x1b]0;title" * 16000) + "\n❯ draft\n"
+    started = time.perf_counter()
+    for _ in range(3):
+        launcher.inspect_composer(small, vendor="claude")
+    small_time = (time.perf_counter() - started) / 3
+    started = time.perf_counter()
+    for _ in range(3):
+        launcher.inspect_composer(large, vendor="claude")
+    large_time = (time.perf_counter() - started) / 3
+    assert large_time < 8 * small_time + 0.05, (small_time, large_time)
 
 
-def test_the_bytes_handed_to_the_parser_are_capped_from_the_tail(
+def test_the_rows_handed_to_the_parser_are_capped_from_the_tail_without_cutting_a_row(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Terminal review F12, the other half: the launcher hands inspect_composer at most
-    PANE_INSPECT_MAX_CHARS characters, taken from the tail because the live box is the last
-    block positionally. A viewport three times the cap loses its head, never its box."""
+    """Cycle 1 F12 and cycle 2 F45: the launcher hands inspect_composer at most
+    PANE_INSPECT_MAX_LINES rows, taken from the tail because the live box is the last block.
+    Rows, not bytes: a byte cut could land inside the marker row and turn a staged draft into
+    not_found. A viewport three times the cap loses its head and keeps every row of its box."""
     seen: list[str] = []
     real = launcher.inspect_composer
 
@@ -2353,8 +2367,8 @@ def test_the_bytes_handed_to_the_parser_are_capped_from_the_tail(
         seen.append(text)
         return real(text, vendor=vendor)
 
-    cap = launcher.PANE_INSPECT_MAX_CHARS
-    dump = ("x" * (3 * cap)) + "\n❯ tail draft"
+    cap = launcher.PANE_INSPECT_MAX_LINES
+    dump = "\n".join(f"scrollback row {i}" for i in range(3 * cap)) + "\n❯ tail draft"
     monkeypatch.setattr(launcher, "inspect_composer", capture)
     monkeypatch.setattr(
         launcher,
@@ -2364,9 +2378,28 @@ def test_the_bytes_handed_to_the_parser_are_capped_from_the_tail(
     inspection = launcher.pane_input_inspection("w1:p1", vendor="claude")
     assert inspection.state is launcher.ComposerState.STAGED
     assert inspection.text == "tail draft"
-    assert len(seen) == 1 and len(seen[0]) == cap
+    assert len(seen) == 1 and seen[0].count("\n") == cap - 1
     assert seen[0].endswith("❯ tail draft")
-    assert cap >= 16384
+    assert cap >= 1000
+
+
+def test_a_long_bordered_draft_past_the_old_byte_cap_still_reads_staged(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cycle 2, F45, the measured case: a marker row followed by 400 bordered draft rows at
+    about 68 KB classified staged in full and not_found after a 65536-byte tail cut, because
+    the cut fell inside the marker row. With a row cap the whole block reaches the parser."""
+    draft_rows = "\n".join("│ " + ("draft text " * 14).strip() + " │" for _ in range(450))
+    dump = "│ ❯ first row │\n" + draft_rows
+    assert len(dump) > 65536
+    monkeypatch.setattr(
+        launcher,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(["herdr"], 0, dump, ""),
+    )
+    inspection = launcher.pane_input_inspection("w1:p1", vendor="claude")
+    assert inspection.state is launcher.ComposerState.STAGED
+    assert inspection.text is not None and inspection.text.startswith("first row")
 
 
 def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
@@ -2771,6 +2804,61 @@ def test_each_setup_line_and_the_task_are_separately_inspected(
     assert owned.owned is True
     assert len(owned_sends) == 3
     assert len(guard_calls) == 2
+
+
+def test_the_picker_refusal_reports_a_count_not_the_scraped_options(
+    launcher: ModuleType,
+) -> None:
+    """Cycle 2, F74: the option tokens were scraped from the pane and the refusal interpolated
+    them into a stop that becomes the unit note and the run record. Only the count is reported."""
+    with pytest.raises(SystemExit) as stop:
+        launcher.resolve_opencode_variant("turbo", ["high", "low"])
+    message = str(stop.value)
+    assert "2 options" in message
+    assert "high" not in message and "low" not in message
+    assert "'turbo'" in message
+
+
+@pytest.mark.parametrize(
+    ("readback", "seen_in", "confirmed"),
+    [
+        ("Select variant\n> high\n> low\n", "picker_menu_only", False),
+        ("Select variant\n> high\n> low\nvariant: high\n", "session", True),
+    ],
+)
+def test_variant_confirmation_records_whether_the_token_was_seen_outside_the_menu(
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    readback: str,
+    seen_in: str,
+    confirmed: bool,
+) -> None:
+    """Cycle 2, F75: the confirmation searched the same pane the token was scraped from, and
+    the picker menu lists every option, so finding the token there proved nothing. The source
+    is now recorded on the receipt and the preflight confirms the variant only when the session
+    itself showed it on a non-menu row."""
+    monkeypatch.setattr(launcher, "read_pane", lambda *_a, **_k: readback)
+    unit = launcher.LaunchRequest(
+        name="oc", vendor="opencode", worktree="/tmp/wt", variant="high", launch_receipt={}
+    )
+    assert launcher.confirm_opencode_variant_selected(unit, "w80:p9", "high") == seen_in
+    unit.launch_receipt["variant_confirmed_from"] = seen_in
+    monkeypatch.setattr(
+        launcher, "verify_unit_identity", lambda *a, **k: (["pane"], [], "opencode", True)
+    )
+    receipt = launcher.verify_unit_preflight(unit, "w80:p9", ready=True)
+    assert ("variant" in receipt["confirmed_against_herdr"]) is confirmed
+    assert ("variant" in receipt["requested_only"]) is (not confirmed)
+
+
+def test_an_absent_variant_token_is_still_a_stop(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counter-case for F75: recording the source does not weaken the existing stop."""
+    monkeypatch.setattr(launcher, "read_pane", lambda *_a, **_k: "Select variant\n> low\n")
+    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt")
+    with pytest.raises(SystemExit, match="does not report it"):
+        launcher.confirm_opencode_variant_selected(unit, "w80:p9", "high")
 
 
 def _staged_receipt(**over: Any) -> dict[str, Any]:

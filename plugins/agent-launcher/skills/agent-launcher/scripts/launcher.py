@@ -605,12 +605,14 @@ DELIVERY_WARNING = (
 # local socket round trip, so this is a bound on a wedged herdr rather than a wait for work.
 PANE_INPUT_READ_SECONDS = 5.0
 TAB_CLOSE_SECONDS = 10.0
-# The most characters of a pane read handed to the composer parser, taken from the tail: the
-# live box is the last block positionally, so the head of an oversized viewport is scrollback
-# the parse never needed. This bounds the in-process parse the way the read timeout bounds the
-# subprocess; the parser's own regex is linear, and this keeps a pathological viewport from
-# turning one inspection into seconds anyway (issue 907 terminal review F12).
-PANE_INSPECT_MAX_CHARS = 65536
+# The most rows of a pane read handed to the composer parser, taken from the tail: the live box
+# is the last block positionally, so the head of an oversized viewport is scrollback the parse
+# never needed. Rows, not bytes: a byte cut can land inside the marker row itself and turn a
+# staged draft into `not_found`, which the guard treats as inconclusive and prompts through
+# (issue 907 terminal review cycle 2, F45). A row is never split, so the box survives the cut.
+# The parser's own regex is linear (cycle 1, F12); this keeps a pathological viewport from
+# turning one inspection into seconds through any other path.
+PANE_INSPECT_MAX_LINES = 4000
 # How long to give one pane write. The two calls that put a line into a session were the only
 # Herdr calls with no bound, so a wedged daemon hung go and land mid-delivery, after the guard
 # had inspected the composer and before any status was written. A write is a local socket round
@@ -748,8 +750,12 @@ def resolve_opencode_variant(requested: str | None, available_options: Sequence[
         if opt.strip().lower() == req_clean:
             return opt
 
+    # The count, never the option tokens: they were scraped from the pane, and this stop becomes
+    # the unit note and the run record (cycle 2, F74) -- the same redaction discipline the
+    # composer guard follows.
     raise SystemExit(
-        f"requested variant {requested!r} is not available in live picker options: {list(available_options)}"
+        f"requested variant {requested!r} is not among the {len(available_options)} options "
+        "the live picker offered"
     )
 
 
@@ -781,7 +787,15 @@ def pane_input_inspection(pane_id: str, *, vendor: str) -> Any:
         return ComposerInspection(ComposerState.READ_TIMEOUT)
     if proc.returncode != 0:
         return ComposerInspection(ComposerState.READ_FAILED)
-    return inspect_composer(proc.stdout[-PANE_INSPECT_MAX_CHARS:], vendor=vendor)
+    return inspect_composer(tail_rows(proc.stdout, PANE_INSPECT_MAX_LINES), vendor=vendor)
+
+
+def tail_rows(text: str, rows: int) -> str:
+    """The last ``rows`` physical rows of ``text``, never cutting a row in half."""
+    lines = text.split("\n")
+    if len(lines) <= rows:
+        return text
+    return "\n".join(lines[-rows:])
 
 
 def should_guard_pane_write(unit: Any, *, wrote_before: bool) -> bool:
@@ -848,7 +862,10 @@ guard_unowned_pane = guard_pane_before_write
 guard_reused_pane = guard_pane_before_write
 
 
-def confirm_opencode_variant_selected(unit: Any, pane_id: str, selected: str) -> None:
+OPENCODE_MENU_ROW_RE = re.compile(r"^(?:[>*\-•#]\s*|\d+[\.\)]\s*|\[[\s*xX]?\]\s*)")
+
+
+def confirm_opencode_variant_selected(unit: Any, pane_id: str, selected: str) -> str:
     """Read the pane back and require the chosen variant to be reflected in it.
 
     Typing a label into a picker is a request, not an outcome. A picker that closed on the value it
@@ -856,13 +873,24 @@ def confirm_opencode_variant_selected(unit: Any, pane_id: str, selected: str) ->
     exactly the silent substitution this unit's stop conditions forbid. The echo the interface
     leaves behind is the only evidence of the selection available from outside it, so a selection
     that cannot be found there is a loud stop rather than an assumption.
+
+    Returns where the token was seen, and that is recorded rather than upgraded (cycle 2, F75):
+    ``"session"`` when it appears on a row that is not a picker menu row -- the picker closed and
+    the session itself shows the variant -- and ``"picker_menu_only"`` when the only rows carrying
+    it are menu rows, which is the same menu the token was scraped from and proves nothing about
+    the selection. The preflight lists the variant as confirmed only in the first case.
     """
     clean = strip_ansi(read_pane(pane_id, lines=40))
-    if not re.search(rf"\b{re.escape(selected)}\b", clean, re.IGNORECASE):
+    token = re.compile(rf"\b{re.escape(selected)}\b", re.IGNORECASE)
+    rows = [row.strip() for row in clean.splitlines() if token.search(row)]
+    if not rows:
         raise SystemExit(
             f"{unit.name}: variant {selected!r} was sent to the picker but the session does not "
             "report it; refusing to submit the task at an unverified variant"
         )
+    if any(not OPENCODE_MENU_ROW_RE.match(row) for row in rows):
+        return "session"
+    return "picker_menu_only"
 
 
 def drive_opencode_variant_selection(
@@ -907,7 +935,9 @@ def drive_opencode_variant_selection(
 
     # Wait until session returns to task-ready, then confirm the picker actually moved
     ready = await_ready(unit)
-    confirm_opencode_variant_selected(unit, pane_id, selected)
+    seen_in = confirm_opencode_variant_selected(unit, pane_id, selected)
+    if isinstance(unit.launch_receipt, dict):
+        unit.launch_receipt["variant_confirmed_from"] = seen_in
 
     unit.variant = selected
     append_unit_note(unit, f"variant {selected} verified")
@@ -1291,8 +1321,11 @@ def verify_unit_preflight(
     effective_variant = unit.variant or unit.effort
     if unit.vendor == "opencode" and not effective_variant:
         effective_variant = "Default"
-    # An OpenCode variant is the one tier value that was read back out of the session holding it.
-    if unit.vendor == "opencode" and unit.variant:
+    # An OpenCode variant is confirmed only when it was read back from the session itself, not
+    # from the picker menu it was scraped out of (cycle 2, F75).
+    existing = getattr(unit, "launch_receipt", None)
+    variant_seen_in = existing.get("variant_confirmed_from") if isinstance(existing, dict) else None
+    if unit.vendor == "opencode" and unit.variant and variant_seen_in == "session":
         confirmed.append("variant")
     else:
         unconfirmed.append("variant")

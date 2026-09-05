@@ -540,7 +540,7 @@ this table is the wiring contract for their own queued items.
 
 | Command | Reads | Writes (`save`) |
 |---|---|---|
-| **/plan** | `scan` (§2.3, resume before minting) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`), `adr_refs`, `decisions`, `orchestration_mode`, `orchestration_recommended`, `orchestration_ref` (only when `orchestration_mode=cc-workflows-ultracode`). |
+| **/plan** | `scan` (§2.3, resume before minting) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`), `adr_refs`, `decisions`, `orchestration_mode`, `orchestration_recommended`, `orchestration_ref` (only when `orchestration_mode=cc-workflows-ultracode`), `orchestration_operator_choice` (derived from an explicit mode flag unless an explicit choice is supplied; omitting both preserves the prior choice or starts empty). |
 | **/work** | `restore` (rehydrate `round`/`phase`/`checks_run`/`next_step`) | primary writer: per-phase ticks, round bump (`rounds_seen`), `checks_run`, `work_session_paths`, `issue_ref` adoption, `status=done` at completion. |
 | **/code-review** | the diff + `scan`/`restore` (the existing work-thread) | review-track consumer: appends `review_paths` (append-only, never mints); **never advances `lifecycle_phase`** (preserves it). |
 | **/qa** | `restore` (the work-thread) | qa-track consumer: writes `qa_paths`; on PASS advances `lifecycle_phase` `work`→`qa`; on FAIL keeps `lifecycle_phase=work`. Never mints. |

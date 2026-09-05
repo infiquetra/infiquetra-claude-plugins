@@ -78,6 +78,7 @@ def assert_row(api: ModuleType, contract: Any, text: str) -> None:
         )
         for i in contract.data["writes"]
     ]
+    expected.append(("orchestration_operator_choice", "", ""))
     assert facts == expected, f"{api.SPEC}: /plan consumer row facts differ: {facts} != {expected}"
     assert row == api.render_consumer_row(contract), (
         f"{api.SPEC}: /plan consumer row rendering differs"
@@ -104,8 +105,7 @@ def assert_regions(api: ModuleType, contract: Any, skill: str, spec: str) -> Non
             if when != "always" and template["fixed"].get(when["field"]) != when["equals"]:
                 continue
             value = template["fixed"].get(item["name"], item.get("value", item.get("placeholder")))
-            # Use the shared quote-aware option reader for individual values as well.
-            expected[item["name"]] = save_options("--probe " + value)["probe"]
+            expected[item["name"]] = [value]
         assert options == expected, f"{api.SKILL}: template {template['id']} lost or changed flags"
     note_start, note_end = api.region_span(skill, "EFFORT HONORING NOTE")
     note = skill[note_start:note_end]
@@ -161,7 +161,7 @@ def test_plan_save_contract_loads_and_rejects_malformed_entries(contract_api: Mo
         data = copy.deepcopy(original)
         data["effort_honoring"][field] = value
         cases.append((data, "effort_honoring"))
-    for schema in ("plan_save_contract.v3", "bridge_signatures.v1", None):
+    for schema in ("plan_save_contract.v99", "bridge_signatures.v1", None):
         data = copy.deepcopy(original)
         data["schema"] = schema
         cases.append((data, "schema.*matching tool/schema"))
@@ -258,8 +258,29 @@ def test_operator_choice_rule_matches_engine(tmp_path: Path) -> None:
         tick["orchestration_operator_choice"] == "team-execution"
         and tick["orchestration_mode"] == "inline"
     )
-    note = (ROOT / "plugins/saga/references/plan-save-contract.md").read_text()
-    assert "--orchestration-downgrade" in note and "with neither flag" in note
+    # A carried divergence needs no fresh rationale; a new upgrade is refused even
+    # with a rationale. Nonempty text alone is not an authorization to change modes.
+    tick, _ = save_tick(tmp_path, {"id": "override"})
+    assert (
+        tick["orchestration_operator_choice"] == "team-execution"
+        and tick["orchestration_mode"] == "inline"
+    )
+    save_tick(tmp_path, {**flags, "id": "blank", "orchestration_downgrade": "   "}, ok=False)
+    save_tick(
+        tmp_path,
+        {
+            "id": "upgrade",
+            "orchestration_mode": "team-execution",
+            "orchestration_operator_choice": "inline",
+            "orchestration_downgrade": "does not authorize an upgrade",
+        },
+        ok=False,
+    )
+    note = (ROOT / "plugins/saga/references/saga-spec.md").read_text()
+    assert (
+        "`orchestration_operator_choice` (derived from an explicit mode flag unless an explicit "
+        "choice is supplied; omitting both preserves the prior choice or starts empty)"
+    ) in note
 
 
 def test_saga_spec_plan_consumer_row_matches_contract(contract_api: ModuleType) -> None:
@@ -302,9 +323,7 @@ def test_plan_docs_generated_regions_match_contract(contract_api: ModuleType) ->
     )
     revised = mutated(api, data)
     hash_data = copy.deepcopy(contract.data)
-    next(i for i in hash_data["writes"] if i["name"] == "decisions")["placeholder"] = (
-        "'repair #926'"
-    )
+    next(i for i in hash_data["writes"] if i["name"] == "decisions")["placeholder"] = "repair #926"
     hashed = api.render_template(mutated(api, hash_data), contract.data["templates"][0]["id"])
     parsed = save_options(save_blocks(hashed)[0])
     assert parsed["decisions"] == ["repair #926"] and "orchestration_recommended" in parsed

@@ -2,6 +2,20 @@
 
 ## 2026-09-05
 
+### Plan example values are data, not shell fragments {#926-plan-literal-placeholders}
+
+Cycle 4's independent review rejected the preceding implementation and its closure claims.
+Its v2 placeholders mixed data with authored shell syntax, allowing comments and command
+substitution to change the command. v3 stores raw scalars; the renderer quotes every value.
+A real Bash argument-capture test proves that controlled hashes, pipes, quotes, and
+substitution payloads remain inert. Tests bind identity classification to the engine's
+identity function and reject structural values that can destroy output delimiters.
+
+The older decision below is the cycle-4 design record, not a claim that cycle 4 passed.
+The [current repair receipt](../work-sessions/2026-09-05-saga-plan-contract-926-repair.md)
+separates completed units from pending failures and records their mutations.
+
+
 ### Saga Plan facts use a smaller contract with independent producer and behavior checks {#926-plan-save-contract-single-source}
 
 **Decision.** Cycle 4 replaces the unreleased v1 carrier with v2. YAML remains the single

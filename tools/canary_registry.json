@@ -26,14 +26,14 @@
   {
     "id": "manifest-consumer-matrix",
     "guard": "tests/test_manifest_consumer_matrix.py::test_manifest_no_orphan_field",
-    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md \u00a713.3 (R17, no orphan field).",
+    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md §13.3 (R17, no orphan field).",
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/scripts/provenance_manifest.py",
       "find": "    execution_id: str\n    saga_ref: str",
       "replace": "    execution_id: str\n    canary_mutant_field: str\n    saga_ref: str"
     },
-    "mutation_description": "Add a schema field to the Manifest dataclass with no matching \u00a713.3 matrix row (orphan field)."
+    "mutation_description": "Add a schema field to the Manifest dataclass with no matching §13.3 matrix row (orphan field)."
   },
   {
     "id": "team-execution-pointers",
@@ -86,14 +86,14 @@
   {
     "id": "plan-save-contract-operator-choice",
     "guard": "tests/test_saga_spec_consumer_row.py::test_operator_choice_rule_matches_engine",
-    "invariant": "Remove the documented provenance-refusal requirement.",
+    "invariant": "Falsify the stored operator-choice derivation rule.",
     "mutation": {
       "kind": "replace_text",
-      "file": "plugins/saga/references/plan-save-contract.md",
-      "find": "`--orchestration-downgrade`",
-      "replace": "`--p5-missing-downgrade`"
+      "file": "plugins/saga/references/saga-spec.md",
+      "find": "derived from an explicit mode flag unless an explicit",
+      "replace": "derived on every save unless an explicit"
     },
-    "mutation_description": "Remove the documented provenance-refusal requirement."
+    "mutation_description": "Falsify the stored operator-choice derivation rule."
   },
   {
     "id": "plan-save-contract-regions",
@@ -154,5 +154,41 @@
       "replace": "            for path in []:  # injected rollback bypass"
     },
     "mutation_description": "Bypass rollback after a second-document replace failure; the filesystem assertion must fail."
+  },
+  {
+    "id": "plan-save-contract-shell",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_values_are_shell_data",
+    "invariant": "shell boundary is independently exercised.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "shlex.quote(value)",
+      "replace": "value"
+    },
+    "mutation_description": "Bypass the shell boundary."
+  },
+  {
+    "id": "plan-save-contract-structure",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_rejects_corrupting_structure",
+    "invariant": "structure boundary is independently exercised.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "if {item[\"name\"] for item in data[\"identity\"]} != identity:",
+      "replace": "if False:"
+    },
+    "mutation_description": "Bypass the structure boundary."
+  },
+  {
+    "id": "plan-save-contract-cli",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout",
+    "invariant": "cli boundary is independently exercised.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "message + \"; run --help\", \"usage\"",
+      "replace": "message + \"; run --help\", \"invalid_contract\""
+    },
+    "mutation_description": "Bypass the cli boundary."
   }
 ]

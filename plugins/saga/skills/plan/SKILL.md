@@ -386,7 +386,7 @@ the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-d
 **Write the answer into the plan document's `backend:` frontmatter field**, not only into the saga
 tick. The tick is untracked local state: it does not survive a worktree boundary, another machine,
 or another vendor, so an executor that did not run in this directory cannot see it. The plan document
-is committed and travels with the work, which makes it the only place a decision made here can
+is committed with the work and travels with it, which makes it the only place a decision made here can
 reliably be read later. `/work` honours that field and does not ask again. (If a Phase 0.7
 pre-answer carrier applied `backend: inline`, skip only the operator-facing offer — still call
 `lifecycle_state.recommend_execution_backend`, still record `--orchestration-recommended` with its

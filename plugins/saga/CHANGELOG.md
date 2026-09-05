@@ -26,12 +26,15 @@
 ### Added
 
 - **Two drift checks so these three corrections cannot silently relapse.** A negative check
-  rejects any Markdown file under `plugins/saga/` that describes a resolved tier as merely
-  surfaced to the operator rather than acted on downstream — matching the class of claim rather
-  than one sentence, and reading HTML comment blocks whole because the stale wording spanned
-  source lines where a line-oriented grep would miss it. A positive check derives the expected consumer-row
-  field set from Plan's own fenced `saga.py save` blocks and compares it to the row, so the two
-  documents cannot drift apart again; it maintains no second field list of its own.
+  rejects any span under `plugins/saga/` that pairs an effort token with a not-honored claim
+  (drift-check-opt-out: this bullet describes the matcher itself, not a claim about the
+  system) — the `emission only` idiom, a negation governing a consume/honor/dispatch/enforce
+  verb (including `un-` forms such as `unconsumed`), or a dead-end adjective such as inert,
+  advisory-only, or ignored — reading HTML comment blocks whole because the stale wording
+  spanned source lines where a line-oriented grep would miss it. A positive check derives
+  the expected consumer-row field set from Plan's own fenced `saga.py save` blocks and compares
+  it to the row, so the two documents cannot drift apart again; it maintains no second field
+  list of its own.
 
 ## [0.155.0] - 2026-08-31
 

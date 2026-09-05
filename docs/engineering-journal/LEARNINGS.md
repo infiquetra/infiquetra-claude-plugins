@@ -22,6 +22,24 @@
 
 ## 2026-09-05
 
+### A real-save documentation probe must contain the engine's derived destination {#926-save-probe-identity-containment}
+
+**Evidence.** Saga slugifies task IDs but preserves issue IDs verbatim. A final security audit
+at `b7a28ba4` supplied a traversal-shaped issue ID to the new real-save probe; it wrote outside
+the probe workspace, within a disposable parent directory used for the reproduction.
+**Fix.** Before launching the fixed Saga executable, the test helper asks the real parser and
+builder for the incoming Saga ID, resolves the actual `SAGAS_DIR` destination, and requires it
+to remain within that test's private workspace. This also covers an explicit Saga-ID override
+and escaping symlinks. Task IDs that the engine safely slugifies remain valid. Canonical example
+checks now exercise both issue and task identity behavior, even without a kind predicate.
+**Scope.** This contains documentation-test execution. Saga's existing runtime path behavior
+is unchanged under P5's explicit boundary; any runtime input-policy change belongs to separate
+work. No additional maintainer-validator policy or copied ID derivation was added.
+**Validation.** The same traversal is refused before execution, a safe ID still saves, and both
+containment and issue-scenario bypasses turn the named test red.
+[Receipt](../evidence/issue-926/repair-save-containment-mutations.json). The earlier gate was
+stopped by its verified PID and descendants; its interrupted result is retained separately.
+
 ### Candidate validation must use the same boundary parser as saved output {#926-candidate-phase-boundary}
 
 **Evidence.** After cycle-4 repairs, a final audit changed a literal plan path and removed the

@@ -12,7 +12,7 @@ from types import ModuleType
 import pytest
 import yaml
 from saga_plan_contract import save_blocks
-from test_saga_spec_consumer_row import ROOT, cli, contract_api, mutated, tree
+from test_saga_spec_consumer_row import ROOT, cli, contract_api, mutated, save_tick, tree
 
 __all__ = ["contract_api"]
 
@@ -185,3 +185,45 @@ def test_contract_conflict_recovery(contract_api: ModuleType, tmp_path: Path) ->
     assert path.read_text() == original
     result = cli(api, tmp_path, "render", "--check")
     assert result.returncode == 0 and json.loads(result.stdout)["outcome"] == "clean"
+
+
+def test_contract_save_workspace_is_contained(contract_api: ModuleType, tmp_path: Path) -> None:
+    api = contract_api
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    for flags in (
+        {"kind": "issue", "id": "../../../../../../escaped"},
+        {"id": "../../../../../../escaped"},
+        {"kind": "task", "id": "safe", "saga_id": str(outside / "escaped")},
+    ):
+        with pytest.raises(AssertionError, match="identity escapes its temporary workspace"):
+            save_tick(workspace, flags)
+        assert not (tmp_path / "escaped").exists() and not list(outside.iterdir())
+    # Slugified task IDs stay valid; this is path containment, not a text ban.
+    tick, _ = save_tick(workspace, {"kind": "task", "id": "area/topic"})
+    assert tick["id"] == "area/topic" and tick["saga_id"] == "task-area-topic"
+    linked_workspace = tmp_path / "linked"
+    linked_workspace.mkdir()
+    engine = api.module(ROOT, "plugins/saga/scripts/saga.py", "SAGAS_DIR")
+    target = linked_workspace / engine.SAGAS_DIR
+    target.parent.mkdir(parents=True)
+    target.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(AssertionError, match="identity escapes its temporary workspace"):
+        save_tick(linked_workspace, {"kind": "task", "id": "safe"})
+    assert not list(outside.iterdir())
+    # The edit-time tool must exercise issue IDs even when the example kind is an enum.
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    data = api.load().data
+    next(i for i in data["identity"] if i["name"] == "id")["placeholder"] = (
+        "../../../../../../escaped"
+    )
+    (checkout / api.CONTRACT).write_text(yaml.safe_dump(data, sort_keys=False))
+    before = {p: (checkout / p).read_bytes() for p in (api.SKILL, api.SPEC)}
+    for mode in (("validate",), ("render", "--write")):
+        result = cli(api, checkout, *mode)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "identity escapes" in json.loads(result.stdout)["error"]
+        assert before == {p: (checkout / p).read_bytes() for p in before}

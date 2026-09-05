@@ -8,7 +8,8 @@ Evidence: [boundary mutations](repair-boundary-mutations.json),
 [saved-result mutations](repair-semantic-mutations.json),
 [final factual/behavioral mutations](repair-final-mutations.json), and
 [protected bytes](protected-boundaries.json), and the subsequent
-[candidate-phase repair](repair-phase-boundary-mutations.json). The current
+[candidate-phase repair](repair-phase-boundary-mutations.json) and
+[real-save containment repair](repair-save-containment-mutations.json). The current
 [work session](../../work-sessions/2026-09-05-saga-plan-contract-926-repair.md) records revision custody.
 
 | Finding IDs | Repair or correction | Named test / audit | Mutation evidence |

@@ -184,3 +184,24 @@ change only; every scenario still executes on a healthy input. No runtime file c
 Final narrow validation: **66 passed in 94.91s**. Full-scope mypy passed 349 files;
 repository Ruff and the protected-byte audit passed. Implementation is ready to freeze for
 the full gate. The final gate receipt will name this unit's commit explicitly.
+
+
+## Unit 6: contain the real-save probe's identity-derived destination
+
+The gate at `b7a28ba4` was deliberately interrupted after a read-only security audit exposed
+a documentation-test containment gap. The earlier run reported no test failure before that
+interruption and is not claimed as a completed gate. Its receipt is retained at
+`/tmp/gate-p5-c5-b7a28ba4-interrupted/result.txt` (exit 143).
+
+The test helper now uses Saga's actual parser/builder and `SAGAS_DIR` to resolve the incoming
+write destination before execution. Traversal through issue IDs, explicit Saga IDs and symlinks
+is refused; task IDs that Saga safely slugifies continue to work. The example matrix exercises
+issue IDs as well as task slugs. This is test-execution containment; `saga.py` is unchanged.
+The [receipt](../evidence/issue-926/repair-save-containment-mutations.json) reproduces the old
+outside-workspace write in an entirely disposable parent directory, shows refusal after repair,
+and records the restored safe-ID save. Both bypass mutations are `caught` with green baselines.
+The containment guard is registered in the ordinary gate (16 P5 controls total).
+
+Final focused validation after containment: **67 passed in 186.73s**. Full-scope mypy
+passed 349 files, repository Ruff passed, and the protected-byte audit passed. The replacement
+full gate runs at this unit's frozen commit; its SHA and result are reported separately.

@@ -1,0 +1,44 @@
+{
+  "baseline_revision": "b7a28ba4",
+  "source_hashes": {
+    "tests/test_saga_spec_consumer_row.py": "e9633e0b7ffb3efad1e51d1a8d3d4b529ff742120c3d81288d22560b687080a3",
+    "tests/test_saga_plan_contract_boundaries.py": "2d725ddce058c663ab850dec69404fbac96cfb8aefb0dfecc3026f9d07a90710",
+    "tools/canary_registry.json": "84fb8bec846501de5a646bdb0aa233d6e5c90cec81c34e5af90e27de09e9a188"
+  },
+  "before": {
+    "baseline_revision": "b7a28ba4",
+    "identity": "../../../../../../escaped",
+    "private_workspace": "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-id-containment-odlr3iaz/inside",
+    "escaped_destination": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-id-containment-odlr3iaz/escaped",
+    "outside_workspace_written": true,
+    "files": [
+      "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-id-containment-odlr3iaz/escaped/20260905-233957.md"
+    ]
+  },
+  "after": {
+    "result": "refused before execution",
+    "diagnostic": "Plan example saga identity escapes its temporary workspace",
+    "outside_workspace_written": false,
+    "restored_safe_id": "saved successfully"
+  },
+  "canaries": [
+    {
+      "guard": "plan-save-contract-save-containment",
+      "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_save_workspace_is_contained",
+      "mutation": "replace_text in tests/test_saga_spec_consumer_row.py: 'assert target.is_relative_to(tmp_path.resolve())' -> 'assert True or target.is_relative_to(tmp_path.resolve())'",
+      "result": "caught",
+      "baseline_exit": 0,
+      "detail": "",
+      "timestamp": "2026-09-05T23:46:20+00:00"
+    },
+    {
+      "guard": "issue-identity-scenario",
+      "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_save_workspace_is_contained",
+      "mutation": "replace_text in tests/test_saga_spec_consumer_row.py: 'variants: list[dict[str, str]] = [{}, {\"kind\": \"issue\"}]' -> 'variants: list[dict[str, str]] = [{}]'",
+      "result": "caught",
+      "baseline_exit": 0,
+      "detail": "",
+      "timestamp": "2026-09-05T23:46:28+00:00"
+    }
+  ]
+}

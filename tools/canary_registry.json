@@ -224,5 +224,16 @@
       "find": "phase = plan_phase_53(text=skill)",
       "replace": "phase = skill"
     }
+  },
+  {
+    "id": "plan-save-contract-save-containment",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_save_workspace_is_contained",
+    "invariant": "Real-save probes cannot write outside their private workspace, including explicit/derived issue IDs and symlinks.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "tests/test_saga_spec_consumer_row.py",
+      "find": "assert target.is_relative_to(tmp_path.resolve())",
+      "replace": "assert True or target.is_relative_to(tmp_path.resolve())"
+    }
   }
 ]

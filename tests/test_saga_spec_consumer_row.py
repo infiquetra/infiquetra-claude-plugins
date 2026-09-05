@@ -13,6 +13,7 @@ import importlib.util
 import inspect
 import json
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -351,6 +352,16 @@ def save_tick(
     args = [sys.executable, str(ROOT / "plugins/saga/scripts/saga.py"), "save"]
     for name, value in flags.items():
         args += ["--" + name.replace("_", "-"), value]
+    # Ask the real parser/builder where this save will write before executing it.
+    # Issue IDs are verbatim and explicit saga IDs can override derivation.
+    engine = runpy.run_path(str(ROOT / "plugins/saga/scripts/saga.py"))
+    parser = argparse.ArgumentParser()
+    engine["_add_save_parser"](parser.add_subparsers())
+    incoming, _ = engine["_build_save_saga"](parser.parse_args(args[2:]))
+    target = (tmp_path / engine["SAGAS_DIR"] / incoming.saga_id).resolve()
+    assert target.is_relative_to(tmp_path.resolve()), (
+        "Plan example saga identity escapes its temporary workspace"
+    )
     result = subprocess.run(args, cwd=tmp_path, capture_output=True, text=True, check=False)
     if not ok:
         assert result.returncode != 0 and "downgrade" in result.stdout + result.stderr, result
@@ -589,7 +600,8 @@ def assert_saved_examples(
     # at a time; destination/backend are already crossed by the parametrized test.
     entries = {i["name"]: i for i in contract.data["identity"] + contract.data["writes"]}
     predicates = {i["when"]["field"] for i in contract.data["writes"] if i["when"] != "always"}
-    variants: list[dict[str, str]] = [{}]
+    # Issue IDs use a different filesystem path rule from task slugs.
+    variants: list[dict[str, str]] = [{}, {"kind": "issue"}]
     for field in sorted(predicates - {"destination", "orchestration_mode"}):
         placeholder = entries[field].get("placeholder", "")
         if placeholder.startswith("<") and placeholder.endswith(">") and "|" in placeholder:

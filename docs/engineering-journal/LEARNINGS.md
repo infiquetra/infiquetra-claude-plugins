@@ -47,7 +47,6 @@ and gate result.
 sensitivity using both changed facts and changed outputs.
 **Refs.** [Decision](DECISIONS.md#926-plan-save-contract-single-source).
 
-## 2026-09-05
 
 ### A refusal fixture can defend a read bypass without proving that live routing is safe {#912-read-original-test-defended-bypass}
 

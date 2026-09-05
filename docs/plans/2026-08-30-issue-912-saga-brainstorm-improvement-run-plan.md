@@ -132,8 +132,9 @@ Grouped by concern. R-IDs are continuous across groups and never restart.
   plus a second independent grader agreeing or a recorded operator adjudication, and that gating
   logic is asserted directly.
 - R21. A small fixed calibration set runs and reports grader agreement, making drift visible.
-- R22. Every safeguard B1 and B2 declare critical carries a mutation case that fails when the
-  safeguard is weakened and passes when it is restored.
+- R22. Every safeguard B1 and B2 declare critical carries a documentation-drift guard: a case that
+  fails when the safeguard sentence is deleted and passes when restored, proving the sentence is present and its
+  predicate wired — not that the safeguard's behaviour holds. For prose contracts, weakening is indistinguishable from deletion to a string check, so the guard is honest about that limit.
 - R23. The harness runs offline, writes nothing under `docs/brainstorms/`, mutates no Saga state, and
   needs no network access.
 

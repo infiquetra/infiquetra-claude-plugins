@@ -47,48 +47,74 @@
   <text x="800" y="230" class="label" fill="#17202a">
     <tspan x="800" dy="0">Derived maturity passport</tspan>
   </text>
-  <rect x="800" y="285" width="660" height="82" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
-  <text x="830" y="319" class="body" fill="#52616f">
+  <rect x="800" y="285" width="660" height="62" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
+  <text x="830" y="310" class="body" fill="#52616f">
     <tspan x="830" dy="0">docs/ideation/</tspan>
   </text>
-  <text x="1115" y="319" class="label" fill="#3f7d4d">
+  <text x="1115" y="310" class="label" fill="#3f7d4d">
     <tspan x="1115" dy="0">idea-ready</tspan>
   </text>
-  <text x="1370" y="319" class="label" fill="#2f6fbd">
+  <text x="1370" y="310" class="label" fill="#2f6fbd">
     <tspan x="1370" dy="0">/plan</tspan>
   </text>
-  <rect x="800" y="390" width="660" height="82" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
-  <text x="830" y="424" class="body" fill="#52616f">
-    <tspan x="830" dy="0">docs/brainstorms/ + docs/specs/</tspan>
+  <rect x="800" y="361" width="660" height="62" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
+  <text x="830" y="386" class="body" fill="#52616f">
+    <tspan x="830" dy="0">docs/brainstorms/ +</tspan>
+    <tspan x="830" dy="18">docs/specs/</tspan>
   </text>
-  <text x="1115" y="424" class="label" fill="#3f7d4d">
+  <text x="1115" y="386" class="label" fill="#3f7d4d">
     <tspan x="1115" dy="0">requirements-ready</tspan>
   </text>
-  <text x="1370" y="424" class="label" fill="#2f6fbd">
+  <text x="1370" y="386" class="label" fill="#2f6fbd">
     <tspan x="1370" dy="0">/plan</tspan>
   </text>
-  <rect x="800" y="495" width="660" height="82" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
-  <text x="830" y="529" class="body" fill="#52616f">
-    <tspan x="830" dy="0">docs/plans/ + docs/reviews/</tspan>
+  <rect x="800" y="437" width="660" height="62" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
+  <text x="830" y="462" class="body" fill="#52616f">
+    <tspan x="830" dy="0">docs/brainstorms/</tspan>
+    <tspan x="830" dy="18">frontmatter pending-</tspan>
+    <tspan x="830" dy="18">confirmation</tspan>
   </text>
-  <text x="1115" y="529" class="label" fill="#3f7d4d">
+  <text x="1115" y="462" class="label" fill="#3f7d4d">
+    <tspan x="1115" dy="0">pending-confirmation</tspan>
+  </text>
+  <text x="1370" y="462" class="label" fill="#2f6fbd">
+    <tspan x="1370" dy="0">/brainstorm</tspan>
+  </text>
+  <rect x="800" y="513" width="660" height="62" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
+  <text x="830" y="538" class="body" fill="#52616f">
+    <tspan x="830" dy="0">explicit preserve/defer</tspan>
+    <tspan x="830" dy="18">language</tspan>
+  </text>
+  <text x="1115" y="538" class="label" fill="#3f7d4d">
+    <tspan x="1115" dy="0">deferred-context</tspan>
+  </text>
+  <text x="1370" y="538" class="label" fill="#2f6fbd">
+    <tspan x="1370" dy="0">/handoff</tspan>
+  </text>
+  <rect x="800" y="589" width="660" height="62" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
+  <text x="830" y="614" class="body" fill="#52616f">
+    <tspan x="830" dy="0">docs/plans/ +</tspan>
+    <tspan x="830" dy="18">docs/reviews/</tspan>
+  </text>
+  <text x="1115" y="614" class="label" fill="#3f7d4d">
     <tspan x="1115" dy="0">plan-ready</tspan>
   </text>
-  <text x="1370" y="529" class="label" fill="#2f6fbd">
+  <text x="1370" y="614" class="label" fill="#2f6fbd">
     <tspan x="1370" dy="0">/work</tspan>
   </text>
-  <rect x="800" y="600" width="660" height="82" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
-  <text x="830" y="634" class="body" fill="#52616f">
-    <tspan x="830" dy="0">docs/work-sessions/ + branch refs</tspan>
+  <rect x="800" y="665" width="660" height="62" rx="8" fill="#ffffff" stroke="#c7d0d8" stroke-width="2"/>
+  <text x="830" y="690" class="body" fill="#52616f">
+    <tspan x="830" dy="0">docs/work-sessions/ +</tspan>
+    <tspan x="830" dy="18">branch refs</tspan>
   </text>
-  <text x="1115" y="634" class="label" fill="#3f7d4d">
+  <text x="1115" y="690" class="label" fill="#3f7d4d">
     <tspan x="1115" dy="0">resume-ready</tspan>
   </text>
-  <text x="1370" y="634" class="label" fill="#2f6fbd">
+  <text x="1370" y="690" class="label" fill="#2f6fbd">
     <tspan x="1370" dy="0">/work</tspan>
   </text>
   <rect x="760" y="760" width="770" height="70" rx="8" fill="#ffffff" stroke="#b7791f" stroke-width="2"/>
   <text x="800" y="804" class="label" fill="#b7791f">
-    <tspan x="800" dy="0">Rule: maturity is derived, never stored in saga frontmatter.</tspan>
+    <tspan x="800" dy="0">Rule: maturity is derived, never stored as saga tick frontmatter.</tspan>
   </text>
 </svg>

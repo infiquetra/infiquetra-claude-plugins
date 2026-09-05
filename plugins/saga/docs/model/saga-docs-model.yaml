@@ -43,8 +43,11 @@ maturity:
       from: [explicit preserve/defer language]
       consumed_by: [/handoff]
     pending-confirmation:
-      from: []
-      consumed_by: []
+      from: [docs/brainstorms/ frontmatter pending-confirmation]
+      consumed_by: [/brainstorm]
+      # read_by lists only readers that have been inventoried; absence means not yet
+      # inventoried, not no reader (see README.md).
+      read_by: [/resume, /loop, /handoff]
   source_refs:
     - plugins/saga/references/saga-spec.md
     - plugins/saga/skills/handoff/SKILL.md

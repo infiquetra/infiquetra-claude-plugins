@@ -113,27 +113,44 @@ def check_lightweight_helpers(text: str) -> list[str]:
     return violations
 
 
+def _phase_1_1(text: str) -> str:
+    start = text.find("### 1.1 Existing-context scan")
+    end = text.find("### 1.2", start)
+    if start != -1 and end != -1:
+        return text[start:end]
+    return text
+
+
 def check_helper_ceiling(text: str) -> list[str]:
     violations: list[str] = []
-    norm = _norm(text)
-    if "at most one read-only repository-grounding scout" not in norm:
-        violations.append("missing at most one grounding scout")
+    section = _phase_1_1(text)
+    norm = _norm(section)
+    if "at most one read-only repository-grounding scout" not in norm.lower():
+        violations.append("missing at most one grounding scout in Phase 1.1")
     if "at most one independent claim verifier" not in norm:
-        violations.append("missing at most one claim verifier")
+        violations.append("missing at most one claim verifier in Phase 1.1")
     if "distinct evidence question" not in norm:
-        violations.append("missing distinct evidence question")
-    if "two helpers on the same question is one helper too many" not in norm:
-        violations.append("missing two helpers on same question guard")
+        violations.append("missing distinct evidence question in Phase 1.1")
+    if "two helpers on the same question is one too many" not in norm:
+        violations.append("missing two helpers on same question guard in Phase 1.1")
     if "These are ceilings, not required launches" not in norm:
-        violations.append("missing ceilings not required launches")
+        violations.append("missing ceilings not required launches in Phase 1.1")
     return violations
 
 
 def check_helper_capability(text: str) -> list[str]:
     violations: list[str] = []
     norm = _norm(text)
-    if "may not write files" not in norm:
-        violations.append("missing may not write files")
+    if "worktree-isolated" not in norm:
+        violations.append("missing worktree-isolated")
+    # The safeguard itself: helpers are read-only by omitting the file-mutation
+    # tools. Both helpers must carry the instruction — the verifier and the scout
+    # each state it, and the scout is the one not worktree-isolated so tool omission
+    # is its only protection. Require two occurrences (TEST-13).
+    if norm.count("read-only by omission of `Edit`/`Write`/`NotebookEdit`") < 2:
+        violations.append(
+            "missing read-only by omission of Edit/Write/NotebookEdit (expected 2 occurrences for both helpers)"
+        )
     if "may not choose requirements" not in norm:
         violations.append("missing may not choose requirements")
     if "may not address the operator" not in norm:
@@ -142,6 +159,8 @@ def check_helper_capability(text: str) -> list[str]:
         violations.append("missing subagent_type: Explore")
     if "subagent_type: saga:readonly-verifier" not in text:
         violations.append("missing subagent_type: saga:readonly-verifier")
+    if "A state-free capability with no tick" not in text:
+        violations.append("missing state-free capability sentence")
     return violations
 
 
@@ -284,7 +303,7 @@ def test_lightweight_helpers_positive_and_mutation_fails() -> None:
 def test_helper_ceiling_negative_and_mutation_fails() -> None:
     text = _read(BRAINSTORM_SKILL)
     assert check_helper_ceiling(text) == [], f"ceiling: {check_helper_ceiling(text)}"
-    mutated = _mutate(text, "two helpers on the same question is one helper too many")
+    mutated = _mutate(text, "two helpers on the same question is one too many")
     assert check_helper_ceiling(mutated) != []
     mutated2 = _mutate(text, "These are ceilings, not required launches")
     assert check_helper_ceiling(mutated2) != []
@@ -298,7 +317,7 @@ def test_helper_ceiling_negative_and_mutation_fails() -> None:
 def test_helper_capability_negative_and_mutation_fails() -> None:
     text = _read(BRAINSTORM_SKILL)
     assert check_helper_capability(text) == [], f"capability: {check_helper_capability(text)}"
-    mutated = _mutate(text, "may not write")
+    mutated = _mutate(text, "A state-free capability with no tick")
     assert check_helper_capability(mutated) != []
     mutated2 = _mutate(text, "subagent_type: Explore")
     assert check_helper_capability(mutated2) != []
@@ -363,7 +382,7 @@ def test_inventory_guard_covers_brainstorm() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 passed" in result.stdout or "passed" in result.stdout
+    assert "2 passed" in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +405,7 @@ def test_resolver_routing_still_passes() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 passed" in result.stdout or "passed" in result.stdout
+    assert "1 passed" in result.stdout
 
 
 # ---------------------------------------------------------------------------

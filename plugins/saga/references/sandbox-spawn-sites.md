@@ -67,7 +67,7 @@ retained — the same posture the `Explore` rung of the fallback ladder below do
 not by a worktree fence. Filing it in the in-scope table would wrongly claim the
 `read-only-verify` profile (`saga:readonly-verifier` plus `isolation: "worktree"`).
 
-The scout is a survey-class read spawn. Isolation was considered and not adopted, because filing it under the `read-only-verify` profile would wrongly claim a `saga:readonly-verifier`-plus-worktree posture it does not carry, and the run's settled decisions are not reopened by a maintenance unit. The residual is concrete: a Bash-capable agent in the live tree can run `git checkout` or `git restore`, which is the accidental-clobber class recorded at `docs/engineering-journal/DECISIONS.md` under the sandbox-spawn decision and at `docs/engineering-journal/LEARNINGS.md` under the verifier-clobber incident. Commit or stash before a Brainstorm that will launch a scout against uncommitted work. Note the asymmetry openly: rung 1 of this file's own fallback ladder pairs `Explore` with `isolation: "worktree"`, so the scout is deliberately less isolated than a degraded claim verifier.
+The scout is a survey-class read spawn. Isolation was considered and not adopted, because filing it under the `read-only-verify` profile would wrongly claim a `saga:readonly-verifier`-plus-worktree posture it does not carry, and the run's settled decisions are not reopened by a maintenance unit. The residual is concrete: a Bash-capable agent in the live tree can run `git checkout` or `git restore`, which is the accidental-clobber class recorded in the engineering journal at docs/engineering-journal/LEARNINGS.md#verify-agent-git-checkout-clobber ("An adversarial-verify agent ran destructive git on the uncommitted working tree and clobbered live work"). Commit or stash before a Brainstorm that will launch a scout against uncommitted work. Note the asymmetry openly: rung 1 of this file's own fallback ladder pairs `Explore` with `isolation: "worktree"`, so the scout is deliberately less isolated than a degraded claim verifier.
 
 ## Ad-hoc spawn rule
 
@@ -132,7 +132,7 @@ actually spawned. The panel gate summary keys off exactly these two fields to re
 so a run that quietly degraded its verifier
 cannot pass as a first-choice pass. Workflow `agent()` calls need no manual recording — the emitter
 stamps `fallback_depth: 0` because an unresolvable `agentType` fails the call outright rather than
-descending. This is attribution only; the ladder's order and contract are unchanged (binding
+descending. A state-free capability with no tick such as Brainstorm states the rung and the agent type spawned in its own turn text to the operator instead of persisting the fields. This is attribution only; the ladder's order and contract are unchanged (binding
 decision `{#readonly-verifier-fallback-ladder-325}`).
 
 ## KTD7 residual boundary (documented, not defended)

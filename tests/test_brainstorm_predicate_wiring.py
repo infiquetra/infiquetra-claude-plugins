@@ -1,7 +1,9 @@
-"""Layer 3 — safeguard-phrase drift guard for eight declared-critical safeguards (R22).
+"""Layer 3 — proof that each safeguard predicate reads the phrase it guards (R22).
 
-Each case proves that the safeguard sentence is present in its contract file and that the
-predicate guarding it is wired to it — not that the safeguard's behaviour holds.
+Eight cases, one bit of information each: delete a safeguard's sentence and its predicate
+flags. That establishes the predicates are not no-ops. It does NOT establish that any
+safeguard's behaviour holds — a contradictory re-phrasing keeping the sentence is invisible
+to a string predicate, which is why this file is named for wiring and not for proof.
 """
 
 from __future__ import annotations
@@ -85,7 +87,7 @@ def _cases():  # type: ignore[no-untyped-def]
             "helper_ceiling",
             judg.check_helper_ceiling,
             BRAINSTORM_SKILL,
-            "two helpers on the same question is one helper too many",
+            "two helpers on the same question is one too many",
         ),
         (
             "map_privacy",
@@ -103,7 +105,7 @@ def _cases():  # type: ignore[no-untyped-def]
             "helper_read_only",
             judg.check_helper_capability,
             BRAINSTORM_SKILL,
-            "may not write",
+            "read-only by omission of `Edit`/`Write`/`NotebookEdit`",
         ),
     ]
 
@@ -164,7 +166,12 @@ def _assert_mutation(name: str) -> None:
     # Special handling for no_deferred_save which is tested separately
     if name == "no_deferred_save":
         return
-    # Mutated must fail — remove the needle in memory
+    # Deletion must fail. (No weakening probe: contradictory re-phrasings of a
+    # safeguard while keeping its sentence are a semantic judgement, not
+    # detectable by a string predicate — R22 as amended records this limit;
+    # these cases prove only presence-plus-wiring, per the module docstring.)
     assert needle in text, f"needle {needle!r} not in {path}"
-    mutated = text.replace(needle, "", 1)
-    assert fn(mutated) != [], f"{name} mutated did not fail"  # type: ignore[operator]
+    # Remove EVERY occurrence — a safeguard stated twice (e.g. read-only by tool
+    # omission for scout and verifier) is only deleted when both statements go.
+    deleted = text.replace(needle, "")
+    assert fn(deleted) != [], f"{name} deletion did not fail"  # type: ignore[operator]

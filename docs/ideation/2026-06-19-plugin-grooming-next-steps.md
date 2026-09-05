@@ -3,7 +3,7 @@ date: 2026-06-19
 topic: plugin-grooming-next-steps
 companion-to: 2026-06-19-plugin-ecosystem-grooming-ideation.md
 repo: infiquetra-claude-plugins
-maturity: ready-to-execute
+maturity: idea-ready
 ---
 
 # Plugin Grooming — Next-Step Seeds

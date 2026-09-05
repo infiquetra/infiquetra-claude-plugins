@@ -32,6 +32,29 @@ COLORS = {
     "panel": "#ffffff",
 }
 
+#: Display order for the state-readiness ladder. Order is a rendering concern and lives here;
+#: the row CONTENT comes from the model, so no column can drift from its declared source (DOC-34).
+LADDER_ORDER = (
+    "idea-ready",
+    "requirements-ready",
+    "pending-confirmation",
+    "deferred-context",
+    "plan-ready",
+    "resume-ready",
+)
+
+
+def maturity_rows(model: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Build the ladder's rows from the model so all three columns have one source of truth."""
+    values = model["maturity"]["values"]
+    missing = set(values) ^ set(LADDER_ORDER)
+    if missing:
+        raise ValueError(f"LADDER_ORDER and model maturity values disagree: {sorted(missing)}")
+    return [
+        (" + ".join(values[name]["from"]), name, " / ".join(values[name]["consumed_by"]))
+        for name in LADDER_ORDER
+    ]
+
 
 def _load_model(path: Path = MODEL_PATH) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -224,26 +247,21 @@ def render_state_readiness_ladder(model: dict[str, Any]) -> str:
 
     _box(parts, 760, 180, 770, 560)
     _text(parts, 800, 230, "Derived maturity passport", cls="label")
-    maturity_rows = [
-        ("docs/ideation/", "idea-ready", "/plan"),
-        ("docs/brainstorms/ + docs/specs/", "requirements-ready", "/plan"),
-        ("docs/plans/ + docs/reviews/", "plan-ready", "/work"),
-        ("docs/work-sessions/ + branch refs", "resume-ready", "/work"),
-    ]
+    ladder_rows = maturity_rows(model)
     y = 285
-    for source, maturity, consumer in maturity_rows:
-        _box(parts, 800, y, 660, 82)
-        _text(parts, 830, y + 34, source, fill="muted")
-        _text(parts, 1115, y + 34, maturity, cls="label", fill="green")
-        _text(parts, 1370, y + 34, consumer, cls="label", fill="blue")
-        y += 105
+    for source, maturity, consumer in ladder_rows:
+        _box(parts, 800, y, 660, 62)
+        _text(parts, 830, y + 25, source, fill="muted", max_chars=24, line_height=18)
+        _text(parts, 1115, y + 25, maturity, cls="label", fill="green")
+        _text(parts, 1370, y + 25, consumer, cls="label", fill="blue")
+        y += 76
 
     _box(parts, 760, 760, 770, 70, fill="panel", stroke="amber")
     _text(
         parts,
         800,
         804,
-        "Rule: maturity is derived, never stored in saga frontmatter.",
+        "Rule: maturity is derived, never stored as saga tick frontmatter.",
         cls="label",
         fill="amber",
     )

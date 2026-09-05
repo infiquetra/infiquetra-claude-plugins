@@ -2,6 +2,83 @@
 
 ## 2026-09-05
 
+### Source resolution refuses the original outside the root and shares one decision {#912-refuse-original-outside-root}
+
+**Decision.** A source that resolves outside the declared root is never read. If
+its path carries a marker directory (`docs/brainstorms/` and the like) and the same
+subpath exists inside the root, that in-root file is read instead and its
+declaration decides. Otherwise the source is refused with `unknown:out-of-root:`,
+whatever it declares, whether or not it exists, and however its path is spelled.
+A twin that declares nothing is also refused; its path rule cannot authorize the
+original. Containment uses resolved paths, including symlink targets.
+**Date.** 2026-09-05; author: Codex, Lane A; approved by the issue #912 repair plan,
+KTD1/KTD3/KTD9. This reverses the read-original choice in
+`913-maturity-unknown-sentinel`; Lane B owns the in-place correction.
+**Why.** Refusal now returns a diagnostic sentinel rather than a live path fallback,
+so the earlier rationale against refusal no longer holds. `ResolvedSource` shares
+the path and publication decision between inference and envelope construction.
+The spy test and its divergent inline mutation prove that callers use that decision.
+**Rejected.** Keeping the original-file read would allow a prepared issue to cite
+an artifact absent from its declared checkout. Applying the path rule to an
+undeclaring twin would reopen a different live route. Duplicating the re-anchor
+decision would let attribution and classification diverge again.
+**Revisit when.** The operator explicitly authorizes cross-root prepared-issue
+sources or changes the consumer contract. `infer_maturity(..., root=None)` retains
+the caller-named-file behavior; envelope construction always supplies a root.
+**Refs.** Issue #912/#913; SEC-1, AM-3, AM-4, TEST-1, TEST-2;
+`docs/evidence/issue-912/lane-A-evidence.md`; KTD9 cross-checked against
+`resolve_source` and the twin-without-declaration refusal in `_resolved_maturity`.
+
+### Loop 0.2 stops on unrecognized declarations additively, keeping the pinned bullet verbatim  {#loop-unrecognized-declaration-additive-stop}
+
+**Decision.** AU-4 is repaired by adding one bullet after the pinned line-119 empty
+bullet in `loop/SKILL.md` 0.2 — "empty with `handoff.requires_clarification` True ->
+the Handoff maturity section is present but its value is unrecognized (including any
+`unknown:` sentinel); STOP, show the declared value, and have the issue's handoff
+section fixed; never continue to the saga scan on it" — and not touching the existing
+bullet's wording, casing, or line breaks.
+**Date:** 2026-09-05 · **Issue:** #912 (AU-4) · **Origin:** Review finding AU-4;
+`plugins/saga/skills/loop/SKILL.md` 0.2; `tests/test_saga_plugin.py:4057-4058` pins both
+halves of the existing bullet.
+**Why.** `test_handoff_and_loop_skills_use_positive_routable_vocabulary_gate` asserts the
+existing bullet's phrases verbatim and Lane C may not edit that test, so any rephrase,
+re-case, or split of the old bullet is a red suite by construction. The new bullet's
+opening words ("empty with ... True") make the old bullet the `requires_clarification`
+False case without touching it, and its closing clause ("never continue to the saga
+scan on it") is what the new continuity predicate pins.
+**Rejected.** Rewriting 0.2 as a single combined bullet (breaks the verbatim pin);
+routing unrecognized values onward to the saga scan (the fail-open AU-4 files).
+**Revisit when.** The issue parser stops collapsing unrecognized maturities to empty —
+then the True/False split moves from `requires_clarification` to the maturity value itself.
+**Refs.** `tests/test_brainstorm_continuity_contract.py::check_loop_unrecognized_declaration_stops`;
+`tests/test_saga_plugin.py:4023-4061`.
+
+### The ladder source column wraps inside its 62px row on the renderer's own calibration  {#ladder-source-wrap-budget}
+
+**Decision.** CORR-9 is repaired by rendering the ladder source label with `max_chars=24`
+at `line_height=18`, producing a second (or third) `<text>` line inside the existing
+62px row, and pinning it with `test_ladder_source_labels_fit_their_column`, which
+recomputes the budget from the renderer's own geometry (maturity x 1115 − source x 830
+− 20 padding) and its own calibration (46 chars in 490px ≈ 10.6px/char) and asserts
+every rendered source line fits.
+**Date:** 2026-09-05 · **Issue:** #912 (CORR-9) · **Origin:** Review finding CORR-9;
+`plugins/saga/scripts/render_docs_visuals.py::render_state_readiness_ladder`;
+`tests/test_saga_docs_coverage.py`.
+**Why.** Wrapping keeps the column origins, faces, and row heights untouched, so the
+other three assets regenerate byte-identical and the row-labels guard
+(`test_ladder_renderer_rows_equal_model_maturity_values`) needs no fragment adjustment —
+maturity labels are never wrapped, so every model value still appears verbatim in the
+SVG. Deriving the test budget from the renderer's own numbers keeps the guard from
+drifting from the render it pins; `break_long_words=False` is safe because the longest
+unwrappable token (`pending-confirmation`, 21 chars ≈ 224px) fits the 265px budget.
+**Rejected.** A narrower face (changes every label for one column's sake); moved column
+origins (reflows the whole ladder and all four assets); taller rows (breaks the atlas
+grid rhythm for an overrun only the source column has).
+**Revisit when.** A source string grows an unwrappable token past 24 chars, or the
+ladder gains a seventh maturity row that no longer fits the canvas at 62px rows.
+**Refs.** `tests/test_saga_docs_coverage.py::test_ladder_source_labels_fit_their_column`;
+`plugins/saga/docs/assets/state-readiness-ladder.svg`.
+
 ### Out-of-root handoff sources are refused outright, never read  {#912-out-of-root-refused-outright}
 
 **Decision.** A source that resolves outside the declared root is never read. If its path carries a marker directory (`docs/brainstorms/` and the like) and the same subpath exists inside the root, that in-root file is read instead and its declaration decides — including refusal with `unknown:out-of-root:` when the twin declares nothing. Otherwise the source is refused with `unknown:out-of-root:`, whatever it declares, whether or not it exists, and however its path is spelled. Containment is judged on resolved paths on both sides, so an in-root symlink whose target lies outside the root is refused, not read. The source decision has a single owner, `resolve_source`, consumed by both `infer_maturity` and `build_handoff_envelope`.

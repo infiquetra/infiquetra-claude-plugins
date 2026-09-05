@@ -1,6 +1,7 @@
 # Maintaining Plan's documentation contract
 
-Edit `plan-save-contract.yaml`, then run these commands from the target checkout:
+Edit `plan-save-contract.yaml`, then run these commands from the target checkout's development
+environment (PyYAML and pytest are required):
 
 ```bash
 python3 plugins/saga/scripts/plan_save_contract.py validate
@@ -31,11 +32,14 @@ argument errors), `entry`, and `error` with the repair instruction. Codes are:
 | `engine` | Restore the named engine file and its dependencies. |
 | `filesystem` | Restore file access; follow retained-backup instructions if rollback failed. |
 | `syntax` | Restore valid, readable input and inspect the reported parser failure. |
+| `verification` | Correct the saved-example failure or restore the checkout's test dependencies; run its matching tool. |
 
 There is no automatic v1/v2 migration: restore the carrier and tool from the same revision.
 v3 placeholders are literal data: remove v2's shell quoting rather than relabeling the schema.
-`validate` checks inputs; `render --check`
-also checks document boundaries and output drift. Text placeholders are raw scalar values;
+All three operations run `test_plan_examples_save_the_intended_tick` against the target
+checkout before reporting success or writing. That test executes every example in temporary
+directories and checks the entire saved snapshot. The tool must match the checkout's copy.
+`render --check` also checks document boundaries and output drift. Text placeholders are raw scalar values;
 the renderer supplies shell quoting. Replace enum placeholders with one listed choice.
 
 Add an example as a unique `templates` entry containing `id` and `fixed`, a mapping of declared

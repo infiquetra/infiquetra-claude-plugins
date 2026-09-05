@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -153,6 +154,15 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
                     if field not in names:
                         fail(CONTRACT, entry + ".fixed", f"unknown field {field!r}")
                     choice(actions, field, value, entry + ".fixed")
+                    source = next(
+                        i for i in data["identity"] + data["writes"] if i["name"] == field
+                    )
+                    if "value" in source and value != source["value"]:
+                        fail(
+                            CONTRACT,
+                            entry + ".fixed",
+                            f"{field} has a contract constant; remove the conflicting override",
+                        )
                 continue
             names.add(name)
             value_key = "value" if "value" in item else "placeholder"
@@ -207,21 +217,6 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
             CONTRACT,
             "identity",
             f"must match derive_saga_id inputs {sorted(identity)}; place payload fields in writes",
-        )
-    # Independent producer instructions precede generated outputs. This is a code-token
-    # inventory, not a classifier of English sentences and not a second field list.
-    sections = re.split(r"(?m)^### 5\.3\b", (root / SKILL).read_text(), maxsplit=1)
-    if len(sections) != 2:
-        fail(SKILL, "Phase 5.3", "restore the numbered section boundary before rendering")
-    instructions = sections[0]
-    mentioned = {f.replace("-", "_") for f in re.findall(r"--([a-z]+(?:-[a-z]+)*)", instructions)}
-    missing = (mentioned & actions.keys()) - names
-    if missing:
-        fail(
-            CONTRACT,
-            "writes",
-            f"missing Plan producer flags {sorted(missing)} from {SKILL}; "
-            "restore the required fields rather than renaming them to other valid options",
         )
     effort = data["effort_honoring"]
     keys(effort, {"seam", "parameters", "spawn_kinds", "reference"}, "effort_honoring")
@@ -396,7 +391,7 @@ def rendered_documents(contract: Contract, skill: str, spec: str) -> dict[Path, 
     for start, end, replacement in reversed(replacements):
         skill = skill[:start] + replacement + skill[end:]
         outside = outside[:start] + "\n" * outside[start:end].count("\n") + outside[end:]
-    if re.search(r"saga\.py\s+save", outside):
+    if re.search(r"(?m)(?:^\s*|`)(?:python3?\s+)?(?:[\w./-]+/)?saga\.py\s+save\b", outside):
         fail(
             SKILL,
             "save example outside generated regions",
@@ -459,6 +454,52 @@ class Parser(argparse.ArgumentParser):
         fail(None, "usage", message + "; run --help", "usage")
 
 
+def verify_saved_examples(root: Path) -> None:
+    """Require the existing real-save oracle, without a second policy validator.
+
+    This is a repository maintenance tool: use the checkout's dev environment.
+    The selected test renders in memory and saves only into pytest's temporary paths.
+    """
+    tool = Path("plugins/saga/scripts/plan_save_contract.py")
+    if (root / tool).read_bytes() != Path(__file__).read_bytes():
+        fail(
+            tool,
+            "tool revision",
+            "run the tool from the target checkout so its tested renderer is the one that writes",
+            "verification",
+        )
+    guard = "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick"
+    with tempfile.TemporaryDirectory(prefix="plan-save-proof-") as temporary:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                guard,
+                "-q",
+                "-o",
+                "addopts=",
+                "-p",
+                "no:cacheprovider",
+                "--basetemp",
+                str(Path(temporary) / "run"),
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if result.returncode:
+        fail(
+            CONTRACT,
+            "writes / saved examples",
+            f"{guard} failed (exit {result.returncode}); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\n"
+            + result.stdout[-1200:]
+            + result.stderr[:300],
+            "verification",
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     root = ROOT
     try:
@@ -483,6 +524,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--root must name a checkout")
         root = Path(args.root).resolve()
         contract = load(root=root)
+        verify_saved_examples(root)
         if args.command == "validate":
             print(json.dumps({"outcome": "valid", "schema": SCHEMA, "root": str(root)}))
             return 0

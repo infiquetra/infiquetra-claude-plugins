@@ -58,6 +58,8 @@ def tree(api: ModuleType, root: Path) -> None:
         api.CONTRACT,
         api.SKILL,
         api.SPEC,
+        Path("tests/test_saga_spec_consumer_row.py"),
+        Path("tests/saga_plan_contract.py"),
         Path(api.load().data["effort_honoring"]["reference"]),
     ):
         (root / path).parent.mkdir(parents=True, exist_ok=True)
@@ -349,6 +351,11 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
     skill, spec = (ROOT / api.SKILL).read_text(), (ROOT / api.SPEC).read_text()
     revised = skill.replace("Emit a **runnable** saga", "Produce an **executable** saga")
     revised_spec = spec.replace("Each command below implements", "Every listed command implements")
+    revised = revised.replace(
+        "### 5.3",
+        "Blocked plans: `/work` later records `--blockers`; the saga.py save operation supports other phases.\n\n```bash\nother-tool --status ready # --next-step is unrelated\n```\n\n### 5.3",
+        1,
+    )
     assert revised != skill and revised_spec != spec
     assert_regions(api, contract, revised, revised_spec)
     assert_row(api, contract, revised_spec)
@@ -397,59 +404,82 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("destination", ["pr", "nonprod-deploy"])
-@pytest.mark.parametrize("backend", ["inline", "cc-workflows-ultracode"])
-def test_plan_examples_save_the_intended_tick(
-    contract_api: ModuleType, tmp_path: Path, destination: str, backend: str
+def assert_saved_examples(
+    api: ModuleType, contract: Any, tmp_path: Path, destination: str, backend: str
 ) -> None:
-    api = contract_api
-    contract = api.load()
+    """Compare the whole saved snapshot with Plan's independently specified outcomes."""
     for template in contract.data["templates"]:
         body = api.render_template(contract, template["id"])
         block = save_blocks(body)[0]
         values = {name: value[0] for name, value in save_options(block).items()}
-        # Fill placeholders as a Plan operator would; never add a missing unconditional flag.
-        samples = {
-            "kind": "task",
-            "id": "example-" + template["id"],
-            "plan_path": "docs/plans/plan.md",
-            "destination": destination,
-            "orchestration_mode": backend,
-            "orchestration_recommended": "inline",
-            "adr_refs": "ADR-0926",
-            "decisions": "KTD1: repair #926. --issue-ref is prose.",
-            "orchestration_ref": "docs/workflows/spec.json",
-        }
-        for name in values:
-            if name not in template["fixed"] and name in samples:
-                values[name] = samples[name]
-        # Conditional additions come from emitted bullets, not a duplicate contract.
-        for name, _value, field, expected in re.findall(
+
+        def fill(name: str, value: str, template_id: str = template["id"]) -> str:
+            # Substitute only enum choices, never replace literal text under test.
+            if value.startswith("<") and value.endswith(">") and "|" in value:
+                choices = value[1:-1].split("|")
+                selected = {
+                    "destination": destination,
+                    "orchestration_mode": backend,
+                    "kind": "task",
+                    "deploy_autonomy": "auto",
+                }.get(name, choices[0])
+                assert selected in choices, f"template {template_id}: {name} lacks {selected}"
+                return selected
+            return value
+
+        values = {name: fill(name, value) for name, value in values.items()}
+        for name, value, field, expected in re.findall(
             r"- `--([a-z-]+) ([^`]+)` only when `--([a-z-]+) ([^`]+)`\.", body
         ):
             if values[field.replace("-", "_")] == expected:
-                values[name.replace("-", "_")] = (
-                    "auto" if name == "deploy-autonomy" else samples[name.replace("-", "_")]
+                tokens = shlex.split(value)
+                assert len(tokens) == 1, (
+                    f"template {template['id']}: conditional value is not one shell argument"
                 )
-        tick, text = save_tick(tmp_path, values)
-        assert tick["lifecycle_phase"] == "plan" and tick["phase_status"] == "complete"
-        assert tick["plan_path"] == samples["plan_path"] and tick["destination"] == destination
-        assert (
-            tick["adr_refs"] == ["ADR-0926"]
-            and samples["decisions"] in text.split("## Decisions", 1)[1]
+                values[name.replace("-", "_")] = fill(name.replace("-", "_"), tokens[0])
+        workspace = tmp_path / template["id"]
+        workspace.mkdir(parents=True)
+        identity = {name: values[name] for name in ("kind", "id")}
+        before, _ = save_tick(
+            workspace, {**identity, "next_step": "prior work", "review_paths": "prior-review.md"}
         )
-        assert tick["orchestration_recommended"] == "inline"
-        assert (
-            tick["orchestration_operator_choice"]
-            == tick["orchestration_mode"]
-            == template["fixed"].get("orchestration_mode", backend)
+        tick, text = save_tick(workspace, values)
+        # The expectation names semantic outcomes, not a second list of save flags.
+        # Every other stored field must remain unchanged, including fields a new
+        # (valid but unrelated) save option might otherwise silently overwrite.
+        expected = {
+            "lifecycle_phase": "plan",
+            "phase_status": "complete",
+            "plan_path": values["plan_path"],
+            "destination": values["destination"],
+            "adr_refs": re.findall(r"\bADR-[A-Za-z0-9]+\b", values["adr_refs"]),
+            "orchestration_recommended": values["orchestration_recommended"],
+            "orchestration_mode": values["orchestration_mode"],
+            "orchestration_operator_choice": values["orchestration_mode"],
+            "deploy_autonomy": values["deploy_autonomy"]
+            if values["destination"] == "nonprod-deploy"
+            else "",
+            "orchestration_ref": values["orchestration_ref"]
+            if values["orchestration_mode"] == "cc-workflows-ultracode"
+            else "",
+        }
+        assert expected["adr_refs"], "Plan example must demonstrate pipe-separated ADR references"
+        assert values.keys() <= expected.keys() | identity.keys() | {"decisions"}, (
+            "Plan example writes unrelated state"
         )
-        assert tick["deploy_autonomy"] == ("auto" if destination == "nonprod-deploy" else "")
-        assert tick["orchestration_ref"] == (
-            samples["orchestration_ref"]
-            if tick["orchestration_mode"] == "cc-workflows-ultracode"
-            else ""
-        )
+        before.update(expected)
+        before.pop("updated_at")
+        tick.pop("updated_at")
+        assert tick == before, f"template {template['id']}: saved Plan snapshot differs"
+        assert values["decisions"] in text.split("## Decisions", 1)[1]
+
+
+@pytest.mark.parametrize("destination", ["plan-only", "pr", "merge", "nonprod-deploy"])
+@pytest.mark.parametrize("backend", ["inline", "team-execution", "cc-workflows-ultracode"])
+def test_plan_examples_save_the_intended_tick(
+    contract_api: ModuleType, tmp_path: Path, destination: str, backend: str
+) -> None:
+    assert_saved_examples(contract_api, contract_api.load(), tmp_path, destination, backend)
 
 
 def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -> None:
@@ -457,6 +487,16 @@ def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -
     tree(api, tmp_path)
     data = api.load().data
     data["templates"].append({"id": "deploy", "fixed": {"destination": "nonprod-deploy"}})
+    data["templates"].extend(
+        [
+            {"id": "merge", "fixed": {"destination": "merge"}},
+            {"id": "recommendation", "fixed": {"orchestration_recommended": "team-execution"}},
+            {
+                "id": "autonomy",
+                "fixed": {"destination": "nonprod-deploy", "deploy_autonomy": "auto"},
+            },
+        ]
+    )
     (tmp_path / api.CONTRACT).write_text(yaml.safe_dump(data, sort_keys=False))
     result = cli(api, tmp_path, "render", "--check")
     assert result.returncode == 1 and json.loads(result.stdout)["outcome"] == "drift"
@@ -473,6 +513,15 @@ def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -
         (tmp_path / api.SKILL).read_text(),
         (tmp_path / api.SPEC).read_text(),
     )
+    for destination in ("pr", "nonprod-deploy"):
+        for backend in ("inline", "cc-workflows-ultracode"):
+            assert_saved_examples(
+                api,
+                api.load(root=tmp_path),
+                tmp_path / f"saved-{destination}-{backend}",
+                destination,
+                backend,
+            )
     # Original checkout is not the target even when running an installed/cached script.
     assert "Example: deploy" not in (ROOT / api.SKILL).read_text()
 

@@ -2,6 +2,22 @@
 
 ## 2026-09-05
 
+### The documentation write command requires the existing saved-result proof {#926-plan-write-requires-behavior-proof}
+
+The edit-time CLI runs the focused real-save test before it can write. The importable
+loader and renderer remain usable by that test; the selected test does not invoke this
+CLI. This is a repository maintenance command, like the gate, and requires the checkout's
+development environment. Installed copies must match the target checkout's tool.
+
+This replaces the broad prose-flag scan rather than introducing another policy classifier
+or a second hardcoded field contract. The behavioral test states Plan's expected results
+and checks the entire stored snapshot, including preservation of unrelated state. The
+ordinary pytest gate runs the existing mutation-canary machinery, so a hollow behavioral
+guard cannot silently wait for a scheduled run. No Saga runtime imports the maintainer tool
+or these tests. The [unit receipt](../work-sessions/2026-09-05-saga-plan-contract-926-repair.md)
+records the data-drift, wording-only, preflight-bypass, hollow-guard, and deletion probes.
+
+
 ### Plan example values are data, not shell fragments {#926-plan-literal-placeholders}
 
 Cycle 4's independent review rejected the preceding implementation and its closure claims.

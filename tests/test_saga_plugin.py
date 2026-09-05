@@ -161,13 +161,15 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
     # Keep this inventory outside the guard it protects: deleting the guard must be red.
     contract = PLUGIN_ROOT / "references/plan-save-contract.yaml"
     guard = ROOT / "tests/test_saga_spec_consumer_row.py"
-    for path in (contract, guard):
+    boundaries = ROOT / "tests/test_saga_plan_contract_boundaries.py"
+    for path in (contract, guard, boundaries):
         assert path.is_file(), (
             f"{path.relative_to(ROOT)}: required Plan contract guard input is missing"
         )
     functions = [
         node
-        for node in ast.parse(_read(guard), filename=str(guard)).body
+        for path in (guard, boundaries)
+        for node in ast.parse(_read(path), filename=str(path)).body
         if isinstance(node, ast.FunctionDef)
     ]
     for name in (
@@ -180,27 +182,18 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
         "test_plan_examples_save_the_intended_tick",
         "test_plan_renderer_edit_workflow",
         "test_plan_renderer_refusals_and_rollback",
+        "test_contract_values_are_shell_data",
+        "test_contract_rejects_corrupting_structure",
+        "test_contract_cli_reports_operation_and_checkout",
     ):
         matches = [node for node in functions if node.name == name]
         assert len(matches) == 1, f"{guard.relative_to(ROOT)}: expected exactly one {name}"
-        body = matches[0].body
-        executable = [
-            node
-            for node in body
-            if not (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-            )
-        ]
-        assert executable and not isinstance(executable[0], (ast.Pass, ast.Return)), (
-            f"{guard.relative_to(ROOT)}::{name}: hollow guard body; restore its behavioral checks"
-        )
-    # Syntax inventory is only the presence layer; mutation canaries prove execution.
+    # Syntax proves presence only. The ordinary pytest gate runs behavioral canaries
+    # in test_wiring_canary.py; it detects bypasses after any statement, not only return-first.
     registry = json.loads((ROOT / "tools/canary_registry.json").read_text())
     protected = {entry["guard"].split("::")[-1] for entry in registry}
     assert {node.name for node in functions if node.name.startswith("test_")} <= protected, (
-        f"{guard.relative_to(ROOT)}: every guard needs a scheduled behavioral mutation"
+        "Plan contract: every guard needs a behavioral mutation run by the ordinary pytest gate"
     )
 
     dispatch_docs = "\n".join(

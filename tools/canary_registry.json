@@ -78,8 +78,8 @@
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/references/plan-save-contract.yaml",
-      "find": "schema: plan_save_contract.v2",
-      "replace": "schema: plan_save_contract.v2\nschema: plan_save_contract.v2"
+      "find": "schema: plan_save_contract.v3",
+      "replace": "schema: plan_save_contract.v3\nschema: plan_save_contract.v3"
     },
     "mutation_description": "Duplicate a structured schema key; the loader must refuse."
   },

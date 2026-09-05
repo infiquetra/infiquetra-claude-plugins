@@ -33,6 +33,19 @@ def _load_canary():
 canary = _load_canary()
 
 
+def test_plan_contract_guards_have_teeth() -> None:
+    """P5 cannot wait for a scheduled run to discover a hollow guard (#926)."""
+    entries = [
+        entry
+        for entry in canary.load_registry(REPO_ROOT / "tools/canary_registry.json")
+        if entry["id"].startswith("plan-save-contract-")
+    ]
+    assert entries, "Plan contract behavioral canaries are missing"
+    for entry in entries:
+        record = canary.run_entry(entry, REPO_ROOT)
+        assert record["result"] == "caught", f"{entry['guard']}: {record}"
+
+
 # ---------------------------------------------------------------------------
 # Fixture-repo builders — a tiny throwaway "repo" with one guard + one target file
 # ---------------------------------------------------------------------------

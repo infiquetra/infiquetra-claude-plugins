@@ -45,7 +45,11 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.155.0"  # cycle-2 repair of the integrated review's
+    assert plugin_json["version"] == "0.156.0"  # issue #926 (unit P5, issue #918 Wave Two):
+    # Plan's documentation corrections -- the derived-state sentence, the board-move trigger
+    # clause, the effort-emission comment's native-vs-proxy description, and the saga-spec
+    # /plan consumer row -- plus the two drift checks that keep them from relapsing.
+    # Successor to the cycle-2 repair of the integrated review's
     # WK2-WK4 findings: the /qa preamble and certificate comment issue #930 named, the halt/allowlist
     # attribution, a CLI for the build-unit tier resolver, validation of an explicit plan tier, and
     # three guard tests that could not fail. Successor to issue #930's maintenance sweep at 0.154.0

@@ -9,9 +9,10 @@
   plan, which Plan never produces because it writes a file and never runs `git commit`. It now
   names the plan document and the saga tick. The board-move trigger clause drops "is committed"
   while keeping its precondition force: the plan document exists and has cleared review.
-- **The effort-emission comment described a world that no longer exists.** It claimed no dispatch
-  mechanism honors resolved effort and named issue #363's work as future; that work shipped and
-  the issue closed. The comment now names the honoring seam,
+- **The effort-emission comment described a world that has since changed.** It named issue #363's
+  effort-rider work as still ahead of the repository; that work shipped and the issue closed, so
+  the comment's account of how a resolved tier reaches a spawned agent was stale. It now names
+  the honoring seam,
   `fleet_commons.effort_rider.inject_effort`, and distinguishes real enforcement from proxy: the
   `workflow` and `external-engine` spawn kinds carry effort on a real control, while the `agent`
   spawn kind prepends an `EFFORT_RIDER` directive because the Agent tool has no per-call effort
@@ -25,10 +26,10 @@
 ### Added
 
 - **Two drift checks so these three corrections cannot silently relapse.** A negative check
-  rejects any Markdown file under `plugins/saga/` that claims resolved effort is emitted but not
-  consumed, honored, dispatched, or enforced — matching the class of claim rather than one
-  sentence, and reading HTML comment blocks whole because the stale claim spanned source lines
-  where a line-oriented grep would miss it. A positive check derives the expected consumer-row
+  rejects any Markdown file under `plugins/saga/` that describes a resolved tier as merely
+  surfaced to the operator rather than acted on downstream — matching the class of claim rather
+  than one sentence, and reading HTML comment blocks whole because the stale wording spanned
+  source lines where a line-oriented grep would miss it. A positive check derives the expected consumer-row
   field set from Plan's own fenced `saga.py save` blocks and compares it to the row, so the two
   documents cannot drift apart again; it maintains no second field list of its own.
 

@@ -22,6 +22,21 @@
 
 ## 2026-09-05
 
+### Candidate validation must use the same boundary parser as saved output {#926-candidate-phase-boundary}
+
+**Evidence.** After cycle-4 repairs, a final audit changed a literal plan path and removed the
+Phase 5.3 heading together. The candidate differed from the document, so the test parsed the
+whole candidate instead of using the shared phase reader. `validate` and `render --write`
+returned 0, then all twelve ordinary saved-example cases failed on the written document.
+**Fix.** The shared reader accepts explicit candidate text; both candidate and file paths use
+its same heading/count/order checks. A missing 5.3 or 5.4 heading refuses before writing even
+with simultaneous output drift. The CLI stops at the first pytest failure with a short traceback,
+so its bounded diagnostic contains the actual assertion rather than twelve repeated summaries.
+The verification envelope names the test file rather than blaming every failure on the YAML.
+**Validation.** The identical mutation now returns 2 with unchanged documents; restoring the
+heading returns 0. Bypassing candidate phase parsing and removing first-failure reporting each
+turn their named test red. [Mutation receipt](../evidence/issue-926/repair-phase-boundary-mutations.json).
+
 ### Executable documentation must not choose a test's program {#926-doc-command-execution-boundary}
 
 **Evidence.** Cycle 4 security review changed the maintainer's recommender example to an

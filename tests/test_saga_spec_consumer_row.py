@@ -158,11 +158,12 @@ def assert_row(api: ModuleType, contract: Any, text: str) -> None:
 def assert_regions(api: ModuleType, contract: Any, skill: str, spec: str) -> None:
     rendered = api.rendered_documents(contract, skill, spec)
     assert rendered[api.SKILL] == skill, f"{api.SKILL}: generated region differs; render --write"
-    blocks = save_blocks(plan_phase_53() if skill == (ROOT / api.SKILL).read_text() else skill)
+    phase = plan_phase_53(text=skill)
+    blocks = save_blocks(phase)
     assert len(blocks) == len(contract.data["templates"]), (
         f"{api.SKILL}: missing/extra save example"
     )
-    ids = re.findall(r"\*\*Example: ([a-z0-9_-]+)\*\*", skill)
+    ids = re.findall(r"\*\*Example: ([a-z0-9_-]+)\*\*", phase)
     assert len(ids) == len(set(ids)) == len(blocks), f"{api.SKILL}: duplicate or missing example ID"
     by_id = dict(zip(ids, blocks, strict=True))
     assert set(by_id) == {t["id"] for t in contract.data["templates"]}
@@ -481,6 +482,8 @@ def test_plan_docs_generated_regions_match_contract(
     assert parsed["decisions"] == ["repair #926"] and "orchestration_recommended" in parsed
     output = api.rendered_documents(revised, skill, spec)[api.SKILL]
     assert "docs/plans/revised.md" in output and output != skill
+    with pytest.raises(AssertionError, match="expected exactly one ### 5.3"):
+        assert_regions(api, revised, output.replace("### 5.3 ", "### 5.8 "), spec)
 
 
 def recommender_argv(command: str, root: Path) -> list[str]:
@@ -768,6 +771,23 @@ def test_plan_renderer_refusals_and_rollback(
             assert result.returncode == 2 and name in json.loads(result.stdout)["error"]
             assert (tmp_path / api.SPEC).read_text() == originals[api.SPEC]
         (tmp_path / path).write_text(originals[path])
+    raw = (tmp_path / api.CONTRACT).read_text()
+    data = yaml.safe_load(raw)
+    next(i for i in data["writes"] if i["name"] == "plan_path")["placeholder"] = "revised.md"
+    (tmp_path / api.CONTRACT).write_text(yaml.safe_dump(data, sort_keys=False))
+    for heading in ("5.3", "5.4"):
+        broken = originals[api.SKILL].replace(f"### {heading} ", "### 5.8 ")
+        (tmp_path / api.SKILL).write_text(broken)
+        for command in (("validate",), ("render", "--write")):
+            result = cli(api, tmp_path, *command)
+            detail = json.loads(result.stdout)
+            assert result.returncode == 2 and heading in detail["error"], result.stdout
+            assert "expected exactly one" in detail["error"]
+            assert detail["file"] == "tests/test_saga_spec_consumer_row.py"
+            assert (tmp_path / api.SKILL).read_text() == broken
+            assert (tmp_path / api.SPEC).read_text() == originals[api.SPEC]
+    (tmp_path / api.SKILL).write_text(originals[api.SKILL])
+    (tmp_path / api.CONTRACT).write_text(raw)
     for args in [
         (),
         ("render",),

@@ -410,7 +410,7 @@ def verify_saved_examples(root: Path) -> None:
             code="verification",
         )
     guard = "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick"
-    args = [sys.executable, "-m", "pytest", guard, "-q", "-o", "addopts="]
+    args = [sys.executable, "-m", "pytest", guard, "-q", "-x", "--tb=short", "-o", "addopts="]
     args += ["-p", "no:cacheprovider"]
     with tempfile.TemporaryDirectory(prefix="plan-save-proof-") as temporary:
         args += ["--basetemp", str(Path(temporary) / "run")]
@@ -421,6 +421,7 @@ def verify_saved_examples(root: Path) -> None:
             f"{guard} failed (exit {result.returncode}); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\n"
             + result.stdout[-1200:]
             + result.stderr[:300],
+            source=guard.split("::")[0],
             code="verification",
         )
 

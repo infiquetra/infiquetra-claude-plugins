@@ -7,7 +7,8 @@ These are implementation dispositions, not assigned lens scores or review accept
 Evidence: [boundary mutations](repair-boundary-mutations.json),
 [saved-result mutations](repair-semantic-mutations.json),
 [final factual/behavioral mutations](repair-final-mutations.json), and
-[protected bytes](protected-boundaries.json). The current
+[protected bytes](protected-boundaries.json), and the subsequent
+[candidate-phase repair](repair-phase-boundary-mutations.json). The current
 [work session](../../work-sessions/2026-09-05-saga-plan-contract-926-repair.md) records revision custody.
 
 | Finding IDs | Repair or correction | Named test / audit | Mutation evidence |
@@ -39,7 +40,7 @@ Evidence: [boundary mutations](repair-boundary-mutations.json),
 | `api05` | Refusals bound key previews and the total error string instead of echoing the full document. | test_contract_cli_reports_operation_and_checkout | unit-2 unbounded-error; oversized key/value controls |
 | `adv07`, `sec04` | Documented SafeLoader inheritance at the yaml.load call with the targeted Bandit annotation. Permanent controls refuse harmless Python object tags. | test_plan_save_contract_loads_and_rejects_malformed_entries | plan-save-contract-malformed; SafeLoader object-tag controls |
 | `api04` | Schema errors report actual/expected versions and distinguish obsolete migration from a mismatched future tool. The runbook enumerates all seven removed v1 concepts and the removed v3 effort configuration. | test_contract_cli_reports_operation_and_checkout | schema-remedy; observed-version controls |
-| `testing06` | Removed the impossible importlib-spec branch with runpy. Candidate parsing exercises the phase boundary, conflicting constants and conditions have controls, and ordered-but-overlapping regions are explicitly rejected. | test_contract_rejects_corrupting_structure; test_plan_save_contract_loads_and_rejects_malformed_entries | overlap; conditional-fixed; malformed constants |
+| `testing06` | Removed the impossible importlib-spec branch with runpy. Candidate parsing exercises the phase boundary, conflicting constants and conditions have controls, and ordered-but-overlapping regions are explicitly rejected. | test_contract_rejects_corrupting_structure; test_plan_save_contract_loads_and_rejects_malformed_entries | overlap; conditional-fixed; malformed constants; candidate-phase mutation (including simultaneous output drift) |
 | `corr05` | A fixed conditional field with a fixed false predicate is refused rather than silently discarded. Newly introduced predicate fields are exercised through their enum choices. | test_contract_rejects_corrupting_structure; test_plan_save_contract_binds_to_engine | conditional-fixed; predicate-kind; predicate-orchestration_recommended; predicate-coverage-bypassed |
 | `adv08` | Restored the literal section signs in the two unrelated canary entries. Their complete entries remain equal to the pre-repair baseline. | Canary registry JSON comparison | unrelated-registry equality audit |
 

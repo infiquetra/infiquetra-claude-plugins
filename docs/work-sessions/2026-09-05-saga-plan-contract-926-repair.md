@@ -159,3 +159,28 @@ independent lens scoring remains coordinator-owned.
 [Protected-byte receipt](../evidence/issue-926/protected-boundaries.json). No push, PR, merge,
 board or issue mutation; no model/effort/profile change. The coordinator dispatches independent
 review. The frozen gate result is implementation evidence, not a lens score.
+
+
+## Unit 5: candidate/file parser parity before the frozen gate
+
+A final audit found that `assert_regions` parsed an edited candidate as a whole document,
+while an unchanged document used the shared Phase 5.3 reader. Removing the phase heading
+and changing a literal path together produced `valid` and `rendered`, then twelve failing
+saved-example tests after the write. The shared reader now accepts explicit text; all candidates
+use it, and both missing boundary headings are tested with simultaneous output drift. Example
+IDs are read from that same phase. Routing's existing default reader path stays intact.
+
+[Before/after receipt](../evidence/issue-926/repair-phase-boundary-mutations.json): before,
+validate/write exited 0 and the subsequent ordinary test exited 1 (12 failures); after,
+validate/write exit 2 without edits and restored validate exits 0. The phase-parser bypass
+canary and first-failure-diagnostic mutation each report `caught` from a green baseline.
+The new canary joins the ordinary pytest gate (15 registered P5 controls total).
+
+The first focused attempt correctly failed the new diagnostic assertion: twelve failure
+summaries crowded out the heading error. Preflight now stops at the first failure, uses a
+short traceback, and identifies the failing test file in its envelope. This is a diagnostics
+change only; every scenario still executes on a healthy input. No runtime file changed.
+
+Final narrow validation: **66 passed in 94.91s**. Full-scope mypy passed 349 files;
+repository Ruff and the protected-byte audit passed. Implementation is ready to freeze for
+the full gate. The final gate receipt will name this unit's commit explicitly.

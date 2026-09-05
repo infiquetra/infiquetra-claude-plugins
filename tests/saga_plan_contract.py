@@ -16,9 +16,10 @@ _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\n]*)$")
 _OPTION = re.compile(r"--([a-z][a-z0-9-]*)(?:=(.*))?", re.DOTALL)
 
 
-def plan_phase_53() -> str:
+def plan_phase_53(*, text: str | None = None) -> str:
     """Read exactly Phase 5.3, failing with the source and missing boundary."""
-    text = PLAN_SKILL.read_text(encoding="utf-8")
+    if text is None:
+        text = PLAN_SKILL.read_text(encoding="utf-8")
     boundaries = []
     for heading in ("5.3", "5.4"):
         matches = list(re.finditer(rf"^### {re.escape(heading)}(?:\s|$)", text, re.MULTILINE))

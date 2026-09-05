@@ -213,5 +213,16 @@
       "find": "if re.search(r\"(?m)^(?:<{7}|={7}|>{7}|\\|{7})(?: |$)\", text):",
       "replace": "if False:"
     }
+  },
+  {
+    "id": "plan-save-contract-phase-boundary",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+    "invariant": "Candidate text always uses the shared Phase 5.3 boundary parser, even during drift.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "tests/test_saga_spec_consumer_row.py",
+      "find": "phase = plan_phase_53(text=skill)",
+      "replace": "phase = skill"
+    }
   }
 ]

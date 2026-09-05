@@ -375,7 +375,7 @@ every other destination.
 > **A) Gate** (default, pre-select) — deploy asks for explicit confirmation before promoting.
 > **B) Auto** — deploy may auto-promote to **nonprod only** (staging/production always confirm).
 
-This becomes the saga `--deploy-autonomy <gate|auto>`. It is authored **once** here and read — never
+This becomes the saga `--deploy-autonomy` value shown in §5.3’s generated examples. It is authored **once** here and read — never
 re-asked — by `deploy_handoff.offer` at handoff time; there is deliberately no way to widen it to
 `auto` at deploy time. **Pre-select Gate**: a missing or gate posture can never auto-fire, which is
 the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-deploy destination —
@@ -541,14 +541,15 @@ shared registry**:
    dirtied overlay with the run's changes (the repo accretes tier judgment). Every persisted override
    originates from an explicit operator confirmation; never auto-promote silently.
 
-<!-- BEGIN GENERATED EFFORT HONORING NOTE (rendered from references/plan-save-contract.yaml by scripts/plan_save_contract.py — do not hand-edit; pinned by tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract)
+<!-- BEGIN GENERATED EFFORT HONORING NOTE
 The honoring seam is `fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)`.
 `workflow` carries effort on a real control.
 `external-engine` carries effort on a real control.
-`agent` prepends an `EFFORT_RIDER` directive, a labeled proxy, because the Agent tool has no per-call effort parameter.
+`agent` prepends an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.
 See `plugins/fleet-core/references/effort-convention.md`.
-the per-unit "proposed tier" cell is a `<model>/<effort>` pair, both halves sourced verbatim from `tier_resolver.resolve(...)`, never a bare model literal with effort omitted
-Team Execution's A7 worker table (`plugins/team-execution/skills/team-execution/SKILL.md`) carries the same cell shape and its parser splits the cell on `/`; its own copy of this note still carries the pre-#363 wording and is tracked by issue #993
+The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`
+and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.
+Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.
 END GENERATED EFFORT HONORING NOTE -->
 
 For a unit carrying `engine`/`capability` (U12 chaperone-worker units), the recommendation row also
@@ -618,7 +619,9 @@ shares the same stem: `docs/workflows/<YYYY-MM-DD>-<topic>.workflow.js`.
 Emit a **runnable** saga `save` command — never prose like "write a saga", and never `git add` the
 tick (saga state is git-ignored, machine-local). Use the real flags:
 
-<!-- BEGIN GENERATED PLAN SAVE TEMPLATE: default (rendered from references/plan-save-contract.yaml by scripts/plan_save_contract.py — do not hand-edit; a divergence fails tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract) -->
+<!-- BEGIN GENERATED PLAN SAVE EXAMPLES: default -->
+**Example: default**
+
 ```bash
 python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
@@ -630,17 +633,19 @@ python3 plugins/saga/scripts/saga.py save \
   --adr-refs "ADR-NNNN|ADR-MMMM" \
   --decisions "KTD1: rationale. KTD2: rationale." \
   --orchestration-mode <inline|team-execution|cc-workflows-ultracode> \
-  --orchestration-recommended <recommend_execution_backend() output>
+  --orchestration-recommended <inline|team-execution|cc-workflows-ultracode>
 ```
 
-Add when the condition holds:
-- `--deploy-autonomy <gate|auto>` — only when `--destination nonprod-deploy`; Phase 5.1 follow-up; omit otherwise
-<!-- END GENERATED PLAN SAVE TEMPLATE: default -->
+- `--deploy-autonomy <gate|auto>` only when `--destination nonprod-deploy`.
+- `--orchestration-ref docs/workflows/YYYY-MM-DD-<topic>-spec.json` only when `--orchestration-mode cc-workflows-ultracode`.
+<!-- END GENERATED PLAN SAVE EXAMPLES: default -->
 
 **For `cc-workflows-ultracode`:** also pass `--orchestration-ref` pointing at the **spec JSON** (the
 canonical artifact, per KTD1/KD3 — regenerable, so the ref is the spec not the `.workflow.js`):
 
-<!-- BEGIN GENERATED PLAN SAVE TEMPLATE: cc-workflows-ultracode (rendered from references/plan-save-contract.yaml by scripts/plan_save_contract.py — do not hand-edit; a divergence fails tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract) -->
+<!-- BEGIN GENERATED PLAN SAVE EXAMPLES: workflow -->
+**Example: cc-workflows-ultracode**
+
 ```bash
 python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
@@ -652,10 +657,12 @@ python3 plugins/saga/scripts/saga.py save \
   --adr-refs "ADR-NNNN|ADR-MMMM" \
   --decisions "KTD1: rationale. KTD2: rationale." \
   --orchestration-mode cc-workflows-ultracode \
-  --orchestration-recommended <recommend_execution_backend() output> \
+  --orchestration-recommended <inline|team-execution|cc-workflows-ultracode> \
   --orchestration-ref docs/workflows/YYYY-MM-DD-<topic>-spec.json
 ```
-<!-- END GENERATED PLAN SAVE TEMPLATE: cc-workflows-ultracode -->
+
+- `--deploy-autonomy <gate|auto>` only when `--destination nonprod-deploy`.
+<!-- END GENERATED PLAN SAVE EXAMPLES: workflow -->
 
 The `.workflow.js` is regenerable at any time from the spec (`execution_spec.py emit`); the spec JSON is
 the durable canonical artifact. `orchestration_ref` is the repo-relative path to the spec JSON, so
@@ -668,7 +675,9 @@ auto-derives from `--orchestration-mode`, so the only added burden is naming the
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc work pass
 `--kind task --id <slug>`. The flags in the templates above and the `/plan` consumer row
 in `references/saga-spec.md` §11 are rendered from the same `references/plan-save-contract.yaml`
-contract. `--phase-status complete` is what the `/loop`
+contract. The [maintainer runbook](../../references/plan-save-contract.md) documents both
+generation systems, the runnable recommender call, and recovery from a failed render.
+`--phase-status complete` is what the `/loop`
 dispatch table routes on: a finished plan goes onward to `/doc-review`, and omitting it leaves the
 tick at the `pending` default, which routes the already-finished plan right back into `/plan`.
 When resuming (Phase 0.3 matched), this appends a tick to the existing saga directory rather than

@@ -163,7 +163,7 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
             f"{path.relative_to(ROOT)}: required Plan contract guard input is missing"
         )
     functions = [
-        node.name
+        node
         for node in ast.parse(_read(guard), filename=str(guard)).body
         if isinstance(node, ast.FunctionDef)
     ]
@@ -174,10 +174,31 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
         "test_saga_spec_plan_consumer_row_matches_contract",
         "test_plan_docs_generated_regions_match_contract",
         "test_plan_docs_wording_changes_do_not_fail",
+        "test_plan_examples_save_the_intended_tick",
+        "test_plan_renderer_edit_workflow",
+        "test_plan_renderer_refusals_and_rollback",
     ):
-        assert functions.count(name) == 1, (
-            f"{guard.relative_to(ROOT)}: expected exactly one {name}; found {functions.count(name)}"
+        matches = [node for node in functions if node.name == name]
+        assert len(matches) == 1, f"{guard.relative_to(ROOT)}: expected exactly one {name}"
+        body = matches[0].body
+        executable = [
+            node
+            for node in body
+            if not (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            )
+        ]
+        assert executable and not isinstance(executable[0], (ast.Pass, ast.Return)), (
+            f"{guard.relative_to(ROOT)}::{name}: hollow guard body; restore its behavioral checks"
         )
+    # Syntax inventory is only the presence layer; mutation canaries prove execution.
+    registry = json.loads((ROOT / "tools/canary_registry.json").read_text())
+    protected = {entry["guard"].split("::")[-1] for entry in registry}
+    assert {node.name for node in functions if node.name.startswith("test_")} <= protected, (
+        f"{guard.relative_to(ROOT)}: every guard needs a scheduled behavioral mutation"
+    )
 
     dispatch_docs = "\n".join(
         _read(PLUGIN_ROOT / "references" / name)

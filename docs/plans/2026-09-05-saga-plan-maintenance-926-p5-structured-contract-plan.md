@@ -645,17 +645,21 @@ dimension in the roster's own words where the anchor is short enough to quote.
 
 ---
 
-## Finding ledger — every cycle-2 finding, one disposition each
+## Finding ledger — 55 cycle-2 findings and two carried cycle-1 security findings
 
 Categories: **repair** (this plan fixes it, where and how), **already-fixed** (the live tree fixes
 it, verified by me), **resolved-by-redesign** (the defect's subject no longer exists),
 **duplicate-of** (same defect, same fix, filed by another lens), **rejected** (not a defect of this
 unit, with evidence). Counts: repair 11, already-fixed 10, resolved-by-redesign 18, duplicate-of 14,
-rejected 2 — 55 rows. The controller deduplicated to 47; this ledger marks 14 duplicates because
+rejected 2 — 55 cycle-2 rows. The two separately identified cycle-1 carry-forward rows below
+bring this ledger to 57 rows; they were omitted from the original heading and tally.
+The controller deduplicated cycle 2 to 47; this ledger marks 14 duplicates because
 several lenses filed one defect from distinct angles, and every row still gets its own line.
 
 | Id | Sev | Lens | Disposition | Where and how, or evidence |
 |---|---|---|---|---|
+| cycle1-sec01 | P2 | security | resolved-by-redesign, rechecked in cycle 4 | The quadratic prose scanner is deleted. v1's replacement alias traversal also earned nothing; v2 rejects YAML alias tokens before object construction. `test_plan_save_contract_loads_and_rejects_malformed_entries` exercises recursive and shared aliases. |
+| cycle1-sec02 | P2 | security | rejected for P5 scope, carried disposition | Marketplace license/category validation is a Wave One residual terminalized by the parent. The cycle-4 dispatch explicitly forbids reopening it. Marketplace bytes stay identical to `a736c166`; this row records custody, not a claim of repair. |
 | adv07 | P1 | adversarial | already-fixed | `a736c166`; my titled-fence mutation omitting `--phase-status` turned the routing test red ("counts per variant: [1, 1, 0]") |
 | adv09 | P1 | adversarial | resolved-by-redesign | the sentinel and the classifier are deleted (Element 9, R12); no prose is scanned |
 | adv02 | P2 | adversarial | resolved-by-redesign | tilde fences are read at `a736c166` (my probe); an indented block outside a region fails R14, which matches the command text rather than a fence shape |

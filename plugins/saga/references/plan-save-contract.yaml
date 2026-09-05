@@ -1,75 +1,61 @@
-# Canonical Plan save and effort facts. Edit this file and run
-# python3 plugins/saga/scripts/plan_save_contract.py render --write
-# reads, note and notes are free text, rendered verbatim; they are not facts.
-schema: plan_save_contract.v1
-producer: /plan
-owner: plugins/saga/skills/plan/SKILL.md
-reads: '`scan` (offer "resume existing?" before minting — §2.3)'   # free text, rendered verbatim
-
-identity:                       # name the saga; never written as fields, never in the row
-  - name: kind
-    placeholder: "<issue|task>"
-  - name: id
-    placeholder: "<issue-number-or-task-slug>"
-
-writes:                         # order is rendering order
-  - name: lifecycle_phase
-    value: plan
-    when: always
-  - name: phase_status
-    value: complete
-    when: always
-  - name: plan_path
-    placeholder: docs/plans/YYYY-MM-DD-<topic>-plan.md
-    when: always
-  - name: destination
-    placeholder: "<plan-only|pr|merge|nonprod-deploy>"
-    when: always
-  - name: deploy_autonomy
-    placeholder: "<gate|auto>"
-    when: {field: destination, equals: nonprod-deploy}
-    note: Phase 5.1 follow-up; omit otherwise
-  - name: adr_refs
-    placeholder: '"ADR-NNNN|ADR-MMMM"'
-    when: always
-  - name: decisions
-    placeholder: '"KTD1: rationale. KTD2: rationale."'
-    when: always
-    note: the KTD mirror; renders as the tick's `## Decisions` section
-  - name: orchestration_mode
-    placeholder: "<inline|team-execution|cc-workflows-ultracode>"
-    when: always
-  - name: orchestration_recommended
-    placeholder: "<recommend_execution_backend() output>"
-    when: always
-  - name: orchestration_ref
-    placeholder: docs/workflows/YYYY-MM-DD-<topic>-spec.json
-    when: {field: orchestration_mode, equals: cc-workflows-ultracode}
-
-stored_without_flag:            # written by the engine on a Plan save, not by a Plan flag
-  - name: orchestration_operator_choice
-    rule:
-      explicit_flag: orchestration_operator_choice   # wins when passed
-      else_from_flag: orchestration_mode             # when that flag is explicitly passed
-      else: preserve-prior-or-empty                  # new saga: empty; resumed saga: prior value
-
-templates:                      # the Phase 5.3 save templates, in document order
-  - id: default
-    fixed: {}
-    omit: [orchestration_ref]
-  - id: cc-workflows-ultracode
-    fixed: {orchestration_mode: cc-workflows-ultracode}
-    omit: [deploy_autonomy]
-
+# Canonical Plan save examples; enum placeholders enumerate saga.py choices.
+# See plan-save-contract.md for editing, validation and generated-region ownership.
+# Identity flags are stored too; this list separates addressing from Plan payload.
+schema: plan_save_contract.v2
+identity:
+- name: kind
+  placeholder: <issue|task>
+- name: id
+  placeholder: <issue-number-or-task-slug>
+writes:
+- name: lifecycle_phase
+  value: plan
+  when: always
+- name: phase_status
+  value: complete
+  when: always
+- name: plan_path
+  placeholder: docs/plans/YYYY-MM-DD-<topic>-plan.md
+  when: always
+- name: destination
+  placeholder: <plan-only|pr|merge|nonprod-deploy>
+  when: always
+- name: deploy_autonomy
+  placeholder: <gate|auto>
+  when:
+    field: destination
+    equals: nonprod-deploy
+- name: adr_refs
+  placeholder: '"ADR-NNNN|ADR-MMMM"'
+  when: always
+- name: decisions
+  placeholder: '"KTD1: rationale. KTD2: rationale."'
+  when: always
+- name: orchestration_mode
+  placeholder: <inline|team-execution|cc-workflows-ultracode>
+  when: always
+- name: orchestration_recommended
+  placeholder: <inline|team-execution|cc-workflows-ultracode>
+  when: always
+- name: orchestration_ref
+  placeholder: docs/workflows/YYYY-MM-DD-<topic>-spec.json
+  when:
+    field: orchestration_mode
+    equals: cc-workflows-ultracode
+templates:
+- id: default
+  fixed: {}
+- id: cc-workflows-ultracode
+  fixed:
+    orchestration_mode: cc-workflows-ultracode
 effort_honoring:
   seam: fleet_commons.effort_rider.inject_effort
-  parameters: [prompt, effort, spawn_kind]
+  parameters:
+  - prompt
+  - effort
+  - spawn_kind
   spawn_kinds:
     workflow: native
     external-engine: native
     agent: proxy
   reference: plugins/fleet-core/references/effort-convention.md
-  notes:                        # free text, rendered verbatim, never validated
-    - the per-unit "proposed tier" cell is a `<model>/<effort>` pair, both halves sourced verbatim from `tier_resolver.resolve(...)`, never a bare model literal with effort omitted
-    - >-
-      Team Execution's A7 worker table (`plugins/team-execution/skills/team-execution/SKILL.md`) carries the same cell shape and its parser splits the cell on `/`; its own copy of this note still carries the pre-#363 wording and is tracked by issue #993

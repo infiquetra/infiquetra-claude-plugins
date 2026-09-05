@@ -50,25 +50,109 @@
   {
     "id": "plan-save-contract-row",
     "guard": "tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract",
-    "invariant": "The /plan consumer row equals the rendering of the canonical Plan save contract (#926 R16).",
+    "invariant": "Remove the uniquely identified Plan row; no full-row fixture is copied.",
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/references/saga-spec.md",
-      "find": "| **/plan** | `scan` (offer \"resume existing?\" before minting \u2014 \u00a72.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`; Phase 5.1 follow-up; omit otherwise), `adr_refs`, `decisions` (the KTD mirror; renders as the tick's `## Decisions` section), `orchestration_mode`, `orchestration_recommended`, `orchestration_ref` (only when `orchestration_mode=cc-workflows-ultracode`); also stored: `orchestration_operator_choice` (an explicit `--orchestration-operator-choice` wins; otherwise an explicitly passed `--orchestration-mode` fills it; with neither flag, preserve the prior choice or start empty). |",
-      "replace": "| **/plan** | `scan` (offer \"resume existing?\" before minting \u2014 \u00a72.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`; Phase 5.1 follow-up; omit otherwise), `adr_refs`, `decisions` (the KTD mirror; renders as the tick's `## Decisions` section), `orchestration_mode`, `orchestration_ref` (only when `orchestration_mode=cc-workflows-ultracode`); also stored: `orchestration_operator_choice` (an explicit `--orchestration-operator-choice` wins; otherwise an explicitly passed `--orchestration-mode` fills it; with neither flag, preserve the prior choice or start empty). |"
+      "find": "| **/plan** |",
+      "replace": "| **/plan-canary** |"
     },
-    "mutation_description": "Remove orchestration_recommended from the uniquely anchored /plan row without changing the contract."
+    "mutation_description": "Remove the uniquely identified Plan row; no full-row fixture is copied."
   },
   {
     "id": "plan-save-contract-engine-binding",
     "guard": "tests/test_saga_spec_consumer_row.py::test_plan_save_contract_binds_to_engine",
-    "invariant": "Every Plan write has a real save option and Saga field, independently of generated documentation (#926 R7).",
+    "invariant": "Replace the intended recommendation field with a different genuine save option.",
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/references/plan-save-contract.yaml",
-      "find": "name: adr_refs",
-      "replace": "name: risk_tier"
+      "find": "name: orchestration_recommended",
+      "replace": "name: next_step"
     },
-    "mutation_description": "Replace adr_refs with risk_tier, a field the real save parser does not accept."
+    "mutation_description": "Replace the intended recommendation field with a different genuine save option."
+  },
+  {
+    "id": "plan-save-contract-malformed",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_save_contract_loads_and_rejects_malformed_entries",
+    "invariant": "Duplicate a structured schema key; the loader must refuse.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/plan-save-contract.yaml",
+      "find": "schema: plan_save_contract.v2",
+      "replace": "schema: plan_save_contract.v2\nschema: plan_save_contract.v2"
+    },
+    "mutation_description": "Duplicate a structured schema key; the loader must refuse."
+  },
+  {
+    "id": "plan-save-contract-operator-choice",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_operator_choice_rule_matches_engine",
+    "invariant": "Remove the documented provenance-refusal requirement.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/plan-save-contract.md",
+      "find": "`--orchestration-downgrade`",
+      "replace": "`--p5-missing-downgrade`"
+    },
+    "mutation_description": "Remove the documented provenance-refusal requirement."
+  },
+  {
+    "id": "plan-save-contract-regions",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+    "invariant": "Remove a generated example boundary; rendering must refuse ambiguous ownership.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/skills/plan/SKILL.md",
+      "find": "<!-- BEGIN GENERATED PLAN SAVE EXAMPLES: default -->",
+      "replace": "<!-- MISSING GENERATED PLAN SAVE EXAMPLES: default -->"
+    },
+    "mutation_description": "Remove a generated example boundary; rendering must refuse ambiguous ownership."
+  },
+  {
+    "id": "plan-save-contract-wording",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_docs_wording_changes_do_not_fail",
+    "invariant": "Introduce a prose-only rejection in the renderer; the wording-independence guard must detect it.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    replacements = []",
+      "replace": "    if \"Produce an **executable** saga\" in skill:\n        fail(SKILL, \"prose\", \"injected prose classifier\")\n    replacements = []"
+    },
+    "mutation_description": "Introduce a prose-only rejection in the renderer; the wording-independence guard must detect it."
+  },
+  {
+    "id": "plan-save-contract-saved-tick",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick",
+    "invariant": "Move the deploy condition to another real destination; saved-tick semantics must fail.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/plan-save-contract.yaml",
+      "find": "equals: nonprod-deploy",
+      "replace": "equals: pr"
+    },
+    "mutation_description": "Move the deploy condition to another real destination; saved-tick semantics must fail."
+  },
+  {
+    "id": "plan-save-contract-add-example",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_renderer_edit_workflow",
+    "invariant": "Forbid an ordinary additional example; the maintainer workflow test must fail.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    keys(data, {\"schema\", \"identity\", \"writes\", \"templates\", \"effort_honoring\"}, \"contract\")",
+      "replace": "    keys(data, {\"schema\", \"identity\", \"writes\", \"templates\", \"effort_honoring\"}, \"contract\")\n    if len(data[\"templates\"]) > 2:\n        fail(CONTRACT, \"templates\", \"injected extension refusal\")"
+    },
+    "mutation_description": "Forbid an ordinary additional example; the maintainer workflow test must fail."
+  },
+  {
+    "id": "plan-save-contract-rollback",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_renderer_refusals_and_rollback",
+    "invariant": "Bypass rollback after a second-document replace failure; the filesystem assertion must fail.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "            for path in reversed(written):",
+      "replace": "            for path in []:  # injected rollback bypass"
+    },
+    "mutation_description": "Bypass rollback after a second-document replace failure; the filesystem assertion must fail."
   }
 ]

@@ -2,44 +2,56 @@
 
 ## 2026-09-05
 
-### Saga Plan save facts have one structured source, rendered outputs, and engine bindings {#926-plan-save-contract-single-source}
+### Saga Plan facts use a smaller contract with independent producer and behavior checks {#926-plan-save-contract-single-source}
 
-**Decision.** `plugins/saga/references/plan-save-contract.yaml` is the v1 authority for Plan's
-save fields, conditions, operator-choice rule, templates, and effort-honoring mechanism.
-`plugins/saga/scripts/plan_save_contract.py` validates it and renders the `/plan` consumer row,
-two marked save templates, and the effort note. Tests bind facts to the real save parser,
-`Saga` fields, saved tick envelopes, and `inject_effort` behavior. Documents never supply facts
-to the validator. Ordinary prose outside the owned regions is deliberately unconstrained.
+**Decision.** Cycle 4 replaces the unreleased v1 carrier with v2. YAML remains the single
+list of Plan save fields, conditions, examples and effort mechanisms. `load()` validates real
+`Saga` fields and save options, enum placeholder vocabularies, the save flags named in Plan's
+upstream instructions, and `inject_effort` behavior before either rendering command can write.
+The upstream inventory reads only code tokens before Phase 5.3; generated documents do not
+supply expected field lists or mechanisms. Saved-tick tests independently assert Plan's semantic
+outcomes, including both destinations and backends, so a real but wrong field/condition fails.
 
-**Date:** 2026-09-05 · **Issue:** #926 (unit P5, parent #918 Wave Two) · **Origin:** accepted
-[structured-contract plan](../plans/2026-09-05-saga-plan-maintenance-926-p5-structured-contract-plan.md),
-following two failed review cycles and the operator's redesign decision.
+**Date:** 2026-09-05 · **Issue:** #926 (P5 / #918) · **Authority:** the operator's cycle-4 repair
+dispatch supersedes the cycle-3 cap outcome and permits a smaller design. The original accepted
+[plan](../plans/2026-09-05-saga-plan-maintenance-926-p5-structured-contract-plan.md) remains the
+historical design; this decision and the cycle-4 work session record its implementation amendment.
 
-**Why.** Document-to-document equality certified phantom fields. The prose classifier both
-missed reworded stale claims and rejected legitimate text; suppression broadened that gap.
-Structured facts let the parser and observed engine behavior supply independent evidence.
-Conditional flags render below commands, so shell comments cannot terminate continuations.
-Duplicate keys, entries, template IDs, and ambiguous region boundaries are explicit refusals;
-`render --write` preflights both documents before writing either on a structural anomaly.
+**What earned nothing.** Removed free-form factual `notes`, per-template `omit`, configurable
+operator-choice rules, the generic `reads`/producer/owner data, the recursive alias graph walk,
+per-example ownership markers, a foreign `--contract` input, the global retry remedy, a dead
+`flags_of` helper, and pure-function self-comparison assertions. These were configuration or
+checks without an independent oracle. Two stable example groups now accept additional examples
+without marker edits. Identity is correctly described as stored addressing data. Operator-choice
+semantics are documented beside their real save/refusal tests, not configurable policy. The
+restored tier regression checks require both resolver attributes and the model/effort cell.
 
-**Falsifiability and limits.** A separate packaging test pins the three guard files and six test
-names. Each test exercises its own boundary with changed inputs; the row and template pins also
-change the contract input to detect a renderer that reads its output back. Scheduled canaries
-mutate the real row and a real contract entry. Healthy canaries must report `caught`. A bypass
-caught by an inline proof fails the canary baseline and reports `error`; if both that proof and
-the validator are bypassed, the canary reports `toothless`. These outcomes are distinct, all
-reported as observed. No layer proves resistance to coordinated deletion of all layers, and a
-stale statement added elsewhere in free prose is outside coverage. Team Execution's separate
-note is owned by #993.
+**Alternatives weighed.** Shipping only the four prose corrections with **no checks** would be
+smaller and acceptable for ordinary editorial work. It was considered explicitly for cycle 4,
+but would abandon the operator's required field/condition, malformed-input and bypass proofs
+after two demonstrated silent-green guards. The chosen scope keeps only the existing three
+outputs and the checks needed to falsify those properties. A natural-language classifier or
+exact-phrase tripwire was rejected by the operator; no suppression convention is reintroduced.
+A generic schema framework, plugin system, transaction service and coverage of the other five
+consumer rows would increase scope without serving P5. No runtime changes are permitted.
 
-**Rejected.** Repairing the classifier or using an exact-phrase tripwire (operator rejected
-both); dropping the effort check (loses behavior binding); deriving only from parser options
-(the parser cannot identify Plan's subset); `jsonschema` (new runtime dependency and weaker
-entry diagnostics); extending all six consumer rows now (unrelated scope and no approved facts).
+**Recovery and limits.** The solo edit-time tool stages both files, replaces each atomically,
+and rolls back completed replacements on an ordinary I/O failure. Failed rollback retains named
+backup files; it does not claim transactional crash recovery or support concurrent writers.
+`--root` selects code, YAML and documents together. JSON distinguishes schema family/version
+refusals; marker failures tell the maintainer to restore markers, not to repeat a refused render.
+The [maintainer runbook](../../plugins/saga/references/plan-save-contract.md) describes the complete
+editing and recovery path, both generation systems, and which facts are stored by Saga itself.
 
-**Revisit when.** Another producer needs coverage: consider v2 with `producers`. The Agent tool
-gains a native effort control: change the mechanism and re-render after behavior binding passes.
-Issue #993 lands: remove the Team Execution historical note from the contract and re-render.
+**Falsifiability.** Independent output parsing catches a renderer that drops a declared field
+and then rerenders. Real saves prove the intended Plan tick, conditional writes and operator-choice
+refusals. Inline altered-input controls catch bypassed helpers; packaging inventory detects a
+missing or hollow guard; each guard has a scheduled mutation canary. A coordinated rewrite of all
+oracles remains outside this guarantee, as does the truth of arbitrary newly added English prose.
+The upstream token inventory intentionally requires every mentioned real save option to be in
+the carrier; introducing a new upstream option is a contract edit. Team Execution's older note
+remains issue #993's responsibility. Independent Saga Code Review belongs to the coordinator;
+these tests and mutation receipts are preparation, not a review acceptance claim.
 
 ### Plan's interim reader decision is superseded {#926-plan-drift-checks-derive-dont-restate}
 

@@ -120,8 +120,3 @@ def save_options(block: str) -> dict[str, list[str]]:
             index += 1
         options.setdefault(name.replace("-", "_"), []).append(value)
     return options
-
-
-def flags_of(block: str) -> set[str]:
-    """Return declared field names using the same option reader as routing."""
-    return set(save_options(block))

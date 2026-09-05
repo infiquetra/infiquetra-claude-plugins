@@ -6,8 +6,11 @@ and scheduled canaries independently protect guard removal. No English classifie
 
 from __future__ import annotations
 
+import argparse
 import copy
+import dataclasses
 import importlib.util
+import inspect
 import json
 import re
 import shlex
@@ -36,7 +39,63 @@ def contract_api() -> ModuleType:
 
 
 def mutated(api: ModuleType, data: dict[str, Any]) -> Any:
-    return api.load(text=yaml.safe_dump(data, sort_keys=False))
+    contract = api.load(text=yaml.safe_dump(data, sort_keys=False))
+    assert_engine_binding(api, contract)
+    return contract
+
+
+def assert_engine_binding(api: ModuleType, contract: Any) -> None:
+    """One engine binding, used by the edit-time preflight and regression tests."""
+    saga = api.module(contract.root, "plugins/saga/scripts/saga.py", "_add_save_parser", "Saga")
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers()
+    saga._add_save_parser(sub)
+    actions = {action.dest: action for action in sub.choices["save"]._actions}
+    fields = {field.name for field in dataclasses.fields(saga.Saga)}
+
+    def choice(name: str, value: Any, entry: str) -> None:
+        options = actions[name].choices if name in actions else None
+        if options is None or value not in options:
+            api.fail(entry, f"{name}={value!r} must be one of {options or []}")
+
+    for section in ("identity", "writes"):
+        for item in contract.data[section]:
+            name = item["name"]
+            entry = f"{section} ({name!r})"
+            if name not in actions or name not in fields:
+                api.fail(entry, f"--{name.replace('_', '-')} is not a saga.py save option")
+            if "value" in item:
+                choice(name, item["value"], entry + ".value")
+            elif actions[name].choices is not None:
+                allowed = "<" + "|".join(actions[name].choices or []) + ">"
+                if item["placeholder"] != allowed:
+                    api.fail(entry + ".placeholder", f"expected engine choices {allowed}")
+            when = item.get("when", "always")
+            if when != "always":
+                choice(when["field"], when["equals"], entry + ".when")
+    for template in contract.data["templates"]:
+        for name, value in template["fixed"].items():
+            choice(name, value, f"templates ({template['id']!r}).fixed")
+    observed = probe_effort(api, contract.root)
+    for kind, mechanism in contract.data["effort_honoring"]["spawn_kinds"].items():
+        if mechanism != observed[kind]:
+            api.fail(
+                f"effort_honoring.spawn_kinds ({kind!r})",
+                "declaration disagrees with inject_effort behavior",
+            )
+
+
+def probe_effort(api: ModuleType, root: Path) -> dict[str, str]:
+    rider = api.module(root, api.RIDER, "inject_effort")
+    mechanisms = {}
+    for kind in sorted(rider.SPAWN_KINDS):
+        observed = [rider.inject_effort("probe", level, kind) for level in rider.EFFORTS]
+        if all(value == "probe" for value in observed):
+            mechanisms[kind] = "native"
+        else:
+            assert observed == [rider.EFFORT_RIDER[level] + "\n\nprobe" for level in rider.EFFORTS]
+            mechanisms[kind] = "proxy"
+    return mechanisms
 
 
 def cli(api: ModuleType, root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -60,7 +119,7 @@ def tree(api: ModuleType, root: Path) -> None:
         api.SPEC,
         Path("tests/test_saga_spec_consumer_row.py"),
         Path("tests/saga_plan_contract.py"),
-        Path(api.load().data["effort_honoring"]["reference"]),
+        api.EFFORT_REFERENCE,
     ):
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_bytes((ROOT / path).read_bytes())
@@ -69,6 +128,15 @@ def tree(api: ModuleType, root: Path) -> None:
 def assert_row(api: ModuleType, contract: Any, text: str) -> None:
     start, end = api.row_span(text)
     row = text[start:end]
+    assert row.split("|")[2].strip() == "`scan` (§2.3)", f"{api.SPEC}: Plan Reads cell differs"
+    assert re.search(r"(?m)^### 2\.3\b", text), f"{api.SPEC}: missing scan/resume reference"
+    intake = (ROOT / api.SKILL).read_text().split("### 0.3", 1)[1].split("### 0.4", 1)[0]
+    assert "python3 plugins/saga/scripts/saga.py scan" in intake
+    assert "Do not hand-edit the `/plan` row." in text
+    assert (
+        "`tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract`"
+        in text
+    )
     # Parse emitted technical facts independently; a renderer dropping a field after
     # re-rendering must fail even if output equals that renderer's own output.
     facts = re.findall(r"`([a-z_]+)(?:=([^`]+))?`(?: \(only when `([^`]+)`\))?", row.split("|")[3])
@@ -94,26 +162,58 @@ def assert_regions(api: ModuleType, contract: Any, skill: str, spec: str) -> Non
     assert len(blocks) == len(contract.data["templates"]), (
         f"{api.SKILL}: missing/extra save example"
     )
-    ids = re.findall(r"\*\*Example: ([a-z0-9-]+)\*\*", skill)
+    ids = re.findall(r"\*\*Example: ([a-z0-9_-]+)\*\*", skill)
     assert len(ids) == len(set(ids)) == len(blocks), f"{api.SKILL}: duplicate or missing example ID"
     by_id = dict(zip(ids, blocks, strict=True))
     assert set(by_id) == {t["id"] for t in contract.data["templates"]}
     for template in contract.data["templates"]:
         block = by_id[template["id"]]
         options = save_options(block)
-        expected = {}
+        expected_options = {}
         for item in contract.data["identity"] + contract.data["writes"]:
             when = item.get("when", "always")
             if when != "always" and template["fixed"].get(when["field"]) != when["equals"]:
                 continue
             value = template["fixed"].get(item["name"], item.get("value", item.get("placeholder")))
-            expected[item["name"]] = [value]
-        assert options == expected, f"{api.SKILL}: template {template['id']} lost or changed flags"
-    note_start, note_end = api.region_span(skill, "EFFORT HONORING NOTE")
-    note = skill[note_start:note_end]
-    assert "tier_resolver.resolve(...).model" in note, f"{api.SKILL}: proposed tier lost model"
-    assert "tier_resolver.resolve(...).effort" in note, f"{api.SKILL}: proposed tier lost effort"
-    assert "`<model>/<effort>`" in note, f"{api.SKILL}: proposed tier must carry the resolved pair"
+            expected_options[item["name"]] = [value]
+        assert options == expected_options, (
+            f"{api.SKILL}: template {template['id']} lost or changed flags"
+        )
+    for name in (
+        "PLAN SAVE EXAMPLES: default",
+        "PLAN SAVE EXAMPLES: workflow",
+        "EFFORT HONORING NOTE",
+    ):
+        start, end = api.region_span(skill, name)
+        assert f"Source: {api.CONTRACT}; renderer: {SCRIPT}." in skill[start:end]
+        assert (
+            "Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract."
+            in skill[start:end]
+        )
+    start, end = api.region_span(skill, "EFFORT HONORING NOTE")
+    note = skill[start:end]
+    rider = api.module(contract.root, api.RIDER, "inject_effort")
+    groups: dict[str, list[str]] = {"native": [], "proxy": []}
+    for kind, mechanism in probe_effort(api, contract.root).items():
+        groups[mechanism].append(f"`{kind}`")
+    # Positive pins bind every generated factual clause to these independent probes.
+    expected = [
+        f"The honoring seam is `fleet_commons.effort_rider.inject_effort({', '.join(inspect.signature(rider.inject_effort).parameters)})`.",
+        "For "
+        + ", ".join(groups["native"])
+        + ": effort already rides on real controls; injecting a rider would double-count it.",
+        "For "
+        + ", ".join(groups["proxy"])
+        + ": prepend an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.",
+        "See `plugins/fleet-core/references/effort-convention.md`.",
+        "The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`",
+        "and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.",
+        "Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.",
+    ]
+    actual = re.findall(r"<!--\n(.*?)\n-->", note, re.S)
+    assert actual == ["\n".join(expected)], (
+        f"{api.SKILL}: effort/tier factual clauses differ from runtime proof"
+    )
 
 
 def test_plan_save_contract_loads_and_rejects_malformed_entries(contract_api: ModuleType) -> None:
@@ -138,6 +238,7 @@ def test_plan_save_contract_loads_and_rejects_malformed_entries(contract_api: Mo
     case("writes", "placeholder", "<phase>", "keys")
     case("templates", "fixed", {"no_such_p5_field": "x"}, "unknown field")
     case("templates", "fixed", {"destination": "staging"}, "destination")
+    case("templates", "fixed", {"lifecycle_phase": "work"}, "contract constant")
     case("templates", "fixed", [], "fixed")
     case("templates", "omit", ["deploy_autonomy"], "keys")
     case("writes", "name", "not an identifier", "identifier")
@@ -166,7 +267,7 @@ def test_plan_save_contract_loads_and_rejects_malformed_entries(contract_api: Mo
     for schema in ("plan_save_contract.v99", "bridge_signatures.v1", None):
         data = copy.deepcopy(original)
         data["schema"] = schema
-        cases.append((data, "schema.*matching tool/schema"))
+        cases.append((data, "schema.*matching tool revision"))
     for data, diagnostic in cases:
         with pytest.raises(api.ContractError, match="plan-save-contract.yaml:.*" + diagnostic):
             mutated(api, data)
@@ -177,6 +278,13 @@ def test_plan_save_contract_loads_and_rejects_malformed_entries(contract_api: Mo
     with pytest.raises(api.ContractError, match="plan_path.*value"):
         mutated(api, literal)
     raw = (ROOT / api.CONTRACT).read_text()
+    for tag in (
+        "!!python/name:builtins.str",
+        "!!python/object/apply:builtins.str [unsafe]",
+        "!!python/object/new:builtins.str [unsafe]",
+    ):
+        with pytest.raises(yaml.constructor.ConstructorError):
+            api.load(text=tag)
     for suffix, diagnostic in [
         ("\nschema: duplicate\n", "duplicate"),
         ("\nx: &x [*x]\n", "alias"),
@@ -199,6 +307,21 @@ def test_plan_save_contract_binds_to_engine(contract_api: ModuleType, tmp_path: 
             result = cli(api, tmp_path, *command)
             assert result.returncode == 2, result.stdout + result.stderr
             assert "writes" in json.loads(result.stdout)["error"], result.stdout
+            assert before == {p: (tmp_path / p).read_bytes() for p in before}
+    # A newly introduced condition must exercise both sides even when its field
+    # is outside the ordinary destination/backend scenario matrix.
+    for field, value in (("kind", "task"), ("orchestration_recommended", "inline")):
+        data = copy.deepcopy(original)
+        next(i for i in data["writes"] if i["name"] == "adr_refs")["when"] = {
+            "field": field,
+            "equals": value,
+        }
+        (tmp_path / api.CONTRACT).write_text(yaml.safe_dump(data, sort_keys=False))
+        before = {p: (tmp_path / p).read_bytes() for p in (api.SKILL, api.SPEC)}
+        for command in [("validate",), ("render", "--write")]:
+            result = cli(api, tmp_path, *command)
+            assert result.returncode == 2, result.stdout + result.stderr
+            assert json.loads(result.stdout)["code"] == "verification"
             assert before == {p: (tmp_path / p).read_bytes() for p in before}
     for name in (
         "kind",
@@ -285,11 +408,24 @@ def test_operator_choice_rule_matches_engine(tmp_path: Path) -> None:
     ) in note
 
 
-def test_saga_spec_plan_consumer_row_matches_contract(contract_api: ModuleType) -> None:
+def test_saga_spec_plan_consumer_row_matches_contract(
+    contract_api: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     api = contract_api
     contract = api.load()
     text = (ROOT / api.SPEC).read_text()
     assert_row(api, contract, text)
+    real_row = api.render_consumer_row
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            api,
+            "render_consumer_row",
+            lambda c: real_row(c).replace("`scan` (§2.3)", "`restore` (§99.9)"),
+        )
+        start, end = api.row_span(text)
+        rewritten = text[:start] + api.render_consumer_row(contract) + text[end:]
+        with pytest.raises(AssertionError, match="Reads cell differs"):
+            assert_row(api, contract, rewritten)
     start, end = api.row_span(text)
     # Derive the mutant token from the actual field sequence; no copied row or fixed index.
     name = contract.data["writes"][0]["name"]
@@ -302,11 +438,25 @@ def test_saga_spec_plan_consumer_row_matches_contract(contract_api: ModuleType) 
             assert_row(api, contract, broken)
 
 
-def test_plan_docs_generated_regions_match_contract(contract_api: ModuleType) -> None:
+def test_plan_docs_generated_regions_match_contract(
+    contract_api: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     api = contract_api
     contract = api.load()
     skill, spec = (ROOT / api.SKILL).read_text(), (ROOT / api.SPEC).read_text()
     assert_regions(api, contract, skill, spec)
+    real_note = api.render_effort_note
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            api,
+            "render_effort_note",
+            lambda c: real_note(c).replace("`<model>/<effort>`", "`<model>`"),
+        )
+        rewritten = api.rendered_documents(contract, skill, spec)
+        # A faulty renderer and its freshly rewritten output agree. The independent
+        # factual assertion must still fail; source-to-itself equality is insufficient.
+        with pytest.raises(AssertionError, match="factual clauses differ"):
+            assert_regions(api, contract, rewritten[api.SKILL], rewritten[api.SPEC])
     broken = skill.replace("--phase-status complete", "--phase-status pending", 1)
     with pytest.raises(AssertionError, match="generated region differs"):
         assert_regions(api, contract, broken, spec)
@@ -353,7 +503,7 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
     revised_spec = spec.replace("Each command below implements", "Every listed command implements")
     revised = revised.replace(
         "### 5.3",
-        "Blocked plans: `/work` later records `--blockers`; the saga.py save operation supports other phases.\n\n```bash\nother-tool --status ready # --next-step is unrelated\n```\n\n### 5.3",
+        "Blocked plans: `/work` later records `--blockers`; the saga.py save operation (`saga.py save`) supports other phases.\n\n```bash\nother-tool --status ready # --next-step is unrelated\n```\n\n### 5.3",
         1,
     )
     assert revised != skill and revised_spec != spec
@@ -370,6 +520,30 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
         assert (path.parent / match[1]).resolve() == (ROOT / api.SPEC).resolve(), source
         assert match[2] == anchor, f"{source}: broken consumer-row anchor"
     runbook = (ROOT / "plugins/saga/references/plan-save-contract.md").read_text()
+    for row in (
+        "| 0 | `valid`, `clean`, `rendered` | Input validated, output already current, or output written. |",
+        "| 1 | `drift` | `changed` contains relative paths; `diff` contains proposed changes. |",
+        "| 2 | `invalid` | Nothing should be retried until the reported failure is corrected. |",
+    ):
+        assert row in runbook, (
+            "maintainer runbook: exit protocol differs from exercised CLI outcomes"
+        )
+    codes = re.findall(r"^\| `([a-z_]+)` \|", runbook, re.M)
+    assert set(codes) == {
+        "usage",
+        "schema_family",
+        "schema_version",
+        "invalid_contract",
+        "engine",
+        "filesystem",
+        "syntax",
+        "verification",
+    }
+    assert len(codes) == len(set(codes)), "maintainer runbook: duplicate error code"
+    reference = ROOT / "plugins/saga/references/execution-spec.md"
+    match = re.search(r"\[generated Plan save example\]\(([^)#]+)#([^)]*)\)", reference.read_text())
+    assert match and (reference.parent / match[1]).resolve() == (ROOT / api.SKILL).resolve()
+    assert match[2] == "53-write-the-saga-tick"
     for path in re.findall(r"`(plugins/[^`]+\.py)`", runbook):
         assert (ROOT / path).is_file(), f"maintainer runbook: missing {path}"
     commands = [
@@ -408,70 +582,104 @@ def assert_saved_examples(
     api: ModuleType, contract: Any, tmp_path: Path, destination: str, backend: str
 ) -> None:
     """Compare the whole saved snapshot with Plan's independently specified outcomes."""
+    # Conditions are single equalities. Vary each additional predicate's enum one
+    # at a time; destination/backend are already crossed by the parametrized test.
+    entries = {i["name"]: i for i in contract.data["identity"] + contract.data["writes"]}
+    predicates = {i["when"]["field"] for i in contract.data["writes"] if i["when"] != "always"}
+    variants: list[dict[str, str]] = [{}]
+    for field in sorted(predicates - {"destination", "orchestration_mode"}):
+        placeholder = entries[field].get("placeholder", "")
+        if placeholder.startswith("<") and placeholder.endswith(">") and "|" in placeholder:
+            variants.extend({field: value} for value in placeholder[1:-1].split("|"))
     for template in contract.data["templates"]:
-        body = api.render_template(contract, template["id"])
-        block = save_blocks(body)[0]
-        values = {name: value[0] for name, value in save_options(block).items()}
+        for index, overrides in enumerate(variants):
+            assert_saved_example(
+                api,
+                contract,
+                tmp_path / template["id"] / str(index),
+                destination,
+                backend,
+                template,
+                overrides,
+            )
 
-        def fill(name: str, value: str, template_id: str = template["id"]) -> str:
-            # Substitute only enum choices, never replace literal text under test.
-            if value.startswith("<") and value.endswith(">") and "|" in value:
-                choices = value[1:-1].split("|")
-                selected = {
-                    "destination": destination,
-                    "orchestration_mode": backend,
-                    "kind": "task",
-                    "deploy_autonomy": "auto",
-                }.get(name, choices[0])
-                assert selected in choices, f"template {template_id}: {name} lacks {selected}"
-                return selected
-            return value
 
-        values = {name: fill(name, value) for name, value in values.items()}
-        for name, value, field, expected in re.findall(
-            r"- `--([a-z-]+) ([^`]+)` only when `--([a-z-]+) ([^`]+)`\.", body
-        ):
-            if values[field.replace("-", "_")] == expected:
-                tokens = shlex.split(value)
-                assert len(tokens) == 1, (
-                    f"template {template['id']}: conditional value is not one shell argument"
-                )
-                values[name.replace("-", "_")] = fill(name.replace("-", "_"), tokens[0])
-        workspace = tmp_path / template["id"]
-        workspace.mkdir(parents=True)
-        identity = {name: values[name] for name in ("kind", "id")}
-        before, _ = save_tick(
-            workspace, {**identity, "next_step": "prior work", "review_paths": "prior-review.md"}
-        )
-        tick, text = save_tick(workspace, values)
-        # The expectation names semantic outcomes, not a second list of save flags.
-        # Every other stored field must remain unchanged, including fields a new
-        # (valid but unrelated) save option might otherwise silently overwrite.
-        expected = {
-            "lifecycle_phase": "plan",
-            "phase_status": "complete",
-            "plan_path": values["plan_path"],
-            "destination": values["destination"],
-            "adr_refs": re.findall(r"\bADR-[A-Za-z0-9]+\b", values["adr_refs"]),
-            "orchestration_recommended": values["orchestration_recommended"],
-            "orchestration_mode": values["orchestration_mode"],
-            "orchestration_operator_choice": values["orchestration_mode"],
-            "deploy_autonomy": values["deploy_autonomy"]
-            if values["destination"] == "nonprod-deploy"
-            else "",
-            "orchestration_ref": values["orchestration_ref"]
-            if values["orchestration_mode"] == "cc-workflows-ultracode"
-            else "",
-        }
-        assert expected["adr_refs"], "Plan example must demonstrate pipe-separated ADR references"
-        assert values.keys() <= expected.keys() | identity.keys() | {"decisions"}, (
-            "Plan example writes unrelated state"
-        )
-        before.update(expected)
-        before.pop("updated_at")
-        tick.pop("updated_at")
-        assert tick == before, f"template {template['id']}: saved Plan snapshot differs"
-        assert values["decisions"] in text.split("## Decisions", 1)[1]
+def assert_saved_example(
+    api: ModuleType,
+    contract: Any,
+    tmp_path: Path,
+    destination: str,
+    backend: str,
+    template: dict[str, Any],
+    overrides: dict[str, str],
+) -> None:
+    body = api.render_template(contract, template["id"])
+    block = save_blocks(body)[0]
+    values = {name: value[0] for name, value in save_options(block).items()}
+
+    def fill(name: str, value: str, template_id: str = template["id"]) -> str:
+        # Substitute only enum choices, never replace literal text under test.
+        if value.startswith("<") and value.endswith(">") and "|" in value:
+            choices = value[1:-1].split("|")
+            selected = {
+                "destination": destination,
+                "orchestration_mode": backend,
+                "kind": "task",
+                "deploy_autonomy": "auto",
+            }.get(name, choices[0])
+            selected = overrides.get(name, selected)
+            assert selected in choices, f"template {template_id}: {name} lacks {selected}"
+            return selected
+        return value
+
+    values = {name: fill(name, value) for name, value in values.items()}
+    for name, value, field, expected in re.findall(
+        r"- `--([a-z-]+) ([^`]+)` only when `--([a-z-]+) ([^`]+)`\.", body
+    ):
+        if values[field.replace("-", "_")] == expected:
+            tokens = shlex.split(value)
+            assert len(tokens) == 1, (
+                f"template {template['id']}: conditional value is not one shell argument"
+            )
+            values[name.replace("-", "_")] = fill(name.replace("-", "_"), tokens[0])
+    workspace = tmp_path
+    workspace.mkdir(parents=True)
+    identity = {name: values[name] for name in ("kind", "id")}
+    before, _ = save_tick(
+        workspace, {**identity, "next_step": "prior work", "review_paths": "prior-review.md"}
+    )
+    tick, text = save_tick(workspace, values)
+    # The expectation names semantic outcomes, not a second list of save flags.
+    # Every other stored field must remain unchanged, including fields a new
+    # (valid but unrelated) save option might otherwise silently overwrite.
+    expected = {
+        "lifecycle_phase": "plan",
+        "phase_status": "complete",
+        "plan_path": values["plan_path"],
+        "destination": values["destination"],
+        "adr_refs": re.findall(r"\bADR-[A-Za-z0-9]+\b", values["adr_refs"]),
+        "orchestration_recommended": values["orchestration_recommended"],
+        "orchestration_mode": values["orchestration_mode"],
+        "orchestration_operator_choice": values["orchestration_mode"],
+        "deploy_autonomy": values["deploy_autonomy"]
+        if values["destination"] == "nonprod-deploy"
+        else "",
+        "orchestration_ref": values["orchestration_ref"]
+        if values["orchestration_mode"] == "cc-workflows-ultracode"
+        else "",
+    }
+    assert expected["adr_refs"], "Plan example must demonstrate pipe-separated ADR references"
+    assert "orchestration_operator_choice" not in values, (
+        "Plan examples derive operator choice from the mode flag"
+    )
+    assert values.keys() <= expected.keys() | identity.keys() | {"decisions"}, (
+        "Plan example writes unrelated state"
+    )
+    before.update(expected)
+    before.pop("updated_at")
+    tick.pop("updated_at")
+    assert tick == before, f"template {template['id']}: saved Plan snapshot differs"
+    assert values["decisions"] in text.split("## Decisions", 1)[1]
 
 
 @pytest.mark.parametrize("destination", ["plan-only", "pr", "merge", "nonprod-deploy"])
@@ -479,7 +687,15 @@ def assert_saved_examples(
 def test_plan_examples_save_the_intended_tick(
     contract_api: ModuleType, tmp_path: Path, destination: str, backend: str
 ) -> None:
-    assert_saved_examples(contract_api, contract_api.load(), tmp_path, destination, backend)
+    api = contract_api
+    contract = api.load()
+    assert_engine_binding(api, contract)
+    candidate = api.rendered_documents(
+        contract, (ROOT / api.SKILL).read_text(), (ROOT / api.SPEC).read_text()
+    )
+    assert_regions(api, contract, candidate[api.SKILL], candidate[api.SPEC])
+    assert_row(api, contract, candidate[api.SPEC])
+    assert_saved_examples(api, contract, tmp_path, destination, backend)
 
 
 def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -> None:
@@ -490,7 +706,10 @@ def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -
     data["templates"].extend(
         [
             {"id": "merge", "fixed": {"destination": "merge"}},
-            {"id": "recommendation", "fixed": {"orchestration_recommended": "team-execution"}},
+            {
+                "id": "recommendation_example",
+                "fixed": {"orchestration_recommended": "team-execution"},
+            },
             {
                 "id": "autonomy",
                 "fixed": {"destination": "nonprod-deploy", "deploy_autonomy": "auto"},

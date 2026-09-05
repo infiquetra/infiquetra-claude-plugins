@@ -2,6 +2,38 @@
 
 ## 2026-09-05
 
+### Fixed documentation facts use independent positive assertions {#926-plan-fixed-facts-independent-proof}
+
+The carrier keeps field/condition/example data and native/proxy declarations. Removed effort
+seam, parameter and reference configuration earned nothing: those owners already exist in the
+engine and convention. The loader now handles structure and identity; the one existing pytest
+binding supplies engine choices, observed effort behavior and whole saved-result semantics to
+both regression tests and the mandatory edit-time preflight. `runpy` replaces custom module
+registration. The renderer cannot authorize itself by agreeing with its own output.
+
+Fixed generated statements use narrow positive assertions: the actual scan boundary, both tier
+resolver attributes, the paired cell, the native/proxy explanation and the complete coupling
+note. Inline controls falsify the renderer and rerender together. A registered canary removes
+that independent factual assertion; ordinary pytest must then report the guard toothless.
+Free prose remains outside these assertions. Symmetric generated markers carry the source,
+renderer and named guard, and the surviving Plan example elsewhere links to its generated owner.
+
+Additional enum predicates are exercised one at a time because the carrier permits only a
+single equality per condition. This closes an observed gap where making ADR references
+conditional on `kind: task` escaped the destination/backend matrix. Valid fixed examples and
+underscore IDs still work. This adds test scenarios without adding a second validator or a
+Cartesian product to the canonical examples. The historical records now explicitly correct
+omitted previous-comments findings and distinguish worker release custody from integrator
+changes. See the [59-finding ledger](../evidence/issue-926/cycle4-finding-dispositions.md).
+
+The maintainer script has 287 AST statements versus 310 at `b4ef1925`; its 507 physical lines
+include diagnostics, formatting and ownership text (499 at that baseline, 466 at `04cbb0ce`).
+This is not a claim of a physical-line reduction against cycle 3. The reduction is in configurable
+policy and executable statements; remaining write/rollback handling serves the required refusal
+and recovery behavior. No runtime dependency or runtime behavior changes. Revisit this choice
+if the carrier needs general conditions, more document targets, or arbitrary prose semantics;
+those would exceed this maintenance unit rather than justify a generic validator.
+
 ### The documentation write command requires the existing saved-result proof {#926-plan-write-requires-behavior-proof}
 
 The edit-time CLI runs the focused real-save test before it can write. The importable
@@ -34,7 +66,14 @@ separates completed units from pending failures and records their mutations.
 
 ### Saga Plan facts use a smaller contract with independent producer and behavior checks {#926-plan-save-contract-single-source}
 
-**Decision.** Cycle 4 replaces the unreleased v1 carrier with v2. YAML remains the single
+**Historical decision for `04cbb0ce`; superseded after independent cycle-4 rejection.**
+The intended guarantees in this entry were not all achieved. The source still defined an
+unused `REMEDY`, the tier/Reads prose was unbound, and the first-statement inventory could
+miss hollow guards. The current decisions above and repair receipt correct those claims.
+The runbook has since been narrowed to its verified editing, protocol and recovery contract;
+it does not document both generators or every stored Saga field.
+
+**Decision at submission.** Cycle 4 replaced the unreleased documentation v1 carrier with v2. YAML remains the single
 list of Plan save fields, conditions, examples and effort mechanisms. `load()` validates real
 `Saga` fields and save options, enum placeholder vocabularies, the save flags named in Plan's
 upstream instructions, and `inject_effort` behavior before either rendering command can write.

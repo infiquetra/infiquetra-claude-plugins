@@ -49,13 +49,7 @@ templates:
   fixed:
     orchestration_mode: cc-workflows-ultracode
 effort_honoring:
-  seam: fleet_commons.effort_rider.inject_effort
-  parameters:
-  - prompt
-  - effort
-  - spawn_kind
   spawn_kinds:
     workflow: native
     external-engine: native
     agent: proxy
-  reference: plugins/fleet-core/references/effort-convention.md

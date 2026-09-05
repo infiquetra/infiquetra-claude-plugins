@@ -9,6 +9,13 @@ backend: inline
 
 # Saga Plan maintenance — issue 926 unit P5, structured documentation contract (cycle 3 redesign)
 
+> Historical accepted design at `54f788ad`, amended by subsequent repair decisions.
+> The current implementation and revision-bound evidence are in the
+> [post-cycle-4 repair receipt](../work-sessions/2026-09-05-saga-plan-contract-926-repair.md).
+> Integrator commits `4fcd314a`/`2a0b0554` established Saga 0.157.0; references below to
+> 0.156.0 describe the earlier dispatch, not the current release state. Independent
+> cycle-4 review rejected prior closure claims; the corrections below preserve that history.
+
 ## Summary
 
 Replace the natural-language drift classifier that failed two Saga Code Review cycles with one
@@ -659,7 +666,7 @@ several lenses filed one defect from distinct angles, and every row still gets i
 | Id | Sev | Lens | Disposition | Where and how, or evidence |
 |---|---|---|---|---|
 | cycle1-sec01 | P3 | security | resolved-by-redesign, rechecked in cycle 4 | The quadratic prose scanner is deleted. v1's replacement alias traversal also earned nothing; v2 rejects YAML alias tokens before object construction. `test_plan_save_contract_loads_and_rejects_malformed_entries` exercises recursive and shared aliases. |
-| cycle1-sec02 | P3 | security | rejected for P5 scope, carried disposition | Marketplace license/category validation is a Wave One residual terminalized by the parent. The cycle-4 dispatch explicitly forbids reopening it. Marketplace bytes stay identical to `a736c166`; this row records custody, not a claim of repair. |
+| cycle1-sec02 | P3 | security | rejected for P5 scope, carried disposition | Marketplace license/category validation is a Wave One residual terminalized by the parent. The cycle-4 dispatch explicitly forbids reopening it. The worker submission `04cbb0ce` preserved `a736c166` marketplace bytes, but integrator `4fcd314a` changed release surfaces to 0.157.0 before review. Current repairs preserve `2a0b0554` release bytes. This row records custody, not a marketplace repair. (Correction: cycle-4 `prev03`.) |
 | adv07 | P1 | adversarial | already-fixed | `a736c166`; my titled-fence mutation omitting `--phase-status` turned the routing test red ("counts per variant: [1, 1, 0]") |
 | adv09 | P1 | adversarial | resolved-by-redesign | the sentinel and the classifier are deleted (Element 9, R12); no prose is scanned |
 | adv02 | P2 | adversarial | resolved-by-redesign | tilde fences are read at `a736c166` (my probe); an indented block outside a region fails R14, which matches the command text rather than a fence shape |
@@ -683,11 +690,11 @@ several lenses filed one defect from distinct angles, and every row still gets i
 | doc-clarity10 | P2 | documentation | resolved-by-redesign | no escape hatch to document |
 | testing01 | P2 | testing | resolved-by-redesign | no prose coverage to measure |
 | testing04 | P2 | testing | repair | the comparison is contract→engine and contract→document (Element 6); KTD7's three layers for a short-circuit |
-| testing05 | P2 | testing | repair | R10 binds the effort note's facts to `effort_rider`; moving the module or the reference goes red |
+| testing05 | P2 | testing | repair | The original R10 seam/reference check did not bind the tier-cell claim (cycle-3 `prev02`, repeated by cycle-4 `prev01`/`prev02`). The current generated-region test independently pins both resolver attributes, `<model>/<effort>`, native/proxy behavior and the full coupling note; its inline false-renderer/output control and factual-self-guard canary reject a coordinated false render |
 | testing09 | P2 | testing | resolved-by-redesign | no matcher |
 | testing11 | P2 | testing | duplicate-of agentusab05 | — |
 | adv06 | P3 | adversarial | already-fixed | `a736c166` line 243 names both paths; superseded by Element 7 |
-| adv08 | P3 | adversarial | resolved-by-redesign | no file is scanned; the fact is bound to code, which covers Python by construction |
+| adv08 | P3 | adversarial | resolved-by-redesign | The prose classifier is deleted. The earlier rationale “covers Python by construction” was false: engine binding never checked arbitrary Python narrative (cycle-3 `prev03`, omitted until cycle-4 `prev02`). No current stale Python claim was identified by that review. Closure is removal of the classifier; free narrative remains outside the documentation contract |
 | adv13 | P3 | adversarial | resolved-by-redesign | no negation class |
 | adv14 | P3 | adversarial | already-fixed | `a736c166` line 254 synthetic name; the probe itself is replaced by R22 |
 | adv15 | P3 | adversarial | already-fixed | `a736c166` line-start fence rule; my probe with an inline ``` mention found both real blocks |

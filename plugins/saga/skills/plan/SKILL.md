@@ -392,8 +392,7 @@ again. (If a Phase 0.7 pre-answer carrier applied `backend: inline`, skip only t
 `lifecycle_state.recommend_execution_backend`, still record `--orchestration-recommended` with its
 output and `--orchestration-mode inline`, and still write the plan document's `backend:` field;
 the carrier never applies the other two backends, they remain explicit invocations. Skipping the
-offer must never skip the recommend call: Phase 5.3's save demands its output, and passing an
-empty value aborts the save — cycle-2 U06.)
+offer must never skip the recommend call: Phase 5.3's save examples include its output.)
 
 The recorded enum still has three values — `inline` ("inline") | `team-execution` ("team execution") |
 `cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
@@ -541,16 +540,19 @@ shared registry**:
    dirtied overlay with the run's changes (the repo accretes tier judgment). Every persisted override
    originates from an explicit operator confirmation; never auto-promote silently.
 
-<!-- BEGIN GENERATED EFFORT HONORING NOTE
+<!-- BEGIN GENERATED EFFORT HONORING NOTE -->
+<!-- Source: plugins/saga/references/plan-save-contract.yaml; renderer: plugins/saga/scripts/plan_save_contract.py.
+Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract. -->
+<!--
 The honoring seam is `fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)`.
-`workflow` carries effort on a real control.
-`external-engine` carries effort on a real control.
-`agent` prepends an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.
+For `external-engine`, `workflow`: effort already rides on real controls; injecting a rider would double-count it.
+For `agent`: prepend an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.
 See `plugins/fleet-core/references/effort-convention.md`.
 The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`
 and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.
 Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.
-END GENERATED EFFORT HONORING NOTE -->
+-->
+<!-- END GENERATED EFFORT HONORING NOTE -->
 
 For a unit carrying `engine`/`capability` (U12 chaperone-worker units), the recommendation row also
 carries the unit's `intent` and a **plan-time resolution preview**: for a capability-routed unit, call
@@ -620,6 +622,8 @@ Emit a **runnable** saga `save` command — never prose like "write a saga", and
 tick (saga state is git-ignored, machine-local). Use the real flags:
 
 <!-- BEGIN GENERATED PLAN SAVE EXAMPLES: default -->
+<!-- Source: plugins/saga/references/plan-save-contract.yaml; renderer: plugins/saga/scripts/plan_save_contract.py.
+Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract. -->
 **Example: default**
 
 ```bash
@@ -644,6 +648,8 @@ python3 plugins/saga/scripts/saga.py save \
 canonical artifact, per KTD1/KD3 — regenerable, so the ref is the spec not the `.workflow.js`):
 
 <!-- BEGIN GENERATED PLAN SAVE EXAMPLES: workflow -->
+<!-- Source: plugins/saga/references/plan-save-contract.yaml; renderer: plugins/saga/scripts/plan_save_contract.py.
+Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract. -->
 **Example: cc-workflows-ultracode**
 
 ```bash
@@ -673,10 +679,10 @@ recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestra
 auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.
 
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc work pass
-`--kind task --id <slug>`. The flags in the templates above and the `/plan` consumer row
+`--kind task --id <slug>`. The flags in the save examples above and the `/plan` consumer row
 in `references/saga-spec.md` §11 are rendered from the same `references/plan-save-contract.yaml`
-contract. The [maintainer runbook](../../references/plan-save-contract.md) documents both
-generation systems, the runnable recommender call, and recovery from a failed render.
+contract. The [maintainer runbook](../../references/plan-save-contract.md) documents editing,
+the runnable recommender call, and recovery from a failed render.
 `--phase-status complete` is what the `/loop`
 dispatch table routes on: a finished plan goes onward to `/doc-review`, and omitting it leaves the
 tick at the `pending` default, which routes the already-finished plan right back into `/plan`.

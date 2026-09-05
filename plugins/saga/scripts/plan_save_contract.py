@@ -8,19 +8,19 @@ Every invocation except --help returns JSON: 0 success, 1 drift, 2 refusal.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import difflib
-import importlib.util
 import inspect
 import json
 import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NoReturn
 
 import yaml
@@ -30,51 +30,44 @@ CONTRACT = Path("plugins/saga/references/plan-save-contract.yaml")
 SKILL = Path("plugins/saga/skills/plan/SKILL.md")
 SPEC = Path("plugins/saga/references/saga-spec.md")
 SCHEMA = "plan_save_contract.v3"
+RIDER = "plugins/fleet-core/scripts/fleet_commons/effort_rider.py"
+EFFORT_REFERENCE = Path("plugins/fleet-core/references/effort-convention.md")
 
 
 class ContractError(ValueError):
-    """Refusal with file, entry, and a repair specific to the failed operation."""
-
     def __init__(self, source: object, entry: str, reason: str, code: str = "invalid_contract"):
-        self.source, self.entry, self.code = (
-            str(source) if source is not None else None,
-            entry,
-            code,
-        )
+        self.source = str(source) if source is not None else None
+        self.entry, self.code = entry, code
         super().__init__(f"{source}: {entry}: {reason}")
 
 
-def fail(source: object, entry: str, reason: str, code: str = "invalid_contract") -> NoReturn:
+def fail(
+    entry: str, reason: str, *, source: object = CONTRACT, code: str = "invalid_contract"
+) -> NoReturn:
     raise ContractError(source, entry, reason, code)
 
 
 def keys(value: Any, expected: set[str], entry: str) -> None:
     if not isinstance(value, dict) or set(value) != expected:
         actual = list(value)[:12] if isinstance(value, dict) else type(value).__name__
-        fail(
-            CONTRACT,
-            entry,
-            f"expected exactly these keys: {sorted(expected)}; got {str(actual)[:240]}",
-        )
+        fail(entry, f"expected exactly these keys: {sorted(expected)}; got {str(actual)[:240]}")
 
 
 def module(root: Path, path: str, *members: str) -> Any:
     try:
-        spec = importlib.util.spec_from_file_location("p5_" + Path(path).stem, root / path)
-        if spec is None or spec.loader is None:
-            raise ImportError("no Python loader")
-        result = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = result
-        spec.loader.exec_module(result)
+        target = (root / path).resolve()
+        if not target.is_relative_to(root.resolve()):
+            raise ImportError("engine path escapes checkout")
+        result = SimpleNamespace(**runpy.run_path(str(target)))
         for member in members:
             getattr(result, member)
         return result
     except Exception as exc:
         fail(
-            path,
             "engine import",
             f"{exc}; restore this checkout and its Python dependencies",
-            "engine",
+            source=path,
+            code="engine",
         )
 
 
@@ -85,7 +78,6 @@ class UniqueLoader(yaml.SafeLoader):
             key = self.construct_object(key_node, deep=deep)
             if not isinstance(key, str) or key in result:
                 fail(
-                    CONTRACT,
                     f"line {key_node.start_mark.line + 1} key {key!r}",
                     "mapping keys must be unique strings; remove the duplicate/invalid entry",
                 )
@@ -100,12 +92,12 @@ class Contract:
 
 
 def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
+    """Read structure; the mandatory CLI proof binds values to engine and output."""
     raw = (root / CONTRACT).read_text() if text is None else text
     # Aliases earn nothing in this small carrier. Reject before constructing any graph.
     for token in yaml.scan(raw):
         if isinstance(token, yaml.AliasToken):
             fail(
-                CONTRACT,
                 f"line {token.start_mark.line + 1} alias {token.value}",
                 "aliases are unsupported; spell out this entry",
             )
@@ -113,10 +105,13 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
     schema = data.get("schema") if isinstance(data, dict) else None
     if schema != SCHEMA:
         fail(
-            CONTRACT,
             "schema",
-            f"observed {str(schema)[:80]!r}, expected {SCHEMA}; use the matching tool/schema revision: "
-            "restore an obsolete carrier with its tool, or upgrade the tool for a newer carrier",
+            f"observed {str(schema)[:80]!r}, expected {SCHEMA}; "
+            + (
+                "migrate this obsolete carrier using the runbook"
+                if schema in ("plan_save_contract.v1", "plan_save_contract.v2")
+                else "restore the expected carrier or use its matching tool revision"
+            ),
             code="schema_version"
             if isinstance(schema, str) and schema.startswith("plan_save_contract.")
             else "schema_family",
@@ -125,41 +120,36 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
     saga = module(
         root, "plugins/saga/scripts/saga.py", "_add_save_parser", "Saga", "derive_saga_id"
     )
-    parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers()
-    saga._add_save_parser(sub)
-    actions = {a.dest: a for a in sub.choices["save"]._actions}
     names: set[str] = set()
     for section in ("identity", "writes", "templates"):
         items = data[section]
         if not isinstance(items, list) or not items:
-            fail(CONTRACT, section, "expected a nonempty list")
+            fail(section, "expected a nonempty list")
         seen: set[str] = set()
         for index, item in enumerate(items):
             entry = f"{section}[{index}]"
             if not isinstance(item, dict):
-                fail(CONTRACT, entry, "expected a mapping")
+                fail(entry, "expected a mapping")
             name = item.get("id" if section == "templates" else "name")
             entry += f" ({name!r})"
             if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", name):
-                fail(CONTRACT, entry, "expected an identifier")
+                fail(entry, "expected an identifier")
             if name in seen or (section != "templates" and name in names):
-                fail(CONTRACT, entry, "duplicate entry; keep exactly one")
+                fail(entry, "duplicate entry; keep exactly one")
             seen.add(name)
             if section == "templates":
                 keys(item, {"id", "fixed"}, entry)
                 if not isinstance(item["fixed"], dict):
-                    fail(CONTRACT, entry + ".fixed", "expected a mapping of fields to choices")
+                    fail(entry + ".fixed", "expected a mapping of fields to choices")
                 for field, value in item["fixed"].items():
                     if field not in names:
-                        fail(CONTRACT, entry + ".fixed", f"unknown field {field!r}")
-                    choice(actions, field, value, entry + ".fixed")
+                        fail(entry + ".fixed", f"unknown field {field!r}")
+                    string(value, entry + ".fixed")
                     source = next(
                         i for i in data["identity"] + data["writes"] if i["name"] == field
                     )
                     if "value" in source and value != source["value"]:
                         fail(
-                            CONTRACT,
                             entry + ".fixed",
                             f"{field} has a contract constant; remove the conflicting override",
                         )
@@ -167,26 +157,7 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
             names.add(name)
             value_key = "value" if "value" in item else "placeholder"
             keys(item, {"name", value_key} | ({"when"} if section == "writes" else set()), entry)
-            if name not in actions or name not in {f.name for f in dataclasses.fields(saga.Saga)}:
-                fail(CONTRACT, entry, f"--{name.replace('_', '-')} is not a saga.py save option")
-            value = item[value_key]
-            if (
-                not isinstance(value, str)
-                or not value
-                or any(c in value for c in ("\n", "\r", "\x00", "<!--", "-->"))
-            ):
-                fail(
-                    CONTRACT,
-                    entry + "." + value_key,
-                    "expected a nonempty single-line string without HTML comment markers",
-                )
-            choices = actions[name].choices
-            if choices is not None:
-                allowed = "<" + "|".join(choices) + ">"
-                if value_key == "placeholder" and value != allowed:
-                    fail(CONTRACT, entry + ".placeholder", f"expected engine choices {allowed}")
-            if value_key == "value":
-                choice(actions, name, value, entry + ".value")
+            string(item[value_key], entry + "." + value_key)
     for item in data["writes"]:
         when = item["when"]
         if when != "always":
@@ -197,8 +168,8 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
                 or when["field"] not in names
                 or when["field"] == item["name"]
             ):
-                fail(CONTRACT, entry, "condition must reference another declared field")
-            choice(actions, when["field"], when["equals"], entry)
+                fail(entry, "condition must reference another declared field")
+            string(when["equals"], entry + ".equals")
             for template in data["templates"]:
                 fixed = template["fixed"]
                 if (
@@ -207,66 +178,31 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
                     and fixed[when["field"]] != when["equals"]
                 ):
                     fail(
-                        CONTRACT,
                         f"templates ({template['id']!r}).fixed",
                         f"{item['name']} is fixed while its condition is false; remove that fixed value",
                     )
     identity = {name.rstrip("_") for name in inspect.signature(saga.derive_saga_id).parameters}
     if {item["name"] for item in data["identity"]} != identity:
         fail(
-            CONTRACT,
             "identity",
             f"must match derive_saga_id inputs {sorted(identity)}; place payload fields in writes",
         )
     effort = data["effort_honoring"]
-    keys(effort, {"seam", "parameters", "spawn_kinds", "reference"}, "effort_honoring")
-    rider = module(
-        root,
-        "plugins/fleet-core/scripts/fleet_commons/effort_rider.py",
-        "inject_effort",
-        "SPAWN_KINDS",
-        "EFFORTS",
-        "EFFORT_RIDER",
-    )
-    if effort["seam"] != "fleet_commons.effort_rider." + rider.inject_effort.__name__ or effort[
-        "parameters"
-    ] != list(inspect.signature(rider.inject_effort).parameters):
-        fail(CONTRACT, "effort_honoring.seam/parameters", "must match inject_effort signature")
+    keys(effort, {"spawn_kinds"}, "effort_honoring")
+    rider = module(root, RIDER, "inject_effort", "SPAWN_KINDS", "EFFORTS", "EFFORT_RIDER")
     keys(effort["spawn_kinds"], set(rider.SPAWN_KINDS), "effort_honoring.spawn_kinds")
-    for kind, mechanism in effort["spawn_kinds"].items():
-        for level in rider.EFFORTS:
-            observed = rider.inject_effort("probe", level, kind)
-            expected = {"native": "probe", "proxy": rider.EFFORT_RIDER[level] + "\n\nprobe"}
-            if (
-                not isinstance(mechanism, str)
-                or mechanism not in expected
-                or observed != expected[mechanism]
-            ):
-                fail(
-                    CONTRACT,
-                    f"effort_honoring.spawn_kinds ({kind!r})",
-                    "native/proxy declaration disagrees with inject_effort behavior",
-                )
-    reference = effort["reference"]
-    if (
-        not isinstance(reference, str)
-        or any(c in reference for c in ("\x00", "\n", "\r", "<!--", "-->"))
-        or Path(reference).is_absolute()
-        or not (root / reference).resolve().is_relative_to(root.resolve())
-        or not (root / reference).is_file()
-    ):
-        fail(CONTRACT, "effort_honoring.reference", "use an existing file inside --root")
+    if not (root / EFFORT_REFERENCE).is_file():
+        fail("reference", "restore the honoring convention", source=EFFORT_REFERENCE)
     return Contract(data, root)
 
 
-def choice(actions: dict[str, Any], name: str, value: Any, entry: str) -> None:
-    action = actions.get(name)
-    if action is None or action.choices is None or value not in action.choices:
-        fail(
-            CONTRACT,
-            entry,
-            f"{name}={value!r} must be one of {list(action.choices or []) if action else []}",
-        )
+def string(value: Any, entry: str) -> None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(c in value for c in ("\n", "\r", "\x00", "<!--", "-->"))
+    ):
+        fail(entry, "expected a nonempty single-line string without HTML comment markers")
 
 
 def render_consumer_row(contract: Contract) -> str:
@@ -282,7 +218,7 @@ def render_consumer_row(contract: Contract) -> str:
         "`orchestration_operator_choice` (derived from an explicit mode flag unless an explicit "
         "choice is supplied; omitting both preserves the prior choice or starts empty)"
     )
-    return "| **/plan** | `scan` (§2.3, resume before minting) | " + ", ".join(cells) + ". |"
+    return "| **/plan** | `scan` (§2.3) | " + ", ".join(cells) + ". |"
 
 
 def render_template(contract: Contract, template_id: str) -> str:
@@ -314,45 +250,53 @@ def render_template(contract: Contract, template_id: str) -> str:
 
 
 def render_effort_note(contract: Contract) -> str:
-    effort = contract.data["effort_honoring"]
-    lines = [f"The honoring seam is `{effort['seam']}({', '.join(effort['parameters'])})`."]
-    for kind, mechanism in effort["spawn_kinds"].items():
-        lines.append(
-            f"`{kind}` "
-            + (
-                "carries effort on a real control."
-                if mechanism == "native"
-                else "prepends an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter."
-            )
-        )
+    rider = module(contract.root, RIDER, "inject_effort")
+    parameters = ", ".join(inspect.signature(rider.inject_effort).parameters)
+    lines = [
+        f"The honoring seam is `fleet_commons.effort_rider.{rider.inject_effort.__name__}({parameters})`."
+    ]
+    kinds = contract.data["effort_honoring"]["spawn_kinds"]
+    for mechanism, sentence in (
+        (
+            "native",
+            "effort already rides on real controls; injecting a rider would double-count it.",
+        ),
+        (
+            "proxy",
+            "prepend an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.",
+        ),
+    ):
+        group = ", ".join(f"`{kind}`" for kind in sorted(kinds) if kinds[kind] == mechanism)
+        lines.append(f"For {group}: {sentence}")
     lines += [
-        f"See `{effort['reference']}`.",
+        f"See `{EFFORT_REFERENCE}`.",
         "The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`",
         "and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.",
         "Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.",
     ]
-    return region("EFFORT HONORING NOTE", "\n".join(lines))
+    return region("EFFORT HONORING NOTE", "<!--\n" + "\n".join(lines) + "\n-->")
 
 
 def markers(name: str) -> tuple[str, str]:
-    if name == "EFFORT HONORING NOTE":
-        return f"<!-- BEGIN GENERATED {name}", f"END GENERATED {name} -->"
     return f"<!-- BEGIN GENERATED {name} -->", f"<!-- END GENERATED {name} -->"
 
 
 def region(name: str, body: str) -> str:
     begin, end = markers(name)
-    return f"{begin}\n{body}\n{end}"
+    owner = (
+        f"<!-- Source: {CONTRACT}; renderer: plugins/saga/scripts/plan_save_contract.py.\n"
+        "Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract. -->"
+    )
+    return f"{begin}\n{owner}\n{body}\n{end}"
 
 
 def region_span(text: str, name: str, path: Path = SKILL) -> tuple[int, int]:
     begin, end = markers(name)
     if text.count(begin) != 1 or text.count(end) != 1 or text.index(begin) >= text.index(end):
         fail(
-            path,
             name,
-            "expected one ordered marker pair; restore markers from git, "
-            "or resolve the merge conflict using the maintainer runbook before rendering",
+            "expected one ordered marker pair; restore markers from git, or resolve the merge conflict using the maintainer runbook before rendering",
+            source=path,
         )
     return text.index(begin), text.index(end) + len(end)
 
@@ -360,7 +304,11 @@ def region_span(text: str, name: str, path: Path = SKILL) -> tuple[int, int]:
 def row_span(text: str) -> tuple[int, int]:
     rows = list(re.finditer(r"^\| \*\*/plan\*\* \|[^\n]*", text, re.MULTILINE))
     if len(rows) != 1:
-        fail(SPEC, "/plan consumer row", f"found {len(rows)}; restore exactly one row from git")
+        fail(
+            "/plan consumer row",
+            f"found {len(rows)}; restore exactly one row from git",
+            source=SPEC,
+        )
     return rows[0].span()
 
 
@@ -368,9 +316,9 @@ def rendered_documents(contract: Contract, skill: str, spec: str) -> dict[Path, 
     for path, text in ((SKILL, skill), (SPEC, spec)):
         if re.search(r"(?m)^(?:<{7}|={7}|>{7}|\|{7})(?: |$)", text):
             fail(
-                path,
                 "merge conflict",
                 "resolve the entire conflict, including its delimiters, before rendering",
+                source=path,
             )
     replacements = []
     for group in ("default", "workflow"):
@@ -386,16 +334,17 @@ def rendered_documents(contract: Contract, skill: str, spec: str) -> dict[Path, 
     replacements.sort()
     for left, right in zip(replacements, replacements[1:], strict=False):
         if left[1] > right[0]:
-            fail(SKILL, "generated regions", "overlap; restore the markers from git")
+            fail("generated regions", "overlap; restore the markers from git", source=SKILL)
     outside = skill
     for start, end, replacement in reversed(replacements):
         skill = skill[:start] + replacement + skill[end:]
         outside = outside[:start] + "\n" * outside[start:end].count("\n") + outside[end:]
-    if re.search(r"(?m)(?:^\s*|`)(?:python3?\s+)?(?:[\w./-]+/)?saga\.py\s+save\b", outside):
+    command = r"(?:python3?\s+)?(?:[\w./-]+/)?saga\.py\s+save"
+    if re.search(rf"(?m)^\s*{command}\b|`{command}\s+--", outside):
         fail(
-            SKILL,
             "save example outside generated regions",
             "add examples to templates in YAML; remove the extra command from the document",
+            source=SKILL,
         )
     start, end = row_span(spec)
     return {SKILL: skill, SPEC: spec[:start] + render_consumer_row(contract) + spec[end:]}
@@ -404,11 +353,7 @@ def rendered_documents(contract: Contract, skill: str, spec: str) -> dict[Path, 
 def write_documents(
     root: Path, originals: dict[Path, str], rendered: dict[Path, str], changed: list[Path]
 ) -> None:
-    """Stage both files first; replace atomically per file and roll back a failed batch.
-
-    This is a solo maintainer tool, not a crash-safe multi-file transaction. A failed
-    rollback retains backup paths in the diagnostic rather than claiming no changes.
-    """
+    """Stage the batch, roll back I/O failures, and retain backups if rollback fails."""
     staged: dict[Path, Path] = {}
     backups: dict[Path, Path] = {}
     written: list[Path] = []
@@ -434,7 +379,6 @@ def write_documents(
                 except OSError:
                     failures.append(f"{path}: restore {backups.pop(path)} manually")
             fail(
-                root / failed_path,
                 "filesystem",
                 f"{exc}; "
                 + (
@@ -442,7 +386,8 @@ def write_documents(
                     if failures
                     else "all changes rolled back; fix filesystem access and retry"
                 ),
-                "filesystem",
+                source=root / failed_path,
+                code="filesystem",
             )
     finally:
         for path in [*staged.values(), *backups.values()]:
@@ -451,52 +396,32 @@ def write_documents(
 
 class Parser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
-        fail(None, "usage", message + "; run --help", "usage")
+        fail("usage", message + "; run --help", source=None, code="usage")
 
 
 def verify_saved_examples(root: Path) -> None:
-    """Require the existing real-save oracle, without a second policy validator.
-
-    This is a repository maintenance tool: use the checkout's dev environment.
-    The selected test renders in memory and saves only into pytest's temporary paths.
-    """
+    """Run the checkout proof before writing; its saved ticks are temporary."""
     tool = Path("plugins/saga/scripts/plan_save_contract.py")
     if (root / tool).read_bytes() != Path(__file__).read_bytes():
         fail(
-            tool,
             "tool revision",
             "run the tool from the target checkout so its tested renderer is the one that writes",
-            "verification",
+            source=tool,
+            code="verification",
         )
     guard = "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick"
+    args = [sys.executable, "-m", "pytest", guard, "-q", "-o", "addopts="]
+    args += ["-p", "no:cacheprovider"]
     with tempfile.TemporaryDirectory(prefix="plan-save-proof-") as temporary:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                guard,
-                "-q",
-                "-o",
-                "addopts=",
-                "-p",
-                "no:cacheprovider",
-                "--basetemp",
-                str(Path(temporary) / "run"),
-            ],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        args += ["--basetemp", str(Path(temporary) / "run")]
+        result = subprocess.run(args, cwd=root, capture_output=True, text=True, check=False)
     if result.returncode:
         fail(
-            CONTRACT,
             "writes / saved examples",
             f"{guard} failed (exit {result.returncode}); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\n"
             + result.stdout[-1200:]
             + result.stderr[:300],
-            "verification",
+            code="verification",
         )
 
 
@@ -508,9 +433,7 @@ def main(argv: list[str] | None = None) -> int:
             "--root", default=str(ROOT), help="target checkout (code, YAML and docs together)"
         )
         sub = parser.add_subparsers(dest="command", required=True)
-        sub.add_parser(
-            "validate", help="validate YAML against this checkout’s producer and Python code"
-        )
+        sub.add_parser("validate", help="check structured input and real saved examples")
         render = sub.add_parser("render", help="check or update generated documentation")
         mode = render.add_mutually_exclusive_group(required=True)
         mode.add_argument(
@@ -524,12 +447,16 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--root must name a checkout")
         root = Path(args.root).resolve()
         contract = load(root=root)
+        originals = {}
+        for path in (SKILL, SPEC):
+            try:
+                originals[path] = (root / path).read_text()
+            except UnicodeError as exc:
+                fail("encoding", f"{exc}; restore UTF-8 text", source=path, code="syntax")
+        rendered = rendered_documents(contract, originals[SKILL], originals[SPEC])
         verify_saved_examples(root)
         if args.command == "validate":
-            print(json.dumps({"outcome": "valid", "schema": SCHEMA, "root": str(root)}))
-            return 0
-        originals = {p: (root / p).read_text() for p in (SKILL, SPEC)}
-        rendered = rendered_documents(contract, originals[SKILL], originals[SPEC])
+            return report(0, root, outcome="valid", schema=SCHEMA)
         changed = [p for p in originals if originals[p] != rendered[p]]
         if args.check:
             diff = "".join(
@@ -543,43 +470,37 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 for p in changed
             )
-            print(
-                json.dumps(
-                    {
-                        "outcome": "drift" if changed else "clean",
-                        "root": str(root),
-                        "diff": diff,
-                        "changed": [str(p) for p in changed],
-                    }
-                )
+            return report(
+                int(bool(changed)),
+                root,
+                outcome="drift" if changed else "clean",
+                diff=diff,
+                changed=list(map(str, changed)),
             )
-            return int(bool(changed))
         write_documents(root, originals, rendered, changed)
-        print(
-            json.dumps(
-                {"outcome": "rendered", "root": str(root), "changed": [str(p) for p in changed]}
-            )
-        )
-        return 0
+        return report(0, root, outcome="rendered", changed=list(map(str, changed)))
     except Exception as exc:
-        code = "filesystem" if isinstance(exc, OSError) else "syntax"
-        detail = {
-            "outcome": "invalid",
-            "root": str(root),
-            "error": str(exc)[:2000]
-            + (
-                ""
-                if isinstance(exc, ContractError)
-                else "; restore readable, valid checkout inputs before retrying"
-            ),
-            "code": exc.code if isinstance(exc, ContractError) else code,
-            "file": exc.source
-            if isinstance(exc, ContractError)
-            else str(getattr(exc, "filename", None) or CONTRACT),
-            "entry": exc.entry if isinstance(exc, ContractError) else "load/render",
-        }
-        print(json.dumps(detail))
-        return 2
+        if not isinstance(exc, ContractError):
+            exc = ContractError(
+                getattr(exc, "filename", None) or CONTRACT,
+                "load/render",
+                str(exc)[:1800] + "; restore readable, valid checkout inputs before retrying",
+                "filesystem" if isinstance(exc, OSError) else "syntax",
+            )
+        return report(
+            2,
+            root,
+            outcome="invalid",
+            error=str(exc)[:2000],
+            code=exc.code,
+            file=exc.source,
+            entry=exc.entry,
+        )
+
+
+def report(exit_code: int, root: Path, **detail: Any) -> int:
+    print(json.dumps({"root": str(root), **detail}))
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -48,7 +48,10 @@ its verdict without changing the fact. The old field comparison also stayed gree
 **Mechanism.** Lexical co-occurrence is sensitive to editorial boundaries. Comparing two
 restatements establishes agreement, not truth. YAML has its own boundary: an unquoted `#993`
 was a comment in the accepted example and disappeared from the first render. Inspecting the
-migration diff exposed it; a block scalar preserves the prescribed note verbatim.
+migration diff exposed it; v1 used a block scalar to preserve the prescribed note. That
+was a historical fix: v2 moved the note to a Python literal without binding its facts,
+which independent cycle-4 review rejected. The current generated-region test independently
+pins the complete factual note and falsifies a renderer/output pair that agrees on a lie.
 **Fix.** Bind one structured source to the parser and observed runtime behavior, render the
 owned documentation, and leave free prose outside the contract. Keep independent inventory,
 inline mutation proofs, and scheduled canaries; report baseline errors separately from

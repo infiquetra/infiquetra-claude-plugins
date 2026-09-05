@@ -1,0 +1,51 @@
+# Cycle-4 finding dispositions for issue 926
+
+This ledger covers all **59 typed findings** in the independent cycle-4 review of the
+integrated submission. IDs below are cycle-4 IDs unless explicitly prefixed cycle-3.
+These are implementation dispositions, not assigned lens scores or review acceptance.
+
+Evidence: [boundary mutations](repair-boundary-mutations.json),
+[saved-result mutations](repair-semantic-mutations.json),
+[final factual/behavioral mutations](repair-final-mutations.json), and
+[protected bytes](protected-boundaries.json). The current
+[work session](../../work-sessions/2026-09-05-saga-plan-contract-926-repair.md) records revision custody.
+
+| Finding IDs | Repair or correction | Named test / audit | Mutation evidence |
+|---|---|---|---|
+| `prev01`, `arch01`, `testing03`, `adv01` | Generated factual prose now has independent Reads/tier/native/proxy assertions. A false renderer and freshly rendered output must still fail. | test_plan_docs_generated_regions_match_contract; test_saga_spec_plan_consumer_row_matches_contract | false-reads, false-native, false-proxy, tier-cell, tier-resolver, tier-coupling; factual-self-guard |
+| `doc02`, `adv05`, `corr06` | The row includes derived operator choice; the false blanket refusal rule is removed. Real saves cover explicit mode, initial empty choice, resume, carried divergence, blank rationale, and a forbidden upgrade. | test_operator_choice_rule_matches_engine | plan-save-contract-operator-choice; unit-2 boundary receipt |
+| `doc01` | The CLI rejects all Git conflict delimiters before any write. The runbook requires resolving the entire hunk, and the recovery test follows that procedure through write/check. | test_contract_conflict_recovery | plan-save-contract-conflict-recovery |
+| `adv02`, `doc03`, `api06` | Removed the stale release-state sentence from the maintenance runbook. Release custody is explicitly revision-bound in the historical record. | test_plan_docs_wording_changes_do_not_fail; protected byte audit | exit-protocol; protected release hashes |
+| `testing01` | Identity is derived from derive_saga_id parameters, preventing reclassification of a payload write. | test_contract_rejects_corrupting_structure | plan-save-contract-structure; unit-2 identity |
+| `testing02`, `testing04` | The saved-example oracle compares the entire before/after snapshot, executes literal placeholder values, and rejects unrelated state writes and comma-delimited ADRs. | test_plan_examples_save_the_intended_tick | unit-3 extra-next_step, extra-review_paths, literal-adr-delimiter; plan-save-contract-saved-tick |
+| `adv03`, `corr03`, `arch02` | Additional examples can fix any compatible enum field. The same saved-result oracle executes them; identifiers containing underscores are accepted. | test_plan_renderer_edit_workflow | plan-save-contract-add-example; template-id-underscore |
+| `prev02` | Explicitly corrected the omitted cycle-3 previous-comments prev02 and prev03 in the accepted-plan ledger and historical cycle-4 receipt. The former needed the full tier pin; the latter was a false Python-coverage rationale, not a live Python-prose defect. | Historical ledger audit below | 59/59 current IDs mapped; both carried IDs explicitly named |
+| `doc05` | The current changelog describes the released delta as sharing one parser, not retaining an unreleased repair. It describes saved-result preflight and independent factual checks. | Changelog diff review | Historical-wording audit; release headings remain identical |
+| `doc07`, `agentusab01`, `arch04`, `api03`, `adv06`, `agentusab04` | The JSON envelope has distinct documented codes, real file paths or null for arguments, an absolute checkout root, and actionable refusals for loading, syntax and I/O. | test_contract_cli_reports_operation_and_checkout; test_plan_docs_wording_changes_do_not_fail | plan-save-contract-cli; usage-code; write-root; exit-protocol |
+| `doc06`, `doc10` | The runbook uses save examples consistently, distinguishes YAML templates from placement groups, and groups native mechanisms into one reasoned sentence. | test_plan_docs_generated_regions_match_contract | false-native; ownership; independent complete-note assertion |
+| `corr02`, `corr07`, `sec03` | Module loading checks required interfaces, catches ordinary import exceptions, and names the actual engine. Deep YAML and encoding errors return diagnostic JSON with exit 2. | test_contract_cli_reports_operation_and_checkout | engine-exception; encoding-path; deeply nested input control |
+| `adv04`, `agentusab03`, `sec02` | v3 placeholders are literal data. shlex.quote owns shell syntax, and a controlled Bash argument capture verifies hashes, pipes, quotes and substitutions stay inert. | test_contract_values_are_shell_data | plan-save-contract-shell |
+| `corr01`, `corr08` | All string values reject HTML comment delimiters. The configurable effort reference was removed entirely; the owner is the existing convention. | test_contract_rejects_corrupting_structure | plan-save-contract-structure; unit-2 marker-injection/comment-terminator |
+| `arch03`, `corr04`, `doc08`, `corr09` | Deleted the broad upstream prose-flag inventory. The remaining unowned-command check recognizes command syntax and accepts ordinary English and bare inline operation names. | test_plan_docs_wording_changes_do_not_fail; test_plan_docs_generated_regions_match_contract | wording-only; plan-save-contract-wording |
+| `api01` | The Reads cell is limited to scan §2.3, bound to the Plan scan command and specification heading. A false renderer/output pair is rejected. | test_saga_spec_plan_consumer_row_matches_contract | false-reads |
+| `agentusab02`, `doc04`, `arch07` | All three generated regions use symmetric closed markers, name source/renderer/guard, and warn against hand editing. The consumer row has matching ownership guidance. | test_plan_docs_generated_regions_match_contract; test_saga_spec_plan_consumer_row_matches_contract | ownership; plan-save-contract-regions |
+| `api02` | Every success/refusal JSON identifies the resolved checkout root; write destinations are relative to it. | test_contract_cli_reports_operation_and_checkout | write-root; plan-save-contract-cli |
+| `testing05` | Presence inventory makes no behavioral claim. Ordinary pytest runs the registered canaries, catching a guard hollowed after a real first statement. | test_plan_contract_guards_have_teeth; test_provider_onboarding_contract_is_packaged_and_documented | unit-3 hollow-after-first-statement and guard-file-deleted; registered baseline/caught results |
+| `sec01` | The runbook test fixes the interpreter/script prefix and refuses resolved paths escaping the checkout. The module loader now enforces the same checkout boundary. | test_plan_docs_wording_changes_do_not_fail; test_contract_cli_reports_operation_and_checkout | unit-1 outside-marker reproduction; engine-containment |
+| `doc09`, `arch06` | Marked the old decision as rejected historical intent and corrected the block-scalar learning to distinguish v1 history from the current Python renderer and independent fact pins. | Historical ledger and decision audit | Current repair receipt supersedes prior claims explicitly |
+| `prev03` | Qualified worker byte claims at 04cbb0ce separately from integrator release changes at 4fcd314a/2a0b0554; current repairs preserve the latter. | Protected byte audit | protected-boundaries.json |
+| `prev04`, `arch05` | Deleted the unused REMEDY in eb735566; corrected the earlier record that confused unwiring it with deletion. | Source and historical ledger audit | REMEDY absent from implementation; historical claim explicitly corrected |
+| `arch08` | Replaced the fourth Plan save example in execution-spec with a resolving link to the generated Plan example. Adjacent Workflow instructions remain unchanged. | test_plan_docs_wording_changes_do_not_fail | execution-pointer |
+| `api05` | Refusals bound key previews and the total error string instead of echoing the full document. | test_contract_cli_reports_operation_and_checkout | unit-2 unbounded-error; oversized key/value controls |
+| `adv07`, `sec04` | Documented SafeLoader inheritance at the yaml.load call with the targeted Bandit annotation. Permanent controls refuse harmless Python object tags. | test_plan_save_contract_loads_and_rejects_malformed_entries | plan-save-contract-malformed; SafeLoader object-tag controls |
+| `api04` | Schema errors report actual/expected versions and distinguish obsolete migration from a mismatched future tool. The runbook enumerates all seven removed v1 concepts and the removed v3 effort configuration. | test_contract_cli_reports_operation_and_checkout | schema-remedy; observed-version controls |
+| `testing06` | Removed the impossible importlib-spec branch with runpy. Candidate parsing exercises the phase boundary, conflicting constants and conditions have controls, and ordered-but-overlapping regions are explicitly rejected. | test_contract_rejects_corrupting_structure; test_plan_save_contract_loads_and_rejects_malformed_entries | overlap; conditional-fixed; malformed constants |
+| `corr05` | A fixed conditional field with a fixed false predicate is refused rather than silently discarded. Newly introduced predicate fields are exercised through their enum choices. | test_contract_rejects_corrupting_structure; test_plan_save_contract_binds_to_engine | conditional-fixed; predicate-kind; predicate-orchestration_recommended; predicate-coverage-bypassed |
+| `adv08` | Restored the literal section signs in the two unrelated canary entries. Their complete entries remain equal to the pre-repair baseline. | Canary registry JSON comparison | unrelated-registry equality audit |
+
+Historical ledger audit: the accepted plan now explicitly dispositions cycle-3 `prev02`
+against cycle-2 `testing05`, and cycle-3 `prev03` against cycle-2 `adv08`. The old claim
+that engine binding covered Python narrative “by construction” is withdrawn. The cycle-4
+work session is retained as a rejected submission receipt, with its tier, hollow-guard,
+REMEDY, and release-custody errors listed at the top. None of these documentary corrections
+claims a test proves arbitrary natural-language history.

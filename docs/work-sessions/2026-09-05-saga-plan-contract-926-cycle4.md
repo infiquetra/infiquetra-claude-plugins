@@ -1,5 +1,18 @@
 # P5 cycle 4 — documentation contract repair (#926)
 
+> **Historical submission receipt for `04cbb0ce`, rejected by independent cycle-4 review.**
+> The claims below describe that worker's intended closure and are not current proof.
+> The authoritative correction is the [post-cycle-4 repair receipt](2026-09-05-saga-plan-contract-926-repair.md).
+> In particular, the tier-cell assertion was still unbound; the inventory detected only
+> first-statement hollow bodies; and the universal `REMEDY` was unwired but still defined.
+> `eb735566` actually deletes that constant. Cycle-3 previous-comments `prev02` (tier pin)
+> and `prev03` (false Python-coverage rationale) were omitted here; both now have explicit
+> corrected dispositions in the accepted plan and current repair ledger.
+> The byte audit below applies to `04cbb0ce`, not the integrator's reviewed revision:
+> `4fcd314a`/`2a0b0554` legitimately advanced release surfaces to 0.157.0. Current repairs
+> compare runtime/protected prose to `a736c166` and release files to `2a0b0554`.
+
+
 The operator authorized this fourth repair cycle after the cycle-3 cap outcome at `b4ef1925`.
 The worker resumed the existing issue-926 Saga Work thread inline. Independent review remains
 coordinator-owned; no review acceptance is claimed. No push, PR, merge, board or issue write.

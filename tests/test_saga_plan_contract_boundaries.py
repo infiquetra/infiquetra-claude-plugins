@@ -72,9 +72,17 @@ def test_contract_rejects_corrupting_structure(contract_api: ModuleType, tmp_pat
     (tmp_path / reference).write_text("exists")
     data = copy.deepcopy(original)
     data["effort_honoring"]["reference"] = reference
-    with pytest.raises(api.ContractError, match="effort_honoring.reference"):
+    with pytest.raises(api.ContractError, match="effort_honoring.*reference"):
         api.load(root=tmp_path, text=yaml.safe_dump(data))
     skill, spec = (ROOT / api.SKILL).read_text(), (ROOT / api.SPEC).read_text()
+    begin, end = api.markers("EFFORT HONORING NOTE")
+    start, stop = api.region_span(skill, "EFFORT HONORING NOTE")
+    nested = skill[:start] + skill[stop:]
+    default_end = api.markers("PLAN SAVE EXAMPLES: default")[1]
+    nested = nested.replace(default_end, begin + "\n" + end + "\n" + default_end)
+    with pytest.raises(api.ContractError, match="generated regions.*overlap"):
+        api.rendered_documents(api.load(), nested, spec)
+
     for delimiter in ("<<<<<<< ours", "=======", ">>>>>>> theirs", "||||||| base"):
         for path in (api.SKILL, api.SPEC):
             with pytest.raises(api.ContractError, match="merge conflict.*entire conflict"):
@@ -123,7 +131,9 @@ def test_contract_cli_reports_operation_and_checkout(
         assert result.returncode == 2 and detail["code"] == "schema_version"
         assert schema in detail["error"]
         observed.append(detail["error"])
-    assert observed[0] != observed[1]
+    assert "migrate this obsolete carrier" in observed[0]
+    assert "matching tool revision" in observed[1]
+    assert "migrate" not in observed[1]
     for bad in (raw + "\nextra: " + "x" * 200_000, "[" * 2000 + "]" * 2000):
         (tmp_path / api.CONTRACT).write_text(bad)
         result = cli(api, tmp_path, "validate")
@@ -131,8 +141,47 @@ def test_contract_cli_reports_operation_and_checkout(
         detail = json.loads(result.stdout)
         assert detail["file"] == str(api.CONTRACT) and len(result.stdout) < 1000
         assert "x" * 1000 not in result.stdout
+    (tmp_path / api.CONTRACT).write_text(raw)
+    for path in (api.SKILL, api.SPEC):
+        original = (tmp_path / path).read_bytes()
+        (tmp_path / path).write_bytes(b"\xff invalid UTF-8")
+        result = cli(api, tmp_path, "render", "--write")
+        detail = json.loads(result.stdout)
+        assert result.returncode == 2 and detail["code"] == "syntax"
+        assert detail["file"] == str(path) and detail["entry"] == "encoding"
+        (tmp_path / path).write_bytes(original)
+    engine.unlink()
+    engine.symlink_to(ROOT / "plugins/saga/scripts/saga.py")
+    result = cli(api, tmp_path, "validate")
+    detail = json.loads(result.stdout)
+    assert result.returncode == 2 and detail["code"] == "engine"
+    assert "escapes" in detail["error"]
+    engine.unlink()
+    engine.write_text(original_engine)
     (tmp_path / api.CONTRACT).unlink()
     result = cli(api, tmp_path, "validate")
     detail = json.loads(result.stdout)
     assert result.returncode == 2 and detail["code"] == "filesystem"
     assert detail["file"] == str(tmp_path / api.CONTRACT) and "restore" in detail["error"]
+
+
+def test_contract_conflict_recovery(contract_api: ModuleType, tmp_path: Path) -> None:
+    """Following the runbook removes the entire conflict before a successful render."""
+    api = contract_api
+    tree(api, tmp_path)
+    path = tmp_path / api.SKILL
+    original = path.read_text()
+    begin, end = api.region_span(original, "PLAN SAVE EXAMPLES: default")
+    region = original[begin:end]
+    conflict = "<<<<<<< ours\n" + region + "\n=======\n" + region + "\n>>>>>>> theirs\n"
+    path.write_text(original[:begin] + conflict + original[end:])
+    result = cli(api, tmp_path, "render", "--write")
+    assert result.returncode == 2 and "entire conflict" in json.loads(result.stdout)["error"]
+    assert conflict in path.read_text()
+    # Resolve the entire hunk to one region; surrounding prose remains byte-identical.
+    path.write_text(path.read_text().replace(conflict, region))
+    result = cli(api, tmp_path, "render", "--write")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert path.read_text() == original
+    result = cli(api, tmp_path, "render", "--check")
+    assert result.returncode == 0 and json.loads(result.stdout)["outcome"] == "clean"

@@ -1,0 +1,16 @@
+{
+  "runtime_and_prose_baseline": "a736c166",
+  "release_baseline": "2a0b0554",
+  "unrelated_registry_baseline": "a736c166",
+  "unrelated_registry_entries_equal": 4,
+  "checks": {
+    "0.6": "ec2c9eaa60f567196d393cb87fd424edc59ec4ab97f338902cdd85e821e938e0",
+    "5.0": "920c8d7bdebf7bb3414f71ccf3e299855424d540e58a5f77fd412a5078bbb3ee",
+    "5.2a": "d71efaabe6e17c3ffd5ae20e357dea243fc270801232959ec11a70f4cbaf3a9e",
+    "plugins/saga/scripts/saga.py": "c03b7269c82eddc859c83e930dccb23322c42d4cbd70fc89560c6a3bc560f319",
+    "plugins/fleet-core/scripts/fleet_commons/effort_rider.py": "6378276048795afc0131f1cd109b56a1141bdfb955428857e3e4d4fc6a56e52e",
+    "plugins/saga/.claude-plugin/plugin.json": "880d570e2a6f8cc393a557dd1fb1a92880958bd47beec1e8abd536f4e4cb9c20",
+    ".claude-plugin/marketplace.json": "21cc7c9c9084ce9c530fe066eb7834f1d2bdcb7e91485ece47de23c6cf031e4f",
+    "five_consumer_rows": "byte-identical"
+  }
+}

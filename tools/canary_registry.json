@@ -115,7 +115,7 @@
       "kind": "replace_text",
       "file": "plugins/saga/scripts/plan_save_contract.py",
       "find": "    replacements = []",
-      "replace": "    if \"Produce an **executable** saga\" in skill:\n        fail(SKILL, \"prose\", \"injected prose classifier\")\n    replacements = []"
+      "replace": "    if \"Produce an **executable** saga\" in skill:\n        fail(\"prose\", \"injected prose classifier\", source=SKILL)\n    replacements = []"
     },
     "mutation_description": "Introduce a prose-only rejection in the renderer; the wording-independence guard must detect it."
   },
@@ -139,7 +139,7 @@
       "kind": "replace_text",
       "file": "plugins/saga/scripts/plan_save_contract.py",
       "find": "    keys(data, {\"schema\", \"identity\", \"writes\", \"templates\", \"effort_honoring\"}, \"contract\")",
-      "replace": "    keys(data, {\"schema\", \"identity\", \"writes\", \"templates\", \"effort_honoring\"}, \"contract\")\n    if len(data[\"templates\"]) > 2:\n        fail(CONTRACT, \"templates\", \"injected extension refusal\")"
+      "replace": "    keys(data, {\"schema\", \"identity\", \"writes\", \"templates\", \"effort_honoring\"}, \"contract\")\n    if len(data[\"templates\"]) > 2:\n        fail(\"templates\", \"injected extension refusal\")"
     },
     "mutation_description": "Forbid an ordinary additional example; the maintainer workflow test must fail."
   },
@@ -186,9 +186,32 @@
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/scripts/plan_save_contract.py",
-      "find": "message + \"; run --help\", \"usage\"",
-      "replace": "message + \"; run --help\", \"invalid_contract\""
+      "find": "code=\"usage\"",
+      "replace": "code=\"invalid_contract\""
     },
     "mutation_description": "Bypass the cli boundary."
+  },
+  {
+    "id": "plan-save-contract-factual-self-guard",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+    "invariant": "A false renderer and its matching output must still fail the independent factual assertion.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "tests/test_saga_spec_consumer_row.py",
+      "find": "assert actual == [\"\\n\".join(expected)]",
+      "replace": "assert True or actual == [\"\\n\".join(expected)]"
+    },
+    "mutation_description": "Bypass the factual assertion while retaining renderer-to-output equality."
+  },
+  {
+    "id": "plan-save-contract-conflict-recovery",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_conflict_recovery",
+    "invariant": "Resolve the whole Git conflict before any document write succeeds.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "if re.search(r\"(?m)^(?:<{7}|={7}|>{7}|\\|{7})(?: |$)\", text):",
+      "replace": "if False:"
+    }
   }
 ]

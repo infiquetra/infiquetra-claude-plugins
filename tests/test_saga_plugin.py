@@ -190,6 +190,12 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
         assert len(matches) == 1, f"{guard.relative_to(ROOT)}: expected exactly one {name}"
     # Syntax proves presence only. The ordinary pytest gate runs behavioral canaries
     # in test_wiring_canary.py; it detects bypasses after any statement, not only return-first.
+    execution_guard = ROOT / "tests/test_wiring_canary.py"
+    assert execution_guard.is_file(), "tests/test_wiring_canary.py: missing behavioral gate"
+    assert any(
+        isinstance(node, ast.FunctionDef) and node.name == "test_plan_contract_guards_have_teeth"
+        for node in ast.parse(_read(execution_guard)).body
+    ), "tests/test_wiring_canary.py: missing Plan behavioral gate"
     registry = json.loads((ROOT / "tools/canary_registry.json").read_text())
     protected = {entry["guard"].split("::")[-1] for entry in registry}
     assert {node.name for node in functions if node.name.startswith("test_")} <= protected, (

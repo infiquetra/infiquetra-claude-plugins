@@ -1,0 +1,27 @@
+[
+  {
+    "case": "ledger baseline",
+    "result": "59 unique IDs, exact review inventory"
+  },
+  {
+    "case": "remove prev02 disposition",
+    "result": "caught",
+    "output": "missing or duplicate cycle-4 finding disposition"
+  },
+  {
+    "case": "ledger restored",
+    "result": "59 unique IDs, exact review inventory"
+  },
+  {
+    "case": "accepted-plan frontmatter",
+    "result": "same parsed metadata as 2a0b0554"
+  },
+  {
+    "case": "release changelog custody",
+    "result": "all headings and 0.156.0-and-older body identical; current delta describes shared parser"
+  },
+  {
+    "case": "unused remedy",
+    "result": "absent from implementation; historical unwiring-vs-deletion correction recorded"
+  }
+]

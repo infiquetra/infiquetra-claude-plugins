@@ -34,15 +34,21 @@ argument errors), `entry`, and `error` with the repair instruction. Codes are:
 | `syntax` | Restore valid, readable input and inspect the reported parser failure. |
 | `verification` | Correct the saved-example failure or restore the checkout's test dependencies; run its matching tool. |
 
-There is no automatic v1/v2 migration: restore the carrier and tool from the same revision.
+There is no automatic v1/v2 migration: use the carrier, tool, tests, and owned documents
+from one checkout revision.
 v3 placeholders are literal data: remove v2's shell quoting rather than relabeling the schema.
+v1's `producer`, `owner`, `reads`, `stored_without_flag`, per-write `note`, template `omit`,
+and effort `notes` are removed. v3 also removes configurable effort `seam`, `parameters`,
+and `reference`; their owner is the existing effort module and convention.
 All three operations run `test_plan_examples_save_the_intended_tick` against the target
-checkout before reporting success or writing. That test executes every example in temporary
-directories and checks the entire saved snapshot. The tool must match the checkout's copy.
-`render --check` also checks document boundaries and output drift. Text placeholders are raw scalar values;
-the renderer supplies shell quoting. Replace enum placeholders with one listed choice.
+checkout before reporting success or writing. It checks the candidate's facts, executes every
+example in temporary directories, and checks the entire saved snapshot. The tool must match
+the checkout's copy. `render --check` reports output drift. Text placeholders are raw scalar values;
+the renderer supplies shell quoting. Values must be nonempty single-line strings without NUL
+or HTML comment delimiters. Replace enum placeholders with one listed choice.
 
-Add an example as a unique `templates` entry containing `id` and `fixed`, a mapping of declared
+YAML's `templates` entries are **save examples**; default and workflow are placement groups.
+Add a save example as a unique `templates` entry containing `id` and `fixed`, a mapping of declared
 fields to enum choices. A fixed conditional value requires a compatible condition. Examples
 fixing `orchestration_mode: cc-workflows-ultracode` render in the workflow group; others render
 in the default group. No new markers are needed. Render, run the tests above, and inspect the diff.

@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- **Plan's routing checks retain the shared template parser.** Titled save variants and
+- **Plan's routing checks share one template parser.** Titled save variants and
   hashes inside quoted values remain visible to the routing tests. The consumer-row check now
   binds generated documentation to a structured contract and binds that contract to the engine.
   The command card links to the consumer row instead of copying its fields. Operator-choice
@@ -26,20 +26,19 @@
   parameter. The operator's model-and-effort confirmation is unchanged.
 - **The specification's `/plan` consumer row disagreed with the skill.** It omitted four fields
   declared by Plan. The row now lists all ten with their conditions, rendered from
-  `references/plan-save-contract.yaml`. The linked maintainer runbook explains stored identity,
-  provenance and operator-choice fields, including the explicit-mode derivation and downgrade
-  refusal. Tests execute saves and inspect the stored result.
+  `references/plan-save-contract.yaml`. The row also states the derived operator-choice consequence. Tests execute the examples
+  and inspect the whole saved result, including preservation of unrelated state.
 
 ### Added
 
 - **Plan's save examples and effort note are generated from a checked documentation contract.**
-  `scripts/plan_save_contract.py` validates real `saga.py` options, enum choices, upstream Plan
-  flag instructions and `effort_rider.inject_effort` behavior before writing. `render --check`
+  `scripts/plan_save_contract.py` requires the existing candidate-document and saved-result proof before writing; it binds
+  fields, enum choices and factual clauses to `saga.py` and `effort_rider.inject_effort`. `render --check`
   reports drift; `render --write` stages both documents and rolls back a failed replacement.
   Both commands support an explicit checkout root and return JSON. Stable example groups allow
-  new templates without marker edits. Free prose is outside this check; unowned save commands
-  anywhere in the Plan skill fail with a named diagnostic. Independent saved-tick tests, guard
-  inventory and mutation canaries cover drift and bypass. The maintainer runbook documents the
+  new save examples without marker edits. Generated regions name their source, renderer and
+  guard. Ordinary prose stays outside the contract. Guard inventory and behavioral mutation
+  canaries run in the ordinary test gate to detect drift and bypass. The maintainer runbook documents the
   generated regions, editing workflow, recovery and the limits of these checks.
 
 ## [0.156.0] - 2026-09-01

@@ -88,3 +88,74 @@ first statement, and deleting the guard file each fail their named ordinary pyte
 Remaining work includes binding the renderer's factual prose, generated ownership metadata,
 the historical finding-ledger corrections, simplifying the remaining configurable surfaces,
 and the full gate at the final frozen commit. These receipts do not claim review acceptance.
+
+## Unit 4: independent factual pins, simpler inputs, and complete dispositions
+
+The effort carrier now contains only native/proxy declarations; its seam, parameters and
+reference come from their existing owners. The loader handles structure/identity, while the
+one pytest engine binding serves both regression and edit-time verification. Custom module
+registration is replaced by `runpy`. The CLI checks document boundaries before its behavioral
+preflight so marker/conflict failures retain direct file/entry diagnostics.
+
+Independent positive assertions bind the complete generated effort/tier note and the Reads
+cell. Each region has symmetric markers, source/renderer attribution, a hand-edit warning,
+and the actual guard name. A false renderer plus freshly rendered output fails these assertions;
+the new factual-self-guard canary detects removal of that assertion. Ordinary narrative stays
+outside the contract. The fourth Plan example in execution-spec is replaced with a resolving
+link. The runbook's protocol table and recovery path have executable controls, including a full
+conflict-resolution round trip. Obsolete schema and future-tool remedies differ. Non-UTF-8
+owned documents and escaping engine symlinks have named, structured refusals.
+
+Additional conditional enum fields are varied one at a time. Mutating ADR references to depend
+on `kind: task` or `orchestration_recommended: inline` now fails even though the old scenario
+matrix always chose those values. Bypassing the added coverage makes its negative control fail.
+Legitimate fixed examples, including an underscore in the example ID, continue to work.
+
+The historical plan, journal and cycle-4 work session now explicitly correct their rejected
+closure claims. The [complete ledger](../evidence/issue-926/cycle4-finding-dispositions.md) maps
+59/59 cycle-4 findings; it also dispositions the omitted cycle-3 previous-comments `prev02`
+and `prev03`. The [document audit](../evidence/issue-926/repair-document-audit.json) fails when a
+ledger row is removed and passes when restored. Accepted-plan frontmatter and older changelog
+bodies remain unchanged. No test is claimed to prove the truth of arbitrary historical prose.
+
+The maintainer tool has 287 AST statements, down from 310 at cycle 3. Physical lines are 507
+(499 at cycle 3; 466 at the rejected cycle-4 submission), so this is a reduction in executable
+and configurable policy, not a claim that every size metric decreased. The current unit removes
+79 net lines from the tool relative to `d7192810`. No generic validation or transaction framework
+was added. The decision records the prose-only alternative and why it does not satisfy the
+operator's four required proofs.
+
+Validation before the frozen gate: 66 focused tests passed; repository Ruff and full-scope
+mypy passed (349 files). The final mutation receipt is
+[repair-final-mutations.json](../evidence/issue-926/repair-final-mutations.json).
+The batch records 53 expected outcomes, including 21 caught canary mutations and the restored
+25-case focused suite passing. A subsequent audit found one additional candidate-phase parsing
+gap, to be fixed in the next unit before the final gate. These are preparation results;
+independent lens scoring remains coordinator-owned.
+
+## Four required properties
+
+| Property | Mutation and named check | Output |
+|---|---|---|
+| Real field/condition drift fails | Each removed Plan field, an unrelated real option, extra writes, incorrect deployment condition; `test_plan_examples_save_the_intended_tick` and `test_plan_save_contract_binds_to_engine`. Additional kind/recommendation predicates are covered. | Unit-3 receipt: validate/write exit 2 with unchanged documents; final receipt: predicate mutations exit 2, restored validate exit 0. |
+| Wording-only edits do not fail | Ordinary narrative, unrelated flags and bare `saga.py save` mentions; `test_plan_docs_wording_changes_do_not_fail`. | `wording-only`: exit 0, `clean`, no changed paths. |
+| Malformed/duplicate facts fail safely | Duplicate mapping keys/entries, aliases, malformed values, deep YAML, HTML delimiters and bad document structure; malformed/structure/CLI guards. | Registered controls: green baseline then `caught`; CLI controls assert exit 2 with file and entry. |
+| Bypass/self-derived checks are caught | Preflight removal, guard deletion, second-statement hollowing, false renderer/output agreement, factual assertion removal and predicate-coverage removal. | Unit-3 named pytest checks exit 1; final factual-self-guard `caught`; predicate-coverage bypass exits 1, restored guard passes. Ordinary pytest runs all registered controls. |
+
+## Issue 926 acceptance evidence at the repair boundary
+
+| Criterion | Evidence |
+|---|---|
+| Plan's derived-state sentence no longer names Work's path | Existing corrected §5.0 is retained byte-identical to `a736c166`. |
+| The unconditional committed-plan claim is removed | Existing entry/exit prose requires the durable plan and cleared review; the old “exists and is committed” text remains absent. |
+| Model-and-effort confirmation unchanged | §5.2a outside the owned effort note matches `a736c166` byte-for-byte. |
+| Emission-only effort comments corrected | Complete generated honoring note binds to observed `inject_effort` behavior, both resolver attributes, the paired tier cell and coupling note; false render mutations fail. |
+| Consumer row is checked derivedly | YAML-to-row/command parsing plus independent whole saved-result semantics; derived operator choice is included. |
+| Issue 927 board prose unchanged | Entire §0.6 and §5.0 hashes match `a736c166`; see the protected-byte receipt. |
+| Runtime behavior unchanged | `saga.py` and `effort_rider.py` match `a736c166` byte-for-byte. |
+| Unrelated lifecycle-position/Workflow prose and five rows unchanged | §5.2a except the owned note and all five non-Plan consumer rows match their baseline. Only the reviewed duplicate Plan save snippet in execution-spec becomes a link. |
+| Gate/release alignment | Integrator-established 0.157.0 manifest/marketplace bytes match `2a0b0554`. All changelog headings and older bodies are unchanged. The full 25-step gate runs after the final commit; its frozen SHA, exit code and result.txt are reported separately without a later source commit. |
+
+[Protected-byte receipt](../evidence/issue-926/protected-boundaries.json). No push, PR, merge,
+board or issue mutation; no model/effort/profile change. The coordinator dispatches independent
+review. The frozen gate result is implementation evidence, not a lens score.

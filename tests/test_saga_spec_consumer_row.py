@@ -10,6 +10,7 @@ import copy
 import importlib.util
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -167,6 +168,12 @@ def test_plan_save_contract_loads_and_rejects_malformed_entries(contract_api: Mo
     for data, diagnostic in cases:
         with pytest.raises(api.ContractError, match="plan-save-contract.yaml:.*" + diagnostic):
             mutated(api, data)
+    literal = copy.deepcopy(original)
+    path_entry = next(i for i in literal["writes"] if i["name"] == "plan_path")
+    path_entry.pop("placeholder")
+    path_entry["value"] = "one|two"
+    with pytest.raises(api.ContractError, match="plan_path.*value"):
+        mutated(api, literal)
     raw = (ROOT / api.CONTRACT).read_text()
     for suffix, diagnostic in [
         ("\nschema: duplicate\n", "duplicate"),
@@ -235,6 +242,9 @@ def test_operator_choice_rule_matches_engine(tmp_path: Path) -> None:
     assert tick["orchestration_operator_choice"] == "team-execution"
     tick, _ = save_tick(tmp_path, {"id": "resume"})
     assert tick["orchestration_operator_choice"] == "team-execution"
+    save_tick(
+        tmp_path, {"id": "choice-only", "orchestration_operator_choice": "team-execution"}, ok=False
+    )
     flags = {
         "id": "override",
         "orchestration_mode": "inline",
@@ -302,7 +312,7 @@ def test_plan_docs_generated_regions_match_contract(contract_api: ModuleType) ->
     assert "docs/plans/revised.md" in output and output != skill
 
 
-def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType) -> None:
+def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_path: Path) -> None:
     api = contract_api
     contract = api.load()
     skill, spec = (ROOT / api.SKILL).read_text(), (ROOT / api.SPEC).read_text()
@@ -324,6 +334,28 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType) -> None
     runbook = (ROOT / "plugins/saga/references/plan-save-contract.md").read_text()
     for path in re.findall(r"`(plugins/[^`]+\.py)`", runbook):
         assert (ROOT / path).is_file(), f"maintainer runbook: missing {path}"
+    commands = [
+        block.strip()
+        for block in re.findall(r"```bash\n(.*?)```", runbook, re.S)
+        if "lifecycle_state.py" in block
+    ]
+    assert len(commands) == 1, "maintainer runbook: missing runnable recommender example"
+    args = shlex.split(commands[0])
+    result = subprocess.run(
+        [sys.executable, str(ROOT / args[1]), *args[2:]],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0 and json.loads(result.stdout)["recommended"] == "inline"
+    # The producer boundary is a section number, never the English heading wording.
+    tree(api, tmp_path)
+    edited = skill.replace("### 5.3 Write the saga tick", "### 5.3 Save the saga tick")
+    assert edited != skill
+    (tmp_path / api.SKILL).write_text(edited)
+    result = cli(api, tmp_path, "render", "--check")
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("destination", ["pr", "nonprod-deploy"])
@@ -457,6 +489,7 @@ def test_plan_renderer_refusals_and_rollback(
         result = cli(api, tmp_path, "validate")
         assert result.returncode == 2 and json.loads(result.stdout)["outcome"] == "invalid"
         assert "Traceback" not in result.stderr
+        assert json.loads(result.stdout)["file"] == "plugins/saga/scripts/saga.py"
     engine.write_text(original_engine)
     # Force actual second-replacement failure after both files were successfully staged.
     replacement = {p: text + "\nchanged\n" for p, text in originals.items()}

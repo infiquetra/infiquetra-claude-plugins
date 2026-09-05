@@ -48,7 +48,7 @@ def keys(value: Any, expected: set[str], entry: str) -> None:
         fail(CONTRACT, entry, f"expected exactly these keys: {sorted(expected)}; got {value!r}")
 
 
-def module(root: Path, path: str) -> Any:
+def module(root: Path, path: str, member: str) -> Any:
     try:
         spec = importlib.util.spec_from_file_location("p5_" + Path(path).stem, root / path)
         if spec is None or spec.loader is None:
@@ -56,6 +56,7 @@ def module(root: Path, path: str) -> Any:
         result = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = result
         spec.loader.exec_module(result)
+        getattr(result, member)
         return result
     except (OSError, ImportError, AttributeError, SyntaxError) as exc:
         fail(path, "engine import", f"{exc}; restore this checkout and its Python dependencies")
@@ -105,7 +106,7 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
             else "schema_family",
         )
     keys(data, {"schema", "identity", "writes", "templates", "effort_honoring"}, "contract")
-    saga = module(root, "plugins/saga/scripts/saga.py")
+    saga = module(root, "plugins/saga/scripts/saga.py", "_add_save_parser")
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers()
     saga._add_save_parser(sub)
@@ -149,8 +150,8 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
                 allowed = "<" + "|".join(choices) + ">"
                 if value_key == "placeholder" and value != allowed:
                     fail(CONTRACT, entry + ".placeholder", f"expected engine choices {allowed}")
-                if value_key == "value":
-                    choice(actions, name, value, entry + ".value")
+            if value_key == "value":
+                choice(actions, name, value, entry + ".value")
     for item in data["writes"]:
         when = item["when"]
         if when != "always":
@@ -165,7 +166,10 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
             choice(actions, when["field"], when["equals"], entry)
     # Independent producer instructions precede generated outputs. This is a code-token
     # inventory, not a classifier of English sentences and not a second field list.
-    instructions = (root / SKILL).read_text().split("### 5.3 Write the saga tick", 1)[0]
+    sections = re.split(r"(?m)^### 5\.3\b", (root / SKILL).read_text(), maxsplit=1)
+    if len(sections) != 2:
+        fail(SKILL, "Phase 5.3", "restore the numbered section boundary before rendering")
+    instructions = sections[0]
     mentioned = {f.replace("-", "_") for f in re.findall(r"--([a-z]+(?:-[a-z]+)*)", instructions)}
     missing = (mentioned & actions.keys()) - names
     if missing:
@@ -177,7 +181,9 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
         )
     effort = data["effort_honoring"]
     keys(effort, {"seam", "parameters", "spawn_kinds", "reference"}, "effort_honoring")
-    rider = module(root, "plugins/fleet-core/scripts/fleet_commons/effort_rider.py")
+    rider = module(
+        root, "plugins/fleet-core/scripts/fleet_commons/effort_rider.py", "inject_effort"
+    )
     if effort["seam"] != "fleet_commons.effort_rider." + rider.inject_effort.__name__ or effort[
         "parameters"
     ] != list(inspect.signature(rider.inject_effort).parameters):

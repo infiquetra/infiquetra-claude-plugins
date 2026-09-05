@@ -658,8 +658,8 @@ several lenses filed one defect from distinct angles, and every row still gets i
 
 | Id | Sev | Lens | Disposition | Where and how, or evidence |
 |---|---|---|---|---|
-| cycle1-sec01 | P2 | security | resolved-by-redesign, rechecked in cycle 4 | The quadratic prose scanner is deleted. v1's replacement alias traversal also earned nothing; v2 rejects YAML alias tokens before object construction. `test_plan_save_contract_loads_and_rejects_malformed_entries` exercises recursive and shared aliases. |
-| cycle1-sec02 | P2 | security | rejected for P5 scope, carried disposition | Marketplace license/category validation is a Wave One residual terminalized by the parent. The cycle-4 dispatch explicitly forbids reopening it. Marketplace bytes stay identical to `a736c166`; this row records custody, not a claim of repair. |
+| cycle1-sec01 | P3 | security | resolved-by-redesign, rechecked in cycle 4 | The quadratic prose scanner is deleted. v1's replacement alias traversal also earned nothing; v2 rejects YAML alias tokens before object construction. `test_plan_save_contract_loads_and_rejects_malformed_entries` exercises recursive and shared aliases. |
+| cycle1-sec02 | P3 | security | rejected for P5 scope, carried disposition | Marketplace license/category validation is a Wave One residual terminalized by the parent. The cycle-4 dispatch explicitly forbids reopening it. Marketplace bytes stay identical to `a736c166`; this row records custody, not a claim of repair. |
 | adv07 | P1 | adversarial | already-fixed | `a736c166`; my titled-fence mutation omitting `--phase-status` turned the routing test red ("counts per variant: [1, 1, 0]") |
 | adv09 | P1 | adversarial | resolved-by-redesign | the sentinel and the classifier are deleted (Element 9, R12); no prose is scanned |
 | adv02 | P2 | adversarial | resolved-by-redesign | tilde fences are read at `a736c166` (my probe); an indented block outside a region fails R14, which matches the command text rather than a fence shape |

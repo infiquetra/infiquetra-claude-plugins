@@ -10,6 +10,31 @@ Note on pasted pytest output: the runner emits unrelated `PytestWarning (rm_rf)`
 tmp-cleanup noise after the summary line; it is trimmed below. Every test-relevant
 line (command, assertion, summary) is pasted verbatim.
 
+## Disposition and proof index
+
+One row per Lane C finding (14). Follow-up accounting (2026-09-05): six findings were
+proven but unlabelled in the first version of this note (AU-4, AU-5, AU-6, AU-7, AU-10
+in "Predicate probes", AU-5 also in "Grep acceptances"); AM-8's comment proof was
+genuinely missing and is now produced in "AM-8 comment proof" below. No finding is
+unrepaired; there is no "not closed" row.
+
+| Finding | Disposition | One-line proof, pointing at the exact evidence in this note |
+|---|---|---|
+| AU-4 | Closed | Predicate probe `check_loop_unrecognized_declaration_stops: real-file=[] mutated-copy=['missing never-continue-to-saga-scan clause for unrecognized declarations']`; the pinned line-119 phrase is asserted present by the same predicate, and the pin test stays green in the 183. |
+| AU-5 | Closed | Predicate probe `check_declined_artifact_reenters_confirmation: real-file=[] mutated-copy=['missing never-confirmed-or-declined re-entry rule']`; duplicate-clause grep returns `1` ("Grep acceptances"). |
+| AU-6 | Closed | Predicate probe `check_matched_brainstorm(+tier2): real-file=[] mutated-copy=['missing tier 2 legacy run class in matched-brainstorm']`. |
+| AU-7 | Closed | Predicate probe `check_dispatch_deferred_context: real-file=[] mutated-copy=['expected exactly one deferred-context dispatch row, found 0']`. |
+| AU-8 | Closed | Stub grep lists only the generic advisory rule, no line naming `/resume` or `/retro` ("Grep acceptances"); loop-corpus pin green in the 183. |
+| AU-10 | Closed | Predicate probe `check_near_match_predicate(+reorder/dedup): real-file=[] mutated-copy=['missing reordered-topic arm in near-match definition']`; multiplicity mirror green in the 183. |
+| TEST-3 | Closed | E2: pipe qualifier re-added → seeded test fails `assert [] != []`; file restored `RESTORED-BYTE-IDENTICAL`, then `1 passed` ("E2 red — TEST-3"). |
+| TEST-6 | Closed | E2: `/qa` appended to a tmp model copy → `violations: ["read_by entry '/qa' names a skill that never branches on pending-confirmation"]` ("E2 red — TEST-6"); live derivation green in the 12. |
+| TEST-7 | Closed | E2: unordered body → seeded test fails `assert True is False`; restored `RESTORED-BYTE-IDENTICAL`, then `1 passed` ("E2 red — TEST-7"). |
+| TEST-9 | Closed | `grep -c 'or "passed" in'` → `0`; seeded-inversion control plus both strict-count integrations `3 passed`. |
+| AM-8 | Closed | Old comment sentence gone (`grep -c "has no readers"` → `0`), new sentence at `saga-docs-model.yaml:48`, `README.md:12` unchanged ("AM-8 comment proof" below); derivation in TEST-6. |
+| AM-9 | Closed | `grep -c "globals()"` → `0`; AM-9-only variant renders all four SVGs `BYTE-IDENTICAL`. |
+| CORR-9 | Closed | E1 red pre-fix (`31 chars, ~330px overruns the 265px source column`) → green in the 12; regen changes only the ladder asset. |
+| DOC-12 | Closed | E1 red shows the old caption verbatim in the SVG → green; new phrase in the regenerated ladder. |
+
 ## Pre-change baseline (scoped list, unmodified tree)
 
 Command:
@@ -330,3 +355,40 @@ uv run pytest tests/test_brainstorm_judgment_contract.py tests/test_brainstorm_c
 The two integration assertions now read `"2 passed"` / `"1 passed"` exactly, and both
 hold (sandbox spawn-sites really emits 2, the tier-resolver routing test really emits
 1) — the strict form matches reality, not just the suite.
+
+## AM-8 comment proof (produced 2026-09-05 for the follow-up accounting)
+
+The plan's AM-8 acceptance is the model comment rewrite plus an unchanged README. This
+proof was missing from the first version of this note; the runs below are read-only
+and change no file. Command:
+
+```bash
+sed -n '45,52p' plugins/saga/docs/model/saga-docs-model.yaml
+grep -c "has no readers" plugins/saga/docs/model/saga-docs-model.yaml
+grep -n "read_by lists only readers" plugins/saga/docs/model/saga-docs-model.yaml
+grep -n "not yet inventoried" plugins/saga/docs/model/README.md
+```
+
+Result (verbatim):
+
+```text
+    pending-confirmation:
+      from: [docs/brainstorms/ frontmatter pending-confirmation]
+      consumed_by: [/brainstorm]
+      # read_by lists only readers that have been inventoried; absence means not yet
+      # inventoried, not no reader (see README.md).
+      read_by: [/resume, /loop, /handoff]
+  source_refs:
+    - plugins/saga/references/saga-spec.md
+---
+0
+48:      # read_by lists only readers that have been inventoried; absence means not yet
+---
+12:- `read_by`: commands that **read** the maturity value to branch on it but do not consume it as a terminal destination (they route onward). For example, `pending-confirmation` is consumed by `/brainstorm` but read by `/resume` (which restores the boundary and routes onward), `/loop` (which routes the value onward), and `/handoff` (which branches to decide stop versus route). `read_by` records only readers that have actually been inventoried. Today that is `pending-confirmation` alone. An empty `read_by` therefore means "not yet inventoried", NOT "no reader exists" — several other maturities are branched on by `/loop` and `/handoff` without being recorded here, so absence of a `read_by` entry is not evidence of absence (API-26).
+```
+
+The old false sentence ("Every other maturity has no readers") is gone (count 0), the
+new two-line comment is at yaml lines 48-49, and `README.md:12` still carries the
+inventoried-readers rule the comment cites — so README needed no change, exactly the
+outcome the plan allowed ("`README.md` is unchanged unless the worker finds it
+inconsistent"). `README.md` was never edited in this lane.

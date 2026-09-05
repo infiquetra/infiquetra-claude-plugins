@@ -71,4 +71,5 @@ effort_honoring:
   reference: plugins/fleet-core/references/effort-convention.md
   notes:                        # free text, rendered verbatim, never validated
     - the per-unit "proposed tier" cell is a `<model>/<effort>` pair, both halves sourced verbatim from `tier_resolver.resolve(...)`, never a bare model literal with effort omitted
-    - Team Execution's A7 worker table (`plugins/team-execution/skills/team-execution/SKILL.md`) carries the same cell shape and its parser splits the cell on `/`; its own copy of this note still carries the pre-#363 wording and is tracked by issue #993
+    - >-
+      Team Execution's A7 worker table (`plugins/team-execution/skills/team-execution/SKILL.md`) carries the same cell shape and its parser splits the cell on `/`; its own copy of this note still carries the pre-#363 wording and is tracked by issue #993

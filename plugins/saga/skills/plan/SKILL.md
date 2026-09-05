@@ -386,9 +386,9 @@ the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-d
 **Write the answer into the plan document's `backend:` frontmatter field**, not only into the saga
 tick. The tick is untracked local state: it does not survive a worktree boundary, another machine,
 or another vendor, so an executor that did not run in this directory cannot see it. The plan document
-is committed with the work and travels with it, which makes it the only place a decision made here can
-reliably be read later. `/work` honours that field and does not ask again. (If a Phase 0.7
-pre-answer carrier applied `backend: inline`, skip only the operator-facing offer — still call
+travels with the work because the executor commits it alongside the changes, which makes it the
+place a decision made here can reliably be read later. `/work` honours that field and does not ask
+again. (If a Phase 0.7 pre-answer carrier applied `backend: inline`, skip only the operator-facing offer — still call
 `lifecycle_state.recommend_execution_backend`, still record `--orchestration-recommended` with its
 output and `--orchestration-mode inline`, and still write the plan document's `backend:` field;
 the carrier never applies the other two backends, they remain explicit invocations. Skipping the
@@ -541,15 +541,15 @@ shared registry**:
    dirtied overlay with the run's changes (the repo accretes tier judgment). Every persisted override
    originates from an explicit operator confirmation; never auto-promote silently.
 
-<!-- EFFORT-EMISSION MARKER (#362 U5, R7, KTD6): the per-unit "proposed tier" cell is a
-`<model>/<effort>` pair — both fields sourced verbatim from `tier_resolver.resolve(...).model`
-and `.effort`, never a bare model literal with effort omitted. /plan surfaces the resolver's
-effort so the operator can see and override it before locking, and the honoring seam is
-`fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)`: the `workflow` and
-`external-engine` spawn kinds carry effort on a real control, while the `agent` spawn kind
-prepends an `EFFORT_RIDER` directive, a labeled proxy rather than a native knob, because the
-Agent tool has no per-call effort parameter. See
-`plugins/fleet-core/references/effort-convention.md` for the canonical description. -->
+<!-- BEGIN GENERATED EFFORT HONORING NOTE (rendered from references/plan-save-contract.yaml by scripts/plan_save_contract.py — do not hand-edit; pinned by tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract)
+The honoring seam is `fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)`.
+`workflow` carries effort on a real control.
+`external-engine` carries effort on a real control.
+`agent` prepends an `EFFORT_RIDER` directive, a labeled proxy, because the Agent tool has no per-call effort parameter.
+See `plugins/fleet-core/references/effort-convention.md`.
+the per-unit "proposed tier" cell is a `<model>/<effort>` pair, both halves sourced verbatim from `tier_resolver.resolve(...)`, never a bare model literal with effort omitted
+Team Execution's A7 worker table (`plugins/team-execution/skills/team-execution/SKILL.md`) carries the same cell shape and its parser splits the cell on `/`; its own copy of this note still carries the pre-#363 wording and is tracked by issue #993
+END GENERATED EFFORT HONORING NOTE -->
 
 For a unit carrying `engine`/`capability` (U12 chaperone-worker units), the recommendation row also
 carries the unit's `intent` and a **plan-time resolution preview**: for a capability-routed unit, call
@@ -618,6 +618,7 @@ shares the same stem: `docs/workflows/<YYYY-MM-DD>-<topic>.workflow.js`.
 Emit a **runnable** saga `save` command — never prose like "write a saga", and never `git add` the
 tick (saga state is git-ignored, machine-local). Use the real flags:
 
+<!-- BEGIN GENERATED PLAN SAVE TEMPLATE: default (rendered from references/plan-save-contract.yaml by scripts/plan_save_contract.py — do not hand-edit; a divergence fails tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract) -->
 ```bash
 python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
@@ -626,16 +627,20 @@ python3 plugins/saga/scripts/saga.py save \
   --phase-status complete \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
-  --deploy-autonomy <gate|auto>   # ONLY when --destination nonprod-deploy (Phase 5.1); else omit \
   --adr-refs "ADR-NNNN|ADR-MMMM" \
   --decisions "KTD1: rationale. KTD2: rationale." \
   --orchestration-mode <inline|team-execution|cc-workflows-ultracode> \
   --orchestration-recommended <recommend_execution_backend() output>
 ```
 
+Add when the condition holds:
+- `--deploy-autonomy <gate|auto>` — only when `--destination nonprod-deploy`; Phase 5.1 follow-up; omit otherwise
+<!-- END GENERATED PLAN SAVE TEMPLATE: default -->
+
 **For `cc-workflows-ultracode`:** also pass `--orchestration-ref` pointing at the **spec JSON** (the
 canonical artifact, per KTD1/KD3 — regenerable, so the ref is the spec not the `.workflow.js`):
 
+<!-- BEGIN GENERATED PLAN SAVE TEMPLATE: cc-workflows-ultracode (rendered from references/plan-save-contract.yaml by scripts/plan_save_contract.py — do not hand-edit; a divergence fails tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract) -->
 ```bash
 python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> \
@@ -650,6 +655,7 @@ python3 plugins/saga/scripts/saga.py save \
   --orchestration-recommended <recommend_execution_backend() output> \
   --orchestration-ref docs/workflows/YYYY-MM-DD-<topic>-spec.json
 ```
+<!-- END GENERATED PLAN SAVE TEMPLATE: cc-workflows-ultracode -->
 
 The `.workflow.js` is regenerable at any time from the spec (`execution_spec.py emit`); the spec JSON is
 the durable canonical artifact. `orchestration_ref` is the repo-relative path to the spec JSON, so
@@ -660,11 +666,9 @@ recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestra
 auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.
 
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc work pass
-`--kind task --id <slug>`. `--lifecycle-phase plan`, `--phase-status complete`, `--plan-path`,
-`--destination`, `--deploy-autonomy` (only when `--destination nonprod-deploy` — Phase 5.1),
-`--adr-refs`, `--decisions` (the KTD mirror), `--orchestration-mode`,
-`--orchestration-recommended`, and (for ultracode) `--orchestration-ref` carry the `/plan`
-consumer row from `references/saga-spec.md` §11. `--phase-status complete` is what the `/loop`
+`--kind task --id <slug>`. The flags in the templates above and the `/plan` consumer row
+in `references/saga-spec.md` §11 are rendered from the same `references/plan-save-contract.yaml`
+contract. `--phase-status complete` is what the `/loop`
 dispatch table routes on: a finished plan goes onward to `/doc-review`, and omitting it leaves the
 tick at the `pending` default, which routes the already-finished plan right back into `/plan`.
 When resuming (Phase 0.3 matched), this appends a tick to the existing saga directory rather than

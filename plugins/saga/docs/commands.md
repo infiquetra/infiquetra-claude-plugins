@@ -107,7 +107,7 @@ HOW-planning engine for settled requirements.
 | Outputs | Plan under `docs/plans/` and a plan saga tick. |
 | Saga state | Saves the Plan tick; see the [/plan consumer row in saga-spec §11](../references/saga-spec.md#11-consumer-contract-rebuild-targets) for written fields and their conditions. |
 | Routes in | `idea-ready`, `requirements-ready`, `docs/brainstorms/`, `docs/specs/`. |
-| Routes out | `/doc-review`, `/work`. |
+| Routes out | `/doc-review`, `/work`, `/handoff`, `/brainstorm`. |
 | Gates | Does not implement or run the review gauntlet. |
 | Boundary | Owns HOW planning only. |
 | Common mistakes | Re-deciding product scope; skipping `/doc-review` before `/work`. |

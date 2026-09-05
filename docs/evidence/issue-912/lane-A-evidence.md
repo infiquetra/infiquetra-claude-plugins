@@ -3,8 +3,10 @@
 Workspace: `/Users/jefcox/workspace/infiquetra/cp912-lane-a`. Baseline supplied by the
 controller: `77c01c99`. Specification: approved repair plan U1 and KTD1–KTD10.
 
-Every command below was executed in the Lane A workspace; stdout and stderr are
-captured together without abridging. `EXIT` records the actual process status.
+The original runs below were executed in the Lane A workspace. The review-cycle-1
+section records the replacement API-4 proof in the integration checkout against
+the shipped resolver of `f28505a7`. Stdout and stderr are captured together without
+abridging. `EXIT` records the actual process status.
 Focused E1/E2 runs override the repository's default all-plugin coverage report
 with `-o addopts=`; the required coverage run is recorded separately. The two owned
 test modules stub repository metadata so their envelope/CLI tests run without Git.
@@ -36,7 +38,7 @@ reported no issues in 346 source files. These are scoped checks, not a full gate
 | AM-5 | Closed | `allow_bullet` is gone, the unreachable scan/zero-index arms are removed, and all extracted helpers report `missing_lines=[]`. |
 | AM-6 | Closed | The pasted AST run validates every function against 8 returns / 12 branches / 0 nested definitions. |
 | AM-10 | Closed | Blank maturity fails the pre-fix diagnostic assertion and passes afterward; `should not occur` grep is 0. |
-| API-4 | Closed by cycle-8 test, mutation-confirmed | Removing the original marker-less `absolute = False` assignment leaks `plan-ready` and fails the existing test; no dedicated replacement test was added. |
+| API-4 | Closed by shipped-resolver mutation (TEST-11) | On reviewed candidate `f28505a7`, changing `resolve_source`'s final return to `ResolvedSource(None, normalized, False, False)` yields `requirements-ready` and fails the existing sentinel assertion at `test_handoff_envelope_maturity.py:903`; `cmp -s` verifies byte-identical restoration and the restored test passes. |
 | API-11 | Closed | The stale `redundant with suggested_command` grep is 0; both fields use bounded text and the truncation test passes. |
 | AU-11 | Closed | `pending-confirmation` is absent from the pre-fix remediation and present after repair; the routable vocabulary is unchanged. |
 | CORR-6 | Closed | The 9,946-byte fixture routes as `requirements-ready` before repair and becomes `unknown:unterminated:`; the diagnostic now names 8192 bytes. |
@@ -89,7 +91,8 @@ reported no issues in 346 source files. These are scoped checks, not a full gate
 
 No listed stop-and-surface event required a policy decision: no byte-identity
 restore failed, no immutable test or other lane file needed editing, and no sixth
-sentinel was introduced. API-4's preflight watch was resolved by its exact mutation.
+sentinel was introduced. API-4's original preflight mutation covered removed code;
+the review-cycle-1 shipped-resolver run below supersedes it for current acceptance.
 Version collision and release/integration checks remain with the controller.
 
 ### Lane B cross-check and changed files
@@ -4668,3 +4671,167 @@ files are excluded; every other source path is compared, including deletions.
   "parse_issue_unchanged": true
 }
 ```
+
+## Review cycle 1 — TEST-11 / API-4 shipped-resolver proof
+
+This section supersedes the pre-refactor API-4 proof for current acceptance.
+Run directly in the integration checkout `/Users/jefcox/workspace/infiquetra/orch-claude-plugins-912`,
+against the controller-supplied reviewed candidate `f28505a7`.
+Only the final refusal of `resolve_source` is mutated; the test is unchanged.
+
+### TEST-11 preflight — removed assignment is absent
+
+```text
+$ grep -c 'absolute = False' plugins/saga/scripts/handoff_envelope.py
+0
+EXIT 1
+```
+
+### TEST-11 green — shipped resolver, unchanged test
+
+```text
+$ uv run pytest tests/test_handoff_envelope_maturity.py -o addopts= -q --tb=short --basetemp=.pytest_cache/repair-cycle-1/pytest -k test_marker_less_out_of_root_declaration_is_never_read
+.                                                                        [100%]
+1 passed, 97 deselected in 0.12s
+EXIT 0
+```
+
+### TEST-11 backup
+
+```text
+$ cp plugins/saga/scripts/handoff_envelope.py .pytest_cache/repair-cycle-1/handoff_envelope.py.bak
+EXIT 0
+```
+
+### TEST-11 mutation — disable final shipped resolver refusal
+
+```text
+$ uv run python -c 'from pathlib import Path; p=Path('"'"'plugins/saga/scripts/handoff_envelope.py'"'"'); s=p.read_text(); old='"'"'    return ResolvedSource(None, normalized, False, True)'"'"'; new='"'"'    return ResolvedSource(None, normalized, False, False)'"'"'; assert s.count(old)==1; assert s.splitlines()[320]==old; p.write_text(s.replace(old,new))'
+EXIT 0
+```
+
+### TEST-11 red — existing sentinel assertion must fail
+
+```text
+$ uv run pytest tests/test_handoff_envelope_maturity.py -o addopts= -q --tb=short --basetemp=.pytest_cache/repair-cycle-1/pytest -k test_marker_less_out_of_root_declaration_is_never_read
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_marker_less_out_of_root_declaration_is_never_read ____________
+tests/test_handoff_envelope_maturity.py:903: in test_marker_less_out_of_root_declaration_is_never_read
+    assert got.startswith("unknown:out-of-root:")
+E   AssertionError: assert False
+E    +  where False = <built-in method startswith of str object at 0x109aa0b30>('unknown:out-of-root:')
+E    +    where <built-in method startswith of str object at 0x109aa0b30> = 'requirements-ready'.startswith
+=========================== short test summary info ============================
+FAILED tests/test_handoff_envelope_maturity.py::test_marker_less_out_of_root_declaration_is_never_read
+1 failed, 97 deselected in 0.14s
+EXIT 1
+```
+
+### TEST-11 restore
+
+```text
+$ cp .pytest_cache/repair-cycle-1/handoff_envelope.py.bak plugins/saga/scripts/handoff_envelope.py
+EXIT 0
+```
+
+### TEST-11 byte-identity comparison
+
+```text
+$ cmp -s .pytest_cache/repair-cycle-1/handoff_envelope.py.bak plugins/saga/scripts/handoff_envelope.py
+EXIT 0
+```
+
+### TEST-11 restoration marker
+
+```text
+$ uv run python -c 'print('"'"'RESTORED-BYTE-IDENTICAL'"'"')'
+RESTORED-BYTE-IDENTICAL
+EXIT 0
+```
+
+### TEST-11 green after restoration
+
+```text
+$ uv run pytest tests/test_handoff_envelope_maturity.py -o addopts= -q --tb=short --basetemp=.pytest_cache/repair-cycle-1/pytest -k test_marker_less_out_of_root_declaration_is_never_read
+.                                                                        [100%]
+1 passed, 97 deselected in 0.12s
+EXIT 0
+```
+
+### Review-cycle-1 scoped envelope regression tests
+
+```text
+$ uv run pytest tests/test_handoff_envelope_maturity.py tests/test_handoff_envelope.py -o addopts= -q --tb=short --basetemp=.pytest_cache/repair-cycle-1/pytest
+........................................................................ [ 46%]
+........................................................................ [ 92%]
+...........                                                              [100%]
+155 passed in 1.08s
+EXIT 0
+```
+
+### Review-cycle-1 final byte identity and evidence verification
+
+```text
+$ uv run python -c 'import hashlib
+from pathlib import Path
+
+expected = {
+    "plugins/saga/scripts/handoff_envelope.py": "415182f0791c717fd51396ff77590b28084f268613e04a01569a91fa7e93e55a",
+    "tests/test_handoff_envelope_maturity.py": "03e0c765873d8c9a9d66553df9caa387502620bf96802d1986f6f14c5781d009",
+    "docs/plans/2026-08-30-agent-launcher-907-run-plan.md": "f695be329f00597156b7c085d17885403a3b52b6b5afa1244f91524a694aac84",
+}
+for name, digest in expected.items():
+    actual = hashlib.sha256(Path(name).read_bytes()).hexdigest()
+    assert actual == digest, (name, actual)
+    print(f"UNCHANGED {actual} {name}")
+
+evidence = Path("docs/evidence/issue-912/lane-A-evidence.md").read_text()
+rows = [line for line in evidence.splitlines() if line.startswith("| API-4 |")]
+assert len(rows) == 1
+assert "Closed by shipped-resolver mutation (TEST-11)" in rows[0]
+assert "ResolvedSource(None, normalized, False, False)" in rows[0]
+assert "test_handoff_envelope_maturity.py:903" in rows[0]
+assert "absolute = False" not in rows[0]
+print(rows[0])
+
+log = Path("docs/evidence/issue-912/integration-log.md")
+text = log.read_text()
+marker = "GATE GREEN — 25 steps ran, 0 blocking failures, 0 uncovered."
+assert text.count(marker) == 4
+for commit in ["8a250b1a", "f8f661bf", "c21f7de8", "5483b9e6", "f28505a7"]:
+    assert commit in text
+assert "after the fact" in text
+print(f"EXISTS {log}: four recorded result.txt markers; retrospective provenance; final review candidate f28505a7")
+print("Persistent changes: docs/evidence/issue-912/lane-A-evidence.md; docs/evidence/issue-912/integration-log.md")
+'
+UNCHANGED 415182f0791c717fd51396ff77590b28084f268613e04a01569a91fa7e93e55a plugins/saga/scripts/handoff_envelope.py
+UNCHANGED 03e0c765873d8c9a9d66553df9caa387502620bf96802d1986f6f14c5781d009 tests/test_handoff_envelope_maturity.py
+UNCHANGED f695be329f00597156b7c085d17885403a3b52b6b5afa1244f91524a694aac84 docs/plans/2026-08-30-agent-launcher-907-run-plan.md
+| API-4 | Closed by shipped-resolver mutation (TEST-11) | On reviewed candidate `f28505a7`, changing `resolve_source`'s final return to `ResolvedSource(None, normalized, False, False)` yields `requirements-ready` and fails the existing sentinel assertion at `test_handoff_envelope_maturity.py:903`; `cmp -s` verifies byte-identical restoration and the restored test passes. |
+EXISTS docs/evidence/issue-912/integration-log.md: four recorded result.txt markers; retrospective provenance; final review candidate f28505a7
+Persistent changes: docs/evidence/issue-912/lane-A-evidence.md; docs/evidence/issue-912/integration-log.md
+EXIT 0
+```
+
+### Review-cycle-1 disposition
+
+TEST-11 is repaired: the existing API-4 pin fails on its sentinel assertion when
+the shipped resolver refusal is disabled. The actual result is
+`requirements-ready`, so the preceding `got != "plan-ready"` assertion passes and
+the sentinel assertion at line 903 is the behavior-sensitive check. There was no
+import or fixture failure and no test strengthening was needed. The original
+`absolute = False` transcript remains historical evidence only; it is superseded
+for shipped-code acceptance by the run above and the replaced API-4 table row.
+
+DOC-13 is repaired by `docs/evidence/issue-912/integration-log.md`, with the four
+controller-recorded green `result.txt` markers, exit statuses, step-header counts,
+test totals, coverage, and final reviewed candidate `f28505a7`. Its retrospective
+provenance is explicit. The scoped envelope regression run passed 155 tests.
+
+Persistent changes in this repair are only this evidence note and
+`integration-log.md`. `handoff_envelope.py` was temporarily mutated and restored
+byte-identically; `test_handoff_envelope_maturity.py` and the protected issue-907
+plan remain byte-identical to their pre-repair hashes. No Git command or full gate
+was run. A new review verdict belongs to the controller; this repair record does
+not assign itself a testing-lens score or acceptance.

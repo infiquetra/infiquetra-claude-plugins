@@ -33,7 +33,7 @@ A route to a **stub** target is **advisory**: `/loop` names it as the next comma
 | `/qa` | shipped (gate-only) | **advisory** — never block |
 | `/investigate` | shipped (systematic-debugging engine) | **advisory + off-chain** — never block |
 | `/retro` | shipped (meta-improvement engine) | **advisory + terminal** — never block |
-| `/resume` | **stub** | **advisory / opt-in** — never auto-route |
+| `/resume` | shipped (forensic reconstruction engine) | **advisory / opt-in** — never auto-route |
 | `/strategy` | shipped | **advisory** — never block |
 | `/optimize` | **shipped (metric-loop engine)** | **advisory + off-chain** — never block |
 
@@ -73,6 +73,7 @@ idea/requirements-ready ─► /plan ─► /doc-review ─► /work ─► /cod
 | `brainstorm` | any | none declared | `/brainstorm` (finish the WHAT) |
 | (none) | — | `pending-confirmation` | `/brainstorm` |
 | `brainstorm` | any | `pending-confirmation` | `/brainstorm` |
+| (none) | — | `deferred-context` | ask the operator the clarifying question the issue names (`/loop` 0.2); dispatch nothing until answered |
 | `brainstorm` | any | `requirements-ready` | `/plan` (settle HOW) |
 | `plan` | `complete` | `plan-ready` | `/doc-review` (readiness) |
 | `plan` | `pending` / `in_progress` | — | `/plan` (finish the plan) |
@@ -90,7 +91,8 @@ not listed above — a brainstorm-phase saga at `idea-ready`, an `unknown:` sent
 later change introduces — stops and asks rather than falling to the nearest plausible row.
 
 For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `idea-ready` /
-`requirements-ready`, it is `/plan` (matches `parse_issue.py`'s `handoff.can_plan` / `can_work` for those maturities). `pending-confirmation` is not routed via `can_plan`/`can_work`; it routes to `/brainstorm` via the no-saga row above.
+`requirements-ready`, it is `/plan` (matches `parse_issue.py`'s `handoff.can_plan` / `can_work` for those maturities).
+`pending-confirmation` is not routed via `can_plan`/`can_work`; it routes to `/brainstorm` via the no-saga row above.
 
 ---
 
@@ -105,7 +107,7 @@ For `plan-ready` / `resume-ready` issues, the direct consumer is `/work`; for `i
 | Scope / ambition question ("is this ambitious enough", "think bigger") on a plan / strategy / brainstorm | `/founder-review` | shipped |
 | Post-completion learnings capture, workflow self-improvement | `/retro` | advisory, shipped (terminal) |
 | Hand a durable artifact to an SDLC issue | `/handoff` | shipped (+ envelope) |
-| Deep forensic reconstruction (opt-in only) | `/resume` | advisory stub, never auto |
+| Deep forensic reconstruction (opt-in only) | `/resume` | advisory, opt-in only |
 
 `/founder-review` fires **upstream of execution** and produces a scope decision, then routes accepted
 scope back to `/plan` and the (re-)expanded plan back to `/doc-review` — `/loop` honors that closed

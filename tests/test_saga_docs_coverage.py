@@ -7,6 +7,7 @@ check structure and references rather than prose style.
 
 from __future__ import annotations
 
+import html
 import importlib.util
 import re
 from pathlib import Path
@@ -145,6 +146,33 @@ def test_every_command_card_has_required_fields_and_existing_sources() -> None:
             assert path.exists(), f"{alias_id} source_ref missing: {source_ref}"
 
 
+def _check_read_by_derived(model: dict[str, Any], model_text: str) -> list[str]:
+    """TEST-6: read_by is derived, not asserted against a literal set.
+
+    Every read_by entry must name a skill whose SKILL.md branches on the maturity
+    value, and the model comment must not claim an uninventoried maturity has no
+    readers. Returns violation messages, [] = pass.
+    """
+    violations: list[str] = []
+    read_by = model["maturity"]["values"]["pending-confirmation"]["read_by"]
+    if not isinstance(read_by, list) or not read_by:
+        violations.append("pending-confirmation must declare its readers in read_by")
+        return violations
+    for reader in read_by:
+        skill_path = SAGA_ROOT / "skills" / reader.lstrip("/") / "SKILL.md"
+        if not skill_path.is_file():
+            violations.append(f"read_by entry {reader!r} names no skill")
+            continue
+        if "pending-confirmation" not in skill_path.read_text(encoding="utf-8"):
+            violations.append(
+                f"read_by entry {reader!r} names a skill that never branches "
+                "on pending-confirmation"
+            )
+    if "has no readers" in model_text:
+        violations.append('model comment claims an uninventoried maturity "has no readers"')
+    return violations
+
+
 def test_readiness_is_derived_not_stored() -> None:
     model = _load_model()
     state_axes = set(model["state_axes"])
@@ -163,11 +191,7 @@ def test_readiness_is_derived_not_stored() -> None:
     assert "docs/specs/" in maturity["values"]["requirements-ready"]["from"]
     assert "docs/brainstorms/" in str(maturity["values"]["pending-confirmation"]["from"])
     assert set(maturity["values"]["pending-confirmation"]["consumed_by"]) == {"/brainstorm"}
-    assert set(maturity["values"]["pending-confirmation"]["read_by"]) == {
-        "/resume",
-        "/loop",
-        "/handoff",
-    }
+    assert _check_read_by_derived(model, MODEL_PATH.read_text(encoding="utf-8")) == []
 
 
 def test_required_scenarios_pairs_and_visual_inventory_are_present() -> None:
@@ -271,6 +295,41 @@ def test_ladder_renderer_rows_equal_model_maturity_values() -> None:
     svg = renderer.render_all(model)["state-readiness-ladder"]
     for value in model_values:
         assert value in svg
+
+
+def test_ladder_source_labels_fit_their_column() -> None:
+    """CORR-9: every rendered ladder source line must fit its column budget.
+
+    The budget is computed from the renderer's own geometry (the source label's x,
+    830, to the maturity label's x, 1115, minus padding) and its own calibration
+    (max_chars=46 in 490px, about 10.6px per character), so the test cannot drift
+    from the render it guards.
+    """
+    model = _load_model()
+    renderer = _load_renderer()
+    svg = renderer.render_all(model)["state-readiness-ladder"]
+    per_char_px = 490 / 46
+    budget_px = 1115 - 830 - 20
+    blocks = re.findall(r'<text x="830"[^>]*>(.*?)</text>', svg, flags=re.DOTALL)
+    assert blocks, "no source column texts found in ladder SVG"
+    for block in blocks:
+        lines = re.findall(r"<tspan[^>]*>(.*?)</tspan>", block, flags=re.DOTALL)
+        assert lines, f"source text block renders no lines: {block[:80]!r}"
+        for line in lines:
+            text = html.unescape(line)
+            assert len(text) * per_char_px <= budget_px, (
+                f"source line {text!r} ({len(text)} chars, "
+                f"~{len(text) * per_char_px:.0f}px) overruns the {budget_px}px source column"
+            )
+
+
+def test_ladder_caption_names_tick_frontmatter() -> None:
+    """DOC-12: the ladder caption must say tick frontmatter, not saga frontmatter."""
+    model = _load_model()
+    renderer = _load_renderer()
+    svg = renderer.render_all(model)["state-readiness-ladder"]
+    assert "never stored as saga tick frontmatter" in svg
+    assert "never stored in saga frontmatter" not in svg
 
 
 def test_state_readiness_table_matches_model() -> None:

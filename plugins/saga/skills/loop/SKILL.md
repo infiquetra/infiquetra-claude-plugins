@@ -60,12 +60,13 @@ not a competitor to any of them.
    (`handoff_envelope.py`). `mission-control` owns issues / boards / comments; `deploy` owns
    deploy mutation; the journal owns durable decisions. `/loop` points at those owners; it never
    reimplements them.
-6. **Gate before routing, never block on a stub.** The one HARD gate routes to `/doc-review`
+6. **Gate before routing, never block on an advisory route.** The one HARD gate routes to `/doc-review`
    (shipped) — block routing to `/work` on unresolved P0/P1 unless overridden with a recorded
    rationale. The route to shipped **`/qa`** is **advisory** (it is a gate-only node that produces a
-   verdict but never blocks the router), and routes to **stub** targets (`/retro`, `/resume`, and
-   `/strategy` / `/optimize` per their state) are **advisory** and **never** block `/loop` on their
-   output.
+   verdict but never blocks the router), and routes to any target whose State cell in
+   `references/dispatch-table.md` still says stub are **advisory** and **never** block `/loop` on
+   their output; `/retro`, `/resume`, `/strategy` and `/optimize` are advisory by their own rows,
+   not by being stubs.
 
 ## Interaction method
 
@@ -117,6 +118,7 @@ stdin and emits the `handoff` object). Use `handoff.maturity` for maturity routi
   route is to ask the operator the clarifying question the issue names before any other phase runs.
   Never treat it as absent and never fall through to the saga scan on it.
 - empty -> the issue carries no recognized handoff metadata; continue to the saga scan (Phase 0.3) and classify normally — an ordinary issue without a handoff section is the common case, not a frontmatter failure.
+- empty with `handoff.requires_clarification` True -> the Handoff maturity section is present but its value is unrecognized (including any `unknown:` sentinel); STOP, show the declared value, and have the issue's handoff section fixed; never continue to the saga scan on it.
 
 The parsed `flags` (`has_security`, `has_infra`, `has_api`) feed the hard test-gate check (Phase 2)
 and the backend recommendation when `/loop` itself drives (Phase 3).
@@ -244,9 +246,9 @@ that the saga points at — those are durable; the cache is not. Route from the 
 
 When cold reconstruction is not enough (tangled multi-round history, a corrupt local cache, a forensic
 "what happened across these PRs" question), **OFFER** the `/resume` route as an **opt-in** — `/resume`
-is the queued deep-reconstruction engine. **Never** auto-route into the `/resume` stub: `/loop` does
+is the queued deep-reconstruction engine. **Never** auto-route into `/resume`: `/loop` does
 its own lightweight restore + inline cold path inline, and only suggests `/resume` when the operator
-wants the heavy forensic dig. (`/resume` is a stub today; routing to it is advisory and never blocks
+wants the heavy forensic dig. (routing to `/resume` is advisory and opt-in and never blocks
 `/loop`.)
 
 ---

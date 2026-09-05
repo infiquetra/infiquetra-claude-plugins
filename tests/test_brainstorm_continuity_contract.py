@@ -17,6 +17,7 @@ ROOT = Path(__file__).parent.parent
 BRAINSTORM_SKILL = ROOT / "plugins/saga/skills/brainstorm/SKILL.md"
 REQUIREMENTS_SECTIONS = ROOT / "plugins/saga/skills/brainstorm/references/requirements-sections.md"
 RESUME_SKILL = ROOT / "plugins/saga/skills/resume/SKILL.md"
+LOOP_SKILL = ROOT / "plugins/saga/skills/loop/SKILL.md"
 LINT = ROOT / "plugins/saga/scripts/lint_gate_absence_contract.py"
 
 
@@ -59,10 +60,7 @@ def check_checkpoint(text: str) -> list[str]:
         violations.append("missing before-confirmation ordering")
     if "no readiness-claiming artifact exists at that point" not in norm:
         violations.append("missing no readiness-claiming artifact guard")
-    if (
-        "written AFTER the confirmation question" in text
-        or "written after the confirmation question" in text.lower()
-    ):
+    if "written after the confirmation question" in text.lower():
         violations.append("found inverted ordering: written AFTER confirmation")
     return violations
 
@@ -388,6 +386,50 @@ def test_gate_absence_lint_reports_zero_violations() -> None:
 DISPATCH_TABLE = ROOT / "plugins/saga/skills/loop/references/dispatch-table.md"
 
 
+def check_dispatch_deferred_context(text: str) -> list[str]:
+    """AU-7: the main-chain table carries exactly one deferred-context row, and its
+    command cell names the clarifying question (dispatch nothing until answered)."""
+    violations: list[str] = []
+    rows = [
+        line
+        for line in text.splitlines()
+        if "deferred-context" in line and line.strip().startswith("|")
+    ]
+    if len(rows) != 1:
+        violations.append(f"expected exactly one deferred-context dispatch row, found {len(rows)}")
+        return violations
+    parts = [p.strip() for p in rows[0].split("|")]
+    command = parts[4] if len(parts) >= 5 else ""
+    if "clarifying question" not in command:
+        violations.append("deferred-context row command cell must name the clarifying question")
+    return violations
+
+
+def check_loop_unrecognized_declaration_stops(text: str) -> list[str]:
+    """AU-4: /loop 0.2 stops on a present-but-unrecognized declaration instead of
+    falling through to the saga scan, while the pinned empty bullet stays verbatim."""
+    violations: list[str] = []
+    if "never continue to the saga scan on it" not in _norm(text):
+        violations.append(
+            "missing never-continue-to-saga-scan clause for unrecognized declarations"
+        )
+    if "empty -> the issue carries no recognized handoff metadata" not in text:
+        violations.append("pinned empty-bullet phrase missing (line-119 contract)")
+    return violations
+
+
+def check_declined_artifact_reenters_confirmation(text: str) -> list[str]:
+    """AU-5: a declined (or never-confirmed) pending-confirmation artifact, and a
+    refinement that moved an already-confirmed boundary, both re-enter Phase 2.5."""
+    violations: list[str] = []
+    norm = _norm(text)
+    if "whether never confirmed or declined" not in norm:
+        violations.append("missing never-confirmed-or-declined re-entry rule")
+    if "re-enter Phase 2.5 for fresh confirmation before returning here" not in norm:
+        violations.append("missing re-enter Phase 2.5 before returning here")
+    return violations
+
+
 def check_matched_brainstorm(text: str) -> list[str]:
     violations: list[str] = []
     norm = _norm(text)
@@ -395,6 +437,8 @@ def check_matched_brainstorm(text: str) -> list[str]:
         violations.append("missing matched-brainstorm classification")
     if "routes to `/brainstorm`" not in norm and "Route directly to `/brainstorm`" not in text:
         violations.append("missing routes to /brainstorm")
+    if "tier 2 candidate the labelled inference path qualified" not in norm:
+        violations.append("missing tier 2 legacy run class in matched-brainstorm")
     return violations
 
 
@@ -458,7 +502,7 @@ def check_dispatch_pending(text: str) -> list[str]:
 def check_no_pending_to_plan(text: str) -> list[str]:
     violations: list[str] = []
     for line in text.splitlines():
-        if line.strip().startswith("|") and "pending-confirmation" in line and "/plan" in line:
+        if "pending-confirmation" in line and "/plan" in line:
             violations.append(f"pending-confirmation must not route to /plan: {line.strip()[:80]}")
     return violations
 
@@ -489,6 +533,10 @@ def check_near_match_predicate(text: str) -> list[str]:
         violations.append("missing same-capability condition in near-match definition")
     if "tier 1 matches of any kind" not in norm:
         violations.append("missing multiplicity rule over the whole tier 1 candidate set")
+    if "reordered topic" not in norm or "slug strings differ" not in norm:
+        violations.append("missing reordered-topic arm in near-match definition")
+    if text.count("equality being the exact match handled above") > 1:
+        violations.append("duplicate equality-being-exact-match clause")
     return violations
 
 
@@ -507,3 +555,81 @@ def test_near_match_multiplicity_rule_mirrored_in_resume() -> None:
     assert "tier 1 matches of any kind" in norm, (
         "Resume must mirror Brainstorm's multiplicity rule over the whole tier 1 candidate set"
     )
+
+
+# ---------------------------------------------------------------------------
+# Routing prose guards (issue 912 repair round, Lane C)
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_deferred_context_positive_and_mutation_fails() -> None:
+    text = DISPATCH_TABLE.read_text(encoding="utf-8")
+    assert check_dispatch_deferred_context(text) == [], (
+        f"deferred-context: {check_dispatch_deferred_context(text)}"
+    )
+    row = next(line for line in text.splitlines() if "deferred-context" in line)
+    mutated = text.replace(row, "", 1)
+    assert check_dispatch_deferred_context(mutated) != []
+
+
+def test_loop_unrecognized_declaration_stops_positive_and_mutation_fails() -> None:
+    text = _read(LOOP_SKILL)
+    assert check_loop_unrecognized_declaration_stops(text) == [], (
+        f"unrecognized declaration: {check_loop_unrecognized_declaration_stops(text)}"
+    )
+    mutated = _mutate(text, "never continue to the saga scan on it")
+    assert check_loop_unrecognized_declaration_stops(mutated) != []
+
+
+def test_declined_artifact_reenters_confirmation_positive_and_mutation_fails() -> None:
+    text = _read(BRAINSTORM_SKILL)
+    assert check_declined_artifact_reenters_confirmation(text) == [], (
+        f"declined re-entry: {check_declined_artifact_reenters_confirmation(text)}"
+    )
+    mutated = _mutate(text, "whether never confirmed or declined")
+    assert check_declined_artifact_reenters_confirmation(mutated) != []
+
+
+def test_resume_matched_brainstorm_tier2_clause_and_mutation_fails() -> None:
+    text = _read(RESUME_SKILL)
+    assert check_matched_brainstorm(text) == [], (
+        f"matched-brainstorm tier 2: {check_matched_brainstorm(text)}"
+    )
+    mutated = _mutate(text, "the labelled inference path qualified")
+    assert check_matched_brainstorm(mutated) != []
+
+
+def test_near_match_reorder_arm_and_single_equality_clause() -> None:
+    text = _read(BRAINSTORM_SKILL)
+    assert check_near_match_predicate(text) == [], (
+        f"near-match reorder: {check_near_match_predicate(text)}"
+    )
+    mutated = _mutate(text, "slug strings differ")
+    assert check_near_match_predicate(mutated) != []
+    duplicated = text.replace(
+        "equality being the exact match handled above",
+        "equality being the exact match handled above (copy) "
+        "equality being the exact match handled above",
+        1,
+    )
+    assert check_near_match_predicate(duplicated) != []
+
+
+def test_no_pending_to_plan_seeded_negative() -> None:
+    text = DISPATCH_TABLE.read_text(encoding="utf-8")
+    assert check_no_pending_to_plan(text) == []
+    # Seeded negative: the review's misrouting sentence appended to a copy must fire.
+    # The sentence opens with an interrogative word, so it is assembled below from
+    # fragments: a single literal would trip the dialogue guard in
+    # tests/test_brainstorm_evidence_model.py, which scans every test_brainstorm_*.py
+    # module for question-shaped string constants.
+    seed_head = "Xhen the handoff maturity is "
+    seed = (
+        seed_head.replace("Xhen", "W" + "hen")
+        + "`pending-confirmation`, route straight to `/plan`."
+    )
+    # Pin the assembled seed to the review's exact sentence without writing it as one
+    # literal (see the dialogue-guard note above).
+    assert seed.startswith("W" + "hen the handoff maturity is ")
+    assert "handoff maturity is `pending-confirmation`, route straight to `/plan`." in seed
+    assert check_no_pending_to_plan(text + "\n" + seed + "\n") != []

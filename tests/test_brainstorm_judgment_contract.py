@@ -382,7 +382,7 @@ def test_inventory_guard_covers_brainstorm() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 passed" in result.stdout or "passed" in result.stdout
+    assert "2 passed" in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +405,7 @@ def test_resolver_routing_still_passes() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 passed" in result.stdout or "passed" in result.stdout
+    assert "1 passed" in result.stdout
 
 
 # ---------------------------------------------------------------------------

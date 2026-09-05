@@ -210,6 +210,24 @@ def test_drift_is_caught_control() -> None:
     assert check_placement(seeded) != []
 
 
+def test_has_block_shape_ordering_seeded_negative() -> None:
+    # A synthetic text carrying all three block markers with /plan before
+    # /brainstorm must NOT have the block shape: the clause is ordered, not a
+    # mere all-present check.
+    seeded = """
+- `/ideate` answers: "What are the strongest ideas?"
+- `/plan` answers: "How should it be built?"
+- `/brainstorm` answers: "What exactly should one chosen idea mean?"
+"""
+    assert _has_block_shape(seeded) is False
+    ordered = """
+- `/ideate` answers: "What are the strongest ideas?"
+- `/brainstorm` answers: "What exactly should one chosen idea mean?"
+- `/plan` answers: "How should it be built?"
+"""
+    assert _has_block_shape(ordered) is True
+
+
 def test_out_of_set_files_negative() -> None:
     for path, reason in OUT_OF_SET.items():
         text = path.read_text(encoding="utf-8")

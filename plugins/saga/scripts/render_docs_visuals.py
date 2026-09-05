@@ -247,11 +247,11 @@ def render_state_readiness_ladder(model: dict[str, Any]) -> str:
 
     _box(parts, 760, 180, 770, 560)
     _text(parts, 800, 230, "Derived maturity passport", cls="label")
-    maturity_rows = globals()["maturity_rows"](model)
+    ladder_rows = maturity_rows(model)
     y = 285
-    for source, maturity, consumer in maturity_rows:
+    for source, maturity, consumer in ladder_rows:
         _box(parts, 800, y, 660, 62)
-        _text(parts, 830, y + 25, source, fill="muted")
+        _text(parts, 830, y + 25, source, fill="muted", max_chars=24, line_height=18)
         _text(parts, 1115, y + 25, maturity, cls="label", fill="green")
         _text(parts, 1370, y + 25, consumer, cls="label", fill="blue")
         y += 76
@@ -261,7 +261,7 @@ def render_state_readiness_ladder(model: dict[str, Any]) -> str:
         parts,
         800,
         804,
-        "Rule: maturity is derived, never stored in saga frontmatter.",
+        "Rule: maturity is derived, never stored as saga tick frontmatter.",
         cls="label",
         fill="amber",
     )

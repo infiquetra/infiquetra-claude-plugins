@@ -248,7 +248,9 @@ Three rendered regions, all marked with the repository's existing generated-bloc
 (`plugins/saga/skills/plan/SKILL.md:479` and `plugins/fleet-core/scripts/fleet_commons/render_tier_table.py`):
 
 1. **The `/plan` row** in `plugins/saga/references/saga-spec.md` §11 — the whole table row, located
-   by its `| **/plan** |` prefix. Rendering: for each write, `` `name=value` `` when a literal value,
+   by its `| **/plan** |` prefix. The Reads cell is rendered from the contract's `reads` free text
+   verbatim, so no second copy of that sentence survives anywhere. Rendering of the Writes cell:
+   for each write, `` `name=value` `` when a literal value,
    else `` `name` ``; a conditioned write appends `(only when `field=value`; <note>)`; a write with a
    note but no condition appends `(<note>)`; then `; also stored: `orchestration_operator_choice`
    (<rule sentence>)`, where the rule sentence is rendered from the three cases by a fixed mapping.
@@ -317,11 +319,15 @@ Every failure names the file, the region or entry, and the remedy; none characte
 Order, each step proved before the next:
 
 1. Author the contract by transcribing the two current templates and the current row (U1). Proof:
-   `render_consumer_row()` equals the current row at `saga-spec.md:513` **except** the trailing
-   parenthetical, which the rendering restates from the structured rule; and the rendered default
-   template equals the current block at `SKILL.md:621-634` **except** that `--deploy-autonomy` moves
-   from a commented line inside the block to the conditional bullet under it. Those are the only two
-   permitted differences and the worker shows them as the diff (R31).
+   `render_consumer_row()` carries the same ten backticked field names in the same order as the
+   current row at `saga-spec.md:513`; every remaining difference is a restatement of a condition,
+   a note, or the also-stored tail from the structured rule, whose phrasing Element 5 fixes (the
+   `deploy_autonomy` and `orchestration_ref` conditions and the operator-choice tail are all
+   reworded, not just one trailing parenthetical). The rendered default template equals the
+   current block at `SKILL.md:621-634` **except** that `--deploy-autonomy` moves from a commented
+   line inside the block to the conditional bullet under it. The worker shows the full
+   render-vs-disk diff as the proof (R31); any difference outside a parenthetical, the
+   also-stored tail, or the permitted bullet move is a defect in the renderer, and the unit stops.
 2. Run `render --write` (U2), then `git diff` and confirm the hunks are exactly: the marker lines,
    the two template regions, the effort note, the row, and the annotation sentence. Anything else in
    the diff is a defect in the renderer, and the unit stops.
@@ -445,14 +451,15 @@ in-memory copies of both documents in the test — leaves every pin green.
 
 R20. Deleting `tests/test_saga_spec_consumer_row.py`, `plugins/saga/scripts/plan_save_contract.py`,
 or `plugins/saga/references/plan-save-contract.yaml` fails `tests/test_saga_plugin.py`, which pins
-their existence and the five test function names by parsing the test module's AST.
+their existence and the six test function names by parsing the test module's AST (three added
+in U1, three in U2).
 
 R21. `tools/canary_registry.json` carries two entries whose mutations must be `caught`: a hand-edit
 of the on-disk `/plan` row (guard: R16's test) and a contract entry naming a flag the engine lacks
 (guard: R7's test). The canary runs on its schedule (`.github/workflows/mutation-canary.yml`), not
 in the gate; the gate-time layers are R20 and the inline mutation proofs of R22.
 
-R22. Each of the five tests carries an inline mutation proof on in-memory inputs that its own
+R22. Each of the six tests carries an inline mutation proof on in-memory inputs that its own
 assertion goes red with the expected message: a malformed and a duplicate contract for R2/R4; a
 phantom flag for R7; a mechanism swapped from `native` to `proxy` for R10; a hand-edited row for
 R16; a hand-edited template body and a save command outside a region for R14/R15.
@@ -490,12 +497,14 @@ sets the heading's date at merge.
 
 *Evidence*
 
-R31. The worker's U2 commit message carries the `git diff --stat` and names the exact two permitted
-content differences under Element 8; the U3 commit message carries the output line of each mutation
+R31. The worker's U2 commit message carries the `git diff --stat` and the full render-vs-disk
+diff, confirming every difference is a rule-derived restatement or the permitted bullet move
+under Element 8; the U3 commit message carries the output line of each mutation
 proof run red.
 
-R32. `uv run pytest tests/ -q -k "saga_spec or plan_docs or consumer_row"` selects the five tests
-and passes; `bash scripts/gate.sh` exits 0.
+R32. `uv run pytest tests/ -q -k "saga_spec or plan_docs or consumer_row"` selects the six tests
+in `tests/test_saga_spec_consumer_row.py` (all match by module name) and passes;
+`bash scripts/gate.sh` exits 0.
 
 ---
 
@@ -681,7 +690,7 @@ several lenses filed one defect from distinct angles, and every row still gets i
 | agentusab03 | P3 | agent-usability | repair | R26: the rendered note carries the Team Execution pointer, the slash-split coupling, and issue 993 |
 | agentusab07 | P3 | agent-usability | duplicate-of api-contract04 | — |
 | agentusab08 | P3 | agent-usability | already-fixed | `a736c166`; renumbering `### 5.3` fails naming the file and heading (my probe) |
-| api-contract03 | P3 | api-contract | rejected | the five rows are byte-identical to the merge base, never claimed exhaustiveness, and the lens itself classed the gap as pre-existing and non-blocking; extension path recorded in Element 4 and Deferred |
+| api-contract03 | P3 | api-contract | rejected | the five rows are byte-identical from `c84af7ad` to `a736c166` (that diff touches only the `/plan` row and the convention paragraph), never claimed exhaustiveness, and the lens itself classed the gap as pre-existing and non-blocking; extension path recorded in Element 4 and Deferred |
 | api-contract05 | P3 | api-contract | duplicate-of agentusab03 | — |
 | api-contract06 | P3 | api-contract | duplicate-of agentusab05 | — |
 | api-contract07 | P3 | api-contract | repair | R30: the integrator sets the `0.156.0` heading date at merge; the worker does not touch it |
@@ -694,7 +703,7 @@ several lenses filed one defect from distinct angles, and every row still gets i
 | corr07 | P3 | correctness | duplicate-of agentusab05 | — |
 | corr08 | P3 | correctness | duplicate-of adv14 | — |
 | doc-clarity05 | P3 | documentation | duplicate-of agentusab03 | — |
-| doc-clarity06 | P3 | documentation | rejected | `.claude-plugin/marketplace.json` and `CLAUDE.md` are untouched by this unit and owned by the integrator; the lens says "out of this unit's frame"; recorded under Deferred |
+| doc-clarity06 | P3 | documentation | rejected | `CLAUDE.md` is untouched by this unit and the registry's only touch is the 0.156.0 release version line — the generated-source marker question itself is untouched and owned by whoever next edits the registry; the lens says "out of this unit's frame"; recorded under Deferred |
 | doc-clarity07 | P3 | documentation | repair | R23 de-enumerates the paragraph |
 | doc-clarity08 | P3 | documentation | repair | R24 rewords line 389 |
 | doc-clarity11 | P3 | documentation | duplicate-of agentusab05 | — |
@@ -806,8 +815,9 @@ land.
 `plan_save_contract.py render --write`; inspect `git diff` and stop if any hunk lies outside the
 enumerated set (Element 8 step 2). Then apply R23, R24, R25 by hand. Then rewrite the test module:
 keep the module constants, add the pins with Element 7 messages, and write the property-2 test on
-in-memory copies (replace every non-region, non-row line of Phase 5.3 and the annotation sentence
-with altered text, then assert the pins still pass on the altered text). R14's presence check uses
+in-memory copies (reword every prose sentence outside the regions and the row in Phase 5.3 and the
+annotation sentence — preserving headings, markers, and fence lines as structure, since
+`plan_phase_53` needs its heading boundary — then assert the pins still pass on the altered text). R14's presence check uses
 `tests/saga_plan_contract.plan_phase_53`, removes the marked regions, and searches the remainder
 for `saga\.py\s+save`.
 

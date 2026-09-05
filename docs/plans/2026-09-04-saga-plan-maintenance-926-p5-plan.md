@@ -108,8 +108,12 @@ at `c84af7ad`.
 R10. The `/plan` row at `plugins/saga/references/saga-spec.md:513` names every field Plan's Phase
 5.3 save blocks write, and names no field they do not.
 
-R11. Every field name the corrected row uses exists in the envelope field table at
-`plugins/saga/references/saga-spec.md:98-160`.
+R11. Every field name the corrected row uses exists in the envelope schema: the nine
+flag-derived stored fields in the frontmatter field table at
+`plugins/saga/references/saga-spec.md:98-160`, and `decisions` in the body-section table
+(`## Decisions` row at `:161`). `decisions` is a body-section field, not frontmatter — it
+appears nowhere in `:98-160` — so a requirement citing only the frontmatter range is
+unsatisfiable and the worker must check both tables.
 
 R12. The corrected row's parseable field set is exactly the flag set of Phase 5.3's save blocks
 minus the two identity flags `--kind` and `--id`. Any other content in the cell — a condition, a
@@ -120,7 +124,10 @@ not consumed, honored, dispatched, or enforced. It matches the claim class, not 
 
 R14. R13's check does not fire on the two legitimate uses of "unconsumed" already in the tree:
 `plugins/saga/references/envelope-token.md:12` and
-`plugins/saga/scripts/bridge_signatures.py:112`.
+`plugins/saga/scripts/bridge_signatures.py:112` — and does not fire on the replacement
+comment itself (`plugins/saga/skills/plan/SKILL.md:544-550` post-repair), which pairs
+"honoring seam" with "no per-call effort parameter" inside one block ~40 words apart.
+The proximity bound in KTD4 is what excludes it.
 
 R15. A test derives the `/plan` consumer row's expected field set from Plan's Phase 5.3 save blocks
 and compares it to the row. It maintains no second hardcoded list of field names.
@@ -180,9 +187,14 @@ uses of "unconsumed" already live under `plugins/saga/`
 (`references/envelope-token.md:12`, "previously-unconsumed engine loophole", and
 `scripts/bridge_signatures.py:112`, "launched-unconsumed"), so any pattern keyed on that word alone
 is red on arrival. Requiring an effort token in the same span excludes both, and requiring only a
-*class* of negation — `no|not|never|lacks|awaits|yet` near
-`consum|honor|honour|dispatch|enforc|read`, plus the standalone idiom `emission only` — means a
-reworded relapse is caught too. Rejected: pinning the exact sentence, which prevents nothing.
+*class* of negation — `no|not|never|nothing|none|lacks|awaits|yet` governing
+`consum|honor|honour|dispatch|enforc|read` within the same clause (a few words — close enough
+to catch "no dispatch mechanism honors it" and the rewording proof's "nothing honors it",
+far tighter than the ~40-word gap between "honoring seam" and "no per-call effort parameter"
+co-occurring in the replacement comment, which must pass per R14), plus the standalone idiom
+`emission only` — means a reworded relapse is caught too. Mere co-occurrence of an effort
+token and a negation anywhere in one comment block is NOT a match. Rejected: pinning the
+exact sentence, which prevents nothing.
 
 KTD5. **The positive check derives the expected field set from Phase 5.3's fenced save blocks,
 because those blocks are already a pinned parse.** `tests/test_saga_plan_save_and_routing.py:398-403`
@@ -356,6 +368,10 @@ directions of the difference by name on failure.
 - False-positive guard — input: the tree as merged, including
   `plugins/saga/references/envelope-token.md:12`. Action: run the check. Expected: passes; the
   "previously-unconsumed engine loophole" phrase carries no effort token in its span.
+- Self-pass guard — input: the repaired effort comment itself. Action: run the check.
+  Expected: passes; "honoring seam" and "no per-call effort parameter" share one block but
+  not one clause, so only a proximity-bound pattern (KTD4) passes here while still catching
+  the rewording proof above.
 
 *Positive derived check.*
 
@@ -380,15 +396,23 @@ directions of the difference by name on failure.
 **Verification**
 
 - `grep -nEi "work-session|work session" plugins/saga/skills/plan/SKILL.md` returns nothing.
-- `grep -nEi "exists and is committed" plugins/saga/skills/plan/SKILL.md` returns nothing.
+- `grep -nEi "exists and is committed" plugins/saga/skills/plan/SKILL.md` returns nothing
+  (verbatim from issue 926; it already passes at base because the filed text carries a comma,
+  so it proves nothing alone). The binding proof: `grep -n "is committed"`
+  `plugins/saga/skills/plan/SKILL.md` names only the legitimate backend-paragraph sentence
+  ("The plan document is committed and travels with the work", `:389` at base), and `git diff`
+  shows the `:338` trigger edit removing "is committed,".
 - `grep -rnEi "no dispatcher|emission only|not consumed|unconsumed" plugins/saga/` returns only the
   two known-legitimate hits in `references/envelope-token.md` and `scripts/bridge_signatures.py`.
 - `git diff HEAD -- plugins/saga/skills/plan/SKILL.md` shows changes confined to the derived-state
   sentence, the trigger clause, and the effort comment — no `Move:` line and no
   `reconcile_controller.py` invocation appears in the diff.
 - `git diff HEAD --stat` names exactly three paths.
-- `uv run pytest tests/ -q -k "saga_spec or plan_docs or consumer_row"` selects the two new tests
-  alongside the existing plan-artifact conformance tests, and passes.
+- `uv run pytest tests/ -q -k "saga_spec or plan_docs or consumer_row"` selects exactly the two
+  new tests and passes. No existing test name or module matches any of the three terms
+  (verified at base: the filter deselects the whole existing corpus), so the existing
+  plan-artifact conformance suites (`tests/test_saga_plan_save_and_routing.py`,
+  `tests/test_plan_artifact_conformance.py`) are run separately, unfiltered, and pass.
 - Each mutation proof above was run and observed to fail before the unit is declared done.
 - `GATE_LOG_DIR=/tmp/gate-run bash scripts/gate.sh` and `cat /tmp/gate-run/result.txt` report green.
 

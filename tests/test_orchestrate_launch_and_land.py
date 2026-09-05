@@ -201,6 +201,75 @@ def _unit(name: str, **over: Any) -> dict[str, Any]:
     }
 
 
+def _claude_composer_pane(composer_line: str) -> str:
+    rule = "\x1b[2m──────────────────────────────\x1b[0m"
+    return f"{rule}\n{composer_line}\n{rule}\n"
+
+
+def _staged_go_harness(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    repo: Path,
+    *,
+    existing_tabs: tuple[str, ...],
+    agent_prompt_ok: bool,
+    pane_dumps: list[str],
+    accepted: list[bool] | None = None,
+) -> list[list[str]]:
+    """Stub only the Herdr boundary under cmd_go and record every command.
+
+    The wrapper create returns tab w1:t1 / pane w1:p1; `herdr tab list` reports
+    `existing_tabs`, which decides tab ownership; the ANSI pane read serves `pane_dumps`
+    in order, one per inspection; `herdr agent prompt` succeeds or is refused per
+    `agent_prompt_ok`, which decides whether a send types into the pane. `accepted` feeds
+    took_the_task in order (default: always True). Returns every recorded command.
+    """
+    receipt = {"tab_id": "w1:t1", "agent_name": "alpha-2", "pane_id": "w1:p1", "reused": False}
+    dumps = iter(pane_dumps)
+    take = iter(accepted) if accepted is not None else None
+    recorded: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            tabs = {"result": {"tabs": [{"tab_id": t, "label": t} for t in existing_tabs]}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, next(dumps), "")
+        if cmd[:3] == ["herdr", "pane", "current"]:
+            pane = {"result": {"pane": {"workspace_id": "w1"}}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
+        if cmd[:3] == ["herdr", "agent", "prompt"]:
+            detail = "" if agent_prompt_ok else "not interactive ready"
+            return subprocess.CompletedProcess(cmd, 0 if agent_prompt_ok else 1, "", detail)
+        if cmd[0] == "agents":
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+        if cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 0, f"{repo}\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    def took(*_a: object, **_k: object) -> bool:
+        return next(take) if take is not None else True
+
+    monkeypatch.setattr(orchestrate, "run", fake_run)
+    monkeypatch.setattr(orchestrate, "launcher", lambda: "agents")
+    monkeypatch.setattr(orchestrate, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(orchestrate, "took_the_task", took)
+    monkeypatch.setattr(
+        orchestrate,
+        "agent_row",
+        lambda *_a, **_k: {
+            "agent_status": "idle",
+            "pane_id": "w1:p1",
+            "workspace_id": "w1",
+            "interactive_ready": True,
+            "agent": "claude",
+        },
+    )
+    monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+    return recorded
+
+
 def _on(repo: Path, branch: str, path: str) -> bool:
     got = subprocess.run(
         ["git", "cat-file", "-e", f"{branch}:{path}"], cwd=repo, capture_output=True
@@ -422,6 +491,386 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         monkeypatch.setattr(orchestrate, "launch", fake_launch)
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
         assert seen == ["child-9"]
+
+    def test_staged_input_stop_returns_the_unit_to_retryable_pending(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """REL-01: both invariants of the staged-input stop, with the real ingested launch()
+        and only the Herdr boundary stubbed. The first go stops on a staged composer and
+        keeps the tab, pane and receipt; the second go, with the composer cleared,
+        re-prompts the same pane and creates nothing. At the frozen revision the second go
+        prints 'already has tab' and records no prompt."""
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+        recorded = _staged_go_harness(
+            orchestrate,
+            monkeypatch,
+            repo,
+            existing_tabs=("w1:t1",),
+            agent_prompt_ok=True,
+            pane_dumps=[
+                _claude_composer_pane("❯ operator draft that was never sent"),
+                _claude_composer_pane("❯ "),
+            ],
+        )
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.PENDING
+        assert saved.tab_id == "w1:t1"
+        assert saved.pane_id == "w1:p1"
+        assert saved.agent_name == "alpha-2"
+        assert saved.launch_receipt["input_box"] == "staged"
+        assert sum(1 for c in recorded if c[0] == "agents") == 1
+        assert "already holds staged input" in saved.note
+        assert "w1:p1" in saved.note
+        assert "staged input withheld" in saved.note
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.RUNNING
+        assert saved.tab_id == "w1:t1"
+        assert sum(1 for c in recorded if c[0] == "agents") == 1
+        assert sum(1 for c in recorded if c[:3] == ["herdr", "agent", "prompt"]) == 1
+        assert "already holds staged input" in saved.note
+        assert "w1:p1" in saved.note
+        assert saved.note.count("staged input withheld") == 1
+        out = capsys.readouterr().out
+        assert "redelivering alpha" in out
+
+    def test_staged_input_stop_on_an_owned_pane_retries_through_the_same_pane(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The owned shape: the tab list is empty before the create so w1:t1 is owned, the
+        agent prompt is refused so the first send types into the pane, the row stays idle,
+        and the U3 resend guard finds the staged draft and stops. The second go redelivers
+        into the same pane with one create in total."""
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+        recorded = _staged_go_harness(
+            orchestrate,
+            monkeypatch,
+            repo,
+            existing_tabs=(),
+            agent_prompt_ok=False,
+            accepted=[False, True],
+            pane_dumps=[
+                _claude_composer_pane("❯ operator draft that was never sent"),
+                _claude_composer_pane("❯ "),
+            ],
+        )
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.PENDING
+        assert saved.launch_receipt["owned"] is True
+        assert saved.tab_id == "w1:t1"
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.RUNNING
+        assert saved.tab_id == "w1:t1"
+        assert saved.launch_receipt["owned"] is True
+        assert sum(1 for c in recorded if c[0] == "agents") == 1
+
+    def test_repeated_staged_stop_keeps_identifiers_and_dedupes_the_note(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A retry that finds text again keeps the unit PENDING and its identifiers; an
+        identical stop message appends nothing to the note, a differing one appends once."""
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+        _staged_go_harness(
+            orchestrate,
+            monkeypatch,
+            repo,
+            existing_tabs=("w1:t1",),
+            agent_prompt_ok=True,
+            pane_dumps=[
+                _claude_composer_pane("❯ operator draft that was never sent"),
+                _claude_composer_pane("❯ operator draft that was never sent"),
+                _claude_composer_pane("❯ a longer operator draft that was still never sent"),
+            ],
+        )
+
+        for _ in range(2):
+            assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.PENDING
+        assert saved.tab_id == "w1:t1"
+        assert saved.pane_id == "w1:p1"
+        assert saved.note.count("already holds staged input") == 1
+        assert saved.note.count("staged input withheld") == 1
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.PENDING
+        assert saved.tab_id == "w1:t1"
+        assert saved.note.count("already holds staged input") == 2
+        assert saved.note.count("staged input withheld") == 2
+
+    def test_already_has_tab_still_skips_a_pending_unit_without_the_staged_marker(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The direction not fixed: a PENDING unit carrying a tab AND a pane with no staged
+        marker is an ordinary already-launched unit and is skipped, never redelivered. The
+        unit carries a pane on purpose (terminal review F28): without one the stop predicate
+        returned False on the pane check and this counter-case never reached the input_box
+        clause it exists to observe."""
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="pending",
+                    branch=None,
+                    tab_id="w1:t-old",
+                    pane_id="w1:p-old",
+                    launch_receipt={"input_box": "empty", "owned": False},
+                )
+            ],
+        )
+        monkeypatch.chdir(repo)
+        launched: list[str] = []
+        monkeypatch.setattr(
+            orchestrate,
+            "launch",
+            lambda unit, *a, **k: launched.append(unit.name),
+        )
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == "pending"
+        assert launched == []
+        assert "already has tab w1:t-old" in capsys.readouterr().out
+
+    def test_a_pending_unit_with_a_pane_and_an_empty_receipt_is_skipped_not_redelivered(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Terminal review F28, second counter-case: a pane and a receipt with no input_box
+        at all. Widening the clause so an empty receipt also routes to redelivery would
+        re-prompt an already-launched unit into its live pane; this observes that edge."""
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="pending",
+                    branch=None,
+                    tab_id="w1:t-old",
+                    pane_id="w1:p-old",
+                    launch_receipt={},
+                )
+            ],
+        )
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(orchestrate, "launch", lambda *_a, **_k: pytest.fail("launch was run"))
+        monkeypatch.setattr(
+            orchestrate, "redeliver", lambda *_a, **_k: pytest.fail("redeliver was run")
+        )
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert orchestrate.Run.load().unit("alpha").status == "pending"
+        assert "already has tab w1:t-old" in capsys.readouterr().out
+
+    def test_a_staged_receipt_without_a_pane_is_not_a_retry(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Cycle 2, F55: the predicate's pane clause had no test asserting false. A pending
+        unit with a staged receipt but no pane is not redelivered -- there is nothing to prompt
+        -- and go treats it as an ordinary unit that already has a tab."""
+        unit = orchestrate.Unit(
+            name="alpha",
+            vendor="claude",
+            task="x",
+            status="pending",
+            tab_id="w1:t1",
+            launch_receipt={"input_box": "staged"},
+        )
+        assert orchestrate._staged_input_stop(unit) is False
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="pending",
+                    branch=None,
+                    tab_id="w1:t1",
+                    launch_receipt={"input_box": "staged", "owned": True},
+                )
+            ],
+        )
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(orchestrate, "launch", lambda *_a, **_k: pytest.fail("launch ran"))
+        monkeypatch.setattr(
+            orchestrate, "redeliver", lambda *_a, **_k: pytest.fail("redeliver ran")
+        )
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert "already has tab w1:t1" in capsys.readouterr().out
+
+    def test_the_staged_marker_is_the_composer_enum_value(self, orchestrate: ModuleType) -> None:
+        """Terminal review F25: Orchestrate's stop predicate compares the receipt against a
+        value the launcher's ComposerState enum produces. The two are bound here so a renamed
+        enum value cannot make the predicate silently return False, print already-has-tab,
+        and never redeliver."""
+        assert orchestrate.ComposerState.STAGED.value == orchestrate.STAGED_INPUT_BOX
+        unit = orchestrate.Unit(
+            name="alpha",
+            vendor="claude",
+            task="x",
+            status="pending",
+            pane_id="w1:p1",
+            launch_receipt={"input_box": orchestrate.ComposerState.STAGED.value},
+        )
+        assert orchestrate._staged_input_stop(unit) is True
+
+    def test_redrive_reprompts_an_undelivered_unit_whose_session_is_idle(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Cycle 2, F76: prompt_undelivered had no door back. redrive re-prompts through the
+        launcher's redeliver -- the same inspected writer -- once the session is idle, and the
+        unit comes back running with the warning cleared."""
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="prompt_undelivered",
+                    branch=None,
+                    tab_id="w1:t1",
+                    pane_id="w1:p1",
+                    note=orchestrate.DELIVERY_WARNING,
+                    launch_receipt={
+                        "tab_id": "w1:t1",
+                        "pane": "w1:p1",
+                        "owned": True,
+                        "prompt_delivered": False,
+                    },
+                )
+            ],
+        )
+        monkeypatch.chdir(repo)
+        recorded = _staged_go_harness(
+            orchestrate,
+            monkeypatch,
+            repo,
+            existing_tabs=(),
+            agent_prompt_ok=True,
+            pane_dumps=[_claude_composer_pane("❯ ")],
+        )
+        assert orchestrate.cmd_redrive(argparse.Namespace(unit="alpha")) == 0
+        saved = orchestrate.Run.load().unit("alpha")
+        assert saved.status == orchestrate.RUNNING
+        assert orchestrate.DELIVERY_WARNING not in saved.note
+        assert sum(1 for c in recorded if c[0] == "agents") == 0
+        assert sum(1 for c in recorded if c[:3] == ["herdr", "agent", "prompt"]) == 1
+        assert (
+            sum(1 for c in recorded if c[:3] == ["herdr", "pane", "read"] and "--format" in c) == 1
+        )
+        assert "redriving alpha" in capsys.readouterr().out
+
+    def test_redrive_refuses_a_session_that_has_started_and_a_unit_that_is_not_undelivered(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Counter-cases for F76: a started session may already hold the task, and any status
+        other than prompt_undelivered is not this door's business."""
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="prompt_undelivered",
+                    branch=None,
+                    tab_id="w1:t1",
+                    pane_id="w1:p1",
+                ),
+                _unit("beta", status="running", branch=None, tab_id="w1:t2", pane_id="w1:p2"),
+            ],
+        )
+        monkeypatch.chdir(repo)
+        prompts: list[list[str]] = []
+
+        def recording_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+            prompts.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(orchestrate, "run", recording_run)
+        monkeypatch.setattr(
+            orchestrate,
+            "agent_row",
+            lambda *_a, **_k: {
+                "agent_status": "working",
+                "pane_id": "w1:p1",
+                "interactive_ready": True,
+            },
+        )
+        with pytest.raises(SystemExit, match="may already hold the task; read tab w1:t1"):
+            orchestrate.cmd_redrive(argparse.Namespace(unit="alpha"))
+        with pytest.raises(SystemExit, match="not 'prompt_undelivered'"):
+            orchestrate.cmd_redrive(argparse.Namespace(unit="beta"))
+        assert [c for c in prompts if c[:3] == ["herdr", "agent", "prompt"]] == []
+        assert orchestrate.Run.load().unit("alpha").status == "prompt_undelivered"
+
+    def test_a_fresh_pending_unit_goes_through_launch_never_redeliver(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The direction not fixed: a fresh PENDING unit without a tab is launched through
+        the wrapper, never redelivered."""
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+        launched: list[str] = []
+        redelivered: list[str] = []
+
+        def fake_launch(unit: Any, *_a: object, **_k: object) -> None:
+            launched.append(unit.name)
+            unit.status = "running"
+
+        def fake_redeliver(unit: Any, *_a: object, **_k: object) -> None:
+            redelivered.append(unit.name)
+
+        monkeypatch.setattr(orchestrate, "launch", fake_launch)
+        monkeypatch.setattr(orchestrate, "redeliver", fake_redeliver)
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert launched == ["alpha"]
+        assert redelivered == []
+        assert orchestrate.Run.load().unit("alpha").status == "running"
 
 
 def _git_branch_exists(repo: Path, branch: str) -> bool:
@@ -1169,7 +1618,7 @@ class TestOpenCodeLaunchAndVariantRecipe:
         unit = r.units[0]
         assert unit.status == "failed"
         assert "ultra" in unit.note
-        assert "not available in live picker options" in unit.note
+        assert "options the live picker offered" in unit.note
 
     def test_mismatched_working_directory_stops_before_task_submission(
         self,
@@ -1590,3 +2039,82 @@ class TestOpenCodeLaunchAndVariantRecipe:
         receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=False)
 
         assert receipt["readiness"] is False
+
+
+class TestRunFileCompatibility:
+    """Issue 907 U9 (API-05): run files tolerate unknown unit keys, so a run written by a
+    newer Orchestrate loads with a named notice instead of a TypeError."""
+
+    def test_an_unknown_unit_key_loads_with_a_named_notice(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        row = _unit("alpha", status="pending", branch=None)
+        row["vibrance"] = "high"
+        _write_run(repo, [row])
+        monkeypatch.chdir(repo)
+
+        loaded = orchestrate.Run.load().unit("alpha")
+
+        assert loaded.name == "alpha"
+        assert not hasattr(loaded, "vibrance"), "the unknown key must not reach the unit"
+        notice = capsys.readouterr()
+        combined = notice.out + notice.err
+        assert "alpha" in combined
+        assert "vibrance" in combined
+        module_path = orchestrate.__file__
+        assert module_path is not None
+        version = json.loads(
+            (
+                orchestrate._plugin_root(Path(module_path)) / ".claude-plugin" / "plugin.json"
+            ).read_text()
+        )["version"]
+        assert version in combined
+
+    def test_a_known_key_set_loads_silently(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.Run.load().unit("alpha").name == "alpha"
+        assert capsys.readouterr().out == ""
+        assert capsys.readouterr().err == ""
+
+    def test_a_load_and_save_round_trip_writes_no_version_key(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        monkeypatch.chdir(repo)
+
+        r = orchestrate.Run.load()
+        r.save()
+        raw = json.loads((repo / ".orchestrate" / "run.json").read_text())
+        assert not any("version" in key for key in raw), raw
+        assert not any("version" in key for key in raw["units"][0]), raw
+
+    def test_the_plugin_layout_helper_names_both_layouts(self, orchestrate: ModuleType) -> None:
+        """ARCH-07: one helper owns the plugin layout depth, and it resolves the same
+        relative depth in the repository layout and the installed cache."""
+        repo_script = SCRIPT
+        assert orchestrate._plugin_root(Path(repo_script)) == SCRIPT.parents[3]
+        cache_script = (
+            Path("/cache/marketplace/agent-launcher/1.10.0")
+            / "skills"
+            / "agent-launcher"
+            / "scripts"
+            / "launcher.py"
+        )
+        assert orchestrate._plugin_root(cache_script) == Path(
+            "/cache/marketplace/agent-launcher/1.10.0"
+        )

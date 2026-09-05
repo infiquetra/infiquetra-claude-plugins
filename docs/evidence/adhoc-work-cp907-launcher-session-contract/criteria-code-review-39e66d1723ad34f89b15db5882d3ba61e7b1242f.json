@@ -1,0 +1,1 @@
+{"blocking_rule":"review_result.v1 outcome","cycle":1,"cycle_cap":3,"final_cycle":true,"lineage":"fresh validation review; not a continuation of the terminal three-cycle review of 43498f14/cbc2fa19/a7ba2995","policy_source":"plugins/saga/references/lens-roster.json","scope":"3b2b7083...39e66d1723ad34f89b15db5882d3ba61e7b1242f","terminal_by_operator_ruling":true}

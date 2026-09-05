@@ -170,6 +170,12 @@ SAGA_SYNTAX: dict[str, str] = {
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
 PROMPT_UNDELIVERED = "prompt_undelivered"
 ACCOUNT_MISMATCH = "account_mismatch"
+# The receipt value the launcher writes for a staged-input stop: ``ComposerState.STAGED.value``
+# in the agent-launcher's composer module. Orchestrate's whole staged retry route hangs on this
+# one string, and the enum is only bound into this namespace after a successful ingest, so the
+# literal lives here under a name and ``tests/test_orchestrate_launch_and_land.py`` binds it to
+# the enum (terminal review F25). Drift there is a red test, not a silent "already has tab".
+STAGED_INPUT_BOX = "staged"
 ORPHANED = "orphaned"
 PARKED = "parked"
 
@@ -248,6 +254,14 @@ class Unit:
     ``auto`` is the default because it is enough for a unit to do its own work in its own worktree.
     ``bypass`` is there because it is what the operator runs all day, and a unit that keeps stopping
     to ask in a tab nobody is watching has failed. The containment is the worktree either way."""
+    permission_declared: bool = False
+    """Whether the plan row that produced this unit named ``permission`` explicitly.
+
+    False means the unit inherited the default, and false is the default here too, so a unit row
+    that lacks the key -- a legacy run file, or one written by hand -- reads as not declared
+    rather than as a posture somebody chose (cycle 2, F67). The plan parser is the only producer
+    that sets it true. Recorded because a run that declared a posture and a plan that omitted the
+    field produce a worker in ``auto`` with nothing on screen to say so."""
     setup: list[str] = field(default_factory=list)
     """Lines sent into the session before its task, for tier control the command line lacks.
 
@@ -382,9 +396,14 @@ class RunBranchResolutionError(RuntimeError):
 # The run-file shape this Orchestrate writes and understands. Bumped when a key changes meaning in
 # a way an older Orchestrate would misread rather than ignore -- `status_map` becoming a
 # (Stage, Status) pair in 4.0.0 is exactly that: an older version reads the pair as an unmapped
-# prefix and announces nothing, silently.
-RUN_FILE_CONTRACT = "2026-08-31.stage-status-pair"
-KNOWN_RUN_FILE_CONTRACTS = frozenset({"", RUN_FILE_CONTRACT})
+# prefix and announces nothing, silently -- and whenever ``Unit`` gains a field, because every
+# Orchestrate before 4.2.0 reads a unit row with a bare ``Unit(**raw)``: it passes this gate on a
+# string it knows and then dies in a TypeError on the key it does not. The string is bound to the
+# Unit field set by ``UNIT_FIELDS_BY_CONTRACT`` in ``tests/test_orchestrate_board_writeback.py``.
+# Every string this Orchestrate ever wrote stays in the known set, so its own older run files
+# still open; the empty string is a run file older than the contract key itself.
+RUN_FILE_CONTRACT = "2026-09-02.permission-declared"
+KNOWN_RUN_FILE_CONTRACTS = frozenset({"", "2026-08-31.stage-status-pair", RUN_FILE_CONTRACT})
 
 
 class RunFileContractError(RuntimeError):
@@ -900,6 +919,15 @@ def spill_unit(unit: Unit, run_id: str) -> dict[str, Any]:
     return data
 
 
+def _orchestrate_version() -> str:
+    """This Orchestrate's own version, from the same manifest the companion floor is read from."""
+    manifest = _plugin_root(Path(__file__).resolve()) / ".claude-plugin" / "plugin.json"
+    try:
+        return str(json.loads(manifest.read_text(encoding="utf-8"))["version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "unknown"
+
+
 def read_unit(raw: dict[str, Any]) -> Unit:
     """One unit from its record row, reading a spilled task back transparently.
 
@@ -911,7 +939,27 @@ def read_unit(raw: dict[str, Any]) -> Unit:
     I/O error -- raises rather than being absorbed: absorbing it also drops the pointer, so the
     next save would make the loss permanent and the unit could be launched with no instructions.
     If the file contains a leading Orchestrate ownership marker, the marker is stripped so the
-    unit's in-memory task text is restored cleanly; unmarked hand-authored briefs load verbatim."""
+    unit's in-memory task text is restored cleanly; unmarked hand-authored briefs load verbatim.
+
+    A key this Unit does not know is dropped with a one-line notice naming the unit, the key
+    and this Orchestrate's version. That is a safety net for a row under a contract this
+    version knows -- a hand-edited record, or a same-contract writer that added a field it
+    should not have -- not forward tolerance: a run file written by a newer Orchestrate under
+    a newer contract string is refused by ``Run.load`` before any unit row is read (cycle 2,
+    F68). No version is ever written into the run file; the contract string is the only
+    statement of shape.
+    """
+    known = set(Unit.__dataclass_fields__)
+    unknown = [key for key in raw if key not in known]
+    if unknown:
+        for key in unknown:
+            print(
+                f"WARNING: unit {raw.get('name', '?')} carries unknown key {key!r}; this "
+                f"Orchestrate {_orchestrate_version()} ignores it (written by a newer "
+                "Orchestrate)",
+                file=sys.stderr,
+            )
+        raw = {key: value for key, value in raw.items() if key in known}
     unit = Unit(**raw)
     if unit.lifecycle is not None:
         # Normalise here rather than in the plan guard alone: review-result, land, status and reap
@@ -970,6 +1018,7 @@ def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
             unit = Unit(**raw)
         except TypeError as exc:
             raise SystemExit(f"invalid plan unit: {exc}") from None
+        unit.permission_declared = "permission" in raw
         if unit.role == REVIEW_CONTROLLER_ROLE:
             if not is_code_review_task(unit.task):
                 raise SystemExit(
@@ -988,6 +1037,9 @@ def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
             ]
         units.append(unit)
     assert_review_transport(units)
+    omitted = [unit.name for unit in units if not unit.permission_declared]
+    if omitted:
+        print(f"permission not declared, inheriting {Unit.permission}: {', '.join(omitted)}")
     return units
 
 
@@ -1408,16 +1460,40 @@ def route_review_result(
     return routing
 
 
+def _send_with_pane_guard(unit: Unit, text: str) -> None:
+    """Put one line into a live unit's session through the launcher's only door.
+
+    ``PaneWriter`` is the launcher's single pane-write choke point; Orchestrate does not own
+    a door of its own, so it cannot write unguarded. The writer is seeded ``wrote_before``
+    true: every unit this sender reaches -- a live worker taking a routed repair, a controller
+    taking a resubmission -- was prompted by its launch, so the launcher has already written
+    into the session and a person may have typed since. The launcher's owned exemption covers
+    only the first write into a pane created seconds earlier; these writes land hours or days
+    later into a session the operator has been watching, so ownership alone exempts nothing
+    here (terminal review F06). A unit with no pane cannot be inspected and is prompted through
+    its agent handle. An inconclusive inspection still sends -- the documented trade in
+    ``guard_pane_before_write``.
+    """
+    writer = PaneWriter(unit, unit.pane_id, wrote_before=True)
+    writer.write(text)
+
+
 def dispatch_review_routing(
     routing: ReviewRouting,
     *,
     sender: Callable[[Unit, str], None] | None = None,
 ) -> list[str]:
     """Send routed requests to live workers; replacement units launch through ordinary ``go``."""
-    send_one = sender or (lambda unit, text: say(unit, unit.pane_id, text))
+    send_one = sender or _send_with_pane_guard
     dispatched: list[str] = []
     for unit, request in routing.dispatches:
-        send_one(unit, _request_prompt(request, run_branch=routing.run_branch))
+        try:
+            send_one(unit, _request_prompt(request, run_branch=routing.run_branch))
+        except StagedInputError as exc:
+            if str(exc) not in unit.note:
+                append_unit_note(unit, str(exc))
+            print(exc)
+            continue
         unit.status = RUNNING
         append_unit_note(unit, f"outstanding review fix {_fix_request_id(request)}")
         dispatched.append(unit.name)
@@ -1481,11 +1557,24 @@ def resubmit_review_if_ready(
     if pending:
         # Each scoped controller recovers independently. One controller still holding an operator
         # request or a live worker must not block another whose repairs are clear -- that would make
-        # two independent targets unable to recover at all (#877).
+        # two independent targets unable to recover at all (#877). A controller withheld on staged
+        # input does not block the others either, but it is still a resubmission this land did
+        # not make: once every controller has had its turn, the withheld ones are raised together
+        # so `land` exits 4 exactly as it does for any other resubmission failure (cycle 2, F42).
         sent = False
+        withheld: list[str] = []
         for candidate in pending:
-            if _resubmit_one(r, candidate, revision, sender=sender):
-                sent = True
+            try:
+                if _resubmit_one(r, candidate, revision, sender=sender):
+                    sent = True
+                    print(f"resubmitted landed revision {revision} through {candidate.name}")
+            except StagedInputError:
+                withheld.append(candidate.name)
+        if withheld:
+            raise StagedInputError(
+                f"resubmission withheld for {', '.join(withheld)}: the composer holds staged "
+                "input; clear it and land again"
+            )
         return sent
 
     controller = r.review_controller()
@@ -1519,12 +1608,107 @@ def _resubmit_one(
         "Resubmit that exact revision through this same Code Review controller and emit the next "
         "complete typed result for `review-result` collection."
     )
-    send_one = sender or (lambda unit, text: say(unit, unit.pane_id, text))
-    send_one(controller, task)
+    send_one = sender or _send_with_pane_guard
+    try:
+        send_one(controller, task)
+    except StagedInputError as exc:
+        # Record, report, and raise. The multi-controller loop in resubmit_review_if_ready
+        # catches this per controller so one staged composer never blocks the others (cycle 1,
+        # F23); the single-controller path lets it reach `land`'s failure handler, so a
+        # resubmission that was withheld exits 4 like every other resubmission failure instead
+        # of falling through to exit 0 (cycle 2, F42). The pending flag stays set either way, so
+        # the next land retries once the composer is clear.
+        if str(exc) not in controller.note:
+            append_unit_note(controller, str(exc))
+        print(f"  {controller.name} resubmission withheld: {exc}")
+        raise
     controller.status = RUNNING
     append_unit_note(controller, f"resubmitted landed revision {revision}")
     r.write_review_slot(controller, review_resubmit_pending=False)
     return True
+
+
+def _plugin_root(script: Path) -> Path:
+    """The plugin root above a script, in both layouts this plugin ships in.
+
+    The relative depth is the same in the repository and the installed cache:
+    <plugin-root>/<skills>/<plugin-name>/scripts/<file>, so three parents above a script is
+    always the plugin root -- the cache's version directory plays the same role. Every
+    other place that needs a sibling plugin or a plugin manifest goes through here, so the
+    layout is named once.
+    """
+    return script.parents[3]
+
+
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    """Parse the numeric three-part plugin versions used by this repository."""
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
+    if match is None:
+        raise SystemExit(f"agent-launcher has unsupported version {value!r}")
+    return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
+
+
+def _declared_agent_launcher_floor(manifest: Path | None = None) -> tuple[int, int, int]:
+    """Read the one authoritative companion floor from Orchestrate's own manifest."""
+    if manifest is None:
+        manifest = _plugin_root(Path(__file__).resolve()) / ".claude-plugin" / "plugin.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        dependencies = payload["dependencies"]
+        requirement = next(
+            entry["version"]
+            for entry in dependencies
+            if isinstance(entry, dict) and entry.get("name") == "agent-launcher"
+        )
+    except (OSError, ValueError, KeyError, TypeError, StopIteration) as exc:
+        raise SystemExit(
+            f"cannot read Orchestrate's agent-launcher dependency from {manifest}: {exc}"
+        ) from None
+    match = re.fullmatch(r">=(\d+\.\d+\.\d+)", str(requirement))
+    if match is None:
+        raise SystemExit(
+            f"Orchestrate's agent-launcher dependency must be a numeric >= floor, got "
+            f"{requirement!r} in {manifest}"
+        )
+    return _version_tuple(match.group(1))
+
+
+def _launcher_cache_version(path: Path) -> tuple[int, int, int]:
+    """Sort cache entries numerically, matching ``sort -V`` rather than lexical ordering."""
+    try:
+        return _version_tuple(_plugin_root(path).name)
+    except SystemExit:
+        return (0, 0, 0)
+
+
+class _LauncherFloorFailure(SystemExit):
+    """A launcher that loads but sits below the floor Orchestrate declares for it.
+
+    Still a ``SystemExit`` so every existing caller reads it the same way; ``remedy`` names
+    this fault's own remedy, which differs by cause (update for a stale install).
+    """
+
+    def __init__(self, message: str, remedy: str) -> None:
+        super().__init__(f"{message.rstrip('.')}. {remedy}")
+
+
+def _validated_agent_launcher(path: Path) -> Path:
+    """Enforce Orchestrate's declared companion-plugin version floor at runtime."""
+    manifest = _plugin_root(path) / ".claude-plugin" / "plugin.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        version = _version_tuple(str(payload["version"]))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise SystemExit(f"cannot verify agent-launcher manifest {manifest}: {exc}") from None
+    minimum = _declared_agent_launcher_floor()
+    if version < minimum:
+        required = ".".join(str(part) for part in minimum)
+        actual = ".".join(str(part) for part in version)
+        raise _LauncherFloorFailure(
+            f"agent-launcher {actual} is installed; Orchestrate requires >={required}",
+            _UPDATE_REMEDIATION,
+        )
+    return path
 
 
 def _agent_launcher_script() -> Path | None:
@@ -1540,7 +1724,12 @@ def _agent_launcher_script() -> Path | None:
         return candidate
     here = Path(__file__).resolve()
     repo_candidate = (
-        here.parents[4] / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+        _plugin_root(here).parent
+        / "agent-launcher"
+        / "skills"
+        / "agent-launcher"
+        / "scripts"
+        / "launcher.py"
     )
     if repo_candidate.is_file():
         return repo_candidate
@@ -1551,7 +1740,10 @@ def _agent_launcher_script() -> Path | None:
             direct = sibling / "skills" / "agent-launcher" / "scripts" / "launcher.py"
             if direct.is_file():
                 return direct
-            matches = sorted(sibling.glob("*/skills/agent-launcher/scripts/launcher.py"))
+            matches = sorted(
+                sibling.glob("*/skills/agent-launcher/scripts/launcher.py"),
+                key=_launcher_cache_version,
+            )
             if matches:
                 return matches[-1]
     for parent in here.parents:
@@ -1560,7 +1752,10 @@ def _agent_launcher_script() -> Path | None:
             direct = sibling / "skills" / "agent-launcher" / "scripts" / "launcher.py"
             if direct.is_file():
                 return direct
-            matches = sorted(sibling.glob("*/skills/agent-launcher/scripts/launcher.py"))
+            matches = sorted(
+                sibling.glob("*/skills/agent-launcher/scripts/launcher.py"),
+                key=_launcher_cache_version,
+            )
             if matches:
                 return matches[-1]
     return None
@@ -1590,18 +1785,65 @@ def _subprocess_run(
     return proc
 
 
+_INSTALL_REMEDIATION = "claude plugin install agent-launcher@infiquetra-plugins"
+_UPDATE_REMEDIATION = "claude plugin update agent-launcher@infiquetra-plugins"
 _REMEDIATION_MESSAGE = (
-    "agent-launcher plugin not found. Install the companion plugin: "
-    "claude plugin install agent-launcher@infiquetra-plugins"
+    f"agent-launcher plugin not found. Install the companion plugin: {_INSTALL_REMEDIATION}"
 )
+# The companion fault, composed per cause: a stale install carries the update remedy, a
+# missing or unusable one carries the install remedy, and each names its own cause.
+_AGENT_LAUNCHER_ERROR: str | None = None
+_COMPANION_FAULT_PRINTED = False
+
+
+def _agent_launcher_error(detail: str) -> str:
+    """One failure contract for a companion that cannot be used at all."""
+    return f"{detail.rstrip('.')}. Install the companion plugin: {_INSTALL_REMEDIATION}"
 
 
 def _agent_launcher_required(*_args: Any, **_kwargs: Any) -> Any:
-    raise SystemExit(_REMEDIATION_MESSAGE)
+    raise SystemExit(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE)
+
+
+def _print_companion_fault_once() -> None:
+    """Print the companion fault once per process, for a read-only degraded command."""
+    global _COMPANION_FAULT_PRINTED
+    if _COMPANION_FAULT_PRINTED:
+        return
+    _COMPANION_FAULT_PRINTED = True
+    print(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE, file=sys.stderr)
+
+
+def assert_agent_launcher_ingested() -> None:
+    """Refuse a read-only command only when no companion was ingested at all.
+
+    The KTD7 matrix's read side for the two informational commands, ``roster`` and ``saga``:
+    they list vendors and saga capabilities and never write a pane, create a session or
+    worktree, or close a tab, so a companion that is merely below the floor still serves
+    them -- exactly as it serves ``wait``, ``settle`` and ``adopt``. A missing or unusable
+    companion has nothing to read with and refuses with the install remedy. Gating these
+    two on the floor was a smaller instance of the fail-closed regression this plugin
+    already shipped once (terminal review F24), and it contradicted the decision record.
+    """
+    if not _AGENT_LAUNCHER_AVAILABLE:
+        raise SystemExit(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE)
 
 
 def assert_agent_launcher_available() -> None:
-    """Fail fast before creating any worktree, session, or mutating run state."""
+    """Refuse before any pane write, session or worktree creation, or tab close.
+
+    The seven commands that call this: ``start``, ``expand``, ``go``, ``review-result``,
+    ``land``, ``clean``, and ``redrive``.
+
+    This is the KTD7 matrix's write side
+    (``docs/engineering-journal/DECISIONS.md`` ``{#907-agent-launcher-floor-owner}``):
+    it fires whenever the companion is below the declared floor (stale: update it) or
+    was not ingested at all (missing or unusable: install or repair it). Read-only
+    commands never call it, so a broken companion never kills a status or a check
+    while a unit is running.
+    """
+    if _AGENT_LAUNCHER_ERROR:
+        raise SystemExit(_AGENT_LAUNCHER_ERROR)
     if not _AGENT_LAUNCHER_AVAILABLE:
         raise SystemExit(_REMEDIATION_MESSAGE)
 
@@ -1613,31 +1855,141 @@ def _ingest_agent_launcher() -> bool:
     module. ``exec`` into ``globals()`` makes those names the ones the extracted
     functions look up, so the patches still apply. Importing a second module
     would hide them. A missing plugin must not kill every subcommand at import.
+    The exec is atomic: a launcher that fails partway through its own import binds
+    nothing (the namespace is restored), and a successful ingest restores this
+    module's own ``__doc__``, so ``--help`` keeps describing Orchestrate. Floor
+    policy after a successful ingest is
+    ``docs/engineering-journal/DECISIONS.md`` ``{#907-agent-launcher-floor-owner}``.
     """
-    script = _agent_launcher_script()
-    if script is None:
+    global _AGENT_LAUNCHER_ERROR
+    try:
+        script = _agent_launcher_script()
+    except SystemExit as exc:
+        _AGENT_LAUNCHER_ERROR = _agent_launcher_error(str(exc))
         return False
+    if script is None:
+        _AGENT_LAUNCHER_ERROR = _REMEDIATION_MESSAGE
+        return False
+    try:
+        _validated_agent_launcher(script)
+    except _LauncherFloorFailure as exc:
+        # A stale launcher is still ingested, so read-only commands -- status, check, wait,
+        # settle, adopt, roster, saga -- keep their Herdr reads through it; the floor gates
+        # only the six commands that would write a pane, create a session or worktree, or
+        # close a tab, and this fault carries the update remedy.
+        _AGENT_LAUNCHER_ERROR = str(exc)
+    except SystemExit as exc:
+        # Orchestrate's own manifest could not name a floor. The launcher is still ingested
+        # for reads; writes are gated behind this cause and the install remedy.
+        _AGENT_LAUNCHER_ERROR = _agent_launcher_error(str(exc))
     # launcher.py has a ``__main__`` CLI. When orchestrate.py is the entry point,
     # ingest would otherwise run that CLI against orchestrate's argv (``wait``,
     # ``clean``, …) and exit. The flag is this module's globals, not the environment.
     globals()["_AGENT_LAUNCHER_INGESTING"] = True
-    exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
+    # Caller obligation: this compile filename is the ingested launcher's only authority for
+    # where its sibling composer.py lives -- the loader resolves the parser from this frame's
+    # co_filename -- so it must stay the launcher's real path. A placeholder makes every
+    # ingested launch stop with the named wrong-directory message.
+    snapshot = dict(globals())
+    own_doc = globals()["__doc__"]
+    try:
+        exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
+    except (SystemExit, Exception) as exc:
+        # The exec is atomic: a launcher that fails partway through its own import binds
+        # nothing, not a subset of its names over this module's own definitions.
+        globals().clear()
+        globals().update(snapshot)
+        _AGENT_LAUNCHER_ERROR = _agent_launcher_error(
+            f"agent-launcher at {script} is unusable: {type(exc).__name__}: {exc}"
+        )
+        return False
+    # The exec binds the launcher's module docstring into this namespace, so --help would
+    # describe the launcher; Orchestrate keeps describing Orchestrate.
+    globals()["__doc__"] = own_doc
+    _bind_missing_launcher_names(script)
     return True
+
+
+# Every launcher name Orchestrate calls. The degraded block below binds each to the
+# required-companion stub when nothing was ingested; ``_bind_missing_launcher_names`` binds the
+# same stub for any of them a launcher that WAS ingested does not define -- a companion whose
+# manifest satisfies the floor but whose source predates it, or a launcher root pointed at an
+# older tree (cycle 2, F54/F69/F72). Without that check a missing name surfaced as a NameError
+# at the first pane write instead of the named companion fault with the update remedy.
+REQUIRED_LAUNCHER_NAMES = (
+    "launch",
+    "redeliver",
+    "agent_argv",
+    "launcher",
+    "launchable",
+    "roster",
+    "live_agents",
+    "close_run_session",
+    "tab_close_failure",
+    "verify_unit_preflight",
+    "agent_row",
+    "session_has_started",
+    "append_unit_note",
+    "PaneWriter",
+    "session_owned",
+    "should_guard_pane_write",
+    "guard_pane_before_write",
+    "models",
+    "favourites",
+    "has_delivery_warning",
+    "clear_delivery_warning",
+    "VENDOR_FLAGS",
+    "VENDOR_PERMISSION",
+    "VENDOR_NOTES",
+    "AccountMismatchError",
+    "StagedInputError",
+)
+
+
+def _bind_missing_launcher_names(script: Path) -> None:
+    """After a successful exec, refuse the write side by name for any required name absent.
+
+    The stub raises the companion fault; the two stop classes are bound to local exception
+    types so ``except`` clauses keep working. The fault carries the update remedy, because a
+    launcher that loads but lacks these names is an older release, whatever its manifest says.
+    An error already recorded (a floor failure) is kept: it names the same remedy.
+    """
+    global _AGENT_LAUNCHER_ERROR
+    missing = [name for name in REQUIRED_LAUNCHER_NAMES if name not in globals()]
+    if not missing:
+        return
+    for name in missing:
+        if name in ("AccountMismatchError", "StagedInputError"):
+            globals()[name] = type(name, (Exception,), {})
+        else:
+            globals()[name] = _agent_launcher_required
+    if not _AGENT_LAUNCHER_ERROR:
+        _AGENT_LAUNCHER_ERROR = (
+            f"agent-launcher at {script} does not define {', '.join(missing)}; Orchestrate "
+            f"requires a release that does. {_UPDATE_REMEDIATION}"
+        )
 
 
 run = _subprocess_run
 if not _ingest_agent_launcher():
     _AGENT_LAUNCHER_AVAILABLE = False
     launch = _agent_launcher_required
+    redeliver = _agent_launcher_required
     agent_argv = _agent_launcher_required
     launcher = _agent_launcher_required
     launchable = _agent_launcher_required
     roster = _agent_launcher_required
     live_agents = _agent_launcher_required
     close_run_session = _agent_launcher_required
+    tab_close_failure = _agent_launcher_required
     verify_unit_preflight = _agent_launcher_required
+    agent_row = _agent_launcher_required
+    session_has_started = _agent_launcher_required
     append_unit_note = _agent_launcher_required
-    say = _agent_launcher_required
+    PaneWriter = _agent_launcher_required
+    session_owned = _agent_launcher_required
+    should_guard_pane_write = _agent_launcher_required
+    guard_pane_before_write = _agent_launcher_required
     models = _agent_launcher_required
     favourites = _agent_launcher_required
     has_delivery_warning = _agent_launcher_required
@@ -1647,6 +1999,9 @@ if not _ingest_agent_launcher():
     VENDOR_NOTES = {}
 
     class AccountMismatchError(Exception):
+        pass
+
+    class StagedInputError(Exception):
         pass
 else:
     _AGENT_LAUNCHER_AVAILABLE = True
@@ -1974,7 +2329,7 @@ def _schema_candidates() -> list[Path]:
     the mission-control plugin in the same checkout -- then each vendor's install cache, newest
     version first."""
     here = Path(__file__).resolve()
-    paths = [here.parents[4] / "mission-control" / "config" / "sdlc-schema.json"]
+    paths = [_plugin_root(here).parent / "mission-control" / "config" / "sdlc-schema.json"]
     paths.extend(_install_candidates("mission-control", "config/sdlc-schema.json"))
     return paths
 
@@ -2129,7 +2484,7 @@ def _controller_candidates() -> list[Path]:
     ``assignments`` payload silently. Lexicographic ordering selected 0.136.0 out of sixty installed
     copies on the machine this was measured on."""
     here = Path(__file__).resolve()
-    paths = [here.parents[4] / "saga" / "scripts" / "reconcile_controller.py"]
+    paths = [_plugin_root(here).parent / "saga" / "scripts" / "reconcile_controller.py"]
     paths.extend(_install_candidates("saga", "scripts/reconcile_controller.py"))
     return paths
 
@@ -2280,7 +2635,7 @@ def _write_is_retryable(write: dict[str, Any]) -> bool:
     return bool(write.get("retryable", True))
 
 
-PLUGIN_MANIFEST = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+PLUGIN_MANIFEST = _plugin_root(Path(__file__).resolve()) / ".claude-plugin" / "plugin.json"
 
 _VERSION_FLOOR_RE = re.compile(r">=\s*v?(\d+(?:\.\d+)*)")
 
@@ -2960,7 +3315,7 @@ def saga_capabilities(vendor: str) -> list[str]:
 
 def cmd_saga(args: argparse.Namespace) -> int:
     """Show how each vendor invokes a saga capability, and whether it has saga at all."""
-    assert_agent_launcher_available()
+    assert_agent_launcher_ingested()
     for name, _ in roster():
         caps = saga_capabilities(name)
         if not caps:
@@ -2977,7 +3332,7 @@ def cmd_saga(args: argparse.Namespace) -> int:
 
 def cmd_roster(args: argparse.Namespace) -> int:
     """Print the agents this machine can run, asked now rather than remembered."""
-    assert_agent_launcher_available()
+    assert_agent_launcher_ingested()
     rows = roster()
     if not rows:
         print("could not read the wrapper's tool list; check that it runs and prints `Tools:`")
@@ -3190,6 +3545,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
 
 def cmd_review_result(args: argparse.Namespace) -> int:
     """Persist one typed result verbatim, then act only on its routing fields."""
+    assert_agent_launcher_available()  # routing resubmits reach `say`: gate before any write
     try:
         raw_result = Path(args.file).read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as exc:
@@ -3263,6 +3619,22 @@ def cmd_review_result(args: argparse.Namespace) -> int:
     return 0
 
 
+def _staged_input_stop(unit: Unit) -> bool:
+    """Whether this PENDING unit stopped on staged input and keeps the recorded pane to retry.
+
+    The marker routes `go`: a unit carrying it is redelivered into the pane the stop
+    recorded, is never skipped as already launched, and never runs the wrapper create a
+    second time -- a second create would overwrite the first owned tab off the unit.
+    Contract: ``docs/engineering-journal/DECISIONS.md`` ``{#907-staged-input-redeliver}``.
+    """
+    return (
+        unit.status == PENDING
+        and bool(unit.pane_id)
+        and isinstance(unit.launch_receipt, dict)
+        and unit.launch_receipt.get("input_box") == STAGED_INPUT_BOX
+    )
+
+
 def cmd_go(args: argparse.Namespace) -> int:
     assert_agent_launcher_available()
     r = Run.load()
@@ -3275,7 +3647,8 @@ def cmd_go(args: argparse.Namespace) -> int:
         return 0
     root = repo_root()
     for unit in ready[: args.limit] if args.limit else ready:
-        if unit.tab_id:
+        staged_stop = _staged_input_stop(unit)
+        if unit.tab_id and not staged_stop:
             print(f"  {unit.name}: already has tab {unit.tab_id}; not launching twice")
             continue
         empty = [d for d in unit.after if not produced_anything(r.unit(d), r)]
@@ -3288,9 +3661,24 @@ def cmd_go(args: argparse.Namespace) -> int:
         if not unit.account and r.account:
             unit.account = r.account
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
-        print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
+        if staged_stop:
+            print(
+                f"redelivering {unit.name} ({unit.vendor}) into pane {unit.pane_id} -> {unit.task}"
+            )
+            deliver = redeliver
+        else:
+            print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
+            deliver = launch
         try:
-            launch(unit, r.backend, review_elsewhere=r.reviews_separately())
+            deliver(unit, r.backend, review_elsewhere=r.reviews_separately())
+        except StagedInputError as exc:
+            unit.status = PENDING
+            # Append, never overwrite: the guard's withheld line and an earlier stop message
+            # are facts a repeated stop must not erase. The membership test is a substring,
+            # not a split on the separator: the stop message itself contains the separator.
+            if str(exc) not in unit.note:
+                append_unit_note(unit, str(exc))
+            print(f"  {unit.name} PENDING: {exc}")
         except AccountMismatchError as exc:
             unit.status = ACCOUNT_MISMATCH
             unit.note = str(exc)
@@ -3360,7 +3748,13 @@ def status_cell(text: str) -> str:
 
 def cmd_status(args: argparse.Namespace) -> int:
     r = Run.load()
-    live = {u.name: poll(u) for u in r.units if u.status == RUNNING}
+    if _AGENT_LAUNCHER_AVAILABLE:
+        live = {u.name: poll(u) for u in r.units if u.status == RUNNING}
+    else:
+        # The companion was not ingested, so Herdr cannot be asked: print the fault once and
+        # read liveness as unknown -- absence must not read as gone (the API-04 trade).
+        _print_companion_fault_once()
+        live = {u.name: "unknown" for u in r.units if u.status == RUNNING}
     print(f"run {r.run_id}   base {r.base[:8]}   {r.source}\n")
     if r.unresolvable_branch:
         print(f"WARNING: run branch {r.unresolvable_branch!r} does not resolve\n")
@@ -4007,6 +4401,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     incomplete. 4: repairs landed but could not be resubmitted to the recorded Code Review
     controller. A caller scripting this has to be able to tell those failures apart.
     """
+    assert_agent_launcher_available()  # reaching `say` and `close_run_session`: gate first
     r = Run.load()
     if not r.branch:
         raise SystemExit("this run has no run branch; it predates `land` -- start a new run")
@@ -4368,11 +4763,19 @@ def cmd_land(args: argparse.Namespace) -> int:
     # landed. The sweep names only the units THIS land merged: reaping the whole run here also
     # closed the worktrees an earlier invocation deliberately kept.
     if getattr(args, "clean", False):
-        closed, _ = reap(r, merged_only=True, only=landed_names)
+        kept_reasons: dict[str, str] = {}
+        closed, _ = reap(r, merged_only=True, only=landed_names, kept_reasons=kept_reasons)
+        r.save()
         if closed:
             print(f"reaped: {', '.join(closed)}")
-        else:
+        elif not landed_names:
             print("nothing to reap: this land merged nothing")
+        else:
+            # Everything this land merged was kept, each for a reason printed below; that is
+            # not "merged nothing" (cycle 2, F70).
+            print("nothing reaped: every unit this land merged was kept, for the reasons below")
+        for name, reason in kept_reasons.items():
+            print(f"kept {name}: {reason}")
     if resubmit_failed:
         return 4
     return 2 if (writeback_failures or outstanding_writebacks) else 0
@@ -4692,6 +5095,41 @@ def clean_remote_branches(
     return report
 
 
+def _reap_keep_reason(unit: Unit, r: Run) -> str:
+    """The true reason a ``--merged`` sweep kept this unit.
+
+    Mirrors ``reapable``'s gate order -- a change there must be reflected here, or the
+    printed reason silently stops being the truth. The routed-fix gate is reap's own, one
+    line above the call.
+    """
+    if is_review_controller(unit):
+        slot = r.review_slot(unit)
+        if slot["review_resubmit_pending"] or bool(slot["operator_fix_requests"]):
+            return "review controller still owed a resubmission"
+    if unit.status != DONE:
+        return "not done"
+    if not unit.branch:
+        # cmd_settle records the review controller in exactly this shape: done, with no branch
+        # of its own. It is not "not done" (terminal review F26); it has nothing to reap.
+        return "done, with no branch of its own to measure"
+    if r.unresolvable_branch:
+        return "run branch unresolved"
+    if landed(unit.branch, r) is None:
+        return "committed nothing to land"
+    # landed()'s single False covers two causes: the branch carries commits the run branch does
+    # not, and git could not answer at all. Ask the same question once more here so the printed
+    # reason names the true one (terminal review F37).
+    comparison = run(
+        ["git", "rev-list", "--count", f"{r.resolved_run_ref()}..{unit.branch}"], check=False
+    )
+    if comparison.returncode != 0:
+        detail = (comparison.stderr or comparison.stdout or "").strip().splitlines()
+        return f"git could not compare branch {unit.branch} against the run branch" + (
+            f": {detail[0]}" if detail else ""
+        )
+    return "not on the run branch"
+
+
 def reap(
     r: Run,
     *,
@@ -4699,6 +5137,7 @@ def reap(
     branches: bool = False,
     only: Sequence[str] | None = None,
     remote: str = "origin",
+    kept_reasons: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
 
@@ -4730,14 +5169,52 @@ def reap(
             continue
         if unit.fix_requests:
             kept.append(unit.name)
+            if kept_reasons is not None:
+                kept_reasons[unit.name] = "fix request outstanding"
             continue
         if merged_only and not reapable(unit, r):
             kept.append(unit.name)
+            if kept_reasons is not None:
+                kept_reasons[unit.name] = _reap_keep_reason(unit, r)
             continue
+        tab_closed = False
         if unit.tab_id:
-            close_run_session(unit)
+            close_result = close_run_session(unit)
+            if close_result is None:
+                # The launcher did not create this tab, so it is never closed here. Report it
+                # as left open -- never as closed -- and keep the unit: the run record is
+                # what names the tab the operator must close by hand, and the session in it
+                # may still be standing in this unit's worktree.
+                if kept_reasons is not None:
+                    kept_reasons[unit.name] = f"tab left open (not owned): tab {unit.tab_id}"
+                kept.append(unit.name)
+                continue
+            if close_result.returncode != 0:
+                detail = (close_result.stderr or close_result.stdout or "").strip()
+                failure = tab_close_failure(unit.tab_id, close_result.returncode, detail)
+                # The note was already recorded by close_run_session, the single owner; a
+                # repeated failure must not stack a second copy on it.
+                if kept_reasons is not None:
+                    kept_reasons[unit.name] = failure
+                kept.append(unit.name)
+                continue
+            tab_closed = True
         if unit.worktree and Path(unit.worktree).exists():
-            run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
+            removed = run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
+            if removed.returncode != 0 and os.path.lexists(unit.worktree):
+                # Mirror the landing-worktree treatment: a removal that failed and left the
+                # directory behind keeps the unit, so the run record still names the worktree
+                # and `clean --all` does not delete the only record of it (terminal review F27).
+                # The tab, if this pass closed it, is named too, so the report matches the side
+                # effects performed (cycle 2, F71); a rerun closes an absent tab idempotently.
+                detail = (removed.stderr or removed.stdout or "").strip()
+                if kept_reasons is not None:
+                    closed_tab = f"tab {unit.tab_id} closed; " if tab_closed else ""
+                    kept_reasons[unit.name] = (
+                        f"{closed_tab}worktree removal failed ({removed.returncode}): {detail}"
+                    )
+                kept.append(unit.name)
+                continue
         if branches and unit.branch:
             run(["git", "branch", "-D", unit.branch], check=False)
         closed.append(unit.name)
@@ -4758,9 +5235,13 @@ def reap(
             # A conflicted merge is, by definition, not merged. Name the recovery surface in the
             # ordinary kept report so `clean --merged` cannot look like it silently swept it up.
             kept.append(label)
+            if kept_reasons is not None:
+                kept_reasons[label] = "conflict worktree"
         elif conflict_path.exists():
             if not live_linked_worktree_at(conflict_path, operator_worktree=root):
                 kept.append(label)
+                if kept_reasons is not None:
+                    kept_reasons[label] = "conflict worktree"
             else:
                 # Protected by live_linked_worktree_at immediately above: the record names an
                 # exact separate linked worktree, not a symlink or another untrusted path.
@@ -4773,6 +5254,8 @@ def reap(
                     r.save()
                 else:
                     kept.append(label)
+                    if kept_reasons is not None:
+                        kept_reasons[label] = "conflict worktree removal failed"
         else:
             # The directory was removed by hand. Clear the pointer so clean reports the filesystem
             # truth. `land` independently inspects and prunes the canonical path's Git registration
@@ -4793,14 +5276,20 @@ def reap(
                 closed.append(label)
             else:
                 kept.append(label)
+                if kept_reasons is not None:
+                    kept_reasons[label] = "landing worktree removal failed"
             continue
         if not live_linked_worktree_at(candidate, operator_worktree=root):
             kept.append(f"landing path at {candidate}")
+            if kept_reasons is not None:
+                kept_reasons[f"landing path at {candidate}"] = "landing worktree"
             continue
         if merged_only:
             recovered = resolved_retained_land(r, candidate)
             if isinstance(recovered, str) or r.resolved_branch is None:
                 kept.append(label)
+                if kept_reasons is not None:
+                    kept_reasons[label] = "landing worktree"
                 continue
             _, recovered_tip, _ = recovered
             published = run(
@@ -4809,6 +5298,8 @@ def reap(
             )
             if published.returncode != 0:
                 kept.append(label)
+                if kept_reasons is not None:
+                    kept_reasons[label] = "landing worktree"
                 continue
         # Protected by live_linked_worktree_at above: the discovered candidate is an exact
         # separate linked worktree; `--merged` additionally proves its merge was published.
@@ -4817,6 +5308,8 @@ def reap(
             closed.append(label)
         else:
             kept.append(label)
+            if kept_reasons is not None:
+                kept_reasons[label] = "landing worktree removal failed"
     return closed, kept
 
 
@@ -4845,6 +5338,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
     their work is on the run branch, and leaving them open for the rest of the run is how a
     workspace ends up with a dozen idle tabs nobody can tell apart.
     """
+    assert_agent_launcher_available()  # reaching `close_run_session`: gate first
     r = Run.load()
     if r.unresolvable_branch:
         print(
@@ -4852,14 +5346,26 @@ def cmd_clean(args: argparse.Namespace) -> int:
             "branch-dependent cleanup checks are unavailable"
         )
     remote = getattr(args, "remote", "origin") or "origin"
-    closed, kept = reap(r, merged_only=args.merged, branches=args.branches, remote=remote)
+    kept_reasons: dict[str, str] = {}
+    closed, kept = reap(
+        r,
+        merged_only=args.merged,
+        branches=args.branches,
+        remote=remote,
+        kept_reasons=kept_reasons,
+    )
     if args.all and not kept:
         shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
-    elif args.all:
-        print("run state retained because cleanup kept work")
+    else:
+        r.save()
+        if args.all:
+            print("run state retained because cleanup kept work")
     print(f"closed: {', '.join(closed) or 'nothing'}")
-    if kept:
-        print(f"kept (not done, or its work not on the run branch): {', '.join(kept)}")
+    ordinary_kept = [name for name in kept if name not in kept_reasons]
+    if ordinary_kept:
+        print(f"kept (not done, or its work not on the run branch): {', '.join(ordinary_kept)}")
+    for name, reason in kept_reasons.items():
+        print(f"kept {name}: {reason}")
     return 0
 
 
@@ -4906,17 +5412,28 @@ def cmd_check(args: argparse.Namespace) -> int:
         findings.append(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
 
     # One herdr round for the whole run, not one per row. A pending or failed unit has no session,
-    # so it is never matched against the list at all.
-    agents = live_agents()
+    # so it is never matched against the list at all. Without an ingested companion Herdr cannot
+    # be asked: the fault prints once and every reading is unknown, never gone.
+    agents: list[dict[str, Any]] | None
+    if _AGENT_LAUNCHER_AVAILABLE:
+        agents = live_agents()
+    else:
+        _print_companion_fault_once()
+        agents = None
     for unit in r.units:
-        if branch_error is None and has_delivery_warning(unit) and not produced_anything(unit, r):
+        if (
+            _AGENT_LAUNCHER_AVAILABLE
+            and branch_error is None
+            and has_delivery_warning(unit)
+            and not produced_anything(unit, r)
+        ):
             findings.append(
                 f"DELIVERY WARNING {unit.name} -- sent its task but was never observed starting, "
                 "and its branch has no commits"
             )
         if unit.status not in (RUNNING, DONE):
             continue
-        state = poll(unit, agents)
+        state = poll(unit, agents) if agents is not None else "unknown"
         if unit.status == DONE:
             if branch_error is None and not produced_anything(unit, r):
                 findings.append(
@@ -5388,6 +5905,49 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_redrive(args: argparse.Namespace) -> int:
+    """Re-prompt a unit recorded as sent-but-never-started, once its session is idle.
+
+    ``prompt_undelivered`` was a terminal bucket: ``go`` skips a unit with a tab, ``settle``
+    reads only running units, and nothing returned it to pending (cycle 2, F76). This is the
+    one door out. It writes a pane, so it gates on the companion floor like the other write
+    commands, and it goes through the launcher's ``redeliver`` -- the same inspected writer
+    as every other write, and the same never-started gate: a session that visibly started may
+    already hold the task and is refused with the tab named for the operator to read.
+    """
+    assert_agent_launcher_available()
+    r = Run.load()
+    unit = r.unit(args.unit)
+    if unit.status != PROMPT_UNDELIVERED:
+        raise SystemExit(
+            f"{unit.name} is {unit.status!r}, not {PROMPT_UNDELIVERED!r}; redrive only "
+            "re-prompts a unit whose prompt was never observed to be taken"
+        )
+    if not unit.pane_id:
+        raise SystemExit(f"{unit.name}: no pane recorded; relaunch it under a new name instead")
+    row = agent_row(unit)
+    if session_has_started(row):
+        status = row.get("agent_status") if row is not None else None
+        raise SystemExit(
+            f"{unit.name}: its session is {status!r}, so it may already hold the task; read "
+            f"tab {unit.tab_id} before prompting it again"
+        )
+    clear_delivery_warning(unit)
+    print(f"redriving {unit.name} ({unit.vendor}) into pane {unit.pane_id} -> {unit.task}")
+    try:
+        redeliver(unit, r.backend, review_elsewhere=r.reviews_separately())
+    except StagedInputError as exc:
+        unit.status = PENDING
+        if str(exc) not in unit.note:
+            append_unit_note(unit, str(exc))
+        print(f"  {unit.name} PENDING: {exc}")
+        r.save()
+        return 1
+    r.save()
+    print(f"  {unit.name}: {unit.status}")
+    return 0 if unit.status == RUNNING else 1
+
+
 def cmd_resume(args: argparse.Namespace) -> int:
     r = Run.load()
     unit, info = resume_unit(
@@ -5567,6 +6127,13 @@ def main(argv: list[str] | None = None) -> int:
         help="remote name (defaults to recorded parked remote, or origin)",
     )
     s.set_defaults(func=cmd_resume)
+
+    s = sub.add_parser(
+        "redrive",
+        help="re-prompt a unit recorded as sent-but-never-started once its session is idle",
+    )
+    s.add_argument("--unit", required=True, help="unit in the prompt_undelivered state")
+    s.set_defaults(func=cmd_redrive)
 
     args = p.parse_args(argv)
     return int(args.func(args))

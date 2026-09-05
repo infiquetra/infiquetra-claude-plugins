@@ -10,6 +10,7 @@ rather than a stand-in for it.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib.util
 import sys
 from pathlib import Path
@@ -26,6 +27,15 @@ SCRIPT = (
     / "orchestrate"
     / "scripts"
     / "orchestrate.py"
+)
+LAUNCHER = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "agent-launcher"
+    / "skills"
+    / "agent-launcher"
+    / "scripts"
+    / "launcher.py"
 )
 
 
@@ -424,7 +434,7 @@ class TestOpenCodeVariantResolution:
             orchestrate.resolve_opencode_variant("ultra", options)
         msg = str(exc_info.value)
         assert "ultra" in msg
-        assert "not available in live picker options" in msg
+        assert "options the live picker offered" in msg
 
     def test_empty_picker_options_fails_loudly(self, orchestrate: ModuleType) -> None:
         with pytest.raises(SystemExit) as exc_info:
@@ -474,3 +484,50 @@ class TestOpenCodePickerParsing:
             "high",
             "max",
         ]
+
+
+class TestTheReusedPaneGuardIsInherited:
+    """Orchestrate launches through launcher.py exec'd into itself, so the guard issue 897 ships
+    there applies to a dispatched unit without a second implementation that could drift."""
+
+    def test_dispatched_units_get_the_launcher_guard_not_a_copy(
+        self, orchestrate: ModuleType
+    ) -> None:
+        assert hasattr(orchestrate, "guard_reused_pane")
+        assert hasattr(orchestrate, "composer_staged_text")
+        assert (
+            Path(orchestrate.guard_reused_pane.__code__.co_filename).resolve() == LAUNCHER.resolve()
+        )
+        assert Path(orchestrate.launch.__code__.co_filename).resolve() == LAUNCHER.resolve()
+
+
+class TestAPlanOmittingPermissionSaysSo:
+    """Inheriting the default because a plan row omitted the field is reported, not silent."""
+
+    def test_plan_omission_of_permission_is_reported(
+        self, orchestrate: ModuleType, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        plan = {
+            "units": [
+                {"name": "u0", "vendor": "claude", "task": "build it"},
+                {
+                    "name": "u1",
+                    "vendor": "claude",
+                    "task": "extend it",
+                    "permission": "bypass",
+                },
+            ]
+        }
+        units = orchestrate.plan_units(plan)
+        assert units[0].permission_declared is False
+        assert units[1].permission_declared is True
+        assert "permission not declared, inheriting auto: u0" in capsys.readouterr().out
+
+    def test_declared_permission_survives_a_run_record_round_trip(
+        self, orchestrate: ModuleType
+    ) -> None:
+        unit = orchestrate.Unit(name="u", vendor="claude", task="x")
+        unit.permission_declared = False
+        raw = dataclasses.asdict(unit)
+        assert "permission_declared" in raw
+        assert orchestrate.Unit(**raw).permission_declared is False

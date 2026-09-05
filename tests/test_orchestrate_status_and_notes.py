@@ -141,7 +141,6 @@ def test_delivery_warning_appends_to_the_file_handover_note(
     )
     monkeypatch.setattr(orchestrate, "run", lambda *_args, **_kwargs: completed)
     monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
-    monkeypatch.setattr(orchestrate, "send", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
     monkeypatch.setattr(
         orchestrate,
@@ -155,9 +154,11 @@ def test_delivery_warning_appends_to_the_file_handover_note(
 
     orchestrate.launch(unit)
 
-    assert handover_note in unit.note
-    assert orchestrate.DELIVERY_WARNING in unit.note
-    assert unit.note == f"{handover_note}; {orchestrate.DELIVERY_WARNING}"
+    assert unit.note.split("; ") == [
+        handover_note,
+        "input box not_found, prompted without a conclusive inspection",
+        orchestrate.DELIVERY_WARNING,
+    ]
 
 
 def test_long_task_handover_appends_after_the_setup_prompt_fallback_note(
@@ -183,8 +184,9 @@ def test_long_task_handover_appends_after_the_setup_prompt_fallback_note(
         )
 
     monkeypatch.setattr(orchestrate, "run", pane_fallback)
+    unit.launch_receipt = {"owned": True}
 
-    orchestrate.send(unit, "pane-1")
+    orchestrate.send(unit, orchestrate.PaneWriter(unit, "pane-1", wrote_before=False))
 
     assert unit.note.startswith("prompted through its pane")
     assert "; task handed over as a file, too long to type:" in unit.note
@@ -208,8 +210,9 @@ def test_long_task_without_setup_keeps_both_pane_fallback_diagnostics(
         )
 
     monkeypatch.setattr(orchestrate, "run", pane_fallback)
+    unit.launch_receipt = {"owned": True}
 
-    orchestrate.send(unit, "pane-1")
+    orchestrate.send(unit, orchestrate.PaneWriter(unit, "pane-1", wrote_before=False))
 
     assert unit.note.startswith("task handed over as a file, too long to type:")
     assert (

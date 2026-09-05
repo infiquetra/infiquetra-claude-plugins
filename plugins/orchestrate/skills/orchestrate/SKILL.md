@@ -81,9 +81,31 @@ created, and must launch only through `go` via the shared `agent-launcher` plugi
 Never create worktrees manually or invoke `agents` directly for a run unit. Direct wrapper calls
 bypass the background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal
 operator UI focus. The launch contract lives in `plugins/agent-launcher/`; Orchestrate does not
-keep a private copy. Orchestrate declares `agent-launcher >=1.0.0` as a dependency; if the companion
-is unresolvable, `roster`, `start`, `expand`, and `go` fail fast before any session or worktree is
-created, reporting the exact supported remediation (`claude plugin install agent-launcher@infiquetra-plugins`).
+keep a private copy. Orchestrate declares its Agent Launcher floor in its plugin manifest and reads
+that same declaration at runtime. Discovery and import never kill `--help`, `status`, or other
+read-only recovery commands merely because the companion is stale or unusable. Seven commands write
+a pane, create a session or worktree, or close a tab -- `start`, `expand`, `go`, `review-result`,
+`land`, `clean`, and `redrive` -- and those seven enforce the floor before doing so; each fault names its own
+cause and remedy: a companion below the floor refuses with
+`claude plugin update agent-launcher@infiquetra-plugins`, a missing or unusable one with
+`claude plugin install agent-launcher@infiquetra-plugins`. `roster` and `saga` write nothing, so a
+companion below the floor still serves them; they refuse, with the install remedy, only when no
+companion was ingested at all. `status` and `check` survive a missing or unusable companion by
+reading liveness as `unknown` and printing the fault once; `wait`, `settle`, and `adopt` need the
+companion's Herdr reads and refuse without it.
+**A staged-input stop is retryable through the same pane.** When a launch refuses to prompt because
+the pane's composer holds an unsent operator draft, the unit stops `PENDING` with its tab, pane and
+launch receipt recorded and the draft's size — never its text — in the note. The recovery has two
+exits. Clear the composer and rerun `go`: the retry re-prompts that same pane and creates no
+session, and `already has tab` never applies to a staged unit, so nothing needs editing by hand.
+Or give the unit up: `clean` closes the tab when Orchestrate owns it and reports a tab it does not
+own as left open, never as closed.
+**A unit recorded `prompt_undelivered` has one door back: `redrive --unit <name>`.** That status
+means the task was sent and the session was never observed to start; `go` skips the unit because it
+has a tab, and `settle` reads only running units. Read the tab first. If the session is idle and
+never took the task, `redrive` re-prompts it through the same inspected writer `go` uses; if the
+session has visibly started, `redrive` refuses and names the tab, because it may already hold the
+task.
 Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step, not a license to bypass `expand` or `go`. A branch in the run's
 `orch/<run-id>-<unit>` series with no row in the table is flagged as unrecorded drift by `status` and
@@ -133,9 +155,18 @@ Operator-owned requests prevent that resubmission.
 ## State
 
 One file, `.orchestrate/run.json`: run id, source, base commit, the verbatim review result and routing
-state, and per unit its name, vendor, model, effort, account, task, role, owned paths, outstanding fix requests,
-dependencies, worktree, branch, tab, Herdr agent name, status, `variant`, `launch_receipt`, and `parked_state`. If
-session state is wrong, `herdr agent list` is the real truth.
+state, and per unit its name, vendor, model, effort, account, `permission` (`auto` or `bypass`),
+`permission_declared` (whether the plan row named that posture or the unit inherited the default), task,
+role, owned paths, outstanding fix requests, dependencies, worktree, branch, tab, Herdr agent name, status,
+`variant`, `launch_receipt`, and `parked_state`. If session state is wrong, `herdr agent list` is the real
+truth.
+
+The file names its own shape under a `contract` key. An Orchestrate from 4.0.0 up to 4.1.x refuses a
+run file this version writes, by name, with the update remedy, rather than reading it wrong. An
+Orchestrate older than 4.0.0 has no contract gate at all: it opens the file blind and fails without a
+named cause. This Orchestrate still opens every run file an older one wrote. So after updating
+Orchestrate, finish or `clean` a run with the version that started it, or update every seat that will
+touch the run.
 
 `start` adds `.orchestrate/` to the driven repository's local `.git/info/exclude`, preserving every
 existing rule and never duplicating its own. The run record and task material therefore stay local

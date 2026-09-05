@@ -310,7 +310,7 @@ class TestModelAuthorityBoundary:
         with pytest.raises(SystemExit) as excinfo_variant:
             orchestrate.resolve_opencode_variant("super-extreme-variant", available_variants)
         assert "super-extreme-variant" in str(excinfo_variant.value)
-        assert "not available in live picker options" in str(excinfo_variant.value)
+        assert "options the live picker offered" in str(excinfo_variant.value)
 
     def test_fleet_commons_internal_team_execution_routing_unaffected(self) -> None:
         """Fleet Commons internal Team Execution tier semantics remain intact."""

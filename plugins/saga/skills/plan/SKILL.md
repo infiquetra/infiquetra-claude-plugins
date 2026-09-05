@@ -335,14 +335,14 @@ vector). Add `deepened: YYYY-MM-DD` to frontmatter when the plan was substantive
 
 ### 5.0 Submit the card's move to `Planning` / `Ready for Active` — Mission Control executes it
 
-**Actor:** this skill. **Trigger:** the plan exists, is committed, and has cleared review, so the
+**Actor:** this skill. **Trigger:** the plan document exists and has cleared review, so the
 card is no longer being designed -- it is ready to build. **Move:** the live pair `Stage` =
 `Planning`, `Status` = `Ready for Active`. `Ready for Active` is the schema's own named terminal
 option for the Planning stage; there is no bare `Ready` option on either live field.
 
 **Deciding and submitting is not writing.** As in Phase 0.6, this skill submits the move and
-Mission Control executes it, derived from what this skill durably produced: the committed plan, the
-saga tick, and the work-session path.
+Mission Control executes it, derived from what this skill durably produced: the plan document and
+the saga tick.
 
 ```bash
 python3 plugins/saga/scripts/reconcile_controller.py reconcile \
@@ -543,11 +543,13 @@ shared registry**:
 
 <!-- EFFORT-EMISSION MARKER (#362 U5, R7, KTD6): the per-unit "proposed tier" cell is a
 `<model>/<effort>` pair — both fields sourced verbatim from `tier_resolver.resolve(...).model`
-and `.effort`, never a bare model literal with effort omitted. This is emission only: /plan
-surfaces the resolver's effort so the operator can see and override it before locking, but no
-dispatch mechanism honors it yet (that's #363's `EFFORT_RIDER`/cascade). Team-execution's own
-A7 worker table (`plugins/team-execution/skills/team-execution/SKILL.md`) carries the same
-`<model>/<effort>` cell shape for the identical reason — see its Tier column note. -->
+and `.effort`, never a bare model literal with effort omitted. /plan surfaces the resolver's
+effort so the operator can see and override it before locking, and the honoring seam is
+`fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)`: the `workflow` and
+`external-engine` spawn kinds carry effort on a real control, while the `agent` spawn kind
+prepends an `EFFORT_RIDER` directive, a labeled proxy rather than a native knob, because the
+Agent tool has no per-call effort parameter. See
+`plugins/fleet-core/references/effort-convention.md` for the canonical description. -->
 
 For a unit carrying `engine`/`capability` (U12 chaperone-worker units), the recommendation row also
 carries the unit's `intent` and a **plan-time resolution preview**: for a capability-routed unit, call

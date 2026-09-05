@@ -30,6 +30,8 @@ Each of the four core files has a block-quote intro at the top with its own form
 
 ## Quick navigation by topic
 
+- Saga Plan shared contract parser and interim #926 repair → [DECISIONS](DECISIONS.md#926-plan-drift-checks-derive-dont-restate)
+
 - Channel plugins are foreground-only; `--bg` / `/bg` strips `--dangerously-load-development-channels` → [LEARNINGS](LEARNINGS.md#cc-channels-bg-not-supported)
 - Claude Code Channels split terminal/channel surfaces by design (don't try to mirror) → [LEARNINGS](LEARNINGS.md#cc-channels-surface-split)
 - Plugin runtime coaching belongs in MCP `instructions=`, NOT `agents/*.md` → [LEARNINGS](LEARNINGS.md#cc-channels-surface-split)

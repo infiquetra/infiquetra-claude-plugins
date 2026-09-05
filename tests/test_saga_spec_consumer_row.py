@@ -15,7 +15,7 @@ from the documents rather than restated beside them:
 * ``test_saga_spec_plan_consumer_row_matches_skill`` — the saga-spec ``/plan``
   consumer row lists exactly the fields Plan's Phase 5.3 save blocks write.
   The expected set is derived from the skill's own fenced ``saga.py save``
-  blocks (any info string, union across variants, shell comments stripped,
+  blocks (shared fence reader, union across variants, shell comments stripped,
   minus the ``--kind``/``--id`` identity flags); the row is parsed per the
   convention stated beside it (backticked identifiers outside parentheses).
   No second hardcoded field list lives here.
@@ -37,6 +37,9 @@ import re
 from pathlib import Path
 
 import pytest
+from saga_plan_contract import flags_of as _flags_of
+from saga_plan_contract import plan_phase_53 as _plan_phase_53
+from saga_plan_contract import save_blocks as _save_blocks
 
 ROOT = Path(__file__).parent.parent
 PLUGIN_ROOT = ROOT / "plugins" / "saga"
@@ -201,45 +204,9 @@ def test_plan_docs_reject_unhonored_effort_claims() -> None:
 _IDENTITY_FLAGS = frozenset({"kind", "id"})
 
 
-def _plan_phase_53() -> str:
-    """Return the Phase 5.3 section of plan/SKILL.md (up to Phase 5.4)."""
-    text = PLAN_SKILL.read_text(encoding="utf-8")
-    start = text.index("### 5.3")
-    end = text.index("### 5.4", start)
-    return text[start:end]
-
-
-def _save_blocks(section: str) -> list[str]:
-    """Every fenced block in a section that runs ``saga.py save``.
-
-    The fence pattern accepts any info string: a save variant titled
-    `````bash title="..."````` is a save block exactly like a plain one.
-    """
-    blocks = re.findall(r"```[^\n]*\n(.*?)```", section, flags=re.DOTALL)
-    save_blocks = [block for block in blocks if "saga.py save" in block]
-    assert save_blocks, "Phase 5.3 must contain runnable saga save command block(s)"
-    return save_blocks
-
-
-def _flags_of(block: str) -> set[str]:
-    """Flag names in one save block, normalized to stored field names.
-
-    Trailing ``#`` shell comments are stripped first: a comment naming a flag
-    (``# ONLY when --destination nonprod-deploy``) documents a condition, it
-    does not pass that flag.
-    """
-    code = "\n".join(line.split(" #", 1)[0] for line in block.splitlines())
-    return {flag.replace("-", "_") for flag in re.findall(r"--([a-z][a-z0-9-]*)", code)}
-
-
-def _skill_field_set(section: str | None = None) -> set[str]:
-    """Union of Phase 5.3 save-block flags, minus the identity flags.
-
-    Derived from the skill text passed in, or from plan/SKILL.md when omitted
-    — the derivation below is bound to that text by the self-guard.
-    """
-    text = _plan_phase_53() if section is None else section
-    fields = set().union(*(_flags_of(block) for block in _save_blocks(text)))
+def _skill_field_set(section: str) -> set[str]:
+    """Derive the flag union from explicit skill text; no alternate file-read path."""
+    fields = set().union(*(_flags_of(block) for block in _save_blocks(section)))
     return fields - _IDENTITY_FLAGS
 
 
@@ -250,10 +217,9 @@ def _plan_row_line(spec_text: str) -> str:
     return matches[0]
 
 
-def _row_field_set(spec_text: str | None = None) -> set[str]:
+def _row_field_set(spec_text: str) -> set[str]:
     """Backticked identifiers outside parentheses in the /plan Writes cell."""
-    text = SAGA_SPEC.read_text(encoding="utf-8") if spec_text is None else spec_text
-    cells = [cell.strip() for cell in _plan_row_line(text).strip().split("|")[1:-1]]
+    cells = [cell.strip() for cell in _plan_row_line(spec_text).strip().split("|")[1:-1]]
     assert len(cells) >= 3, "the /plan consumer row must have a Writes cell"
     deparen = re.sub(r"\([^)]*\)", " ", cells[2])
     return set(re.findall(r"`([a-z][a-z_]*)", deparen))
@@ -267,29 +233,35 @@ def test_saga_spec_plan_consumer_row_matches_skill() -> None:
     from the row without removing its flag fails it naming the row-side orphan.
     The expected set is derived from the skill, never restated here.
     """
-    expected = _skill_field_set()
+    real_section = _plan_phase_53()
+    spec_text = SAGA_SPEC.read_text(encoding="utf-8")
+    expected = _skill_field_set(real_section)
     assert expected, "an empty skill-derived field set must never read as agreement"
-    row = _row_field_set()
+    row = _row_field_set(spec_text)
     assert row, "an empty row field set must never read as agreement"
     assert expected == row, (
-        "the /plan consumer row drifted from Phase 5.3: "
+        f"{SAGA_SPEC}: /plan consumer row drifted from {PLAN_SKILL} Phase 5.3: "
         f"in the skill but not the row: {sorted(expected - row)}; "
         f"in the row but not the skill: {sorted(row - expected)}"
     )
 
-    # Self-guard: the expected set must flow from the skill text. Deriving
-    # from altered text surfaces a forged flag the row lacks — so replacing
-    # `_skill_field_set` with `_row_field_set` (row compared to itself, a
-    # tautology that always passes) fails here instead.
-    real_section = _plan_phase_53()
-    assert "--orchestration-downgrade" not in real_section
-    forged = real_section.replace(
-        "--orchestration-recommended <",
-        "--orchestration-downgrade <note> --orchestration-recommended <",
-        1,
+    # Exercise the same explicit-input path as the comparison above. Allocate
+    # a synthetic name absent from the documents AND the engine's source rather
+    # than claiming a real option (formerly --orchestration-downgrade) cannot exist.
+    occupied = (
+        real_section + spec_text + (PLUGIN_ROOT / "scripts/saga.py").read_text(encoding="utf-8")
     )
-    assert "orchestration_downgrade" in _skill_field_set(forged)
-    assert "orchestration_downgrade" not in _row_field_set()
+    forged_flag = "saga-test-only-nonexistent-field"
+    while forged_flag in occupied or forged_flag.replace("-", "_") in occupied:
+        forged_flag += "-x"
+    forged_field = forged_flag.replace("-", "_")
+    forged = real_section + (
+        '\n```bash title="derivation probe"\n'
+        f"python3 plugins/saga/scripts/saga.py save --{forged_flag} value\n```\n"
+    )
+    assert _skill_field_set(forged) == expected | {forged_field}, (
+        "skill derivation must reflect an added option through the comparison's input path"
+    )
 
     # Titled-fence proof: a save variant with a non-plain info string is still
     # a save block. Under a plain-fence-only pattern this finds nothing and
@@ -299,12 +271,29 @@ def test_saga_spec_plan_consumer_row_matches_skill() -> None:
         "python3 plugins/saga/scripts/saga.py save --forged-flag x\n```\n"
     )
     assert any("saga.py save" in block for block in titled)
+    for opening, closing in (("~~~bash", "~~~"), ('````bash title="save"', "````")):
+        assert _save_blocks(
+            f"An inline ``` mention is prose.\n{opening}\n"
+            f"python3 plugins/saga/scripts/saga.py save --id probe\n{closing}\n"
+        ) == ["python3 plugins/saga/scripts/saga.py save --id probe"]
 
     # Comment-strip proof: a flag named only inside a `#` shell comment is
     # documentation, not a write.
     assert _flags_of("  --deploy-autonomy <gate|auto>   # ONLY when --forged-flag x") == {
         "deploy_autonomy"
     }
+
+    # Hashes and flag-like text inside values are data. Comments at column 0
+    # or after a tab are comments just as they are after a space.
+    assert _flags_of(
+        '--decisions "KTD: per issue #926" --issue-ref owner/repo#926\n'
+        "# --comment-only x\n\t# --tab-comment x\n"
+        '--adr-refs "--quoted-value" --plan-path=docs/plans/example.md'
+    ) == {"decisions", "issue_ref", "adr_refs", "plan_path"}
+    assert _flags_of(
+        "--issue-ref owner/repo#926 --decisions '# a quoted value' --adr-refs ADR-1"
+    ) == {"issue_ref", "decisions", "adr_refs"}
+    assert _flags_of(r"--decisions escaped\ #926 --adr-refs ADR-1") == {"decisions", "adr_refs"}
 
     # Union-across-variants proof: --deploy-autonomy and --orchestration-ref
     # each live in only one save block, so an intersection would under-specify.
@@ -319,9 +308,10 @@ def test_saga_spec_plan_consumer_row_matches_skill() -> None:
     # Parse-stability proof: the auto-derivation note is present in the row,
     # and the parse covers flag-written fields only — `decisions` aside,
     # parenthesized notes are descriptive. In particular
-    # `orchestration_operator_choice` is a real stored field the engine derives
-    # on every save (see the convention beside the table); the parse excludes
-    # it because no Phase 5.3 flag passes it, not because it names no field.
+    # `orchestration_operator_choice` is stored. Without an explicit choice,
+    # the engine fills it from an explicitly passed --orchestration-mode.
+    # When both flags are absent, a new saga starts empty; existing state is
+    # carried forward. No Phase 5.3 flag passes the choice directly.
     raw_row = _plan_row_line(SAGA_SPEC.read_text(encoding="utf-8"))
     assert re.search(r"\([^)]*destination=nonprod-deploy[^)]*\)", raw_row)
     assert "orchestration_operator_choice" in raw_row

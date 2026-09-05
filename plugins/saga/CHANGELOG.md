@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Plan contract checks now share their template parser.** Routing and consumer-row checks
+  use the same section, fence and option readers, so titled save variants cannot disappear
+  from only one check. Hashes inside quoted values or issue references preserve following
+  options. The positive derivation probe uses explicit document inputs and a synthetic name
+  selected to be absent from the documents and engine source. The command card links to the
+  consumer row instead of copying its fields. Operator-choice notes now distinguish an
+  explicit choice, derivation from an explicit mode flag, and preservation on progress saves.
+
 - **Plan no longer claims to produce artifacts it does not produce.** The derived-state sentence
   named the work-session path, which the specification assigns to Work, and named a committed
   plan, which Plan never produces because it writes a file and never runs `git commit`. It now

@@ -28,6 +28,8 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+from saga_plan_contract import plan_phase_53 as _plan_phase_53
+from saga_plan_contract import save_blocks, save_options
 
 ROOT = Path(__file__).parent.parent
 PLUGIN_ROOT = ROOT / "plugins" / "saga"
@@ -395,14 +397,6 @@ def test_successful_plan_save_tick_resolves_to_the_written_document(
 # ---------------------------------------------------------------------------
 
 
-def _plan_phase_53() -> str:
-    """Return the Phase 5.3 section of plan/SKILL.md (up to Phase 5.4)."""
-    text = PLAN_SKILL.read_text(encoding="utf-8")
-    start = text.index("### 5.3")
-    end = text.index("### 5.4", start)
-    return text[start:end]
-
-
 def _dispatch_status_for_finished_plan() -> str:
     """Read the ``phase_status`` the dispatch table requires to route ``plan`` onward.
 
@@ -449,18 +443,13 @@ def test_plan_phase_status_agrees_end_to_end() -> None:
     never drift apart again in silence. Only the runnable command blocks are pinned: the
     prose around them stays free.
     """
-    section = _plan_phase_53()
-    blocks = re.findall(r"```[a-z]*\n(.*?)```", section, flags=re.DOTALL)
-    save_blocks = [block for block in blocks if "saga.py save" in block]
-    assert save_blocks, "Phase 5.3 must contain runnable saga save command block(s)"
-    values = [
-        value for block in save_blocks for value in re.findall(r"--phase-status[= ](\S+)", block)
-    ]
-    assert values, "Phase 5.3 must pass --phase-status on its save command(s)"
-    assert len(values) == len(save_blocks), (
-        f"every Phase 5.3 save variant must pass --phase-status; found {len(values)} "
-        f"flag(s) across {len(save_blocks)} save command(s)"
+    blocks = save_blocks(_plan_phase_53())
+    per_block = [save_options(block).get("phase_status", []) for block in blocks]
+    assert all(len(values) == 1 for values in per_block), (
+        f"{PLAN_SKILL} Phase 5.3: every save variant must pass --phase-status exactly once; "
+        f"counts per variant: {[len(values) for values in per_block]}"
     )
+    values = [values[0] for values in per_block]
     dispatch = _dispatch_status_for_finished_plan()
     spec = _spec_plan_write_phase_status()
     assert set(values) == {dispatch} == {spec}, (

@@ -105,7 +105,7 @@ HOW-planning engine for settled requirements.
 | Do not use when | The WHAT is still vague, or the change is truly atomic. |
 | Inputs | Requirements doc, issue, source artifact, or request. |
 | Outputs | Plan under `docs/plans/` and a plan saga tick. |
-| Saga state | Writes `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy`, `adr_refs`, `decisions`, `orchestration_mode`, `orchestration_recommended`, `orchestration_ref` — the `/plan` consumer row (`references/saga-spec.md` §11). |
+| Saga state | Saves the Plan tick; see the [/plan consumer row in saga-spec §11](../references/saga-spec.md#11-consumer-contract-rebuild-targets) for written fields and their conditions. |
 | Routes in | `idea-ready`, `requirements-ready`, `docs/brainstorms/`, `docs/specs/`. |
 | Routes out | `/doc-review`, `/work`. |
 | Gates | Does not implement or run the review gauntlet. |

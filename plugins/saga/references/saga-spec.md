@@ -308,9 +308,26 @@ HANDOFF_MATURITIES = ("idea-ready", "requirements-ready", "plan-ready", "resume-
 
 `destination` mirrors `lifecycle_state.normalize_destination`'s canonical set — use that helper to normalize
 user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing. `HANDOFF_MATURITIES` is
-implemented in `plugins/saga/scripts/handoff_envelope.py`.
+implemented in `plugins/saga/scripts/handoff_envelope.py`. Frontmatter `maturity` must be the top-level `maturity:` key of the YAML mapping delimited by `---` lines, decided by parsing that
+block as YAML rather than by scanning lines. Any other appearance inside the block — a sequence item
+at any column, a key nested under another mapping key, a flow-style mapping nested under another key, or a
+`maturity:` line in a block that will not parse — does not declare and fails closed as
+`unknown:carrier:`, never falling through to the path rule. A flow-style mapping that is itself the whole top-level mapping declares like any top-level key. An unrecognized non-empty, empty, non-delimited carrier (within the first 30 lines), unterminated block, or unreadable
+file (within the first 8192 bytes) fails closed with no durable route and a diagnostic, rather than falling through to the path rule, provided the declaration lies within the bounded read windows; beyond the 8192-byte window the source fails closed as `unknown:unterminated:`.
+The field's runtime domain is consequently NOT closed at the six values: `infer_maturity` may also
+return the empty string, an `unknown:unrecognized:<raw>` sentinel carrying an unrecognized raw value
+(reserved namespace `unrecognized:` that no vocabulary value contains, so author text cannot forge it),
+a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared outside a delimited
+block), a `unknown:unterminated:<raw>` sentinel for a block whose closing delimiter was not found — either genuinely absent, or present but beyond the 8192-byte frontmatter read window (opening `---` without
+closing `---`), `unknown:unreadable` for a read/decode failure, or `unknown:out-of-root:<path>` for a source that resolves outside the declared root. A source that resolves outside the declared root is never read: if its path carries a marker directory (`docs/brainstorms/` and the like) and the same subpath exists inside the root, that in-root file is read instead and its declaration decides; otherwise the source is refused with `unknown:out-of-root:`, whatever it declares, whether or not it exists, and however its path is spelled. The envelope's published
+`handoff_maturity` field is bounded to 120 characters after the `unknown:` prefix (the helper may
+return the full raw value, but the published field is truncated; the `unknown:` prefix plus its
+discriminator segment is reserved and never appears in author-declared values), the fail-closed shapes
+recorded in `DECISIONS.md`
+`{#913-maturity-unknown-sentinel}` and specified for consumers in §4. Consumers MUST route on the
+vocabulary values only and stop on the sentinel shapes.
 
-Shaping is an Operations board Status, not a Saga lifecycle phase, not a Saga command, and not an automatic consequence of any Saga capability completing. Mission Control is the only routine writer of that field. Cross-reference `plugins/saga/skills/plan/SKILL.md` §0.6, which already states the same derivation boundary, and note that Office Hours' lowercase "discovery / shaping" (lines 3, 19, and 149) is ordinary English for its own activity, unrelated to the board column.
+Shaping is an Operations board Status, not a Saga lifecycle phase, not a Saga command, and not an automatic consequence of any Saga capability completing. Mission Control is the only routine writer of that field. Cross-reference `plugins/saga/skills/plan/SKILL.md` §0.6, which already states the same derivation boundary, and note that Office Hours' lowercase "discovery / shaping" phrasing is ordinary English for its own activity, unrelated to the board column (the lifecycle-consistency check pins those exact phrases mechanically).
 
 ---
 
@@ -483,6 +500,19 @@ directory. (The cached `branch`/`head_sha` may be stale — that is fine, git is
   parseable.
 - The plugin's own SemVer (`plugin.json` / `marketplace.json`) tracks the capability; `schema_version`
   tracks the on-disk envelope contract. They move independently.
+- The handoff envelope built by `handoff_envelope.py` carries its own `schema_version` (currently `"1.1"`) under the same rule: bump it on any breaking change to a field's meaning or layout, even when the JSON type is stable. (1.0 → 1.1 is the precedent: `suggested_command` changed from a field that always holds a runnable slash command to one that can hold a non-routable prose diagnostic when `handoff_maturity` is `pending-confirmation` or unrecognized — consumers must branch on `handoff_maturity` before trusting `suggested_command`.)
+- **Handoff-maturity field contract (part of the envelope surface).** `handoff_maturity` holds one of
+  the six `HANDOFF_MATURITIES` values (§4), the empty string (frontmatter declared the key but left it
+  blank), an `unknown:unrecognized:<raw>` sentinel for an unrecognized value (reserved namespace
+  `unrecognized:`), a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared
+  outside a delimited `---` block), a `unknown:unterminated:<raw>` sentinel for a block whose closing delimiter was not found — either genuinely absent, or present but beyond the 8192-byte frontmatter read window (opening `---` without closing `---`), `unknown:unreadable` for a read/decode failure, or `unknown:out-of-root:<path>` for a source that resolves outside the declared root (all
+  bounded to 120 characters after the `unknown:` prefix; the `unknown:` prefix and its discriminator
+  segment are reserved and never appear in author-declared values; design record: `DECISIONS.md`
+  `{#913-maturity-unknown-sentinel}`). For all non-vocabulary shapes `suggested_command` is
+  non-routable prose; the process still exits zero, so a consumer typed against the closed vocabulary
+  MUST detect the sentinel shapes by prefix/value, not by exit code. Routing `suggested_command` while
+  the value is empty, `unknown:`-prefixed, or `pending-confirmation` is an error — stop and fix the
+  declaring artifact's frontmatter instead.
 
 ---
 

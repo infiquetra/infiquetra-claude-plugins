@@ -7,6 +7,7 @@ check structure and references rather than prose style.
 
 from __future__ import annotations
 
+import html
 import importlib.util
 import re
 from pathlib import Path
@@ -145,6 +146,33 @@ def test_every_command_card_has_required_fields_and_existing_sources() -> None:
             assert path.exists(), f"{alias_id} source_ref missing: {source_ref}"
 
 
+def _check_read_by_derived(model: dict[str, Any], model_text: str) -> list[str]:
+    """TEST-6: read_by is derived, not asserted against a literal set.
+
+    Every read_by entry must name a skill whose SKILL.md branches on the maturity
+    value, and the model comment must not claim an uninventoried maturity has no
+    readers. Returns violation messages, [] = pass.
+    """
+    violations: list[str] = []
+    read_by = model["maturity"]["values"]["pending-confirmation"]["read_by"]
+    if not isinstance(read_by, list) or not read_by:
+        violations.append("pending-confirmation must declare its readers in read_by")
+        return violations
+    for reader in read_by:
+        skill_path = SAGA_ROOT / "skills" / reader.lstrip("/") / "SKILL.md"
+        if not skill_path.is_file():
+            violations.append(f"read_by entry {reader!r} names no skill")
+            continue
+        if "pending-confirmation" not in skill_path.read_text(encoding="utf-8"):
+            violations.append(
+                f"read_by entry {reader!r} names a skill that never branches "
+                "on pending-confirmation"
+            )
+    if "has no readers" in model_text:
+        violations.append('model comment claims an uninventoried maturity "has no readers"')
+    return violations
+
+
 def test_readiness_is_derived_not_stored() -> None:
     model = _load_model()
     state_axes = set(model["state_axes"])
@@ -161,7 +189,9 @@ def test_readiness_is_derived_not_stored() -> None:
         "pending-confirmation",
     }
     assert "docs/specs/" in maturity["values"]["requirements-ready"]["from"]
-    assert maturity["values"]["pending-confirmation"]["from"] == []
+    assert "docs/brainstorms/" in str(maturity["values"]["pending-confirmation"]["from"])
+    assert set(maturity["values"]["pending-confirmation"]["consumed_by"]) == {"/brainstorm"}
+    assert _check_read_by_derived(model, MODEL_PATH.read_text(encoding="utf-8")) == []
 
 
 def test_required_scenarios_pairs_and_visual_inventory_are_present() -> None:
@@ -231,3 +261,137 @@ def test_generated_visual_assets_match_model() -> None:
         )
         assert f'<title id="title">{visual["title"]}</title>' in svg
         assert "Do not edit by hand" in svg
+
+
+def test_ladder_renderer_rows_equal_model_maturity_values() -> None:
+    """CORR-12: the state-readiness ladder's maturity rows must equal the model's vocabulary.
+
+    The renderer's row list is separate from the model's maturity map, so a new maturity
+    value added to the model without a renderer row produces a diagram that disagrees with
+    the very document embedding it. This guard compares the row labels directly against the
+    model so the next vocabulary change fails here instead of shipping a stale asset.
+    """
+    model = _load_model()
+    renderer = _load_renderer()
+    rows = renderer.maturity_rows(model)
+    row_labels = {maturity for _, maturity, _ in rows}
+    # All three columns, not just the name: source and consumer text must equal what the model
+    # declares, so a label cannot drift from its declared source (DOC-34).
+    for source, maturity, consumer in rows:
+        declared = model["maturity"]["values"][maturity]
+        assert source == " + ".join(declared["from"]), (
+            f"ladder source for {maturity!r} is {source!r}, model declares {declared['from']!r}"
+        )
+        assert consumer == " / ".join(declared["consumed_by"]), (
+            f"ladder consumer for {maturity!r} is {consumer!r}, "
+            f"model declares {declared['consumed_by']!r}"
+        )
+    model_values = set(model["maturity"]["values"])
+    assert row_labels == model_values, (
+        f"ladder rows {row_labels!r} != model values {model_values!r}; "
+        "add the missing maturity to render_docs_visuals.py's LADDER_ORDER and regenerate the asset"
+    )
+    # Secondary: the rows must have reached the asset (not just the list)
+    svg = renderer.render_all(model)["state-readiness-ladder"]
+    for value in model_values:
+        assert value in svg
+
+
+def test_ladder_source_labels_fit_their_column() -> None:
+    """CORR-9: every rendered ladder source line must fit its column budget.
+
+    The budget is computed from the renderer's own geometry (the source label's x,
+    830, to the maturity label's x, 1115, minus padding) and its own calibration
+    (max_chars=46 in 490px, about 10.6px per character), so the test cannot drift
+    from the render it guards.
+    """
+    model = _load_model()
+    renderer = _load_renderer()
+    svg = renderer.render_all(model)["state-readiness-ladder"]
+    per_char_px = 490 / 46
+    budget_px = 1115 - 830 - 20
+    blocks = re.findall(r'<text x="830"[^>]*>(.*?)</text>', svg, flags=re.DOTALL)
+    assert blocks, "no source column texts found in ladder SVG"
+    for block in blocks:
+        lines = re.findall(r"<tspan[^>]*>(.*?)</tspan>", block, flags=re.DOTALL)
+        assert lines, f"source text block renders no lines: {block[:80]!r}"
+        for line in lines:
+            text = html.unescape(line)
+            assert len(text) * per_char_px <= budget_px, (
+                f"source line {text!r} ({len(text)} chars, "
+                f"~{len(text) * per_char_px:.0f}px) overruns the {budget_px}px source column"
+            )
+
+
+def test_ladder_caption_names_tick_frontmatter() -> None:
+    """DOC-12: the ladder caption must say tick frontmatter, not saga frontmatter."""
+    model = _load_model()
+    renderer = _load_renderer()
+    svg = renderer.render_all(model)["state-readiness-ladder"]
+    assert "never stored as saga tick frontmatter" in svg
+    assert "never stored in saga frontmatter" not in svg
+
+
+def test_state_readiness_table_matches_model() -> None:
+    """DOC-20: the maturity table in the manual page must match the model exactly.
+
+    The model README declares the model the maintained source for readiness mappings,
+    so the page that embeds the diagram must not diverge from it. This guard parses
+    the page's markdown table and asserts its (maturity, consumed) pairs are exactly
+    the model's, so the divergent row that predated this change cannot recur.
+    """
+    model = _load_model()
+    text = (SAGA_ROOT / "docs" / "state-readiness.md").read_text(encoding="utf-8")
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if "| Source" in line and "Derived maturity" in line:
+            start = i
+            break
+    assert start is not None, "maturity table header not found in state-readiness.md"
+    rows: list[tuple[str, str, str]] = []
+    for line in lines[start + 2 :]:
+        if not line.startswith("|"):
+            break
+        parts = [p.strip() for p in line.split("|")[1:-1]]
+        if len(parts) < 3:
+            continue
+        source, maturity_raw, consumed_raw = parts[0], parts[1], parts[2]
+        maturity = maturity_raw.strip("`").strip()
+        rows.append((source, maturity, consumed_raw))
+    # Build expected pairs from model: each maturity value and its consumed_by
+    expected_maturities = set(model["maturity"]["values"])
+    table_maturities = {m for _, m, _ in rows}
+    assert table_maturities == expected_maturities, (
+        f"table maturities {table_maturities!r} != model {expected_maturities!r}"
+    )
+    for _source, maturity, consumed in rows:
+        assert maturity in expected_maturities, f"table maturity {maturity!r} not in model"
+        expected_consumers = set(model["maturity"]["values"][maturity]["consumed_by"])
+        consumed_tokens = set(re.findall(r"/[a-z-]+", consumed))
+        assert consumed_tokens == expected_consumers, (
+            f"table row for {maturity!r} has consumers {consumed_tokens!r} != model's {expected_consumers!r} "
+            f"from cell {consumed!r}"
+        )
+
+
+def test_model_maturity_values_match_runtime_vocabulary() -> None:
+    """The docs model claims to own the readiness mappings, so bind it to the runtime constant.
+
+    Without this the model and `HANDOFF_MATURITIES` can drift apart silently: the model is
+    prose-checked for structure, and nothing compared its maturity keys to the vocabulary the
+    envelope actually routes on.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "handoff_envelope", SAGA_ROOT / "scripts" / "handoff_envelope.py"
+    )
+    assert spec is not None and spec.loader is not None
+    he: ModuleType = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(he)
+    model: dict[str, Any] = yaml.safe_load(MODEL_PATH.read_text(encoding="utf-8"))
+    model_values = set(model["maturity"]["values"])
+    runtime_values = set(he.HANDOFF_MATURITIES)
+    assert model_values == runtime_values, (
+        f"docs model maturity values {sorted(model_values)} != runtime "
+        f"HANDOFF_MATURITIES {sorted(runtime_values)}"
+    )

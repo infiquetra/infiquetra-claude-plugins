@@ -62,14 +62,24 @@ doc; a rich one produces a rich doc. Do not add ceremony to make a slim brainsto
 
 ## Metadata
 
-Markdown frontmatter at the top of the file. Field names are stable — never rename or repurpose them;
-adding new fields is fine.
+The block is YAML delimited by a literal `---` first line and a closing `---` line. Every brainstorm artifact must start with that block at the file's first byte; a bullet list is not frontmatter and will not be recognized. Example:
+
+```yaml
+---
+date: 2026-08-30
+topic: saga-worktree-prune
+capability: brainstorm
+activity: brainstorm-saga-worktree-prune-20260830T143000Z
+maturity: pending-confirmation
+---
+```
+
+Field names are stable — never rename or repurpose them; adding new fields is fine.
 
 - **`date`** — ISO 8601 (`YYYY-MM-DD`), ASCII digits. Used in the filename.
-- **`topic`** — kebab-case slug identifying the subject (e.g. `surface-scope-earlier`). Used in the
-  filename; resume matches on `topic` plus `capability` when Phase 0.1 scans `docs/brainstorms/`, and
+- **`topic`** — kebab-case slug identifying the subject (e.g. `surface-scope-earlier`), derived via the shipped slugify helper at `plugins/saga/scripts/saga.py:slugify` from the operator's free-form phrasing, and the same slug appears in the filename `YYYY-MM-DD-<topic>-requirements.md`; resume matches on `topic` plus `capability` when Phase 0.1 scans `docs/brainstorms/`, and
   a file carrying `topic` alone is a legacy artifact routed to tier 2 of the Phase 0.1 order, not a
-  match.
+  match. The filename's date `YYYY-MM-DD` is the same ISO date as the frontmatter `date` field.
 - **`capability`** — the producing capability, fixed as `brainstorm` (one of the two producer facts).
 - **`activity`** — the producing activity identity, formed as
   `brainstorm-<topic-slug>-<UTC timestamp YYYYMMDDTHHMMSSZ>` at the moment the artifact is first

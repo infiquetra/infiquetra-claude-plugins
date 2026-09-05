@@ -19,6 +19,158 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-09-05
+
+### A refusal fixture can defend a read bypass without proving that live routing is safe {#912-read-original-test-defended-bypass}
+
+**Context.** Codex, Lane A, revisited Saga's handoff envelope after the six-cycle
+fail-open pattern. The old `test_reanchored_missing_fallback_to_original` asserted
+that a declaring out-of-root original must be read when its in-root twin is absent.
+Its declaration was `pending-confirmation`.
+**Evidence.** The old fixture's no-command assertion passes even while the bypass
+exists, because `pending-confirmation` cannot route. The Lane A E1 transcript instead
+uses an out-of-root `plan-ready` file: both the ordinary absolute source and an
+in-root symlink emitted `/issue --prepare` before the fix. Those exact command
+assertions fail on the pre-fix module and pass on the repaired one. The complete
+transcripts and `cp` / `cmp -s` restoration results are in
+`docs/evidence/issue-912/lane-A-evidence.md`.
+**Mechanism.** A test that asserts the exceptional read becomes a defense of the
+bypass. A second assertion about an already-unroutable value does not exercise the
+security consequence, so green results make that defense look stronger than it is.
+**Fix.** Refuse every source resolving outside a declared root unless a contained
+marker-directory twin exists and supplies a declaration. Retain the unconfirmed
+fixture as a refusal pin, and give the live-command leak its own `plan-ready`
+fixtures. The repaired suite passes; the in-root twin's no-declaration mutation
+returns `requirements-ready` and fails its new pin.
+**Generalizable rule.** To prove that a refusal prevents an action, choose an input
+that would perform that action if the guard disappeared. Keep consistency and
+non-routable-value checks separate from that security proof.
+**Refs.** Issue #912/#913; SEC-1, TEST-1, SEC-7, TEST-10; U1 and KTD1/KTD2 in
+`docs/plans/2026-09-04-issue-912-repair-lanes.md`; existing learning
+`tests-that-pin-fail-opens`; `tests/test_handoff_envelope_maturity.py`.
+
+### A seeded negative that opens with an interrogative trips the dialogue guard  {#seeded-negative-vs-dialogue-guard}
+
+**Context.** TEST-3 required the review's exact misrouting sentence — "When the handoff
+maturity is `pending-confirmation`, route straight to `/plan`." — as a seeded negative
+inside `tests/test_brainstorm_continuity_contract.py`. That module is scanned by
+`tests/test_brainstorm_evidence_model.py`, which flags every question-shaped string
+literal (any literal starting with what/how/why/who/when/which/can-you/could-you, or
+ending with `?`) in every `tests/test_brainstorm_*.py` file.
+**Evidence.** The literal opens with "When"; the guard's `_is_question_shaped` lowercases
+and prefix-matches, so the seed as one literal is a violation and
+`test_no_dialogue_assertions_negative_load_bearing` goes red. Lane C evidence run:
+continuity + evidence-model modules, 27 passed after the fix.
+**Mechanism.** The guard is mechanical over literals, not over runtime values — it cannot
+tell a dispatch-table prose sentence from creative dialogue. Any seed assembled at
+runtime from non-question-shaped fragments (`"Xhen ...".replace("Xhen", "W" + "hen")`
+plus a backtick-led tail) yields the exact sentence while no single literal trips the
+scan; two fragment asserts pin the assembly to the review's wording.
+**Fix (or queued).** Shipped in Lane C: the fragmented seed plus pinning asserts in
+`test_no_pending_to_plan_seeded_negative`, with a comment naming the guard.
+**Validation (if applicable).** `test_no_dialogue_assertions_negative_load_bearing` green
+on the module containing the seed; the seeded test itself reds under the E2 pipe-qualifier
+mutation and greens on the fixed guard.
+**Generalizable rule.** When a required fixture string collides with a repo-wide literal
+scan, assemble it at runtime from clean fragments and assert the assembly — never weaken
+the scan or paraphrase the fixture.
+**Refs.** `tests/test_brainstorm_continuity_contract.py::test_no_pending_to_plan_seeded_negative`;
+`tests/test_brainstorm_evidence_model.py::test_no_dialogue_assertions_negative_load_bearing`;
+findings TEST-3, AU-4.
+
+### Prove a renderer refactor byte-identical with a variant-to-temp-dir render  {#renderer-refactor-byte-proof}
+
+**Context.** AM-9 (`globals()["maturity_rows"]` → direct call) had to be proven to change
+no asset byte, but CORR-9 and DOC-12 in the same function legitimately change the ladder
+asset, so a plain regenerate-and-compare cannot isolate AM-9.
+**Evidence.** A scratch copy of the renderer with only the CORR-9/DOC-12 hunks reverted,
+run with `--model <live model> --output-dir <tmp>`: all four SVGs `cmp`-identical to the
+committed assets (`state-readiness-ladder.svg BYTE-IDENTICAL`, plus command-matrix,
+lifecycle-atlas, ownership-boundary-map). Full evidence in
+`docs/evidence/issue-912/lane-C-evidence.md`.
+**Mechanism.** The renderer takes `--model`/`--output-dir`, so any hunk subset can be
+rendered off-tree and byte-compared without touching the live files or running git —
+the same isolation a detached worktree gives the gate, at single-file scale.
+**Fix (or queued).** Technique used for the AM-9 acceptance; no code change beyond the
+rename itself.
+**Validation (if applicable).** Post-fix regen changed exactly one asset
+(state-readiness-ladder); the other three stayed `cmp`-identical.
+**Generalizable rule.** When one function carries a behavior-neutral refactor plus a
+behavior-changing fix, prove the neutral part with a reverted-hunk variant rendered to a
+temp dir — a combined regen proves nothing about either half alone.
+**Refs.** `plugins/saga/scripts/render_docs_visuals.py`; findings AM-9, CORR-9, DOC-12.
+
+### A whole-suite guard must scope its self-exemption to its own module, not to a name  {#912-dialogue-guard-own-module-exemption}
+
+**Context.** The dialogue guard walks the AST of every `tests/test_brainstorm_*.py` module to prove no deterministic test asserts a creative question, but it must exempt its own definition of question-shapedness — the `_INTERROGATIVES` tuple and the `_is_question_shaped` predicate.
+**Evidence.** `tests/test_brainstorm_evidence_model.py` at `77c01c99`: the visitor skipped any `Assign` to `_INTERROGATIVES` and any function named `_is_question_shaped` in whichever module it was parsing, because the whole suite was concatenated before the walk and the finding carried no file path.
+**Mechanism.** A name-based self-exemption in a multi-file scan is a bypass shaped like hygiene: any other module can claim the exempt name and its question-shaped constants pass unchecked, and a violation report without a path cannot name the module that produced it. The exemption describes where the code lives, so it must be keyed to the path, not to the identifier.
+**Fix.** The scan is now `find_dialogue_assertions(paths)`, which parses each module separately, applies the `_INTERROGATIVES` / `_is_question_shaped` exemption only when the parsed path is the guard's own module, and reports `<path>:<line>` with the real file and line. Three seeded tests pin it: a control question is flagged with its file and line, a renamed `_INTERROGATIVES` tuple in another module is flagged, and the same tuple in the guard's own filename is not. Restoring the unscoped name-based exemption fails the escape test.
+**Generalizable rule.** When a guard scans many files and must exempt itself, scope the exemption to the guard's own path and prove the scoping with an escape test — a fixture that claims the exempt name from another file and must still be flagged.
+**Refs.** Issue #912 (TEST-4, TEST-8); `tests/test_brainstorm_evidence_model.py`; `plugins/saga/references/brainstorm-evidence-model.md`.
+
+### A regression probe must be sized to the regime that showed the defect  {#probe-sized-to-the-defect}
+
+**Context.** Cycle 8 of the issue 912 review fixed a denial of service in
+`handoff_envelope._read_frontmatter_maturity`: YAML expands anchors into SHARED objects, so a
+naive recursive walk revisits them and costs about 9x per anchor level. The verification step
+re-ran the probe that had originally demonstrated the hang and reported it green.
+
+**Evidence.** The re-run probe used a 230-byte payload. Run against the PRE-fix module that
+payload completes in **0.054s** — it passes on the broken code, so the green result proved
+nothing. Escalating the same generator against pre-fix source: 294 B/0.055s, 340 B/0.475s,
+386 B/4.253s, 432 B/**38.271s**, 478 B did not finish in 77s. Post-fix, every size from 294 B
+to 696 B completes in 0.003s or less. The test the repair added
+(`test_alias_shared_frontmatter_does_not_blow_up`) sits at nine anchor levels and, run against
+the pre-fix module, did not complete in 200 seconds — so it does pin the fix.
+
+**Mechanism.** A super-linear defect is invisible below its knee. Any payload in the flat part
+of the curve exercises the same code path and returns the same value, so the probe looks like a
+reproduction while testing nothing. Unlike a wrong-value defect, where any input in the failing
+class reproduces it, a complexity defect reproduces only above a threshold — and a probe rebuilt
+from a description rather than re-run byte-for-byte silently lands below it.
+
+**Generalizable rule.** For a performance or complexity defect, a regression probe is only
+evidence if the same probe has been run against the unfixed code and observed to fail; record
+the size and timing that made it fail, and size the committed test above that knee.
+
+
+### A test that agrees with the defect makes a green suite evidence of nothing  {#tests-that-pin-fail-opens}
+
+**Context.** Saga's handoff envelope decides whether a document may route live. Five review cycles ran against it; the suite was green at every one. The sixth review found three fail-opens in the same file, each of which had been present the whole time.
+**Evidence.** At `3995ae18`, three assertions pinned the defective behaviour rather than the intended behaviour. `tests/test_handoff_envelope_maturity.py` asserted that a frontmatter reading `  maturity: pending-confirmation` was "nested, therefore ignored" and must route live as `requirements-ready`; `tests/test_saga_plugin.py` asserted the same thing in a second copy; and `TEST-31` asserted a containment escape must return `requirements-ready`, with a comment conceding "which is a live route — recorded as a residual, not asserted here as desirable". Findings `AM-35`, `SEC-15` and `CORR-28` are the three the sixth review filed against exactly those shapes.
+**Mechanism.** A test encodes a claim about what the code should do. When the claim is wrong, the test does not merely fail to catch the defect — it actively defends it, because any correct fix now breaks a green suite and reads as a regression. That is the opposite of the signal a suite exists to give, and it is invisible to every technique that trusts the suite: coverage was 85%, mutation testing of the *production* line would show the test failing as designed, and a reviewer reading the diff sees an assertion with a plausible comment. The first case compounded it — under a real YAML reading, a uniformly indented block is a top-level mapping, so the word "nested" in the comment was simply false, and nobody re-derived it because a passing test looked like proof.
+**Fix.** Replaced the line scanner with `yaml.safe_load` so the contract is decided by a parser rather than by string prefixes, inverted all three assertions to the fail-closed behaviour, and mutation-proved every new guard by removing it and confirming a specific test fails. Nine regression tests, each pinned to one guard.
+**Generalizable rule.** When a defect survives several reviews of code that has tests, suspect the tests before suspecting the reviewers — read what the assertions claim, not whether they pass. An assertion whose comment concedes the behaviour is undesirable is a defect report someone filed against themselves and then pinned; treat it as a finding, not as a contract.
+**Refs.** Issue #912 cycle-7 repairs; findings `AM-35`, `SEC-15`, `CORR-28`, `TEST-31`; `plugins/saga/scripts/handoff_envelope.py`; `tests/test_handoff_envelope_maturity.py`. Related: [[guard-inside-the-except-that-never-runs]], the same file's cycle-5 defect where a guard sat in an exception handler that never fired.
+
+### Repairing a finding without reading its second implementation leaves the hole open  {#fix-the-copy-you-did-not-read}
+
+**Context.** Cycle 7 fixed `SEC-16`, a lexical containment check that let a parent segment spell its way past the declared root, in `infer_maturity`. Two units later, reproducing an unrelated finding surfaced the same lexical check still live in `build_handoff_envelope`.
+**Evidence.** `plugins/saga/scripts/handoff_envelope.py` at `0c4ea7a4`: `infer_maturity` used the new `_is_within` helper resolving both sides, while `build_handoff_envelope` still ran `Path(selected_source).is_relative_to(root.resolve())` with no `.resolve()` on the left. The finding named one location. The function still carrying the hole is the one that publishes the route the operator acts on.
+**Mechanism.** A review finding names where a defect was *observed*, not everywhere it *exists*. Fixing the named line and moving on is a plausible-looking repair that leaves the vulnerable path intact, and the gate stays green because no test covered the second copy. It surfaced only because a different finding, `AM-28`, forced a read of the duplicated logic.
+**Fix.** Both functions now consume one `_reanchor_to_marker` owner and one `_is_within` containment test.
+**Generalizable rule.** Before closing a finding, grep for the pattern it describes rather than the line it cites. If the same decision is implemented twice, fixing one copy is not a fix — and duplicated logic is itself the finding to raise.
+**Refs.** Issue #912 findings `SEC-16` and `AM-28`; commits `0c4ea7a4` and `3300e510`.
+
+
+### A guard placed inside the exception handler for a decode that never fails cannot run  {#guard-inside-the-except-that-never-runs}
+
+**Context.** The handoff envelope's frontmatter reader must fail closed rather than let a document declaring `maturity: pending-confirmation` route live. A repair cycle added a NUL-byte check to catch BOM-less UTF-16, whose text decodes into NUL-interleaved nonsense in which `maturity:` is unfindable. The check was written, reviewed, shipped, and never executed once.
+**Evidence.** `plugins/saga/scripts/handoff_envelope.py` at `bf0da80a`: the entire decode-recovery block, NUL check included, sat inside `except UnicodeDecodeError`. Executed at that revision, a `docs/plans/` file declaring `pending-confirmation` encoded as UTF-16 LE or BE without a byte-order mark returned `plan-ready` with a runnable `/issue --prepare`, and a corrupt NUL-bearing file did the same. The full suite was green throughout: 7,022 tests, mypy clean, both ruff legs clean.
+**Mechanism.** NUL is a valid UTF-8 byte, so `raw_bytes.decode("utf-8-sig")` **succeeds** on a BOM-less UTF-16 file. `UnicodeDecodeError` is never raised, the `except` arm never entered, and the guard written for exactly that input never evaluated. The reader then found no `maturity:` in the interleaved text, returned `None`, and the caller fell through to path inference. A guard that cannot run fails identically to a guard that does not guard, and neither is visible in a green suite — the tests exercised inputs that raise, not inputs that decode into nonsense.
+**Fix.** Reject a *successful* decode whose text contains NUL and route it into the same recovery ladder, and apply the maturity-not-in-text check to the UTF-16 sniff branch as well as the replacement-decode branch. Four deliberate tests now construct UTF-16 with a byte-order mark, UTF-16 LE and BE without one, and a corrupt NUL-bearing file. Removing the post-decode guard fails exactly the two BOM-less cases; before these tests existed, the only thing catching that regression was a repository-wide artifact scan that noticed by accident.
+**Generalizable rule.** When a guard lives inside an exception handler, prove the exception actually fires for the input the guard exists to catch — a handler for a failure mode that silently succeeds is dead code that reads as protection. Test the input, not the error path you assumed it takes.
+**Refs.** Issue #912 cycle-5 review, findings API-18 and CORR-22; `plugins/saga/scripts/handoff_envelope.py`; `tests/test_handoff_envelope_maturity.py`.
+
+### A reserved version number can be taken by a concurrent run before you commit — twice over  {#saga-version-taken-by-concurrent-run}
+
+**Context.** The issue-912 repair branch was ruled to release as Saga `0.150.0` — the next minor, because the handoff envelope's `schema_version` moved 1.0 to 1.1 and a capability change earns a minor. That ruling was correct when made. While the branch was still repairing, an unrelated run merged "Saga Plan Wave 1" to `origin/main` and shipped its own `0.150.0`. The branch re-derived the bump to `0.151.0`; over the following day five further unrelated releases merged, and `origin/main` shipped its own `0.151.0` too, so the same collision recurred against the same branch.
+**Evidence.** `scripts/gate.sh` step 07 red with `release_surface_diff_guard: saga: proposed manifest version '0.150.0' is equal to base-ref version '0.150.0' (must be strictly greater)`; `origin/main` at `1c1c04a9` carries `plugins/saga/.claude-plugin/plugin.json` version `0.150.0` and a `## [0.150.0]` CHANGELOG entry describing a `plan_pre_answers.v1` carrier, which is entirely different content from this branch's envelope-schema entry under the same heading. All 24 other gate steps passed. The recurrence is the same guard, one day later: `proposed manifest version '0.151.0' is lower than base-ref version '0.155.0'`, with `origin/main` at `f30d8678` carrying a `## [0.151.0] - 2026-08-31` entry of unrelated content.
+**Mechanism.** `tools/release_surface_diff_guard.py` diffs `{base_ref}...HEAD` and reads both manifests with `read_committed_file`, so it compares the **committed** branch head against the **current** `origin/main` tip. Two facts follow. First, a version ruling made against an earlier tip goes stale silently the moment another branch merges — nothing warns you, and the collision surfaces only as a gate failure. Second, bumping the working tree does not clear the guard: the fix must be committed before the guard can see it, which inverts the usual "make it green, then commit" order.
+**Fix.** Bumped the triad to `0.151.0`, and after the recurrence to `0.156.0` — the next minor above the *current* base, which is what the original ruling's rule yields once the base moves — and retitled this branch's CHANGELOG entry to `## [0.156.0]`, each time leaving the versions `origin/main` had already taken to merge in beneath it rather than colliding at a shared heading. Eight surfaces cite the number — the manifest, the marketplace entry, the CHANGELOG heading and body, a plugin reference doc, two `DECISIONS.md` refs and a hardcoded test pin — so a re-bump is a repo-wide rename, not a one-line edit.
+**Generalizable rule.** A version number is not reserved by deciding on it; it is reserved by merging it. Re-derive the bump from the *current* `origin/main` tip immediately before committing a release, and re-check it again after any long gate or review cycle, because a branch that stays open for a day on a busy trunk will be overtaken more than once, and expect the diff-aware guard to stay red until the bump is committed, because it reads committed `HEAD` and not the working tree.
+**Refs.** Issue #912 cycle-3 and cycle-6 repairs; gate step 07; `origin/main` at `1c1c04a9`, then at `f30d8678`; `tools/release_surface_diff_guard.py`.
 ## 2026-09-02
 
 ### A test that reaches a host binary is green where the binary lives and red where it does not  {#907-host-binary-leak-is-invisible-to-the-local-gate}
@@ -374,6 +526,15 @@ see whether the test still passes.
 
 ## 2026-08-30
 
+### A hand-maintained count in a Markdown table drifts silently; delete it, do not refresh it  {#916-dispatch-line-count-no-target}
+
+**Context.** The design record described a volatile hand-maintained Brainstorm source-line count in a dispatch table. At Saga 0.148.0 the target does not exist: `plugins/saga/references/sandbox-spawn-sites.md` has no Brainstorm row and no `~line` Brainstorm surface exists, verified at `3b2b7083`.
+**Evidence.** Preflight F1 at `e26b5c69`; `grep -rn "~line" plugins/saga/references/sandbox-spawn-sites.md` shows four rows (code-review, qa, investigate, resume) and no brainstorm; `grep -rn "brainstorm" plugins/saga/skills/brainstorm/` shows no line reference. The duplicated lifecycle block F2 appears in four skills (ideate L15, loop L26, office-hours L27, plan L19), not three — Strategy has only inline mentions, founder-review a variant.
+**Mechanism.** A volatile count that never existed cannot be removed — manufacturing a removal would be a vacuous edit that hides the finding. The correct fix is to record the finding and retire the count concept, while pinning the lifecycle ordering mechanically rather than by prose edit (KTD6).
+**Fix.** Recorded F1 and F2 in `LEARNINGS.md` and commit message; the dispatch table's stale parenthetical line counts were deleted rather than refreshed; left `sandbox-spawn-sites.md` Brainstorm surface untouched (one new verifier row added by B2 for different reason); added mechanical `tests/test_saga_lifecycle_consistency.py` discovering block by shape; added Shaping distinction once in `saga-spec.md`.
+**Generalizable rule.** When a design record names a volatile value, verify it against the live tree before acting — a count with no live target is a finding to record, not a line to delete.
+**Refs.** Issue #916 (B4); F1/F2; run plan §U4.
+
 ### Fenced skill blocks run in fresh shells — every consumer block must self-assign its variables  {#918-fresh-shell-block-scope}
 
 **Context.** Repair cycle 1 of issue #918 replaced two working literal script paths in `plugins/saga/skills/work/SKILL.md` with `$CC_WORKFLOWS_SCRIPTS_DIR`, assigned once in the pre-submit block. Cycle 2 (revision `76533cbe`) found the release and renew blocks — separate fenced blocks an agent runs in a NEW shell after the Workflow tool returns — expanded it to empty, so the lease protocol never closed.
@@ -424,28 +585,19 @@ see whether the test still passes.
 **Generalizable rule.** When one handler covers an ordered multi-write transaction, split the error by which write failed before composing any operator-facing claim — a message that asserts state must be conditioned on the write that establishes it.
 **Refs.** Issue #918 repair cycle 1; findings F05/F05u/F05d.
 
-### A volatile line count with no live target must be recorded, not manufactured  {#916-dispatch-line-count-no-target}
-
-**Context.** The design record described a volatile hand-maintained Brainstorm source-line count in a dispatch table. At Saga 0.148.0 the target does not exist: `plugins/saga/references/sandbox-spawn-sites.md` has no Brainstorm row and no `~line` Brainstorm surface exists, verified at `3b2b7083`.
-**Evidence.** Preflight F1 at `e26b5c69`; `grep -rn "~line" plugins/saga/references/sandbox-spawn-sites.md` shows four rows (code-review, qa, investigate, resume) and no brainstorm; `grep -rn "brainstorm" plugins/saga/skills/brainstorm/` shows no line reference. The duplicated lifecycle block F2 appears in four skills (ideate L15, loop L26, office-hours L27, plan L19), not three — Strategy has only inline mentions, founder-review a variant.
-**Mechanism.** A volatile count that never existed cannot be removed — manufacturing a removal would be a vacuous edit that hides the finding. The correct fix is to record the finding and retire the count concept, while pinning the lifecycle ordering mechanically rather than by prose edit (KTD6).
-**Fix.** Recorded F1 and F2 in `LEARNINGS.md` and commit message; left `sandbox-spawn-sites.md` Brainstorm surface untouched (one new verifier row added by B2 for different reason); added mechanical `tests/test_saga_lifecycle_consistency.py` discovering block by shape; added Shaping distinction once in `saga-spec.md`.
-**Generalizable rule.** When a design record names a volatile value, verify it against the live tree before acting — a count with no live target is a finding to record, not a line to delete.
-**Refs.** Issue #916 (B4); F1/F2; run plan §U4.
-
 ### Authored cases are design input; mislabelled captured transcripts are the failure  {#915-evidence-authored-vs-captured}
 
 **Context.** B3's scenario harness must distinguish authored case data (idea seed, independent variables, expected per-dimension outcome) from captured transcripts (evidence of real behaviour). The checkpoint that could have produced captured transcripts is parked, so all six cases are `transcript: none` and the suite must be green that way.
 **Evidence.** `tests/data/brainstorm/scenarios.json` six cases, `rubric.json` five dimensions, `calibration.json` three cases at `e26b5c69`; `plugins/saga/scripts/engine_benchmark.py` grader is never model-graded; `scripts/lint_test_shape.py` flags a fake-only module via AST.
 **Mechanism.** A synthesized transcript labelled `captured` is a harness-substitution failure: it presents a fabricated conversation as evidence. The correct shape is authored data as design input (permitted) plus an explicit `transcript: none|captured` label, with the offline suite proving grading/gating machinery rather than any given brainstorm's quality. `lint_test_shape` catches a fake grader without a production import, so every evidence module path-loads a real `plugins/saga/scripts/` target.
-**Fix.** Built three layers: deterministic AST check (no question-shaped assert), scenario data with independent `product_size`/`consequence`, per-dimension `grade()` with no aggregate, `is_blocking()` requiring reproducible + second-grader agreement or adjudication, calibration drift floor, eight mutation proofs. Reference `plugins/saga/references/brainstorm-evidence-model.md` records prior-art verdicts and what the suite does not prove.
+**Fix.** Built three layers: deterministic AST check (no question-shaped assert), scenario data with independent `product_size`/`consequence` declaring per-dimension `expected` (the key was renamed `authored_verdicts` on this branch) with no aggregate and no grader, `is_blocking()` requiring reproducible + second-grader agreement or adjudication, calibration data with `drift_floor` but no consumer until a grader is built, eight safeguard-phrase drift guards (sentence present and predicate wired, not behaviour). Reference `plugins/saga/references/brainstorm-evidence-model.md` records prior-art verdicts and what the suite does not prove.
 **Generalizable rule.** Separate design input (authored cases) from evidence (captured transcripts) with an explicit label, and prove the label's honesty mechanically — a suite that is green with `transcript: none` proves its machinery, not a conversation.
 **Refs.** Issue #915 (B3); R17/R19/R20/R22/R23; run plan §U3.
 
 ### A bounded helper ceiling needs a distinct-question guard, not just a count  {#914-judgment-helper-ceiling-distinct-question}
 
 **Context.** Brainstorm's Phase 1 context scan permitted parallel `Explore` agents with no count ceiling and no distinct-question requirement, so a Standard/Deep run could fan out arbitrarily and two helpers could chase the same evidence.
-**Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:17` and `:139-140` at `e84be5f2`; `plugins/saga/references/sandbox-spawn-sites.md` had four in-scope rows and no Brainstorm row; `tests/test_sandbox_spawn_sites.py` `IN_SCOPE_SKILLS` hardcoded four skills (D6).
+**Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:17` and `:156` at `e84be5f2` (the same sentence sits at `:139-141` in the base revision `3b2b7083`, which is what the original citation named); `plugins/saga/references/sandbox-spawn-sites.md` had four in-scope rows and no Brainstorm row; `tests/test_sandbox_spawn_sites.py` `IN_SCOPE_SKILLS` hardcoded four skills (D6).
 **Mechanism.** A count ceiling alone still permits two helpers on one question — the waste is not the number but the duplication. The guard must tie each helper to a distinct evidence question, and the inventory must enforce its own class contract: the in-scope table is `read-only-verify` only, so a survey-class `Explore` scout filed there would be false.
 **Fix.** Bounded helpers: Lightweight 0, Standard/Deep at most one `Explore` scout and one `saga:readonly-verifier` claim verifier, each requiring a distinct evidence question. Added one `judgment` row for the verifier; recorded the scout outside the table as survey-class, read-only by omission of `Edit`/`Write`/`NotebookEdit` with `Bash` retained (residual stated, no "structurally cannot write"), not worktree-isolated. Added `brainstorm` to `IN_SCOPE_SKILLS`.
 **Generalizable rule.** When bounding fan-out, bound by count *and* by distinct work — a ceiling without a distinct-question guard still permits duplication, and an inventory table's class contract must be kept truthful even when it means recording a helper outside the table.
@@ -456,7 +608,7 @@ see whether the test still passes.
 **Context.** Brainstorm instructed a `gate_id` record "on the next `saga.py save` call" while never performing that save, so the measurement vanished with no observable failure and no demonstrated consumer.
 **Evidence.** `plugins/saga/skills/brainstorm/SKILL.md:46-50` at `5660c719`; `plugins/saga/references/gate-divergence-instrumentation.md:65` still listed `brainstorm-<decision>` as a gate example; production lint `lint_gate_absence_contract.py` failed when the marker was deleted in a scratch copy (F3).
 **Mechanism.** A telemetry consumer tied to a write boundary the producer never hits is not optional telemetry but a leaked promise — the section-scoped lint makes deleting the marker a second failure, so the telemetry paragraph and its id had to be separated.
-**Fix.** Removed the telemetry paragraph, kept and repointed the marker to `brainstorm-interrogation-gate` (KTD2), and removed the `brainstorm-<decision>` gate example. Added the durable `pending-confirmation` checkpoint and frontmatter-aware `infer_maturity` (KTD7) so an unconfirmed artifact no longer hands off as `requirements-ready`.
+**Fix.** Removed the telemetry paragraph, kept and repointed the marker to `brainstorm-interrogation-gate` (KTD2), and removed the `brainstorm-<decision>` gate example. Added the durable `pending-confirmation` artifact and frontmatter-aware `infer_maturity` (KTD7) so an unconfirmed artifact no longer hands off as `requirements-ready`.
 **Generalizable rule.** When a measurement rides a write path its producer never exercises, delete the instruction rather than deferring it — and keep any lint coverage that was sharing the same marker.
 **Refs.** Issue #913 (B1); KTD1/KTD2/KTD7; run plan `docs/plans/2026-08-30-issue-912-saga-brainstorm-improvement-run-plan.md` §U1.
 
@@ -2428,7 +2580,6 @@ worker will spend real time telling the difference.
 
 **Refs.** [[#drift-is-evidence-of-a-missing-field]], orchestrate CHANGELOG 1.11.0.
 
-
 ## 2026-08-16
 
 ### An agent that leaves your tool was not undisciplined; it hit a wall you built  {#drift-is-evidence-of-a-missing-field}
@@ -3374,7 +3525,6 @@ belongs at the last common choke point before the artifact becomes visible — n
 whichever producer was most convenient to write it in. Ask "which paths reach this state?"
 before "where does the check go?": an unvalidated sibling path does not look broken, it
 looks like the other path's output.
-
 
 ## 2026-08-13
 
@@ -6168,7 +6318,6 @@ issues infiquetra-claude-plugins#637, infiquetra-codex-plugins#45.
 
 ---
 
-
 ## 2026-07-20
 
 ### Workflow-emitter output was unparseable and its test pins asserted the defect {#workflow-emitter-export-pins-627}
@@ -6842,7 +6991,6 @@ asserting that the fallback returns a nonempty string.
 `tests/test_fleet_lease_broker.py`; decision `{#fleet-ttl-lease-broker-356}`.
 
 ---
-
 
 ## 2026-07-16
 
@@ -7560,7 +7708,6 @@ condition from `stdout_bytes + stderr_bytes == 0` to `stdout_bytes == 0` (findin
 
 ---
 
-
 ## 2026-07-12
 
 ### A docstring's stated gating criterion can be silently absent from the implementation it describes  {#docstring-gate-drift-402}
@@ -7764,7 +7911,6 @@ different call path entirely.
 subprocess call sites across the three test files with an explicit `--audit-store <tmp_path>/audit-store`.
 
 ---
-
 
 ## 2026-07-11
 
@@ -8304,7 +8450,6 @@ R2, KTD5.
 
 ---
 
-
 ## 2026-07-06
 
 ### Worktree-isolated verify panels are blind to uncommitted worker output — refute-N ran 0/3 vacuous on every panel {#verify-panels-blind-to-uncommitted-tree}
@@ -8448,7 +8593,6 @@ merge (commit `5a92695`). The two dogfood defects shared one primitive — #495'
 **Refs.** Discipline recorded in `{#outcome-dag-decompose-stale-objective-336}`. Same "durable state belongs where it is consumed" thread as `{#outcome-derived-truth-vs-missing-producer}` — the fix was scope-note comments on the issues, not a side doc, because `/plan` reads the issue.
 
 ---
-
 
 ## 2026-07-05
 
@@ -9007,6 +9151,8 @@ and harness proof `plugins/agy/docs/harness-proof.md`.
 **Refs.** DECISIONS [#outcome-decompose-worktree-stance](DECISIONS.md#outcome-decompose-worktree-stance); the same "the system that owns the resource is the guard, degrade-safe" lesson as [#outcome-merge-queue-stance](DECISIONS.md#outcome-merge-queue-stance) (U6). Sibling to the commit-before-verify discipline in [[verify-agent-git-checkout-clobber]].
 
 ### An adversarial-verify agent ran destructive git on the uncommitted working tree and clobbered live work  {#verify-agent-git-checkout-clobber}
+
+<!-- Anchored citation target: sandbox-spawn-sites.md links here for the verifier-clobber incident. -->
 
 **Context.** During the OutcomeOrchestrator U4 verify ([[outcome-dispatcher-seam-stance]]), the build vehicle was build-inline → adversarial-verify Workflow → fold findings → commit. The U4 changeset was still **uncommitted** when the verify ran.
 

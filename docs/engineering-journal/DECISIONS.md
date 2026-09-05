@@ -1,5 +1,110 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-05
+
+### Source resolution refuses the original outside the root and shares one decision {#912-refuse-original-outside-root}
+
+**Decision.** A source that resolves outside the declared root is never read. If
+its path carries a marker directory (`docs/brainstorms/` and the like) and the same
+subpath exists inside the root, that in-root file is read instead and its
+declaration decides. Otherwise the source is refused with `unknown:out-of-root:`,
+whatever it declares, whether or not it exists, and however its path is spelled.
+A twin that declares nothing is also refused; its path rule cannot authorize the
+original. Containment uses resolved paths, including symlink targets.
+**Date.** 2026-09-05; author: Codex, Lane A; approved by the issue #912 repair plan,
+KTD1/KTD3/KTD9. This reverses the read-original choice in
+`913-maturity-unknown-sentinel`; Lane B owns the in-place correction.
+**Why.** Refusal now returns a diagnostic sentinel rather than a live path fallback,
+so the earlier rationale against refusal no longer holds. `ResolvedSource` shares
+the path and publication decision between inference and envelope construction.
+The spy test and its divergent inline mutation prove that callers use that decision.
+**Rejected.** Keeping the original-file read would allow a prepared issue to cite
+an artifact absent from its declared checkout. Applying the path rule to an
+undeclaring twin would reopen a different live route. Duplicating the re-anchor
+decision would let attribution and classification diverge again.
+**Revisit when.** The operator explicitly authorizes cross-root prepared-issue
+sources or changes the consumer contract. `infer_maturity(..., root=None)` retains
+the caller-named-file behavior; envelope construction always supplies a root.
+**Refs.** Issue #912/#913; SEC-1, AM-3, AM-4, TEST-1, TEST-2;
+`docs/evidence/issue-912/lane-A-evidence.md`; KTD9 cross-checked against
+`resolve_source` and the twin-without-declaration refusal in `_resolved_maturity`.
+
+### Loop 0.2 stops on unrecognized declarations additively, keeping the pinned bullet verbatim  {#loop-unrecognized-declaration-additive-stop}
+
+**Decision.** AU-4 is repaired by adding one bullet after the pinned line-119 empty
+bullet in `loop/SKILL.md` 0.2 — "empty with `handoff.requires_clarification` True ->
+the Handoff maturity section is present but its value is unrecognized (including any
+`unknown:` sentinel); STOP, show the declared value, and have the issue's handoff
+section fixed; never continue to the saga scan on it" — and not touching the existing
+bullet's wording, casing, or line breaks.
+**Date:** 2026-09-05 · **Issue:** #912 (AU-4) · **Origin:** Review finding AU-4;
+`plugins/saga/skills/loop/SKILL.md` 0.2; `tests/test_saga_plugin.py:4057-4058` pins both
+halves of the existing bullet.
+**Why.** `test_handoff_and_loop_skills_use_positive_routable_vocabulary_gate` asserts the
+existing bullet's phrases verbatim and Lane C may not edit that test, so any rephrase,
+re-case, or split of the old bullet is a red suite by construction. The new bullet's
+opening words ("empty with ... True") make the old bullet the `requires_clarification`
+False case without touching it, and its closing clause ("never continue to the saga
+scan on it") is what the new continuity predicate pins.
+**Rejected.** Rewriting 0.2 as a single combined bullet (breaks the verbatim pin);
+routing unrecognized values onward to the saga scan (the fail-open AU-4 files).
+**Revisit when.** The issue parser stops collapsing unrecognized maturities to empty —
+then the True/False split moves from `requires_clarification` to the maturity value itself.
+**Refs.** `tests/test_brainstorm_continuity_contract.py::check_loop_unrecognized_declaration_stops`;
+`tests/test_saga_plugin.py:4023-4061`.
+
+### The ladder source column wraps inside its 62px row on the renderer's own calibration  {#ladder-source-wrap-budget}
+
+**Decision.** CORR-9 is repaired by rendering the ladder source label with `max_chars=24`
+at `line_height=18`, producing a second (or third) `<text>` line inside the existing
+62px row, and pinning it with `test_ladder_source_labels_fit_their_column`, which
+recomputes the budget from the renderer's own geometry (maturity x 1115 − source x 830
+− 20 padding) and its own calibration (46 chars in 490px ≈ 10.6px/char) and asserts
+every rendered source line fits.
+**Date:** 2026-09-05 · **Issue:** #912 (CORR-9) · **Origin:** Review finding CORR-9;
+`plugins/saga/scripts/render_docs_visuals.py::render_state_readiness_ladder`;
+`tests/test_saga_docs_coverage.py`.
+**Why.** Wrapping keeps the column origins, faces, and row heights untouched, so the
+other three assets regenerate byte-identical and the row-labels guard
+(`test_ladder_renderer_rows_equal_model_maturity_values`) needs no fragment adjustment —
+maturity labels are never wrapped, so every model value still appears verbatim in the
+SVG. Deriving the test budget from the renderer's own numbers keeps the guard from
+drifting from the render it pins; `break_long_words=False` is safe because the longest
+unwrappable token (`pending-confirmation`, 21 chars ≈ 224px) fits the 265px budget.
+**Rejected.** A narrower face (changes every label for one column's sake); moved column
+origins (reflows the whole ladder and all four assets); taller rows (breaks the atlas
+grid rhythm for an overrun only the source column has).
+**Revisit when.** A source string grows an unwrappable token past 24 chars, or the
+ladder gains a seventh maturity row that no longer fits the canvas at 62px rows.
+**Refs.** `tests/test_saga_docs_coverage.py::test_ladder_source_labels_fit_their_column`;
+`plugins/saga/docs/assets/state-readiness-ladder.svg`.
+
+### Out-of-root handoff sources are refused outright, never read  {#912-out-of-root-refused-outright}
+
+**Decision.** A source that resolves outside the declared root is never read. If its path carries a marker directory (`docs/brainstorms/` and the like) and the same subpath exists inside the root, that in-root file is read instead and its declaration decides — including refusal with `unknown:out-of-root:` when the twin declares nothing. Otherwise the source is refused with `unknown:out-of-root:`, whatever it declares, whether or not it exists, and however its path is spelled. Containment is judged on resolved paths on both sides, so an in-root symlink whose target lies outside the root is refused, not read. The source decision has a single owner, `resolve_source`, consumed by both `infer_maturity` and `build_handoff_envelope`.
+**Date:** 2026-09-05 · **Issue:** #912 (repair round, SEC-1) · **Origin:** Review finding SEC-1; KTD1/KTD9 of `docs/plans/2026-09-04-issue-912-repair-lanes.md`; `plugins/saga/scripts/handoff_envelope.py`.
+**Why.** This reverses the clause in `{#913-maturity-unknown-sentinel}` that chose reading the original over refusing: that clause's stated reason, "refusing would hide its declared maturity behind a path-rule fallback that routes live", is no longer true, because refusal now returns a sentinel with a diagnostic, not a path-rule route. What is given up: a `/handoff` run from a checkout that does not contain the artifact another worktree wrote now stops with "name a source inside the declared root" instead of routing — the correct stop for a prepared issue, which would otherwise cite a path absent from the repository.
+**Rejected.** Honouring the out-of-root file's own declaration (lets an absolute path stored in saga state route live from a checkout that does not contain it); falling through to the path rule (the fail-open this replaced).
+**Revisit when.** A legitimate cross-worktree handoff appears that cannot name an in-root path.
+**Refs.** Issue #912 review (SEC-1, TEST-1, TEST-2); `plugins/saga/references/saga-spec.md` §4/§9; `plugins/saga/skills/handoff/SKILL.md` Maturity; `plugins/saga/CHANGELOG.md` 0.156.0; `tests/test_handoff_envelope_maturity.py::test_reanchored_missing_twin_is_refused`.
+
+### Handoff maturity fail-closed sentinel: `unknown:` prefix over a validity field or an exception  {#913-maturity-unknown-sentinel}
+
+**Decision.** `handoff_envelope.infer_maturity` returns one of the six `HANDOFF_MATURITIES` values, the empty string (declared but blank), or an `unknown:`-prefixed sentinel: `unknown:unrecognized:<raw>` for an unrecognized value, `unknown:carrier:<raw>` for a non-delimited carrier, `unknown:unterminated:<raw>` for an unterminated block, `unknown:unreadable` for a read/decode failure, or `unknown:out-of-root:<path>` for a source outside the declared root that is refused rather than read. The sentinel is a magic-prefixed string published verbatim in the envelope's `handoff_maturity` field and truncated to 120 characters after the `unknown:` prefix; the `unknown:` prefix and its discriminator segment are reserved and never appear in author-declared values, so a declared `maturity: carrier:foo` cannot forge a carrier sentinel. `build_handoff_envelope` refuses a durable route for all sentinel shapes and emits a prose diagnostic distinguishing the carrier/delimiter/read failure from a value fault.
+**Date:** 2026-08-30 · **Issue:** #912/#913 (repair cycles 1–4) · **Origin:** Review findings API-03/API-12/AM-09/AU-09/API-15/CORR-15/AM-12/API-13/AM-16; `plugins/saga/scripts/handoff_envelope.py`.
+**Why.** Fail-closed must be loud at the consumer, and every consumer of this field is a string-level router: `/handoff` step 6 and `/loop` Phase 0.2 branch on the text, and mission-control's `issue prepare` validates against its own choices tuple. A magic prefix keeps the failure INSIDE the one field being classified, survives JSON round-trips, and needs no schema change; a validity field would widen every envelope consumer's dispatch on a second key for a state that exists only to be stopped at; an exception would abort envelope construction for what is a diagnosable artifact-authoring mistake (the operator wants the envelope's diagnostics, not a crashed build). Truncated because the raw value is author-controlled text flowing into published JSON. Source-path resolution for an absolute source outside the declared root is now refusal outright: the in-root twin is read when it exists and the source is refused otherwise, per `{#912-out-of-root-refused-outright}` — the read-original arm this clause chose is deleted. The non-delimited carrier scan covers the leading block up to 30 lines (where bullet-carrier frontmatter appears) and returns a distinct `carrier:` sentinel so the diagnostic can name the missing delimiters rather than mis-diagnosing a valid value as unrecognized. An unterminated block (opening `---` without closing `---`) is scanned for a visible maturity and fails closed similarly, rather than falling through.
+**Rejected.** A separate `maturity_valid` boolean (consumers must still branch on the value, so the field doubles the decision surface without removing the prefix check); raising `ValueError` (a typo in one artifact would kill the whole envelope build instead of yielding an actionable diagnostic in the field the consumer already reads); swallowing unrecognized values into the path default (the fail-open this replaced); refusing an out-of-root absolute source outright (superseded: the stated downside no longer exists once refusal returns a sentinel with a diagnostic, so this option is now the decision — see `{#912-out-of-root-refused-outright}`).
+**Revisit when.** A consumer needs machine-readable error fields (then add a structured error object rather than parsing prose), or a second sentinel consumer appears (then extract the prefix into a shared constant), or mission-control adds `pending-confirmation` to its prepare vocabulary, or the carrier scan window needs widening beyond thirty lines.
+**Refs.** Issue #912 review; `plugins/saga/references/saga-spec.md` §4/§9; `plugins/saga/CHANGELOG.md` 0.156.0; `tests/test_handoff_envelope_maturity.py`.
+
+### Repository-wide handoff-maturity vocabulary invariant  {#913-maturity-repo-invariant}
+
+**Decision.** Every Markdown file under `docs/ideation/`, `docs/brainstorms/`, `docs/specs/`, `docs/plans/`, `docs/reviews/`, and `docs/work-sessions/` must declare a `maturity:` value inside `HANDOFF_MATURITIES` or declare no maturity at all; any other declared value fails the repository-wide guard `test_no_checked_in_artifact_declares_non_vocab_maturity`.
+**Date:** 2026-08-30 · **Issue:** #912 (CORR-17) · **Origin:** Review finding CORR-17; `tests/test_handoff_envelope_maturity.py::test_no_checked_in_artifact_declares_non_vocab_maturity`; `plugins/saga/scripts/handoff_envelope.py`.
+**Why.** The six-value vocabulary was previously only a handoff-time inference; making it a repository-wide invariant prevents a checked-in artifact from silently carrying a free-form label that later fails closed at handoff time and forces an archive edit to proceed. The three ideation documents rewritten in this change (`ready-to-execute` → `idea-ready`, `imagination-seeds` → `idea-ready`, `illustrative` → `idea-ready`) are the precedent: they used the frontmatter `maturity:` key as a free-form label for `kind`/`topic` distinctions that belong in other frontmatter fields. Scoping the check to all Markdown under the six source directories (rather than only Saga-produced artifacts) was chosen because any file in those directories can be handed off, and a future author in those directories should be guided at authoring time.
+**Rejected.** Scoping the check to only Saga-produced artifacts (would miss a non-Saga document in those directories that later gets handed off); warning rather than failing (would allow the same silent fail-closed at handoff that the invariant exists to prevent); allowing an `x-` prefixed escape hatch (would reintroduce the free-form label that the migration just removed).
+**Revisit when.** A new maturity value is added to `HANDOFF_MATURITIES` (update the guard and the three migrated artifacts' successors), or a documentation directory needs a free-form maturity-like label (use a different frontmatter key such as `kind` or `topic`).
+**Refs.** `tests/test_handoff_envelope_maturity.py::test_no_checked_in_artifact_declares_non_vocab_maturity`; `docs/ideation/2026-06-19-plugin-grooming-next-steps.md:6`, `docs/ideation/2026-06-24-muse-imagination-plugin-seeds.md:5`, `docs/ideation/2026-06-25-operator-outcome-orchestration-ux-walkthrough.md:6`; `plugins/saga/CHANGELOG.md` 0.156.0.
 ## 2026-09-02
 
 ### The launcher's `PaneWriter` is the only pane-write door, and it owns the inspection  {#907-pane-writer-owns-the-write-rule}
@@ -378,21 +483,21 @@ than the record the operation itself produced).
 
 ### Retire stale Brainstorm contract data and pin lifecycle order mechanically  {#916-lifecycle-shaping-maintenance}
 
-**Decision.** Brainstorm's `engine_offer.py` / `engine_session_runner.py` / "retired runner" prose is replaced by the behavioural Dialogue ownership rule (synthesis, judgment, private model, operator exchange stay in this session; only bounded read-only helpers delegate; Orchestrate owns cross-vendor transport). Lifecycle ordering is pinned by a mechanical check over the duplicated block in four skills (ideate, loop, office-hours, plan), not by editing any skill's prose. Shaping is stated once in `saga-spec.md` §4 as an Operations board Status, not a Saga phase/command/automatic consequence, cross-referencing plan §0.6 and noting Office Hours' lowercase generic use. The dispatch line count described as volatile has no live target and nothing was removed.
+**Decision.** Brainstorm's `engine_offer.py` / `engine_session_runner.py` / "retired runner" prose is replaced by the behavioural Dialogue ownership rule (synthesis, judgment, private model, operator exchange stay in this session; only bounded read-only helpers delegate; Orchestrate owns cross-vendor transport). Lifecycle ordering is pinned by a mechanical check over the duplicated block in four skills (ideate, loop, office-hours, plan), not by editing any skill's prose. Shaping is stated once in `saga-spec.md` §4 as an Operations board Status, not a Saga phase/command/automatic consequence, cross-referencing plan §0.6 and noting Office Hours' lowercase generic use. The dispatch table's stale parenthetical line counts (e.g., `342L`) were deleted from the Target column.
 **Date:** 2026-08-30 · **Issue:** #916 (B4) · **Origin:** Run plan §U4; KTD6; amendment 2026-08-30 correcting duplication set to four; preflight F1/F2.
-**Why.** The retired names couple the contract to deleted history; the behavioural rule is what matters. The lifecycle block lives in four high-traffic skills, so single-sourcing would edit them inside a low-risk unit. Shaping and Saga lifecycle are different fields; stating once in the spec prevents accidental coupling. The volatile count's absence is a finding, not a removal.
+**Why.** The retired names couple the contract to deleted history; the behavioural rule is what matters. The lifecycle block lives in four high-traffic skills, so single-sourcing would edit them inside a low-risk unit. Shaping and Saga lifecycle are different fields; stating once in the spec prevents accidental coupling. The parenthetical line counts drift with every edit, so they were deleted rather than refreshed.
 **Rejected.** Growing blacklist of implementation names; editing any of the six lifecycle skills' prose; adding a `/saga:shaping` command or automatic Brainstorm-to-board transition; broadening to dispatch-table redesign.
 **Revisit when.** A new lifecycle command enters the duplicated block, or a new board Status collides with a Saga phase name.
 **Refs.** Issue #916; amendment; `plugins/saga/skills/brainstorm/SKILL.md` Dialogue ownership; `tests/test_saga_lifecycle_consistency.py`; `plugins/saga/references/saga-spec.md` §4; `tests/test_orchestrate_review_transport.py` STAGE_SKILLS.
 
-### Brainstorm evidence is three layers: deterministic, per-dimension scenarios, mutation proof  {#915-evidence-three-layers}
+### Brainstorm evidence is three layers: deterministic, per-dimension scenarios, safeguard-phrase drift guard  {#915-evidence-three-layers}
 
-**Decision.** Evidence is three layers, each matched to what it can honestly prove. Deterministic contract tests cover mechanics with exactly one correct result and are mechanically proven to assert no question, wording, or order. Scenario evaluations, stored as data with `product_size` and `consequence` independent, score judgment per material dimension via a pure `grade()` with no aggregate; grading is deferred. A model-judged finding cannot block alone: `is_blocking()` requires reproducible scenario plus second-grader agreement or operator adjudication. A fixed `calibration.json` set surfaces drift against a floor. Eight mutation proofs weaken each critical safeguard and prove the named check goes red.
+**Decision.** Evidence is three layers, each matched to what it can honestly prove. Deterministic contract tests cover mechanics with exactly one correct result and are mechanically proven to assert no question, wording, or order. Scenario evaluations, stored as data with `product_size` and `consequence` independent, declare per-dimension `expected` (the key was renamed `authored_verdicts` on this branch) with no aggregate and no grader yet; calibration data has the expected shape but its `drift_floor` has no consumer until a grader is built. A model-judged finding cannot block alone: `is_blocking()` requires reproducible scenario plus second-grader agreement or operator adjudication. Eight safeguard-phrase drift guards prove each critical sentence is present and its predicate is wired — not that the safeguard's behaviour holds.
 **Date:** 2026-08-30 · **Issue:** #915 (B3) · **Origin:** Run plan §U3; KTD5; operator rulings.
-**Why.** Deterministic tests can prove mechanics, scenarios can show judgment per dimension, mutation can prove guards are not decorative — but no deterministic test may assert a question and no single model judge may block alone (R17/R20). Prior art `engine_benchmark` gives the data-suite + injectable-runner shape; `lint_test_shape` gives the AST mechanism; `_mutate_source` gives the in-memory mutation.
+**Why.** Deterministic tests can prove mechanics, scenarios can show data shape per dimension, drift guards can prove a sentence is present and wired — but no deterministic test may assert a question, no single model judge may block alone (R17/R20), and no string check can prove behaviour. Prior art `engine_benchmark` gives the data-suite + injectable-runner shape; `lint_test_shape` gives the AST mechanism; `_mutate_source` gives the in-memory mutation.
 **Rejected.** Markdown rubrics as carrier (R19 needs data); aggregate quality number (R19 forbids); synthesized transcript labelled `captured` (harness substitution); live judge in CI (R23 requires offline).
-**Revisit when.** Captured transcripts become available from the parked checkpoint — they add `transcript: captured` cases without changing the offline machinery — or new critical safeguards are declared.
-**Refs.** Issue #915; `plugins/saga/references/brainstorm-evidence-model.md`; `tests/data/brainstorm/`; `tests/test_brainstorm_evidence_model.py`, `tests/test_brainstorm_scenarios.py`, `tests/test_brainstorm_mutation_proofs.py`.
+**Revisit when.** Captured transcripts become available from the parked checkpoint — they add `transcript: captured` cases without changing the offline machinery — or a grader is built so calibration drift can be surfaced, or new critical safeguards are declared.
+**Refs.** Issue #915; `plugins/saga/references/brainstorm-evidence-model.md`; `tests/data/brainstorm/`; `tests/test_brainstorm_evidence_model.py`, `tests/test_brainstorm_scenarios.py`, `tests/test_brainstorm_predicate_wiring.py`.
 
 ### Brainstorm adaptive judgment model: consequence-calibrated, privately tracked, bounded helpers  {#914-judgment-adaptive-model-bounded-helpers}
 
@@ -401,14 +506,14 @@ than the record the operation itself produced).
 **Why.** Product size alone mis-ranks a small credential-sensitive change; consequence must be measured separately. The helper ceiling prevents unbounded fan-out while the distinct-question guard prevents duplication. The `read-only-verify` table's class contract cannot admit a survey spawn, so the scout is recorded outside it with its `Bash` residual stated.
 **Rejected.** Named assurance levels (rejected, factors named directly); a `read-only-survey` row in the in-scope table (would falsify the table's class); "structurally cannot write" for the Explore scout (Explore retains Bash, ladder says so); putting the scout in the table and rewriting the class contract.
 **Revisit when.** New consequence factors enter the product domain, or helper evidence needs justify a higher count with the same distinct-question discipline.
-**Refs.** Issue #914; KTD4; `plugins/saga/skills/brainstorm/SKILL.md` Phases 0.4/1.1/1.2/1.3, `plugins/saga/references/sandbox-spawn-sites.md`, `tests/test_sandbox_spawn_sites.py`, `tests/test_tier_resolver.py`.
+**Refs.** Issue #914; KTD4; `plugins/saga/skills/brainstorm/SKILL.md` Phases 0.4/0.5/1.1/1.2/1.3, `plugins/saga/references/sandbox-spawn-sites.md`, `tests/test_sandbox_spawn_sites.py`, `tests/test_tier_resolver.py`.
 
-### Brainstorm continuity contract: checkpoint, maturity, and resume are one ordered rule  {#913-continuity-checkpoint-maturity-resume}
+### Brainstorm continuity contract: pending-confirmation artifact, maturity, and resume are one ordered rule  {#913-continuity-checkpoint-maturity-resume}
 
-**Decision.** Brainstorm records the producing capability `brainstorm` and activity identity `brainstorm-<topic-slug>-<UTC YYYYMMDDTHHMMSSZ>` plus optional `.orchestrate/run.json` `run_id` on the artifact, writes a `pending-confirmation` checkpoint at Phase 2.5 Path B before any readiness claim, promotes it to `requirements-ready` only on fresh confirmation, and applies an explicitly ordered three-tier resume (exact producer-fact match → legacy labelled inference → empty scan) in both `brainstorm/SKILL.md` Phase 0.1 and `resume/SKILL.md` Phase 0. Legacy inference is labelled `inferred`, operator-confirmed, and never backfills the file. Routes 1–4 are gated on declared `maturity: requirements-ready`; artifact-free exploration writes nothing.
+**Decision.** Brainstorm records the producing capability `brainstorm` and activity identity `brainstorm-<topic-slug>-<UTC timestamp YYYYMMDDTHHMMSSZ>` plus optional `.orchestrate/run.json` `run_id` on the artifact, writes a `pending-confirmation` artifact at Phase 2.5 Path B before any readiness claim, promotes it to `requirements-ready` only on fresh confirmation, and applies an explicitly ordered three-tier resume (exact producer-fact match → legacy labelled inference → empty scan) in both `brainstorm/SKILL.md` Phase 0.1 and `resume/SKILL.md` Phase 0. Legacy inference is labelled `inferred`, operator-confirmed, and never backfills the file. Routes 1–4 are gated on declared `maturity: requirements-ready`; artifact-free exploration writes nothing.
 **Date:** 2026-08-30 · **Issue:** #913 (B1) · **Origin:** Run plan `docs/plans/2026-08-30-issue-912-saga-brainstorm-improvement-run-plan.md` §U1; preflight F3/F4.
-**Why.** The four continuity facts did not hold — producer unrecorded, gate undeclared, artifact-free indistinguishable from handoff, telemetry unreachable — and the `maturity` path rule promoted an unconfirmed checkpoint. KTD1 makes the checkpoint the artifact file itself (no new store), KTD2 keeps the lint coverage by repointing the marker, and KTD7 makes `handoff_envelope.infer_maturity` frontmatter-aware.
-**Rejected.** A checkpoint under `.claude/saga/` (a Brainstorm state store, forbidden by R2); a sidecar file (second ambiguity source); deleting the interaction-rules marker (produces two lint violations); gating only in skill prose instead of in `infer_maturity`.
+**Why.** The four continuity facts did not hold — producer unrecorded, gate undeclared, artifact-free indistinguishable from handoff, telemetry unreachable — and the `maturity` path rule promoted an unconfirmed `pending-confirmation` artifact. KTD1 makes that artifact the file itself in `docs/brainstorms/` (no new store), KTD2 keeps the lint coverage by repointing the marker, and KTD7 makes `handoff_envelope.infer_maturity` frontmatter-aware.
+**Rejected.** A `pending-confirmation` state under `.claude/saga/` (a Brainstorm state store, forbidden by R2); a sidecar file (second ambiguity source); deleting the interaction-rules marker (produces two lint violations); gating only in skill prose instead of in `infer_maturity`.
 **Revisit when.** Brainstorm gains a Saga-tick write path, or the section contract stabilizes additional frontmatter keys that must join the producer facts.
 **Refs.** Issue #913; KTD1/KTD2/KTD7; `plugins/saga/skills/brainstorm/SKILL.md` Phases 0.1/0.2/2.5/3/4, `plugins/saga/skills/brainstorm/references/requirements-sections.md` Metadata, `plugins/saga/references/saga-spec.md` §3.2/§3.3, `plugins/saga/scripts/handoff_envelope.py`.
 

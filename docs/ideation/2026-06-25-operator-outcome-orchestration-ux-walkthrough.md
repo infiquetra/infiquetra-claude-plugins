@@ -3,7 +3,7 @@ date: 2026-06-25
 topic: operator-outcome-orchestration-ux-walkthrough
 kind: ux-walkthrough (illustrative)
 repo: infiquetra-claude-plugins
-maturity: illustrative
+maturity: idea-ready
 ---
 
 # Operator UX Walkthrough — Outcome Orchestration

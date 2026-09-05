@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
+import ast
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,17 +11,6 @@ ROOT = Path(__file__).parent.parent
 SCENARIOS_PATH = ROOT / "tests/data/brainstorm/scenarios.json"
 RUBRIC_PATH = ROOT / "tests/data/brainstorm/rubric.json"
 CALIBRATION_PATH = ROOT / "tests/data/brainstorm/calibration.json"
-
-_PROD = ROOT / "plugins/saga/scripts/handoff_envelope.py"
-
-
-def _load(name: str, path: Path):  # type: ignore[no-untyped-def]
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def _load_json(path: Path) -> Any:
@@ -44,7 +32,14 @@ def is_blocking(
     second_grader_agrees: bool,
     operator_adjudicated: bool,
 ) -> bool:
-    """Evaluator-trust rule (R20)."""
+    """Evaluator-trust rule (R20) — SPECIFICATION ONLY, not implemented in production.
+
+    No Saga script defines or calls this predicate. The tests below fix the intended
+    rule so a future implementation has something to satisfy; they prove this
+    function's shape, not the behaviour of anything Saga ships. The similarly named
+    is_blocking_finding in plugins/saga/scripts/second_opinion.py is a different rule
+    with a different signature and does not implement R20.
+    """
     if finding.get("kind") == "deterministic":
         return True
     # Model-judged finding: reproducible AND (second grader agrees OR adjudicated)
@@ -157,11 +152,11 @@ def test_offline_suite_complete_without_captured_transcripts() -> None:
     for case in cases:
         for dim in case["material_dimensions"]:
             assert dim in rubric_dims, f"case {case['id']} dimension {dim!r} not in rubric"
-        assert set(case["material_dimensions"]) == set(case["expected"].keys())
+        assert set(case["material_dimensions"]) == set(case["authored_verdicts"].keys())
     # No aggregate in data
     for case in cases:
         for key in ("score", "total", "aggregate", "overall", "quality"):
-            assert key not in case["expected"]
+            assert key not in case["authored_verdicts"]
             assert key not in case
     # Gating
     assert (
@@ -198,7 +193,7 @@ def test_offline_suite_complete_without_captured_transcripts() -> None:
 def test_per_dimension_reporting_positive() -> None:
     cases = _SCENARIOS["cases"]
     for case in cases:
-        assert set(case["expected"].keys()) == set(case["material_dimensions"]), (
+        assert set(case["authored_verdicts"].keys()) == set(case["material_dimensions"]), (
             f"case {case['id']} expected vs material_dimensions mismatch"
         )
 
@@ -213,16 +208,31 @@ def test_no_aggregate_negative() -> None:
     cases = _SCENARIOS["cases"]
     for case in cases:
         for banned in ("score", "total", "aggregate", "overall", "quality"):
-            assert banned not in case["expected"]
+            assert banned not in case["authored_verdicts"]
             assert banned not in case
-    # No consumer computes an aggregate — scan this file for banned patterns
-    src = Path(__file__).read_text(encoding="utf-8")
-    for banned in ("aggregate", "overall", "quality"):
-        # Allow the word in comments/assert messages but not as a computed variable
-        # Simple check: no assignment to aggregate
-        assert f"{banned} =" not in src.lower() or f"no {banned}" in src.lower(), (
-            f"file computes banned aggregate {banned!r}"
-        )
+    # No consumer computes an aggregate — AST walk over Assign/AnnAssign targets
+    # Widened to every tests/test_brainstorm_*.py module; no escape clause
+    banned_names = {"score", "total", "aggregate", "overall", "quality"}
+    for path in sorted(ROOT.glob("tests/test_brainstorm_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in banned_names:
+                        raise AssertionError(
+                            f"{path.name}:{node.lineno} computes banned aggregate '{target.id}'"
+                        )
+                    if isinstance(target, ast.Attribute) and target.attr in banned_names:
+                        raise AssertionError(
+                            f"{path.name}:{node.lineno} computes banned aggregate '{target.attr}'"
+                        )
+            elif isinstance(node, ast.AnnAssign) and node.target:
+                target = node.target
+                name = target.id if isinstance(target, ast.Name) else getattr(target, "attr", None)
+                if name in banned_names:
+                    raise AssertionError(
+                        f"{path.name}:{node.lineno} computes banned aggregate '{name}'"
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -300,3 +310,19 @@ def test_calibration_shape_positive() -> None:
     assert "overall" not in _CALIBRATION
     assert "score" not in _CALIBRATION
     # Drift check is deferred until a real grader exists — shape is what we prove now
+
+
+def test_scenario_verdicts_are_disclosed_as_ungraded() -> None:
+    """TEST-39: the fixture must not read as evidence it is not.
+
+    Nothing grades the verdict values, so a reader must be told that in the data rather than
+    discovering it by mutating the file. If a grader is ever wired up, this test should be the
+    one that fails and gets deleted.
+    """
+    assert "grading_status" in _SCENARIOS
+    assert "no grader reads the verdict values yet" in _SCENARIOS["grading_status"]
+    for case in _SCENARIOS["cases"]:
+        assert case["transcript"] == "none", (
+            f"case {case['id']} carries a transcript, so its verdicts may now be gradable "
+            "— wire the grader and delete this test"
+        )

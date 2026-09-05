@@ -1,5 +1,6 @@
 {
   "schema": "brainstorm-scenarios.v1",
+  "grading_status": "authored design input; no grader reads the verdict values yet, so inverting one changes no test outcome",
   "cases": [
     {
       "id": "premature-convergence-deep-low",
@@ -7,7 +8,7 @@
       "product_size": "deep",
       "consequence": "low",
       "material_dimensions": ["convergence_discipline"],
-      "expected": {
+      "authored_verdicts": {
         "convergence_discipline": "fail"
       },
       "transcript": "none",
@@ -19,7 +20,7 @@
       "product_size": "standard",
       "consequence": "medium",
       "material_dimensions": ["gap_coverage"],
-      "expected": {
+      "authored_verdicts": {
         "gap_coverage": "fail"
       },
       "transcript": "none",
@@ -31,7 +32,7 @@
       "product_size": "lightweight",
       "consequence": "high",
       "material_dimensions": ["consequence_calibration"],
-      "expected": {
+      "authored_verdicts": {
         "consequence_calibration": "pass"
       },
       "transcript": "none",
@@ -43,7 +44,7 @@
       "product_size": "standard",
       "consequence": "low",
       "material_dimensions": ["checklist_restraint"],
-      "expected": {
+      "authored_verdicts": {
         "checklist_restraint": "fail"
       },
       "transcript": "none",
@@ -55,7 +56,7 @@
       "product_size": "standard",
       "consequence": "high",
       "material_dimensions": ["consequence_calibration", "gap_coverage", "helper_boundedness"],
-      "expected": {
+      "authored_verdicts": {
         "consequence_calibration": "pass",
         "gap_coverage": "pass",
         "helper_boundedness": "pass"
@@ -69,7 +70,7 @@
       "product_size": "lightweight",
       "consequence": "low",
       "material_dimensions": ["checklist_restraint", "helper_boundedness"],
-      "expected": {
+      "authored_verdicts": {
         "checklist_restraint": "pass",
         "helper_boundedness": "pass"
       },

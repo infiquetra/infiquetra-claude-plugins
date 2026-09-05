@@ -45,13 +45,9 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.155.0"  # cycle-2 repair of the integrated review's
-    # WK2-WK4 findings: the /qa preamble and certificate comment issue #930 named, the halt/allowlist
-    # attribution, a CLI for the build-unit tier resolver, validation of an explicit plan tier, and
-    # three guard tests that could not fail. Successor to issue #930's maintenance sweep at 0.154.0
-    # — teardown as fifth ceremony call, first-time move, gated/allowlist separation,
-    # and the full artifact_pointer path.
-    # Successor to issue #929's build-unit tier resolution at 0.153.0
+    assert plugin_json["version"] == "0.156.0"  # issue 912: handoff envelope schema 1.1 and the
+    # fail-closed maturity vocabulary. 0.150.0 through 0.155.0 were all taken by unrelated runs
+    # while this branch was repairing, so the bump is re-derived from the current origin/main tip.
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -3981,3 +3977,139 @@ def test_intake_exit_saga_creates_no_issue() -> None:
     except AssertionError:
         failed = True
     assert failed, "the seeded bare `gh issue create` must FAIL the boundary check"
+
+
+def test_parse_issue_pending_confirmation_distinguishable(tmp_path: Path) -> None:
+    """fix-41f71b5ccacd: pending-confirmation is not blanked and is distinguishable from no handoff."""
+    mod = _load_module("parse_issue.py")
+    # Real path: parse an issue body carrying pending-confirmation
+    body_pending = "### Handoff maturity\npending-confirmation\n\n### Source context\n- Source: docs/brainstorms/2026-08-30-x-requirements.md\n"
+    parsed_pending = mod.extract(body_pending)
+    assert parsed_pending["handoff"]["maturity"] == "pending-confirmation"
+    # Must not be can_plan/can_work, and blank must be different
+    body_blank = "### Objective\nNo handoff here\n"
+    parsed_blank = mod.extract(body_blank)
+    assert parsed_blank["handoff"]["maturity"] == ""
+    assert parsed_pending["handoff"]["maturity"] != parsed_blank["handoff"]["maturity"]
+    # pending-confirmation is not a planning/working maturity, but is distinct from blank
+    assert parsed_pending["handoff"]["can_plan"] is False
+    assert parsed_pending["handoff"]["can_work"] is False
+    # If HANDOFF_MATURITY_VALUES lacked pending-confirmation, this would have returned "" and failed
+
+
+def test_loop_pending_confirmation_routes_to_brainstorm(tmp_path: Path) -> None:
+    """fix-a0f2528fe992: loop routing and dispatch table row for pending-confirmation are live."""
+    # Real path: parse_issue vocabulary and loop skill routing bullet
+    mod = _load_module("parse_issue.py")
+    assert "pending-confirmation" in mod.HANDOFF_MATURITY_VALUES, (
+        "allowlist must contain pending-confirmation"
+    )
+    loop_skill = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
+    assert "pending-confirmation" in loop_skill and "/brainstorm" in loop_skill, (
+        "loop must route pending-confirmation to /brainstorm"
+    )
+    # Dispatch table rows must be reachable: (none) | — | pending-confirmation | /brainstorm
+    # and brainstorm | any | pending-confirmation | /brainstorm (fail-closed for active brainstorm)
+    dispatch = _read(PLUGIN_ROOT / "skills" / "loop" / "references" / "dispatch-table.md")
+    assert "| (none) | — | `pending-confirmation` | `/brainstorm` |" in dispatch
+    assert "| `brainstorm` | any | `pending-confirmation` | `/brainstorm` |" in dispatch
+    # Brainstorm phase with no declared maturity must also route (exploratory-only outcome writes no file)
+    assert "| `brainstorm` | any | none declared | `/brainstorm` (finish the WHAT) |" in dispatch
+    # Also verify parse_issue actually returns it via real path
+    body = "### Handoff maturity\npending-confirmation\n"
+    assert mod.extract(body)["handoff"]["maturity"] == "pending-confirmation"
+
+
+def test_handoff_and_loop_skills_use_positive_routable_vocabulary_gate() -> None:
+    """fix-4c/fix-b9 (API-10/AM-07/CORR-11/AM-08): both envelope consumers branch POSITIVELY.
+
+    The repair widened `handoff_maturity` to three non-vocabulary shapes (pending-confirmation,
+    empty, unknown:-prefixed), all non-routable. The agent-facing skills must state the positive
+    routable vocabulary and name all three stop states — a future edit reverting to a
+    "not pending-confirmation" unconditional route must go red here.
+    """
+    handoff_skill = _read(PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md")
+    loop_skill = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
+
+    # Handoff step 6: positive routing rule naming the routable vocabulary…
+    assert (
+        "ONLY when `handoff_maturity` is one of the routable vocabulary values" in handoff_skill
+    ), "handoff step 6 must gate on the positive routable vocabulary, not a single negation"
+    for value in (
+        "idea-ready",
+        "requirements-ready",
+        "plan-ready",
+        "resume-ready",
+        "deferred-context",
+    ):
+        assert value in handoff_skill, f"handoff skill must name routable value {value}"
+    # …and name all three non-routable shapes as a stop.
+    for shape in ("pending-confirmation", "unknown:", "empty"):
+        assert shape in handoff_skill, f"handoff skill must name the non-routable shape {shape}"
+    assert "NEVER a runnable command" in handoff_skill
+
+    # Loop 4.2: same positive form (envelope path, which CAN produce sentinel).
+    assert "ONLY when the maturity is one of the routable vocabulary values" in loop_skill
+    assert "`unknown:`-prefixed" in loop_skill and "never a runnable command" in loop_skill
+    # Loop 0.2 maturity routing: empty from issue parser means no handoff metadata —
+    # continue to saga scan, not a frontmatter failure. The issue parser collapses
+    # unrecognized to empty (never to unknown:), so 0.2 must not claim sentinel.
+    assert "empty -> the issue carries no recognized handoff metadata" in loop_skill
+    assert "continue to the saga scan" in loop_skill
+
+    # The Maturity list in the handoff skill must document the two added states.
+    assert "two fail-closed states" in handoff_skill
+
+
+def test_parse_issue_collapses_unrecognized_to_empty() -> None:
+    """fix-6d7c2083c11c TEST-19: issue parser collapses unrecognized Handoff maturity to empty."""
+    mod = _load_module("parse_issue.py")
+    body = "### Handoff maturity\nnot-a-real-maturity\n\n### Source context\n- Source: docs/brainstorms/x.md\n"
+    parsed = mod.extract(body)
+    assert parsed["handoff"]["maturity"] == "", (
+        "unrecognized Handoff maturity must collapse to empty string, not a sentinel"
+    )
+    assert parsed["handoff"]["can_plan"] is False
+    assert parsed["handoff"]["can_work"] is False
+    # Also verify empty vs unrecognized are indistinguishable (both collapse to empty)
+    body_blank = "### Objective\nNo handoff here\n"
+    parsed_blank = mod.extract(body_blank)
+    assert parsed_blank["handoff"]["maturity"] == ""
+    assert parsed["handoff"]["maturity"] == parsed_blank["handoff"]["maturity"]
+
+
+def test_unrecognized_maturity_fails_closed_and_vocabularies_synced(tmp_path: Path) -> None:
+    """fix-13e628f20af7: unrecognized maturity fails closed with no signal, vocabularies in sync."""
+    handoff = _load_module("handoff_envelope.py")
+    parse_mod = _load_module("parse_issue.py")
+    # Real path: frontmatter with unknown maturity under docs/brainstorms must not emit a route
+    brainstorms = tmp_path / "docs" / "brainstorms"
+    brainstorms.mkdir(parents=True)
+    target = brainstorms / "2026-08-30-x-requirements.md"
+    target.write_text("---\nmaturity: not-a-real-maturity\n---\n\nBody\n", encoding="utf-8")
+    envelope = handoff.build_handoff_envelope(
+        "docs/brainstorms/2026-08-30-x-requirements.md", root=tmp_path
+    )
+    assert "/issue --prepare" not in envelope["suggested_command"], (
+        "unrecognized maturity must not emit a route"
+    )
+    assert envelope["handoff_maturity"].startswith("unknown:")
+    # Uniformly indented frontmatter IS top-level YAML — declares and fails closed (not ignored)
+    target.write_text("---\n  maturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8")
+    assert (
+        handoff.infer_maturity("docs/brainstorms/2026-08-30-x-requirements.md", root=tmp_path)
+        == "pending-confirmation"
+    )
+    # Genuinely nested key does not declare, fails closed as carrier
+    target.write_text(
+        "---\nmeta:\n  maturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8"
+    )
+    assert handoff.infer_maturity(
+        "docs/brainstorms/2026-08-30-x-requirements.md", root=tmp_path
+    ).startswith("unknown:carrier:")
+    # Vocabulary drift guard: every code-level maturity vocab is superset of HANDOFF_MATURITIES
+    handoff_mats = set(handoff.HANDOFF_MATURITIES)
+    assert set(parse_mod.HANDOFF_MATURITY_VALUES) == handoff_mats
+    spec_text = _read(ROOT / "plugins/saga/references/saga-spec.md")
+    for val in handoff_mats:
+        assert val in spec_text

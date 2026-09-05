@@ -134,10 +134,10 @@ and let the operator decide — rather than blindly re-dispatching. Read `orches
 `restore` (the full envelope), not via the `scan` candidate (which carries only the orchestration
 pointer summary).
 
-### Deep forensics is opt-in — never auto-route into the /resume stub
+### Deep forensics is opt-in — never auto-route into /resume
 
 `/loop` does lightweight restore + the inline cold path itself. For heavy forensic reconstruction
 (tangled multi-round history, corrupt cache, "what happened across these PRs"), **OFFER** the
 **opt-in** `/resume` route — `/resume` is the queued deep-reconstruction engine. **Never** auto-route
-into the `/resume` stub and **never** block `/loop` on it; routing to `/resume` is advisory and
+into `/resume` and **never** block `/loop` on it; routing to `/resume` is advisory and
 operator-confirmed.

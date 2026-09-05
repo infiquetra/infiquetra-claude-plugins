@@ -404,13 +404,10 @@ SANDBOX_SPAWN_SITES_MD = REPO_ROOT / "plugins" / "saga" / "references" / "sandbo
 _EFFORT_EMISSION_MARKER = "EFFORT-EMISSION MARKER (#362 U5, R7, KTD6)"
 
 
-def test_effort_emitted_into_plan_tier_table() -> None:
-    """`/plan`'s per-unit tier table documents that its cell carries the resolver's
-    `effort` field, not just a bare model literal (R7 emission, KTD6 emission-only)."""
-    text = PLAN_SKILL_MD.read_text(encoding="utf-8")
-    assert _EFFORT_EMISSION_MARKER in text
-    assert "tier_resolver.resolve(...).model" in text
-    assert ".effort" in text
+# Plan's former marker/prose pin was replaced by the structured contract (#926).
+# test_saga_spec_consumer_row.py pins the generated note and binds its facts to the
+# real effort seam. Keeping this older prose assertion would constrain free notes
+# to a second hardcoded spelling after their renderer has intentionally changed.
 
 
 def test_effort_emitted_into_team_execution_a7_table() -> None:

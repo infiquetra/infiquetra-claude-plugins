@@ -2,57 +2,50 @@
 
 ## 2026-09-05
 
-### Saga Plan contract readers share one parser; negative-check policy remains pending {#926-plan-drift-checks-derive-dont-restate}
+### Saga Plan save facts have one structured source, rendered outputs, and engine bindings {#926-plan-save-contract-single-source}
 
-**Decision.** The consumer-row and routing checks import section extraction, fenced-template
-collection and flag harvesting from `tests/saga_plan_contract.py`. The helper lives beside its
-consumers because this repository has no shared parser package; `conftest.py` remains for fixtures.
-It reads the documented templates, including titled backtick and tilde fences, and uses POSIX
-quoting to distinguish shell comments from hashes inside values. It does not execute those
-commands or certify their shell control flow. The positive field set is the union of the save
-variants, minus identity flags, compared with the `/plan` cell's declared fields. The command
-card points to that cell instead of maintaining another field list.
+**Decision.** `plugins/saga/references/plan-save-contract.yaml` is the v1 authority for Plan's
+save fields, conditions, operator-choice rule, templates, and effort-honoring mechanism.
+`plugins/saga/scripts/plan_save_contract.py` validates it and renders the `/plan` consumer row,
+two marked save templates, and the effort note. Tests bind facts to the real save parser,
+`Saga` fields, saved tick envelopes, and `inject_effort` behavior. Documents never supply facts
+to the validator. Ordinary prose outside the owned regions is deliberately unconstrained.
 
-**Date:** 2026-09-05 · **Issue:** #926 (unit P5, parent #918 Wave Two) · **Origin:** interim
-D1–D6 repair after Saga Code Review cycle 2 at `337710f3`. This corrects the cycle-2 record's
-claims about derivation coverage, operator-choice derivation and the negative matcher.
+**Date:** 2026-09-05 · **Issue:** #926 (unit P5, parent #918 Wave Two) · **Origin:** accepted
+[structured-contract plan](../plans/2026-09-05-saga-plan-maintenance-926-p5-structured-contract-plan.md),
+following two failed review cycles and the operator's redesign decision.
 
-**Why.** Editing only one of two copied parsers made titled save variants invisible to the
-routing check. Sharing the parser removes that divergence. Quote-aware tokenization preserves
-real options following a quoted `#926`, while ignoring flags inside actual comments or values.
-Both document readers now take explicit text: the comparison and the altered-text probe use
-the same call path. The former self-guard caught a naive row-for-skill swap but missed a helper
-that returned the row only when called without arguments. The default path has been removed;
-the probe demonstrates sensitivity to its added option, not immunity to every possible rewrite.
-Its synthetic option name is checked against both documents and the engine source and extended
-until absent, so the proof does not reserve a real or future production flag.
+**Why.** Document-to-document equality certified phantom fields. The prose classifier both
+missed reworded stale claims and rejected legitimate text; suppression broadened that gap.
+Structured facts let the parser and observed engine behavior supply independent evidence.
+Conditional flags render below commands, so shell comments cannot terminate continuations.
+Duplicate keys, entries, template IDs, and ambiguous region boundaries are explicit refusals;
+`render --write` preflights both documents before writing either on a structural anomaly.
 
-`orchestration_operator_choice` is stored. A supplied choice takes precedence; otherwise an
-explicit `--orchestration-mode` fills it. With neither flag, a new saga's choice is empty and a
-resumed saga retains its prior choice. The previous claim of derivation on every save was false.
-The row's parse convention covers only flag-written fields in the `/plan` cell; its
-parenthesized notes describe conditions and the additional stored choice.
+**Falsifiability and limits.** A separate packaging test pins the three guard files and six test
+names. Each test exercises its own boundary with changed inputs; the row and template pins also
+change the contract input to detect a renderer that reads its output back. Scheduled canaries
+mutate the real row and a real contract entry. Healthy canaries must report `caught`. A bypass
+caught by an inline proof fails the canary baseline and reports `error`; if both that proof and
+the validator are bypassed, the canary reports `toothless`. These outcomes are distinct, all
+reported as observed. No layer proves resistance to coordinated deletion of all layers, and a
+stale statement added elsewhere in free prose is outside coverage. Team Execution's separate
+note is owned by #993.
 
-**Negative check, unchanged and unresolved.** Its current patterns combine an effort token
-with an emission-only idiom, a bounded negation/verb pattern, an un-prefixed denial or a
-matched adjective. The adjective pattern includes bare `advisory` as well as `advisory only`,
-`inert`, and forms of `ignore`; it does not establish what those words refer to. It can reject
-correct prose and miss rewordings split across clauses. HTML comments remain whole while prose
-is split into clauses. The unanchored, case-insensitive `drift-check-opt-out` substring skips
-an entire such span, even if the token occurs in a path or reference. The previous record
-mistook these mechanical matches for semantic guarantees. This interim repair changes none of
-that behavior and makes no choice among narrowing, dropping or repairing the negative check.
+**Rejected.** Repairing the classifier or using an exact-phrase tripwire (operator rejected
+both); dropping the effort check (loses behavior binding); deriving only from parser options
+(the parser cannot identify Plan's subset); `jsonschema` (new runtime dependency and weaker
+entry diagnostics); extending all six consumer rows now (unrelated scope and no approved facts).
 
-**Rejected.** Keeping two matching fence regexes (the next edit could diverge again); splitting
-comments at a literal hash (quoted values can contain hashes); a fourth field enumeration in
-the command card (another unbound copy); a fixed supposedly nonexistent production flag
-(the former `--orchestration-downgrade` already exists). The CLI's option inventory alone
-cannot say which flags Plan declares, so it does not replace the document-derived comparison.
-Binding all documented templates to executable CLI behavior remains beyond this interim repair.
+**Revisit when.** Another producer needs coverage: consider v2 with `producers`. The Agent tool
+gains a native effort control: change the mechanism and re-render after behavior binding passes.
+Issue #993 lands: remove the Team Execution historical note from the contract and re-render.
 
-**Revisit when.** The operator selects the negative-check policy; the save-template syntax
-changes beyond the reader's documented scope; or the runtime changes operator-choice derivation.
-The Team Execution effort-comment duplicate remains tracked separately by #993.
+### Plan's interim reader decision is superseded {#926-plan-drift-checks-derive-dont-restate}
+
+The [interim shared-reader decision](ARCHIVE.md#926-plan-interim-record-superseded) is superseded.
+Its parser and routing repairs remain; field extraction and the classifier are replaced.
+Historical plans and archived decisions retain their original text by operator approval.
 
 ## 2026-09-02
 

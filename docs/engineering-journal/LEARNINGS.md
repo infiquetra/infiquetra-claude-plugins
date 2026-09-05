@@ -19,6 +19,34 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+
+## 2026-09-05
+
+### Documentation classifiers can have no measured margin under copy editing {#926-prose-classifier-zero-span-margin}
+
+**Context.** Saga Plan's negative drift classifier failed two review cycles; repairing individual
+patterns added false positives and still missed ordinary rewordings.
+**Evidence.** The cycle-2 measurement recorded in the
+[accepted plan](../plans/2026-09-05-saga-plan-maintenance-926-p5-structured-contract-plan.md)
+counted 32,262 spans, 126 with an effort token, 261 with a matched adjective, and zero with both.
+The adjective branch had no coverage on the actual corpus; moving words between clauses changed
+its verdict without changing the fact. The old field comparison also stayed green for a
+`risk_tier` entry rejected by the real save parser.
+**Mechanism.** Lexical co-occurrence is sensitive to editorial boundaries. Comparing two
+restatements establishes agreement, not truth. YAML has its own boundary: an unquoted `#993`
+was a comment in the accepted example and disappeared from the first render. Inspecting the
+migration diff exposed it; a block scalar preserves the prescribed note verbatim.
+**Fix.** Bind one structured source to the parser and observed runtime behavior, render the
+owned documentation, and leave free prose outside the contract. Keep independent inventory,
+inline mutation proofs, and scheduled canaries; report baseline errors separately from
+`caught` and `toothless` outcomes.
+**Validation.** U1 and U2 tests pass against real engines and edited document copies. The
+[work-session](../work-sessions/2026-09-05-saga-plan-contract-926.md) records the final mutations
+and gate result.
+**Generalizable rule.** Validate structured facts against their owner, and test the validator's
+sensitivity using both changed facts and changed outputs.
+**Refs.** [Decision](DECISIONS.md#926-plan-save-contract-single-source).
+
 ## 2026-09-02
 
 ### A test that reaches a host binary is green where the binary lives and red where it does not  {#907-host-binary-leak-is-invisible-to-the-local-gate}

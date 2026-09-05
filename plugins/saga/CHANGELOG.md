@@ -4,19 +4,18 @@
 
 ### Fixed
 
-- **Plan contract checks now share their template parser.** Routing and consumer-row checks
-  use the same section, fence and option readers, so titled save variants cannot disappear
-  from only one check. Hashes inside quoted values or issue references preserve following
-  options. The positive derivation probe uses explicit document inputs and a synthetic name
-  selected to be absent from the documents and engine source. The command card links to the
-  consumer row instead of copying its fields. Operator-choice notes now distinguish an
-  explicit choice, derivation from an explicit mode flag, and preservation on progress saves.
-
+- **Plan's routing checks retain the shared template parser.** Titled save variants and
+  hashes inside quoted values remain visible to the routing tests. The consumer-row check now
+  binds generated documentation to a structured contract and binds that contract to the engine.
+  The command card links to the consumer row instead of copying its fields. Operator-choice
+  notes distinguish an explicit choice, derivation from an explicit mode flag, and preservation
+  on progress saves.
 - **Plan no longer claims to produce artifacts it does not produce.** The derived-state sentence
   named the work-session path, which the specification assigns to Work, and named a committed
   plan, which Plan never produces because it writes a file and never runs `git commit`. It now
   names the plan document and the saga tick. The board-move trigger clause drops "is committed"
-  while keeping its precondition force: the plan document exists and has cleared review.
+  because Plan cannot observe that condition at Phase 5.0; the trigger still requires the plan
+  document to exist and have cleared review.
 - **The effort-emission comment described a world that has since changed.** It named issue #363's
   effort-rider work as still ahead of the repository; that work shipped and the issue closed, so
   the comment's account of how a resolved tier reaches a spawned agent was stale. It now names
@@ -25,24 +24,22 @@
   `workflow` and `external-engine` spawn kinds carry effort on a real control, while the `agent`
   spawn kind prepends an `EFFORT_RIDER` directive because the Agent tool has no per-call effort
   parameter. The operator's model-and-effort confirmation is unchanged.
-- **The specification's `/plan` consumer row disagreed with the skill.** It named six writes while
-  Plan's Phase 5.3 save blocks pass ten non-identity flags, omitting `decisions`,
-  `orchestration_mode`, `orchestration_recommended`, and `orchestration_ref`. The row now lists
-  all ten, with conditions and derivation notes moved inside parentheses under a parse convention
-  stated beside the table.
+- **The specification's `/plan` consumer row disagreed with the skill.** It omitted four fields
+  declared by Plan. The row now lists all ten, rendered with their conditions and the stored
+  operator-choice rule from
+  `references/plan-save-contract.yaml`. Tests bind the contract to the actual save parser and
+  stored tick behavior.
 
 ### Added
 
-- **Two drift checks so these three corrections cannot silently relapse.** A negative check
-  rejects any span under `plugins/saga/` that pairs an effort token with a not-honored claim
-  (drift-check-opt-out: this bullet describes the matcher itself, not a claim about the
-  system) — the `emission only` idiom, a negation governing a consume/honor/dispatch/enforce
-  verb (including `un-` forms such as `unconsumed`), or a dead-end adjective such as inert,
-  advisory-only, or ignored — reading HTML comment blocks whole because the stale wording
-  spanned source lines where a line-oriented grep would miss it. A positive check derives
-  the expected consumer-row field set from Plan's own fenced `saga.py save` blocks and compares
-  it to the row, so the two documents cannot drift apart again; it maintains no second field
-  list of its own.
+- **A structured documentation contract guards Plan's save and effort facts.** The canonical
+  `references/plan-save-contract.yaml` renders the consumer row, both save templates, and the
+  effort-honoring note through `scripts/plan_save_contract.py render --write`. Six tests bind
+  fields, conditions, operator-choice precedence, and effort mechanisms to the engines and pin
+  generated regions to fresh renders. Free prose can be edited without tripping a classifier.
+  Malformed facts, duplicate entries, missing markers, and stray save commands fail with named
+  diagnostics. An external inventory guard, inline mutation proofs, and two scheduled mutation
+  canaries detect guard removal or bypass; no prose suppression convention remains.
 
 ## [0.155.0] - 2026-08-31
 

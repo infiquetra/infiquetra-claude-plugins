@@ -222,7 +222,7 @@ def _assert_operator_rule(
 
 
 def test_operator_choice_rule_matches_engine(contract_api: ModuleType, tmp_path: Path) -> None:
-    observations = []
+    observations: list[tuple[dict[str, str], dict[str, Any], dict[str, Any]]] = []
     cases = [
         {},
         {"orchestration_mode": "team-execution"},
@@ -429,14 +429,23 @@ def _reword_outside(text: str, spans: list[tuple[int, int]]) -> str:
     """Change every ordinary line outside the owned regions, preserving structural lines."""
     lines = []
     offset = 0
+    fence = ""
     for line in text.splitlines(keepends=True):
         owned = any(start <= offset < end for start, end in spans)
-        structural = line.startswith(("#", "|", "```", "~~~", "<!--", "-->"))
-        lines.append(
-            line
-            if owned or structural or not line.strip()
-            else "A wording-only editorial revision.\n"
-        )
+        stripped = line.lstrip()
+        fence_line = stripped.startswith(("```", "~~~"))
+        if fence_line:
+            fence = "" if fence == stripped[0] else stripped[0]
+        structural = line.startswith(("#", "|", "<!--", "-->", "    ")) or fence_line or bool(fence)
+        if owned or structural or not line.strip():
+            lines.append(line)
+        else:
+            # Preserve inline code too: this proof changes prose, never command text.
+            pieces = line.rstrip("\n").split("`")
+            for index in range(0, len(pieces), 2):
+                if pieces[index].strip():
+                    pieces[index] = " A wording-only editorial revision. "
+            lines.append("`".join(pieces) + "\n")
         offset += len(line)
     return "".join(lines)
 

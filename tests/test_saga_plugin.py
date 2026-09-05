@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -145,8 +146,38 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
     ):
         assert required in guide
 
-    for script in ("engine_onboarding.py", "engine_registry_conformance.py", "engine_promotion.py"):
-        assert (PLUGIN_ROOT / "scripts" / script).exists()
+    for script in (
+        "engine_onboarding.py",
+        "engine_registry_conformance.py",
+        "engine_promotion.py",
+        "plan_save_contract.py",
+    ):
+        path = PLUGIN_ROOT / "scripts" / script
+        assert path.is_file(), f"{path.relative_to(ROOT)}: required packaged script is missing"
+
+    # Keep this inventory outside the guard it protects: deleting the guard must be red.
+    contract = PLUGIN_ROOT / "references/plan-save-contract.yaml"
+    guard = ROOT / "tests/test_saga_spec_consumer_row.py"
+    for path in (contract, guard):
+        assert path.is_file(), (
+            f"{path.relative_to(ROOT)}: required Plan contract guard input is missing"
+        )
+    functions = [
+        node.name
+        for node in ast.parse(_read(guard), filename=str(guard)).body
+        if isinstance(node, ast.FunctionDef)
+    ]
+    for name in (
+        "test_plan_save_contract_loads_and_rejects_malformed_entries",
+        "test_plan_save_contract_binds_to_engine",
+        "test_operator_choice_rule_matches_engine",
+        "test_saga_spec_plan_consumer_row_matches_contract",
+        "test_plan_docs_generated_regions_match_contract",
+        "test_plan_docs_wording_changes_do_not_fail",
+    ):
+        assert functions.count(name) == 1, (
+            f"{guard.relative_to(ROOT)}: expected exactly one {name}; found {functions.count(name)}"
+        )
 
     dispatch_docs = "\n".join(
         _read(PLUGIN_ROOT / "references" / name)

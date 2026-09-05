@@ -516,6 +516,66 @@ the Infiquetra command after normal README and marketplace documentation.
 
 ## Superseded
 
+### Saga Plan interim shared-reader decision {#926-plan-interim-record-superseded}
+
+**SUPERSEDED** 2026-09-05 by the
+[structured-contract decision](DECISIONS.md#926-plan-save-contract-single-source).
+The a736c166 repair remains the verified baseline; the accepted redesign replaces its
+negative classifier and document-derived field comparison. Original interim record follows.
+
+### Saga Plan contract readers share one parser; negative-check policy remains pending {#926-plan-interim-original-text}
+
+**Decision.** The consumer-row and routing checks import section extraction, fenced-template
+collection and flag harvesting from `tests/saga_plan_contract.py`. The helper lives beside its
+consumers because this repository has no shared parser package; `conftest.py` remains for fixtures.
+It reads the documented templates, including titled backtick and tilde fences, and uses POSIX
+quoting to distinguish shell comments from hashes inside values. It does not execute those
+commands or certify their shell control flow. The positive field set is the union of the save
+variants, minus identity flags, compared with the `/plan` cell's declared fields. The command
+card points to that cell instead of maintaining another field list.
+
+**Date:** 2026-09-05 · **Issue:** #926 (unit P5, parent #918 Wave Two) · **Origin:** interim
+D1–D6 repair after Saga Code Review cycle 2 at `337710f3`. This corrects the cycle-2 record's
+claims about derivation coverage, operator-choice derivation and the negative matcher.
+
+**Why.** Editing only one of two copied parsers made titled save variants invisible to the
+routing check. Sharing the parser removes that divergence. Quote-aware tokenization preserves
+real options following a quoted `#926`, while ignoring flags inside actual comments or values.
+Both document readers now take explicit text: the comparison and the altered-text probe use
+the same call path. The former self-guard caught a naive row-for-skill swap but missed a helper
+that returned the row only when called without arguments. The default path has been removed;
+the probe demonstrates sensitivity to its added option, not immunity to every possible rewrite.
+Its synthetic option name is checked against both documents and the engine source and extended
+until absent, so the proof does not reserve a real or future production flag.
+
+`orchestration_operator_choice` is stored. A supplied choice takes precedence; otherwise an
+explicit `--orchestration-mode` fills it. With neither flag, a new saga's choice is empty and a
+resumed saga retains its prior choice. The previous claim of derivation on every save was false.
+The row's parse convention covers only flag-written fields in the `/plan` cell; its
+parenthesized notes describe conditions and the additional stored choice.
+
+**Negative check, unchanged and unresolved.** Its current patterns combine an effort token
+with an emission-only idiom, a bounded negation/verb pattern, an un-prefixed denial or a
+matched adjective. The adjective pattern includes bare `advisory` as well as `advisory only`,
+`inert`, and forms of `ignore`; it does not establish what those words refer to. It can reject
+correct prose and miss rewordings split across clauses. HTML comments remain whole while prose
+is split into clauses. The unanchored, case-insensitive `drift-check-opt-out` substring skips
+an entire such span, even if the token occurs in a path or reference. The previous record
+mistook these mechanical matches for semantic guarantees. This interim repair changes none of
+that behavior and makes no choice among narrowing, dropping or repairing the negative check.
+
+**Rejected.** Keeping two matching fence regexes (the next edit could diverge again); splitting
+comments at a literal hash (quoted values can contain hashes); a fourth field enumeration in
+the command card (another unbound copy); a fixed supposedly nonexistent production flag
+(the former `--orchestration-downgrade` already exists). The CLI's option inventory alone
+cannot say which flags Plan declares, so it does not replace the document-derived comparison.
+Binding all documented templates to executable CLI behavior remains beyond this interim repair.
+
+**Revisit when.** The operator selects the negative-check policy; the save-template syntax
+changes beyond the reader's documented scope; or the runtime changes operator-choice derivation.
+The Team Execution effort-comment duplicate remains tracked separately by #993.
+
+
 ### Saga Plan drift checks derive from the documents, and the negative one matches claim classes  {#926-plan-cycle2-record-superseded}
 
 **SUPERSEDED** 2026-09-05. Preserved from `337710f3`; its claims about the self-guard,

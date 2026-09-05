@@ -26,14 +26,14 @@
   {
     "id": "manifest-consumer-matrix",
     "guard": "tests/test_manifest_consumer_matrix.py::test_manifest_no_orphan_field",
-    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md §13.3 (R17, no orphan field).",
+    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md \u00a713.3 (R17, no orphan field).",
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/scripts/provenance_manifest.py",
       "find": "    execution_id: str\n    saga_ref: str",
       "replace": "    execution_id: str\n    canary_mutant_field: str\n    saga_ref: str"
     },
-    "mutation_description": "Add a schema field to the Manifest dataclass with no matching §13.3 matrix row (orphan field)."
+    "mutation_description": "Add a schema field to the Manifest dataclass with no matching \u00a713.3 matrix row (orphan field)."
   },
   {
     "id": "team-execution-pointers",
@@ -46,5 +46,29 @@
       "replace": "    if False and (ref_oid.returncode != 0 or ref_oid.stdout.strip() != pointer.hash):"
     },
     "mutation_description": "Neuter the L1 holding-ref integrity check so a moved ref no longer raises HASH_MISMATCH."
+  },
+  {
+    "id": "plan-save-contract-row",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract",
+    "invariant": "The /plan consumer row equals the rendering of the canonical Plan save contract (#926 R16).",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/saga-spec.md",
+      "find": "| **/plan** | `scan` (offer \"resume existing?\" before minting \u2014 \u00a72.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`; Phase 5.1 follow-up; omit otherwise), `adr_refs`, `decisions` (the KTD mirror; renders as the tick's `## Decisions` section), `orchestration_mode`, `orchestration_recommended`, `orchestration_ref` (only when `orchestration_mode=cc-workflows-ultracode`); also stored: `orchestration_operator_choice` (an explicit `--orchestration-operator-choice` wins; otherwise an explicitly passed `--orchestration-mode` fills it; with neither flag, preserve the prior choice or start empty). |",
+      "replace": "| **/plan** | `scan` (offer \"resume existing?\" before minting \u2014 \u00a72.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`; Phase 5.1 follow-up; omit otherwise), `adr_refs`, `decisions` (the KTD mirror; renders as the tick's `## Decisions` section), `orchestration_mode`, `orchestration_ref` (only when `orchestration_mode=cc-workflows-ultracode`); also stored: `orchestration_operator_choice` (an explicit `--orchestration-operator-choice` wins; otherwise an explicitly passed `--orchestration-mode` fills it; with neither flag, preserve the prior choice or start empty). |"
+    },
+    "mutation_description": "Remove orchestration_recommended from the uniquely anchored /plan row without changing the contract."
+  },
+  {
+    "id": "plan-save-contract-engine-binding",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_save_contract_binds_to_engine",
+    "invariant": "Every Plan write has a real save option and Saga field, independently of generated documentation (#926 R7).",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/plan-save-contract.yaml",
+      "find": "name: adr_refs",
+      "replace": "name: risk_tier"
+    },
+    "mutation_description": "Replace adr_refs with risk_tier, a field the real save parser does not accept."
   }
 ]

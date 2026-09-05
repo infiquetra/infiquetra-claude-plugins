@@ -25,8 +25,9 @@ constant **module-wide** — module-level `Assign` targets, helper-function retu
 literal — so the earlier escape hatches (a question held in a module constant, returned by a
 helper predicate, or fed through `parametrize`) are detected, not missed. Docstrings are the
 one deliberate exclusion (the visitor proves a node is a docstring by parent shape before
-skipping it), plus the module's own definition of question-shapedness (the `_INTERROGATIVES`
-tuple and `_is_question_shaped`). The remaining blind spot is deliberate: JSON data files
+skipping it), plus the guard module's own definition of question-shapedness (the `_INTERROGATIVES`
+tuple and `_is_question_shaped`, exempted only when the parsed module is the guard's own
+`test_brainstorm_evidence_model.py` — any other module defining those names is still flagged). The remaining blind spot is deliberate: JSON data files
 (such as `tests/data/brainstorm/`) are not Python source, so the walk does not see them —
 those cases are authored design data, not test assertions. The check fails on:
 
@@ -51,7 +52,7 @@ assertion executed.
 
 `tests/data/brainstorm/scenarios.json` holds the case set. Each case
 carries `id`, `idea_seed`, `product_size` and `consequence` as
-**independent** fields, `material_dimensions`, `expected` per dimension,
+**independent** fields, `material_dimensions`, `authored_verdicts` per dimension,
 and `transcript` (`captured` or `none`). The set varies both variables
 independently (not collinear) and includes at minimum the four required
 failure-mode kinds: `premature-convergence`, `missed-material-gap`,
@@ -60,12 +61,12 @@ failure-mode kinds: `premature-convergence`, `missed-material-gap`,
 `tests/data/brainstorm/rubric.json` holds dimensions and their band
 descriptions as data, never inlined in assertions.
 
-Scenario data stores `expected` per dimension as authored design input; no `grade()` function exists yet and no live runner is wired. Layer 2 proves the data shape and per-dimension structure, not that any transcript was graded.
+Scenario data stores `authored_verdicts` per dimension as authored design input; no `grade()` function exists yet and no live runner is wired. A top-level `grading_status` field discloses that no grader reads the verdict values yet. Layer 2 proves the data shape and per-dimension structure, not that any transcript was graded.
 
 **Authored case data is expected and permitted.** `scenarios.json`,
 `rubric.json`, and `calibration.json` are authored by this unit: they
 define the idea seed, the two independent variables, the material
-dimensions, and the expected outcome per dimension. That is design input,
+dimensions, and the `authored_verdicts` outcome per dimension. That is design input,
 not evidence.
 
 **Captured transcripts are optional and additive.** Where a parked-checkpoint run
@@ -119,7 +120,8 @@ stay after the confirmed artifact, in Document Review or a narrow
 post-write validator, never in the live dialogue. A green scenario run
 without a captured transcript proves the case set's shape, not the quality of a conversation that was never
 captured. The AST check's scope is as described in Layer 1: question-shaped string constants are
-detected module-wide across the brainstorm test modules; docstrings, the checker's own
+detected module-wide across the brainstorm test modules, each module parsed separately with
+violations reported as `<path>:<line>`; docstrings, the guard module's own
 definitions, and non-Python data files stay outside it.
 
 ## Offline and side-effect-free (R23)

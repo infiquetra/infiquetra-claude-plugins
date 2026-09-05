@@ -47,8 +47,12 @@ scoped to saga's own reader.
 
 **Tracked as issue 950** — "Mission Control bypasses saga's fail-closed handoff maturity contract (API-23)", filed against this repository so the residual is not only recorded in run-scoped evidence.
 
-**Recommended next step.** A separate change against `plugins/mission-control/`, with its own
-review, teaching `sdlc_manager.py` to read declared frontmatter through saga's
-`handoff_envelope.infer_maturity` rather than maintaining a second, narrower vocabulary. Two
-implementations of one contract is the same defect shape as `AM-28`, which cycle 7 closed inside
-saga by giving re-anchoring a single owner.
+**Recommended next step** (corrected 2026-09-05)**.** A separate change carrying
+`HANDOFF_MATURITIES`, `ROUTABLE_MATURITIES` and the path rule into the vendored fleet-commons
+shim (`plugins/fleet-core/scripts/fleet_commons/`, reached through each plugin's
+`fleet_commons_shim.py` and covered by the vendored-copy drift guard), so Mission Control and
+saga share one implementation of the contract rather than two. A direct import of
+`handoff_envelope.infer_maturity` from mission-control is ruled out by
+`{#marketplace-install-layout-no-import-path}` per
+`plugins/saga/references/dispatch-adapter-contract.md:48-54`: a cross-plugin import breaks at
+install time, which is why the vendored shim exists rather than a direct import.

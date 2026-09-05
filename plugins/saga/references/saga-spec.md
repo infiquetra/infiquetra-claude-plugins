@@ -308,19 +308,18 @@ HANDOFF_MATURITIES = ("idea-ready", "requirements-ready", "plan-ready", "resume-
 
 `destination` mirrors `lifecycle_state.normalize_destination`'s canonical set — use that helper to normalize
 user-facing labels (`deploy` -> `nonprod-deploy`, etc.) before storing. `HANDOFF_MATURITIES` is
-implemented in `plugins/saga/scripts/handoff_envelope.py`. Frontmatter `maturity` must be an
-the top-level `maturity:` key of the YAML mapping delimited by `---` lines, decided by parsing that
+implemented in `plugins/saga/scripts/handoff_envelope.py`. Frontmatter `maturity` must be the top-level `maturity:` key of the YAML mapping delimited by `---` lines, decided by parsing that
 block as YAML rather than by scanning lines. Any other appearance inside the block — a sequence item
-at any column, a key nested under another mapping key, a flow-style `{maturity: ...}`, or a
+at any column, a key nested under another mapping key, a flow-style mapping nested under another key, or a
 `maturity:` line in a block that will not parse — does not declare and fails closed as
-`unknown:carrier:`, never falling through to the path rule. An unrecognized non-empty, empty, non-delimited carrier (within the first 30 lines), unterminated block, or unreadable
-file (within the first 8192 bytes) fails closed with no durable route and a diagnostic, rather than falling through to the path rule, provided the declaration lies within the bounded read windows; beyond those windows the path rule applies.
+`unknown:carrier:`, never falling through to the path rule. A flow-style mapping that is itself the whole top-level mapping declares like any top-level key. An unrecognized non-empty, empty, non-delimited carrier (within the first 30 lines), unterminated block, or unreadable
+file (within the first 8192 bytes) fails closed with no durable route and a diagnostic, rather than falling through to the path rule, provided the declaration lies within the bounded read windows; beyond the 8192-byte window the source fails closed as `unknown:unterminated:`.
 The field's runtime domain is consequently NOT closed at the six values: `infer_maturity` may also
 return the empty string, an `unknown:unrecognized:<raw>` sentinel carrying an unrecognized raw value
 (reserved namespace `unrecognized:` that no vocabulary value contains, so author text cannot forge it),
 a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared outside a delimited
 block), a `unknown:unterminated:<raw>` sentinel for a block whose closing delimiter was not found — either genuinely absent, or present but beyond the 8192-byte frontmatter read window (opening `---` without
-closing `---`), `unknown:unreadable` for a read/decode failure, or `unknown:out-of-root:<path>` for a source that resolves outside the declared root; the envelope's published
+closing `---`), `unknown:unreadable` for a read/decode failure, or `unknown:out-of-root:<path>` for a source that resolves outside the declared root. A source that resolves outside the declared root is never read: if its path carries a marker directory (`docs/brainstorms/` and the like) and the same subpath exists inside the root, that in-root file is read instead and its declaration decides; otherwise the source is refused with `unknown:out-of-root:`, whatever it declares, whether or not it exists, and however its path is spelled. The envelope's published
 `handoff_maturity` field is bounded to 120 characters after the `unknown:` prefix (the helper may
 return the full raw value, but the published field is truncated; the `unknown:` prefix plus its
 discriminator segment is reserved and never appears in author-declared values), the fail-closed shapes
@@ -506,7 +505,7 @@ directory. (The cached `branch`/`head_sha` may be stale — that is fine, git is
   the six `HANDOFF_MATURITIES` values (§4), the empty string (frontmatter declared the key but left it
   blank), an `unknown:unrecognized:<raw>` sentinel for an unrecognized value (reserved namespace
   `unrecognized:`), a `unknown:carrier:<raw>` sentinel for a non-delimited carrier (maturity declared
-  outside a delimited `---` block), a `unknown:unterminated:<raw>` sentinel for a block whose closing delimiter was not found — either genuinely absent, or present but beyond the 8192-byte frontmatter read window (opening `---` without closing `---`), or `unknown:unreadable` for a read/decode failure (all
+  outside a delimited `---` block), a `unknown:unterminated:<raw>` sentinel for a block whose closing delimiter was not found — either genuinely absent, or present but beyond the 8192-byte frontmatter read window (opening `---` without closing `---`), `unknown:unreadable` for a read/decode failure, or `unknown:out-of-root:<path>` for a source that resolves outside the declared root (all
   bounded to 120 characters after the `unknown:` prefix; the `unknown:` prefix and its discriminator
   segment are reserved and never appear in author-declared values; design record: `DECISIONS.md`
   `{#913-maturity-unknown-sentinel}`). For all non-vocabulary shapes `suggested_command` is

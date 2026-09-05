@@ -22,6 +22,19 @@
 
 ## 2026-09-05
 
+### Executable documentation must not choose a test's program {#926-doc-command-execution-boundary}
+
+**Evidence.** Cycle 4 security review changed the maintainer's recommender example to an
+out-of-checkout Python file. `test_plan_docs_wording_changes_do_not_fail` passed while that
+file executed: selecting a fence by a filename substring did not constrain its command.
+**Fix.** The test now requires the exact recommender command prefix and resolves its fixed
+script inside the checkout before launching it. Absolute paths, traversal, another repository
+script, interpreter options, and an escaping symlink are refused.
+**Validation.** The same documentation-only mutation now fails before the harmless marker
+file is created; the restored example passes. See the [repair receipt](../work-sessions/2026-09-06-saga-plan-contract-926-repair.md).
+**Generalizable rule.** Documentation can supply example arguments to an executable test;
+it must not select that test's interpreter or program.
+
 ### Documentation classifiers can have no measured margin under copy editing {#926-prose-classifier-zero-span-margin}
 
 **Context.** Saga Plan's negative drift classifier failed two review cycles; repairing individual

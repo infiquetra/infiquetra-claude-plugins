@@ -312,6 +312,18 @@ def test_plan_docs_generated_regions_match_contract(contract_api: ModuleType) ->
     assert "docs/plans/revised.md" in output and output != skill
 
 
+def recommender_argv(command: str, root: Path) -> list[str]:
+    """Documentation may supply example arguments, never select an executable."""
+    args = shlex.split(command)
+    expected = ["python3", "plugins/saga/scripts/lifecycle_state.py", "recommend-backend"]
+    assert args[:3] == expected, (
+        "maintainer runbook: expected the canonical recommend-backend command"
+    )
+    target = (root / expected[1]).resolve()
+    assert target.is_relative_to(root.resolve()), "maintainer runbook: recommender escapes checkout"
+    return [sys.executable, str(target), *args[2:]]
+
+
 def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_path: Path) -> None:
     api = contract_api
     contract = api.load()
@@ -340,9 +352,17 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
         if "lifecycle_state.py" in block
     ]
     assert len(commands) == 1, "maintainer runbook: missing runnable recommender example"
-    args = shlex.split(commands[0])
+    for target in ("/tmp/outside.py", "../outside.py", "plugins/saga/scripts/saga.py", "-c"):
+        with pytest.raises(AssertionError, match="canonical recommend-backend"):
+            recommender_argv(f"python3 {target} recommend-backend lifecycle_state.py", ROOT)
+    linked_root = tmp_path / "linked-checkout"
+    linked_script = linked_root / "plugins/saga/scripts/lifecycle_state.py"
+    linked_script.parent.mkdir(parents=True)
+    linked_script.symlink_to(ROOT / "plugins/saga/scripts/lifecycle_state.py")
+    with pytest.raises(AssertionError, match="escapes checkout"):
+        recommender_argv(commands[0], linked_root)
     result = subprocess.run(
-        [sys.executable, str(ROOT / args[1]), *args[2:]],
+        recommender_argv(commands[0], ROOT),
         cwd=ROOT,
         capture_output=True,
         text=True,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import os
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -28,6 +29,12 @@ def _load() -> ModuleType:
 
 
 HE: ModuleType = _load()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_git_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Envelope classification tests do not need repository metadata or subprocesses."""
+    monkeypatch.setattr(HE, "current_git_state", lambda root: {"branch": "", "head": ""})
 
 
 def _write_file(path: Path, maturity: str | None) -> None:
@@ -511,24 +518,23 @@ def test_read_failure_fails_closed(tmp_path: Path) -> None:
     assert HE.infer_maturity(str(valid)) == "pending-confirmation"
 
 
-def test_reanchored_missing_fallback_to_original(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """CORR-13: re-anchored subpath missing must fallback to original absolute, not path rule."""
+def test_reanchored_missing_twin_is_refused(tmp_path: Path) -> None:
+    """SEC-1/TEST-10: a missing twin refuses even an unconfirmed original declaration."""
     # Root has no docs/brainstorms/b.md, but absolute file outside root declares pending-confirmation
-    outside = Path(tempfile.mkdtemp()) / "outside"
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
     (outside / "docs" / "brainstorms").mkdir(parents=True)
     abs_file = outside / "docs" / "brainstorms" / "2026-08-30-missing-reanchored-requirements.md"
     abs_file.write_text("---\nmaturity: pending-confirmation\n---\n\nBody\n", encoding="utf-8")
     # Ensure root has no such subpath
     assert not (
-        tmp_path / "docs" / "brainstorms" / "2026-08-30-missing-reanchored-requirements.md"
+        root / "docs" / "brainstorms" / "2026-08-30-missing-reanchored-requirements.md"
     ).exists()
-    # Infer with root declared as tmp_path, source is absolute outside root
-    maturity = HE.infer_maturity(str(abs_file), root=tmp_path)
-    assert maturity == "pending-confirmation"
-    envelope = HE.build_handoff_envelope(str(abs_file), root=tmp_path)
-    assert envelope["handoff_maturity"] == "pending-confirmation"
+    maturity = HE.infer_maturity(str(abs_file), root=root)
+    assert maturity.startswith("unknown:out-of-root:")
+    envelope = HE.build_handoff_envelope(str(abs_file), root=root)
+    assert envelope["handoff_maturity"].startswith("unknown:out-of-root:")
     assert "/issue --prepare" not in envelope["suggested_command"]
 
 
@@ -787,7 +793,16 @@ def test_same_file_two_spellings_agree(tmp_path: Path) -> None:
     )
     direct = HE.infer_maturity("docs/brainstorms/x-requirements.md", root=root)
     indirect = HE.infer_maturity("docs/brainstorms/./x-requirements.md", root=root)
-    assert direct == indirect == "pending-confirmation"
+    absolute = HE.infer_maturity(str(brainstorms / "x-requirements.md"), root=root)
+    assert direct == indirect == absolute == "pending-confirmation"
+    outside = tmp_path / "elsewhere/docs/brainstorms/outside.md"
+    outside.parent.mkdir(parents=True)
+    _write_file(outside, "plan-ready")
+    absolute_outside = HE.infer_maturity(str(outside), root=root)
+    relative_outside = HE.infer_maturity(os.path.relpath(outside, root), root=root)
+    assert absolute_outside.split(":", 2)[:2] == relative_outside.split(":", 2)[:2]
+    assert absolute_outside.startswith("unknown:out-of-root:")
+    assert relative_outside.startswith("unknown:out-of-root:")
 
 
 def test_out_of_root_sentinel_carries_a_diagnostic(tmp_path: Path) -> None:
@@ -830,9 +845,11 @@ def test_reanchored_candidate_escaping_root_is_refused(tmp_path: Path) -> None:
     victim = tmp_path / "outside"
     victim.mkdir()
     (victim / "x.md").write_text("---\nmaturity: plan-ready\n---\n\nB\n", "utf-8")
+    (tmp_path / "elsewhere/docs/brainstorms").mkdir(parents=True)
     source = str(
         tmp_path / "elsewhere" / "docs" / "brainstorms" / ".." / ".." / ".." / "outside" / "x.md"
     )
+    assert Path(source).is_file(), "the escape must reach a real declaration"
     result = HE.infer_maturity(source, root=root)
     assert result != "plan-ready", "an out-of-root declaration must not leak in"
     assert result.startswith("unknown:out-of-root:")
@@ -884,3 +901,296 @@ def test_marker_less_out_of_root_declaration_is_never_read(tmp_path: Path) -> No
     got = HE.infer_maturity(str(stray), root=root)
     assert got != "plan-ready", "a marker-less out-of-root file must not be read"
     assert got.startswith("unknown:out-of-root:")
+
+
+def test_out_of_root_declaring_file_is_refused_in_both_spellings(tmp_path: Path) -> None:
+    """SEC-1: the absolute plan-ready spelling must not publish a runnable command."""
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "elsewhere/docs/brainstorms/x.md"
+    outside.parent.mkdir(parents=True)
+    _write_file(outside, "plan-ready")
+    for source in (str(outside), os.path.relpath(outside, root)):
+        envelope = HE.build_handoff_envelope(source, root=root)
+        assert "/issue --prepare" not in envelope["suggested_command"]
+        assert envelope["handoff_maturity"].startswith("unknown:out-of-root:")
+        assert HE.infer_maturity(source, root).startswith("unknown:out-of-root:")
+
+
+def test_in_root_symlink_to_out_of_root_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    link = root / "docs/plans/link.md"
+    link.parent.mkdir(parents=True)
+    outside = tmp_path / "outside.md"
+    _write_file(outside, "plan-ready")
+    link.symlink_to(outside)
+    for source in (str(link), "docs/plans/link.md"):
+        envelope = HE.build_handoff_envelope(source, root=root)
+        assert "/issue --prepare" not in envelope["suggested_command"]
+        assert envelope["handoff_maturity"].startswith("unknown:out-of-root:")
+        assert HE.infer_maturity(source, root).startswith("unknown:out-of-root:")
+
+
+def test_reanchored_twin_declaring_nothing_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    twin = root / "docs/brainstorms/x.md"
+    twin.parent.mkdir(parents=True)
+    twin.write_text("---\ntitle: hello\n---\n", encoding="utf-8")
+    source = str(tmp_path / "elsewhere/docs/brainstorms/x.md")
+    assert HE.infer_maturity(source, root).startswith("unknown:out-of-root:")
+    envelope = HE.build_handoff_envelope(source, root=root)
+    assert envelope["handoff_maturity"].startswith("unknown:out-of-root:")
+    assert "/issue --prepare" not in envelope["suggested_command"]
+    assert "re-anchored from" in envelope["suggested_command"]
+    # Refusal concerns the original; the diagnostic must not say the contained twin escapes.
+    assert "resolves outside" not in envelope["suggested_command"]
+
+
+def test_resolve_source_is_the_single_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    for relative in ("docs/brainstorms/x.md", "brainstorms/x.md"):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _write_file(target, "plan-ready")
+    source = str(tmp_path / "elsewhere/docs/brainstorms/x.md")
+    forced = HE.ResolvedSource(
+        path_to_read=None, published="FORCED-BY-TEST", reanchored=False, refused=True
+    )
+    monkeypatch.setattr(HE, "resolve_source", lambda source, root: forced)
+    envelope = HE.build_handoff_envelope(source, root=root)
+    assert envelope["source"] == "FORCED-BY-TEST"
+    assert envelope["handoff_maturity"].startswith("unknown:out-of-root:")
+    assert envelope["handoff_maturity"] == HE.infer_maturity(source, root)
+
+
+@pytest.mark.parametrize("shape", ["ghost", "no-declaration", "backslash", "marker-less"])
+def test_infer_and_envelope_agree_on_every_out_of_root_shape(shape: str) -> None:
+    # Keep the fixture source below the separately tested 120-character sentinel bound,
+    # so exact equality measures resolution rather than intentional publication truncation.
+    with tempfile.TemporaryDirectory(prefix="912-", dir="/tmp") as fixture_dir:
+        base = Path(fixture_dir).resolve()
+        root = base / "root"
+        root.mkdir()
+        source_path = base / "elsewhere/docs/brainstorms/x.md"
+        source_path.parent.mkdir(parents=True)
+        _write_file(source_path, "plan-ready")
+        if shape in {"no-declaration", "backslash"}:
+            twin = root / "docs/brainstorms/x.md"
+            twin.parent.mkdir(parents=True)
+            _write_file(twin, None if shape == "no-declaration" else "pending-confirmation")
+        if shape == "marker-less":
+            source_path = base / "notes.md"
+            _write_file(source_path, "plan-ready")
+        source = str(source_path)
+        if shape == "backslash":
+            source = source.replace("/", "\\")
+        expected = HE.infer_maturity(source, root)
+        envelope = HE.build_handoff_envelope(source, root=root)
+        assert envelope["handoff_maturity"] == expected
+        if shape == "backslash":
+            assert envelope["source"] == "docs/brainstorms/x.md"
+
+
+_CARRIER_CASES = [
+    ("---\nmeta:\n  maturity: requirements-ready\n---\n", "nested"),
+    ("---\nkeys:\n- maturity: requirements-ready\n---\n", "sequence item"),
+    ("maturity: requirements-ready\n", "missing delimiters"),
+]
+
+
+@pytest.mark.parametrize(("body", "cause"), _CARRIER_CASES)
+def test_carrier_diagnostic_names_the_actual_cause(tmp_path: Path, body: str, cause: str) -> None:
+    _infer(tmp_path, body)
+    envelope = HE.build_handoff_envelope("docs/brainstorms/t-requirements.md", root=tmp_path)
+    assert envelope["handoff_maturity"].startswith("unknown:carrier:")
+    diagnostic = envelope["suggested_command"]
+    assert cause in diagnostic.lower()
+    if cause != "missing delimiters":
+        assert "missing delimiters" not in diagnostic.lower()
+
+
+def test_carrier_diagnostics_are_pairwise_distinct(tmp_path: Path) -> None:
+    diagnostics = []
+    for body, _ in _CARRIER_CASES:
+        _infer(tmp_path, body)
+        diagnostics.append(
+            HE.build_handoff_envelope("docs/brainstorms/t-requirements.md", root=tmp_path)[
+                "suggested_command"
+            ]
+        )
+    assert len(set(diagnostics)) == 3
+
+
+def test_blank_maturity_diagnostic_says_blank_not_unrecognized(tmp_path: Path) -> None:
+    assert _infer(tmp_path, "---\nmaturity:\n---\n") == ""
+    envelope = HE.build_handoff_envelope("docs/brainstorms/t-requirements.md", root=tmp_path)
+    assert "blank" in envelope["suggested_command"].lower()
+    assert "Unrecognized" not in envelope["suggested_command"]
+
+
+def test_unrecognized_remediation_names_pending_confirmation(tmp_path: Path) -> None:
+    _infer(tmp_path, "---\nmaturity: pending confirmation\n---\n")
+    envelope = HE.build_handoff_envelope("docs/brainstorms/t-requirements.md", root=tmp_path)
+    assert "pending-confirmation" in envelope["suggested_command"]
+
+
+def test_maturity_past_the_read_window_fails_closed(tmp_path: Path) -> None:
+    filler = "".join(f"k{i:03d}: text\n" for i in range(900))
+    body = f"---\n{filler}maturity: pending-confirmation\n---\n# doc\n\n"
+    assert len(body.encode()) == 9946
+    got = _infer(tmp_path, body)
+    assert got.startswith("unknown:unterminated:")
+    envelope = HE.build_handoff_envelope("docs/brainstorms/t-requirements.md", root=tmp_path)
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_closing_delimiter_past_the_read_window_names_the_window(tmp_path: Path) -> None:
+    filler = "".join(f"k{i:03d}: text\n" for i in range(900))
+    _infer(tmp_path, f"---\nmaturity: plan-ready\n{filler}---\n# doc\n")
+    envelope = HE.build_handoff_envelope("docs/brainstorms/t-requirements.md", root=tmp_path)
+    assert "8192" in envelope["suggested_command"]
+    assert "closing --- missing" not in envelope["suggested_command"]
+
+
+def test_early_dashes_inside_quoted_value_fail_closed(tmp_path: Path) -> None:
+    got = _infer(tmp_path, '---\nnote: "line\n---\n"\nmaturity: pending-confirmation\n---\n# doc\n')
+    assert got.startswith("unknown:carrier:")
+    envelope = HE.build_handoff_envelope("docs/brainstorms/t-requirements.md", root=tmp_path)
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+def test_deeply_nested_yaml_fails_closed_without_traceback(tmp_path: Path) -> None:
+    body = "---\nmaturity: plan-ready\na: " + "[" * 4000 + "]" * 4000 + "\n---\n"
+    got = _infer(tmp_path, body)
+    assert got.startswith("unknown:carrier:")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "docs/plans/a.md; rm -rf victim",
+        "docs/plans/a.md --maturity resume-ready --target x",
+        "docs/plans/a.md --force",
+        "docs/plans/a.md\n/issue --prepare --from attacker",
+    ],
+)
+def test_suggested_command_is_shell_safe_and_single_line(tmp_path: Path, source: str) -> None:
+    target = tmp_path / source
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _write_file(target, "plan-ready")
+    envelope = HE.build_handoff_envelope(source, root=tmp_path)
+    assert shlex.split(envelope["suggested_command"]) == [
+        "/issue",
+        "--prepare",
+        "--from",
+        source,
+        "--maturity",
+        "plan-ready",
+    ]
+    if "\n" in source:
+        _write_file(target, "pending-confirmation")
+        refused = HE.build_handoff_envelope(source, root=tmp_path)
+        assert "\n" not in refused["suggested_command"]
+
+
+def test_plain_path_command_is_byte_identical(tmp_path: Path) -> None:
+    envelope = HE.build_handoff_envelope("docs/plans/a.md", root=tmp_path)
+    assert envelope["suggested_command"] == (
+        "/issue --prepare --from docs/plans/a.md --maturity plan-ready"
+    )
+
+
+def test_overlong_path_component_returns_a_sentinel_not_oserror(tmp_path: Path) -> None:
+    (tmp_path / "docs/plans").mkdir(parents=True)
+    source = "docs/plans/" + "a" * 400 + ".md"
+    got = HE.infer_maturity(source, root=tmp_path)
+    assert isinstance(got, str)
+
+
+def test_unrecognized_handoff_section_requires_clarification() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "parse_issue_clarification", ROOT / "plugins/saga/scripts/parse_issue.py"
+    )
+    assert spec is not None and spec.loader is not None
+    parser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(parser)
+    got = parser.extract_handoff("### Handoff maturity\nunknown:carrier:requirements-ready\n")
+    assert got["maturity"] == ""
+    assert got["can_plan"] is False
+    assert got["requires_clarification"] is True
+    assert (
+        parser.extract_handoff("### Objective\nNo handoff section.\n")["requires_clarification"]
+        is False
+    )
+
+
+def test_top_level_flow_mapping_declares(tmp_path: Path) -> None:
+    target = tmp_path / "docs/ideation/flow.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("---\n{maturity: requirements-ready, topic: x}\n---\n", encoding="utf-8")
+    assert HE.infer_maturity(str(target), root=tmp_path) == "requirements-ready"
+
+
+@pytest.mark.parametrize("value", ["unknown:out-of-root:x", "unknown:carrier:"])
+def test_hand_written_unknown_prefix_is_wrapped_not_honoured(tmp_path: Path, value: str) -> None:
+    assert _infer(tmp_path, f'---\nmaturity: "{value}"\n---\n') == (f"unknown:unrecognized:{value}")
+    envelope = HE.build_handoff_envelope("docs/brainstorms/t-requirements.md", root=tmp_path)
+    assert "/issue --prepare" not in envelope["suggested_command"]
+
+
+@pytest.mark.parametrize("shape", ["missing", "directory", "nul"])
+def test_frontmatter_io_failure_is_unreadable(tmp_path: Path, shape: str) -> None:
+    target = tmp_path / "unreadable.md"
+    if shape == "directory":
+        target.mkdir()
+    elif shape == "nul":
+        target = tmp_path / "bad\x00name.md"
+    assert HE._read_frontmatter_maturity(target) == "unknown:unreadable"
+    assert HE.carrier_detail(target) == "carrier could not be re-read"
+
+
+def test_small_open_block_without_maturity_keeps_the_path_rule(tmp_path: Path) -> None:
+    assert _infer(tmp_path, "---\ntitle: hello\n") == "requirements-ready"
+
+
+def test_dash_prefixed_yaml_key_does_not_close_frontmatter(tmp_path: Path) -> None:
+    assert _infer(tmp_path, "---\n---note: hello\nmaturity: pending-confirmation\n---\n") == (
+        "pending-confirmation"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"---\nmaturity: pending-confirmation\n---\n",
+        b"---\nmaturity:\n---\n",
+        b"---\nmaturity: pending confirmation\n---\n",
+        b"---\nmeta:\n  maturity: plan-ready\n---\n",
+        b"---\nmaturity: plan-ready\n",
+        b"\xff\xfe\xfd\xfc\xfb",
+    ],
+)
+def test_every_file_diagnostic_escapes_and_bounds_the_source(tmp_path: Path, body: bytes) -> None:
+    source = "docs/brainstorms/a\nb\rc\td/" + "/".join(["x" * 100] * 3) + "/x.md"
+    target = tmp_path / source
+    target.parent.mkdir(parents=True)
+    target.write_bytes(body)
+    envelope = HE.build_handoff_envelope(source, root=tmp_path)
+    diagnostic = envelope["suggested_command"]
+    assert all(char not in diagnostic for char in "\n\r\t\x00")
+    displayed = HE._display_source(source)
+    assert displayed in diagnostic
+    assert len(displayed) == 256
+    assert displayed.endswith("…")
+    assert r"a\nb\rc\td" in diagnostic
+
+
+def test_out_of_root_diagnostic_escapes_nul_and_other_controls(tmp_path: Path) -> None:
+    source = "docs/plans/a\nb\rc\td\x00.md"
+    envelope = HE.build_handoff_envelope(source, root=tmp_path)
+    assert envelope["handoff_maturity"].startswith("unknown:out-of-root:")
+    assert r"a\nb\rc\td\x00.md" in envelope["suggested_command"]
+    assert all(char not in envelope["suggested_command"] for char in "\n\r\t\x00")
+    assert all(char not in envelope["handoff_maturity"] for char in "\n\r\t\x00")

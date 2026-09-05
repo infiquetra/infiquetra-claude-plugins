@@ -86,6 +86,17 @@ class _NoGit:
         return self
 
 
+@pytest.fixture(autouse=True)
+def _isolated_git_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep envelope and CLI persistence tests independent of the process repository."""
+    monkeypatch.setattr(HE, "current_git_state", lambda root: {"branch": "", "head": ""})
+    for name in ("save", "current_git_state", "aggregate_context", "prior_prs"):
+        function = getattr(SAGA, name)
+        defaults = dict(function.__kwdefaults__ or {})
+        defaults["runner"] = _NoGit()
+        monkeypatch.setattr(function, "__kwdefaults__", defaults)
+
+
 # --------------------------------------------------------------------------- #
 # ack_envelope_schema — KTD2 schema fields + JSON round-trip (AC1)
 # --------------------------------------------------------------------------- #

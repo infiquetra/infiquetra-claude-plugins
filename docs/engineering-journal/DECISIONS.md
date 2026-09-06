@@ -1,8 +1,41 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-06
+
+### Plan documentation proof is callable without the test runner {#926-plan-proof-without-pytest}
+
+Cycle 5 identified one dependency problem in three lenses (agentusab05, arch09, testing07).
+At `6b7587f7`, a Python/PyYAML environment without pytest refused a valid carrier, and the
+25 guards took 194.43 seconds locally. Moving existing readers, fact checks and saved-result
+expectations into `plan_save_proof.py` removes the tool's reverse dependency on test files.
+Both tests and the maintainer command use that proof; neither renderer nor carrier supplies
+the expected Plan outcomes. Explicit checks survive `python -O`. No new contract or schema.
+
+The proof calls the existing Saga parser/build/save chain with an explicit private root.
+Its Git runner reports unavailable: these temporary directories have no repository, so
+repeated Git discovery earned nothing. The actual CLI remains independently exercised by
+all twelve destination/backend cases, with whole snapshot and body assertions. Both paths
+check engine-derived save destinations before writing. Saga and effort runtime bytes stay
+unchanged. Candidate facts are verified before either generated document can be written.
+
+Alternatives: dropping proof or limiting it to CI would restore the prior silent-green
+field-swap failure. Keeping pytest perpetuates the verified environment and startup costs.
+Copying expectations into a second validator would create competing policy. Extracting the
+existing proof keeps one oracle and the external inventory, negative controls and ordinary
+mutation canaries that detect its removal or bypass. This is a maintenance tool, not a
+new runtime validation framework; no general predicates, document targets or plugins added.
+
+Validation for this unit: 68 focused tests pass in 25.08 seconds, including a real isolated
+Python/PyYAML environment with neither pytest nor a tests directory, optimized execution,
+field/condition/factual drift refusal, shell data and both containment paths. Full gate and
+mutation receipts follow at the frozen final revision; independent review owns scores.
+
 ## 2026-09-05
 
 ### Fixed documentation facts use independent positive assertions {#926-plan-fixed-facts-independent-proof}
+
+**Historical cycle-5 mechanism; the pytest dependency is superseded by
+[the callable-proof decision](#926-plan-proof-without-pytest). Factual obligations remain.**
 
 The carrier keeps field/condition/example data and native/proxy declarations. Removed effort
 seam, parameter and reference configuration earned nothing: those owners already exist in the
@@ -35,6 +68,9 @@ if the carrier needs general conditions, more document targets, or arbitrary pro
 those would exceed this maintenance unit rather than justify a generic validator.
 
 ### The documentation write command requires the existing saved-result proof {#926-plan-write-requires-behavior-proof}
+
+**Historical cycle-5 mechanism; the pytest dependency is superseded by
+[the callable-proof decision](#926-plan-proof-without-pytest). Factual obligations remain.**
 
 The edit-time CLI runs the focused real-save test before it can write. The importable
 loader and renderer remain usable by that test; the selected test does not invoke this

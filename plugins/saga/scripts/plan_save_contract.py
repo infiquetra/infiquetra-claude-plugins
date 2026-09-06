@@ -15,8 +15,6 @@ import os
 import re
 import runpy
 import shlex
-import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -399,31 +397,18 @@ class Parser(argparse.ArgumentParser):
         fail("usage", message + "; run --help", source=None, code="usage")
 
 
-def verify_saved_examples(root: Path) -> None:
-    """Run the checkout proof before writing; its saved ticks are temporary."""
+def verify_saved_examples(contract: Contract, candidate: dict[Path, str]) -> None:
+    """Verify this candidate with the checkout's plain Python proof before any write."""
     tool = Path("plugins/saga/scripts/plan_save_contract.py")
-    if (root / tool).read_bytes() != Path(__file__).read_bytes():
+    if (contract.root / tool).read_bytes() != Path(__file__).read_bytes():
         fail(
             "tool revision",
-            "run the tool from the target checkout so its tested renderer is the one that writes",
+            "run the tool from the target checkout so its verified renderer is the one that writes",
             source=tool,
             code="verification",
         )
-    guard = "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick"
-    args = [sys.executable, "-m", "pytest", guard, "-q", "-x", "--tb=short", "-o", "addopts="]
-    args += ["-p", "no:cacheprovider"]
-    with tempfile.TemporaryDirectory(prefix="plan-save-proof-") as temporary:
-        args += ["--basetemp", str(Path(temporary) / "run")]
-        result = subprocess.run(args, cwd=root, capture_output=True, text=True, check=False)
-    if result.returncode:
-        fail(
-            "writes / saved examples",
-            f"{guard} failed (exit {result.returncode}); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\n"
-            + result.stdout[-1200:]
-            + result.stderr[:300],
-            source=guard.split("::")[0],
-            code="verification",
-        )
+    proof = module(contract.root, "plugins/saga/scripts/plan_save_proof.py", "verify")
+    proof.verify(SimpleNamespace(**globals()), contract, candidate)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -455,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
             except UnicodeError as exc:
                 fail("encoding", f"{exc}; restore UTF-8 text", source=path, code="syntax")
         rendered = rendered_documents(contract, originals[SKILL], originals[SPEC])
-        verify_saved_examples(root)
+        verify_saved_examples(contract, rendered)
         if args.command == "validate":
             return report(0, root, outcome="valid", schema=SCHEMA)
         changed = [p for p in originals if originals[p] != rendered[p]]

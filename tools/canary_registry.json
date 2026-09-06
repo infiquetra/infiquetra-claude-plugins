@@ -197,9 +197,9 @@
     "invariant": "A false renderer and its matching output must still fail the independent factual assertion.",
     "mutation": {
       "kind": "replace_text",
-      "file": "tests/test_saga_spec_consumer_row.py",
-      "find": "assert actual == [\"\\n\".join(expected)]",
-      "replace": "assert True or actual == [\"\\n\".join(expected)]"
+      "file": "plugins/saga/scripts/plan_save_proof.py",
+      "find": "actual == [\"\\n\".join(expected)]",
+      "replace": "True or actual == [\"\\n\".join(expected)]"
     },
     "mutation_description": "Bypass the factual assertion while retaining renderer-to-output equality."
   },
@@ -220,7 +220,7 @@
     "invariant": "Candidate text always uses the shared Phase 5.3 boundary parser, even during drift.",
     "mutation": {
       "kind": "replace_text",
-      "file": "tests/test_saga_spec_consumer_row.py",
+      "file": "plugins/saga/scripts/plan_save_proof.py",
       "find": "phase = plan_phase_53(text=skill)",
       "replace": "phase = skill"
     }
@@ -234,6 +234,40 @@
       "file": "tests/test_saga_spec_consumer_row.py",
       "find": "assert target.is_relative_to(tmp_path.resolve())",
       "replace": "assert True or target.is_relative_to(tmp_path.resolve())"
+    }
+  },
+  {
+    "id": "plan-save-contract-no-pytest",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest",
+    "invariant": "Documentation commands work offline without pytest; mandatory candidate verification cannot be bypassed.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    proof.verify(SimpleNamespace(**globals()), contract, candidate)",
+      "replace": "    __import__(\"subprocess\").run([sys.executable, \"-m\", \"pytest\", \"--version\"], check=True)"
+    },
+    "mutation_description": "Reintroduce pytest as a documentation dependency."
+  },
+  {
+    "id": "plan-save-contract-proof-containment",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_save_workspace_is_contained",
+    "invariant": "The callable save proof contains actual engine-derived paths before writing.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_proof.py",
+      "find": "target.is_relative_to(workspace.resolve()),",
+      "replace": "True or target.is_relative_to(workspace.resolve()),"
+    }
+  },
+  {
+    "id": "plan-save-contract-proof-required",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest",
+    "invariant": "Skipping the independent proof cannot pass the normal tests.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    proof.verify(SimpleNamespace(**globals()), contract, candidate)",
+      "replace": "    return  # injected proof bypass"
     }
   }
 ]

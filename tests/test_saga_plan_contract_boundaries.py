@@ -5,13 +5,15 @@ from __future__ import annotations
 import copy
 import json
 import shlex
+import shutil
 import subprocess
+import venv
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 import yaml
-from saga_plan_contract import save_blocks
+from saga_plan_contract import SaveProbe, save_blocks
 from test_saga_spec_consumer_row import ROOT, cli, contract_api, mutated, save_tick, tree
 
 __all__ = ["contract_api"]
@@ -193,6 +195,14 @@ def test_contract_save_workspace_is_contained(contract_api: ModuleType, tmp_path
     workspace.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
+    direct = SaveProbe(api, ROOT)
+
+    def forbidden_save(*args: object, **kwargs: object) -> None:
+        raise AssertionError("save was reached before rejecting an escaping identity")
+
+    # A deliberately bypassed containment guard must fail without performing the
+    # very out-of-workspace write this negative control is designed to prevent.
+    direct.engine.save = forbidden_save
     for flags in (
         {"kind": "issue", "id": "../../../../../../escaped"},
         {"id": "../../../../../../escaped"},
@@ -200,6 +210,8 @@ def test_contract_save_workspace_is_contained(contract_api: ModuleType, tmp_path
     ):
         with pytest.raises(AssertionError, match="identity escapes its temporary workspace"):
             save_tick(workspace, flags)
+        with pytest.raises(AssertionError, match="identity escapes its temporary workspace"):
+            direct(workspace, flags)
         assert not (tmp_path / "escaped").exists() and not list(outside.iterdir())
     # Slugified task IDs stay valid; this is path containment, not a text ban.
     tick, _ = save_tick(workspace, {"kind": "task", "id": "area/topic"})
@@ -212,6 +224,8 @@ def test_contract_save_workspace_is_contained(contract_api: ModuleType, tmp_path
     target.symlink_to(outside, target_is_directory=True)
     with pytest.raises(AssertionError, match="identity escapes its temporary workspace"):
         save_tick(linked_workspace, {"kind": "task", "id": "safe"})
+    with pytest.raises(AssertionError, match="identity escapes its temporary workspace"):
+        direct(linked_workspace, {"kind": "task", "id": "safe"})
     assert not list(outside.iterdir())
     # The edit-time tool must exercise issue IDs even when the example kind is an enum.
     checkout = tmp_path / "checkout"
@@ -227,3 +241,76 @@ def test_contract_save_workspace_is_contained(contract_api: ModuleType, tmp_path
         assert result.returncode == 2, result.stdout + result.stderr
         assert "identity escapes" in json.loads(result.stdout)["error"]
         assert before == {p: (checkout / p).read_bytes() for p in before}
+
+
+def test_contract_cli_without_pytest(contract_api: ModuleType, tmp_path: Path) -> None:
+    """Offline docs editing uses only Python/PyYAML, including optimized Python."""
+    api = contract_api
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    assert not (checkout / "tests").exists()
+    environment = tmp_path / "python"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+    python = environment / "bin/python"
+    site = Path(
+        subprocess.check_output(
+            [str(python), "-I", "-c", 'import sysconfig; print(sysconfig.get_path("purelib"))'],
+            text=True,
+        ).strip()
+    )
+    shutil.copytree(Path(yaml.__file__).parent, site / "yaml")
+    absent = subprocess.run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            'import importlib.util; import yaml; assert importlib.util.find_spec("pytest") is None',
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert absent.returncode == 0, absent.stdout + absent.stderr
+    script = checkout / "plugins/saga/scripts/plan_save_contract.py"
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(python), "-I", "-O", str(script), "--root", str(checkout), *args],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    for args in (("validate",), ("render", "--check"), ("render", "--write")):
+        result = run(*args)
+        assert result.returncode == 0 and not result.stderr, result.stdout + result.stderr
+        assert json.loads(result.stdout)["root"] == str(checkout.resolve())
+    assert not (checkout / ".claude").exists(), "proof wrote Saga state into the checkout"
+    originals = {path: (checkout / path).read_bytes() for path in (api.SKILL, api.SPEC)}
+    contract_path = checkout / api.CONTRACT
+    raw = contract_path.read_text()
+    for old, new in (
+        ("name: orchestration_recommended", "name: next_step"),
+        ("equals: nonprod-deploy", "equals: pr"),
+        ("agent: proxy", "agent: native"),
+    ):
+        assert old in raw
+        contract_path.write_text(raw.replace(old, new))
+        result = run("render", "--write")
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert originals == {path: (checkout / path).read_bytes() for path in originals}
+    contract_path.write_text(raw)
+    # Factual sentences are checked independently even if renderer and output agree.
+    code = script.read_text()
+    false = code.replace(
+        "effort already rides on real controls", "effort never rides on real controls"
+    )
+    assert false != code
+    script.write_text(false)
+    result = run("render", "--write")
+    assert result.returncode == 2 and "factual clauses differ" in result.stdout, result.stdout
+    assert originals == {path: (checkout / path).read_bytes() for path in originals}
+    script.write_text(code)
+    result = run("validate")
+    assert result.returncode == 0, result.stdout + result.stderr

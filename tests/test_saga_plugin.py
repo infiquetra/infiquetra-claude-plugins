@@ -154,6 +154,7 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
         "engine_registry_conformance.py",
         "engine_promotion.py",
         "plan_save_contract.py",
+        "plan_save_proof.py",
     ):
         path = PLUGIN_ROOT / "scripts" / script
         assert path.is_file(), f"{path.relative_to(ROOT)}: required packaged script is missing"

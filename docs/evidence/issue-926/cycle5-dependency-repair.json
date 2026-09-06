@@ -1,0 +1,52 @@
+{
+  "before": {
+    "revision": "6b7587f7879f7c0ee414ba60f6b62fc69d33db6d",
+    "environment_check": {
+      "exit": 0,
+      "stdout": "6.0.3\n"
+    },
+    "validate": {
+      "exit": 2,
+      "stdout": "{\"root\": \"/Users/jefcox/workspace/infiquetra/orch-cp918-p5\", \"outcome\": \"invalid\", \"error\": \"tests/test_saga_spec_consumer_row.py: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\n/private/tmp/p5-c6-minimal-env/bin/python: No module named pytest\\n\", \"code\": \"verification\", \"file\": \"tests/test_saga_spec_consumer_row.py\", \"entry\": \"writes / saved examples\"}\n",
+      "stderr": ""
+    }
+  },
+  "after": [
+    {
+      "args": [
+        "validate"
+      ],
+      "exit": 0,
+      "seconds": 0.728,
+      "output": "{\"root\": \"/Users/jefcox/workspace/infiquetra/orch-cp918-p5\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "render",
+        "--check"
+      ],
+      "exit": 0,
+      "seconds": 0.443,
+      "output": "{\"root\": \"/Users/jefcox/workspace/infiquetra/orch-cp918-p5\", \"outcome\": \"clean\", \"diff\": \"\", \"changed\": []}\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "render",
+        "--write"
+      ],
+      "exit": 0,
+      "seconds": 0.483,
+      "output": "{\"root\": \"/Users/jefcox/workspace/infiquetra/orch-cp918-p5\", \"outcome\": \"rendered\", \"changed\": []}\n",
+      "stderr": ""
+    }
+  ],
+  "baseline_test_output": ".........................                                                [100%]\n25 passed in 194.43s (0:03:14)\n",
+  "focused_test_output": "....................................................................     [100%]\n============================= slowest 8 durations ==============================\n3.99s call     tests/test_saga_spec_consumer_row.py::test_plan_renderer_edit_workflow\n3.44s call     tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout\n2.72s call     tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest\n1.67s call     tests/test_saga_spec_consumer_row.py::test_plan_renderer_refusals_and_rollback\n1.16s call     tests/test_saga_spec_consumer_row.py::test_plan_save_contract_binds_to_engine\n0.97s call     tests/test_saga_plan_contract_boundaries.py::test_contract_conflict_recovery\n0.74s call     tests/test_saga_spec_consumer_row.py::test_operator_choice_rule_matches_engine\n0.71s call     tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\n68 passed in 25.08s\n",
+  "canary_output": "..                                                                       [100%]\n2 passed in 71.48s (0:01:11)\n",
+  "source_hashes": {
+    "plugins/saga/scripts/plan_save_contract.py": "6f9e257364fb303ecc12f02d2b3b332524036e2a483152a5351c0ac45a142ac6",
+    "plugins/saga/scripts/plan_save_proof.py": "7a96d25397328917f89b97a25e2cd35c2423c67dba21f81b1a97539670ab07cf"
+  }
+}

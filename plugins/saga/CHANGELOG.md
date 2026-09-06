@@ -2,6 +2,9 @@
 
 ## [0.157.0] - 2026-09-05
 
+- Plan documentation validation and rendering work with Python/PyYAML alone. The existing
+  independent saved-result proof runs without pytest; regression tests retain real CLI coverage.
+
 ### Fixed
 
 - **Plan's routing checks share one template parser.** Titled save variants and

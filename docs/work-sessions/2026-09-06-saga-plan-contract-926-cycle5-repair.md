@@ -108,3 +108,21 @@ Repository Ruff and full-scope mypy pass; both maintenance modules also pass dir
 and have no Bandit findings. The protected-byte and changelog-heading/older-body audits pass.
 See [current boundary hashes](../evidence/issue-926/cycle5-protected-boundaries.json).
 Freeze this unit, then run the 25-step gate and bind its external receipt to that commit.
+
+
+## U3 — Refile all unmerged journal entries under the newest section
+
+The first full gate at `c273af8c` ran all 25 steps and exited 1 solely on the diff-scoped
+journal ordering check. Its test suite passed: 7,728 passed, 7 skipped, 1 expected failure;
+coverage was 85% overall, 94% for the maintenance CLI and 88% for the callable proof.
+The log is preserved separately as `/tmp/gate-p5-c6-c273af8c-red/result.txt`.
+
+The journal guard compares entry identity against the PR merge base, so adding September 6
+sections also made nine September 5 repair entries “outside newest” while this PR remained
+unmerged. Refiled only those entries, retaining every original body and explicitly recording
+its original date. The [journal mutation receipt](../evidence/issue-926/cycle5-journal-order.json)
+shows the original failures, zero violations after the move, and red again when a new entry
+is put back under the older date. Both structural and diff-scoped lint now pass.
+
+No code or test behavior changed after `c273af8c`. Commit this filing repair and rerun the full
+gate at that new frozen revision; the first gate is not presented as green.

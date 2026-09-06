@@ -30,9 +30,9 @@ Python/PyYAML environment with neither pytest nor a tests directory, optimized e
 field/condition/factual drift refusal, shell data and both containment paths. Full gate and
 mutation receipts follow at the frozen final revision; independent review owns scores.
 
-## 2026-09-05
-
 ### Fixed documentation facts use independent positive assertions {#926-plan-fixed-facts-independent-proof}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
 
 **Historical cycle-5 mechanism; the pytest dependency is superseded by
 [the callable-proof decision](#926-plan-proof-without-pytest). Factual obligations remain.**
@@ -69,6 +69,8 @@ those would exceed this maintenance unit rather than justify a generic validator
 
 ### The documentation write command requires the existing saved-result proof {#926-plan-write-requires-behavior-proof}
 
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
 **Historical cycle-5 mechanism; the pytest dependency is superseded by
 [the callable-proof decision](#926-plan-proof-without-pytest). Factual obligations remain.**
 
@@ -88,6 +90,8 @@ records the data-drift, wording-only, preflight-bypass, hollow-guard, and deleti
 
 ### Plan example values are data, not shell fragments {#926-plan-literal-placeholders}
 
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
 Cycle 4's independent review rejected the preceding implementation and its closure claims.
 Its v2 placeholders mixed data with authored shell syntax, allowing comments and command
 substitution to change the command. v3 stores raw scalars; the renderer quotes every value.
@@ -101,6 +105,8 @@ separates completed units from pending failures and records their mutations.
 
 
 ### Saga Plan facts use a smaller contract with independent producer and behavior checks {#926-plan-save-contract-single-source}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
 
 **Historical decision for `04cbb0ce`; superseded after independent cycle-4 rejection.**
 The intended guarantees in this entry were not all achieved. The source still defined an
@@ -160,9 +166,13 @@ these tests and mutation receipts are preparation, not a review acceptance claim
 
 ### Plan's interim reader decision is superseded {#926-plan-drift-checks-derive-dont-restate}
 
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
 The [interim shared-reader decision](ARCHIVE.md#926-plan-interim-record-superseded) is superseded.
 Its parser and routing repairs remain; field extraction and the classifier are replaced.
 Historical plans and archived decisions retain their original text by operator approval.
+
+## 2026-09-05
 
 ### Source resolution refuses the original outside the root and shares one decision {#912-refuse-original-outside-root}
 

@@ -14,6 +14,9 @@ Two isolated mutations also showed that existing regression assertions for the c
 save executable and operator-choice clause were absent from the pre-write proof. Moving
 those positive checks to that boundary blocks both false renders before document writes.
 This is evidence for checking callers after extraction, not adding a prose classifier.
+The final gate also showed that a newer date section changes the filing obligation for all
+entries new versus the PR merge base, including prior repair commits. Refile those unmerged
+entries together, and retain their original dates explicitly.
 
 The reproduction, restoration and guard-bypass outputs are in the
 [cycle-5 repair receipt](../evidence/issue-926/cycle5-final-mutations.json).
@@ -39,9 +42,9 @@ The reproduction, restoration and guard-bypass outputs are in the
 > ```
 
 
-## 2026-09-05
-
 ### A real-save documentation probe must contain the engine's derived destination {#926-save-probe-identity-containment}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
 
 **Evidence.** Saga slugifies task IDs but preserves issue IDs verbatim. A final security audit
 at `b7a28ba4` supplied a traversal-shaped issue ID to the new real-save probe; it wrote outside
@@ -61,6 +64,8 @@ stopped by its verified PID and descendants; its interrupted result is retained 
 
 ### Candidate validation must use the same boundary parser as saved output {#926-candidate-phase-boundary}
 
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
 **Evidence.** After cycle-4 repairs, a final audit changed a literal plan path and removed the
 Phase 5.3 heading together. The candidate differed from the document, so the test parsed the
 whole candidate instead of using the shared phase reader. `validate` and `render --write`
@@ -76,6 +81,8 @@ turn their named test red. [Mutation receipt](../evidence/issue-926/repair-phase
 
 ### Executable documentation must not choose a test's program {#926-doc-command-execution-boundary}
 
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
 **Evidence.** Cycle 4 security review changed the maintainer's recommender example to an
 out-of-checkout Python file. `test_plan_docs_wording_changes_do_not_fail` passed while that
 file executed: selecting a fence by a filename substring did not constrain its command.
@@ -88,6 +95,8 @@ file is created; the restored example passes. See the [repair receipt](../work-s
 it must not select that test's interpreter or program.
 
 ### Documentation classifiers can have no measured margin under copy editing {#926-prose-classifier-zero-span-margin}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
 
 **Context.** Saga Plan's negative drift classifier failed two review cycles; repairing individual
 patterns added false positives and still missed ordinary rewordings.
@@ -115,6 +124,8 @@ and gate result.
 sensitivity using both changed facts and changed outputs.
 **Refs.** [Decision](DECISIONS.md#926-plan-save-contract-single-source).
 
+
+## 2026-09-05
 
 ### A refusal fixture can defend a read bypass without proving that live routing is safe {#912-read-original-test-defended-bypass}
 

@@ -46,7 +46,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.157.0"  # issue #926 (unit P5, issue #918 Wave Two):
+    assert plugin_json["version"] == "0.157.1"  # issue #926 (unit P5, issue #918 Wave Two):
     # Plan's documentation corrections -- the derived-state sentence, the board-move trigger
     # clause, the effort-emission comment's native-vs-proxy description, and the saga-spec
     # /plan consumer row -- plus the two drift checks that keep them from relapsing.

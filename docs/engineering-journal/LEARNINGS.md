@@ -2,6 +2,33 @@
 
 ## 2026-09-06
 
+### A green local gate proved only that the operator had a plugin installed {#926-fleet-root-host-leak}
+
+The issue-926 guard suite passed on the maintainer's machine and failed nine tests in CI, all
+of them this unit's own guards, all with the same error: `fleet-commons: could not resolve a
+fleet-core root`.
+
+**Evidence:** PR #995, CI run 34038381356. Reproduced locally by redirecting `$HOME` to an
+empty directory: 9 failed / 18 passed, the same nine. With `$HOME` intact: 27 passed. Fixed in
+`plugins/saga/scripts/plan_save_contract.py` (`fleet_root()`), pinned by
+`tests/test_saga_plan_contract_boundaries.py::test_contract_cli_resolves_the_engine_from_the_checkout`.
+
+**Mechanism:** `plan_save_contract.py` takes a `--root` documented as "target checkout (code,
+YAML and docs together)" and loads the effort engine from it. The engine imports
+`fleet_commons_shim`, whose `resolve_root()` walks four rungs: the `FLEET_COMMONS_ROOT`
+variable, an ancestor walk-up that requires `.claude-plugin/marketplace.json`, then
+`~/.claude/plugins/installed_plugins.json`, then a plugin-cache sibling scan. Every temporary
+checkout the tests build copies `plugins/fleet-core/scripts` but no marketplace manifest, so
+rung 2 fails and rung 3 answers from the maintainer's installed plugins. The tool was
+validating against the machine, not against `--root` — a containment escape that reads as a
+passing test, because the fallback is only absent somewhere else. Nine review lenses missed it
+for the same reason: the fallback resolved on the reviewer's machine too.
+
+**Generalizable rule:** when a tool takes an explicit root and then loads code that resolves
+its own dependencies, bind that resolution to the same root — and prove it with the ambient
+source removed, not merely present. A dependency resolver with a fallback to the operator's
+home directory turns "the suite is green" into "this machine has it installed".
+
 ### Extracting pytest assertions also requires extracting their diagnostics {#926-proof-extraction-diagnostics}
 
 Removing the test runner from Plan documentation editing preserved the independent proof,

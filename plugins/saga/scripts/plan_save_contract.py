@@ -8,6 +8,7 @@ Every invocation except --help returns JSON: 0 success, 1 drift, 2 refusal.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import difflib
 import inspect
 import json
@@ -16,6 +17,7 @@ import re
 import runpy
 import shlex
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,8 @@ SKILL = Path("plugins/saga/skills/plan/SKILL.md")
 SPEC = Path("plugins/saga/references/saga-spec.md")
 SCHEMA = "plan_save_contract.v3"
 RIDER = "plugins/fleet-core/scripts/fleet_commons/effort_rider.py"
+FLEET_CORE = "plugins/fleet-core"
+FLEET_ROOT_ENV = "FLEET_COMMONS_ROOT"
 EFFORT_REFERENCE = Path("plugins/fleet-core/references/effort-convention.md")
 
 
@@ -51,12 +55,33 @@ def keys(value: Any, expected: set[str], entry: str) -> None:
         fail(entry, f"expected exactly these keys: {sorted(expected)}; got {str(actual)[:240]}")
 
 
+@contextlib.contextmanager
+def fleet_root(root: Path) -> Iterator[None]:
+    """Resolve fleet-core from the target checkout for the duration of an engine load.
+
+    fleet_commons_shim.resolve_root() walks four rungs, and the last two read the operator's
+    installed plugins and plugin cache. Left alone, a checkout that carries fleet-core but no
+    marketplace manifest silently validates against whatever that machine has installed
+    instead of against --root, so the same command passes locally and fails anywhere else.
+    """
+    previous = os.environ.get(FLEET_ROOT_ENV)
+    os.environ[FLEET_ROOT_ENV] = str((root / FLEET_CORE).resolve())
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(FLEET_ROOT_ENV, None)
+        else:
+            os.environ[FLEET_ROOT_ENV] = previous
+
+
 def module(root: Path, path: str, *members: str) -> Any:
     try:
         target = (root / path).resolve()
         if not target.is_relative_to(root.resolve()):
             raise ImportError("engine path escapes checkout")
-        result = SimpleNamespace(**runpy.run_path(str(target)))
+        with fleet_root(root):
+            result = SimpleNamespace(**runpy.run_path(str(target)))
         for member in members:
             getattr(result, member)
         return result

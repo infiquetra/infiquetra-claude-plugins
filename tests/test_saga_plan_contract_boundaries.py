@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shlex
 import shutil
 import subprocess
+import sys
 import venv
 from pathlib import Path
 from types import ModuleType
@@ -336,3 +338,49 @@ def test_contract_cli_without_pytest(contract_api: ModuleType, tmp_path: Path) -
         script.write_text(code)
     result = run("validate")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_contract_cli_resolves_the_engine_from_the_checkout(
+    contract_api: ModuleType, tmp_path: Path
+) -> None:
+    """The effort engine comes from --root, never from the operator's installed plugins.
+
+    fleet_commons_shim.resolve_root() falls through to ~/.claude/plugins and the plugin
+    cache when a checkout carries no marketplace manifest, which is every temporary
+    checkout here. Without the binding this suite passes on a developer machine that has
+    fleet-core installed and fails everywhere else, so the run below scrubs HOME.
+    """
+    api = contract_api
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    home = tmp_path / "home"
+    home.mkdir()
+    environment = {
+        **os.environ,
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+    }
+    environment.pop(api.FLEET_ROOT_ENV, None)
+    script = checkout / "plugins/saga/scripts/plan_save_contract.py"
+
+    def run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(script), "--root", str(checkout), "validate"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+
+    result = run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["outcome"] == "valid"
+
+    # Prove the checkout's own copy is what answered: remove it and the tool must refuse,
+    # not quietly fall back to whatever fleet-core the machine has installed.
+    shutil.rmtree(checkout / api.FLEET_CORE / "scripts")
+    refused = run()
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    payload = json.loads(refused.stdout)
+    assert payload["code"] == "engine" and payload["file"] == api.RIDER

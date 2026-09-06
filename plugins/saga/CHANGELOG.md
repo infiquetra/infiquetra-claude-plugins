@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.157.1] - 2026-09-06
+
+- The Plan documentation validator resolves the effort engine from the checkout named by
+  `--root` instead of falling through to the operator's installed plugins. A checkout that
+  carries fleet-core but no marketplace manifest was silently validated against whatever the
+  machine had installed, so the guard suite passed locally and failed in CI.
+
 ## [0.157.0] - 2026-09-05
 
 - Plan documentation validation and rendering work with Python/PyYAML alone. The existing

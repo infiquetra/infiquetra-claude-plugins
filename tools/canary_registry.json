@@ -26,14 +26,14 @@
   {
     "id": "manifest-consumer-matrix",
     "guard": "tests/test_manifest_consumer_matrix.py::test_manifest_no_orphan_field",
-    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md §13.3 (R17, no orphan field).",
+    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md \u00a713.3 (R17, no orphan field).",
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/scripts/provenance_manifest.py",
       "find": "    execution_id: str\n    saga_ref: str",
       "replace": "    execution_id: str\n    canary_mutant_field: str\n    saga_ref: str"
     },
-    "mutation_description": "Add a schema field to the Manifest dataclass with no matching §13.3 matrix row (orphan field)."
+    "mutation_description": "Add a schema field to the Manifest dataclass with no matching \u00a713.3 matrix row (orphan field)."
   },
   {
     "id": "team-execution-pointers",
@@ -269,5 +269,17 @@
       "find": "    proof.verify(SimpleNamespace(**globals()), contract, candidate)",
       "replace": "    return  # injected proof bypass"
     }
+  },
+  {
+    "id": "plan-save-contract-engine-root",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_resolves_the_engine_from_the_checkout",
+    "invariant": "the effort engine resolves from --root, not the operator's installed plugins.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "        with fleet_root(root):\n            result = SimpleNamespace(**runpy.run_path(str(target)))",
+      "replace": "        result = SimpleNamespace(**runpy.run_path(str(target)))"
+    },
+    "mutation_description": "Let fleet-core resolution fall through to the operator's installed plugins."
   }
 ]

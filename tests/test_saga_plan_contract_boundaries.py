@@ -294,23 +294,45 @@ def test_contract_cli_without_pytest(contract_api: ModuleType, tmp_path: Path) -
         ("name: orchestration_recommended", "name: next_step"),
         ("equals: nonprod-deploy", "equals: pr"),
         ("agent: proxy", "agent: native"),
+        ("value: complete", "value: pending"),
     ):
         assert old in raw
         contract_path.write_text(raw.replace(old, new))
         result = run("render", "--write")
         assert result.returncode == 2, result.stdout + result.stderr
+        if old == "value: complete":
+            detail = json.loads(result.stdout)
+            assert detail["file"] == str(api.CONTRACT)
+            assert (
+                detail["entry"] == "writes / saved examples" and "phase_status" in detail["error"]
+            )
         assert originals == {path: (checkout / path).read_bytes() for path in originals}
     contract_path.write_text(raw)
     # Factual sentences are checked independently even if renderer and output agree.
     code = script.read_text()
-    false = code.replace(
-        "effort already rides on real controls", "effort never rides on real controls"
-    )
-    assert false != code
-    script.write_text(false)
-    result = run("render", "--write")
-    assert result.returncode == 2 and "factual clauses differ" in result.stdout, result.stdout
-    assert originals == {path: (checkout / path).read_bytes() for path in originals}
-    script.write_text(code)
+    for old, new, diagnostic in (
+        (
+            "effort already rides on real controls",
+            "effort never rides on real controls",
+            "factual clauses differ",
+        ),
+        (
+            "derived from an explicit mode flag",
+            "derived on every save",
+            "operator-choice derivation",
+        ),
+        (
+            "python3 plugins/saga/scripts/saga.py save",
+            "python3 /tmp/not-the-checkout/saga.py save",
+            "canonical saga.py save command",
+        ),
+    ):
+        false = code.replace(old, new)
+        assert false != code
+        script.write_text(false)
+        result = run("render", "--write")
+        assert result.returncode == 2 and diagnostic in result.stdout, result.stdout
+        assert originals == {path: (checkout / path).read_bytes() for path in originals}
+        script.write_text(code)
     result = run("validate")
     assert result.returncode == 0, result.stdout + result.stderr

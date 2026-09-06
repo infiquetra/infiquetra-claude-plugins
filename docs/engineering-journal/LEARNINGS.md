@@ -1,5 +1,24 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-09-06
+
+### Extracting pytest assertions also requires extracting their diagnostics {#926-proof-extraction-diagnostics}
+
+Removing the test runner from Plan documentation editing preserved the independent proof,
+but bare test assertions had relied on pytest to display the failed expression. Callable
+checks now name the fact, and whole-snapshot mismatches list differing field names without
+printing values. Explicit checks remain active under Python optimization. The minimal
+Python/PyYAML test verifies both failures and success without a tests directory.
+
+Two isolated mutations also showed that existing regression assertions for the canonical
+save executable and operator-choice clause were absent from the pre-write proof. Moving
+those positive checks to that boundary blocks both false renders before document writes.
+This is evidence for checking callers after extraction, not adding a prose classifier.
+
+The reproduction, restoration and guard-bypass outputs are in the
+[cycle-5 repair receipt](../evidence/issue-926/cycle5-final-mutations.json).
+
+
 > **Empirical findings + mechanisms + fixes + validations.** When something turns out to be true that wasn't obvious — about a plugin's runtime behavior, the marketplace registry, hook timing, skill activation, MCP env propagation, build/test tooling, or a deploy gotcha — it goes here. Include the **evidence** (PR / commit / file:line / reproduction) and the **mechanism** (why it's true), not just the observation.
 >
 > **Append new entries to the top.** Most-recent first. Format:

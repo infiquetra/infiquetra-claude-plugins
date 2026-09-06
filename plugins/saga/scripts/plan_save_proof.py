@@ -27,7 +27,7 @@ class ProofError(AssertionError):
     """A candidate contradicts a fact, including under python -O."""
 
 
-def require(condition: object, message: str = "Plan documentation proof failed") -> None:
+def require(condition: object, message: str) -> None:
     if not condition:
         raise ProofError(message)
 
@@ -194,7 +194,7 @@ def probe_effort(api: ModuleType, root: Path) -> dict[str, str]:
         else:
             require(
                 observed == [rider.EFFORT_RIDER[level] + "\n\nprobe" for level in rider.EFFORTS],
-                "Plan documentation proof failed",
+                f"{api.RIDER}: {kind} must preserve the prompt or prepend its declared EFFORT_RIDER",
             )
             mechanisms[kind] = "proxy"
     return mechanisms
@@ -205,15 +205,24 @@ def assert_row(api: ModuleType, contract: Any, text: str) -> None:
     row = text[start:end]
     require(row.split("|")[2].strip() == "`scan` (§2.3)", f"{api.SPEC}: Plan Reads cell differs")
     require(re.search(r"(?m)^### 2\.3\b", text), f"{api.SPEC}: missing scan/resume reference")
+    require(
+        "`orchestration_operator_choice` (derived from an explicit mode flag unless an explicit "
+        "choice is supplied; omitting both preserves the prior choice or starts empty)" in row,
+        f"{api.SPEC}: operator-choice derivation clause differs from the engine rule",
+    )
     intake = (contract.root / api.SKILL).read_text().split("### 0.3", 1)[1].split("### 0.4", 1)[0]
     require(
-        "python3 plugins/saga/scripts/saga.py scan" in intake, "Plan documentation proof failed"
+        "python3 plugins/saga/scripts/saga.py scan" in intake,
+        f"{api.SKILL}: Phase 0.3 must invoke saga.py scan",
     )
-    require("Do not hand-edit the `/plan` row." in text, "Plan documentation proof failed")
+    require(
+        "Do not hand-edit the `/plan` row." in text,
+        f"{api.SPEC}: /plan row needs its do-not-hand-edit warning",
+    )
     require(
         "`tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract`"
         in text,
-        "Plan documentation proof failed",
+        f"{api.SPEC}: /plan row needs its named regression-guard pointer",
     )
     # Parse emitted technical facts independently; a renderer dropping a field after
     # re-rendering must fail even if output equals that renderer's own output.
@@ -251,10 +260,15 @@ def assert_regions(api: ModuleType, contract: Any, skill: str, spec: str) -> Non
     by_id = dict(zip(ids, blocks, strict=True))
     require(
         set(by_id) == {t["id"] for t in contract.data["templates"]},
-        "Plan documentation proof failed",
+        f"{api.SKILL}: example IDs differ from declared templates",
     )
     for template in contract.data["templates"]:
         block = by_id[template["id"]]
+        command = shlex.split(_without_comments(block.replace("\\\n", "\n")))
+        require(
+            command[:3] == ["python3", "plugins/saga/scripts/saga.py", "save"],
+            f"{api.SKILL}: template {template['id']} must use the checkout's canonical saga.py save command",
+        )
         options = save_options(block)
         expected_options = {}
         for item in contract.data["identity"] + contract.data["writes"]:
@@ -275,12 +289,12 @@ def assert_regions(api: ModuleType, contract: Any, skill: str, spec: str) -> Non
         start, end = api.region_span(skill, name)
         require(
             f"Source: {api.CONTRACT}; renderer: {SCRIPT}." in skill[start:end],
-            "Plan documentation proof failed",
+            f"{api.SKILL}: {name} needs its contract and renderer attribution",
         )
         require(
             "Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract."
             in skill[start:end],
-            "Plan documentation proof failed",
+            f"{api.SKILL}: {name} needs its do-not-hand-edit warning and guard pointer",
         )
     start, end = api.region_span(skill, "EFFORT HONORING NOTE")
     note = skill[start:end]
@@ -422,9 +436,11 @@ def assert_saved_example(
     before.update(expected)
     before.pop("updated_at")
     tick.pop("updated_at")
-    require(tick == before, f"template {template['id']}: saved Plan snapshot differs")
+    changed = sorted(key for key in tick.keys() | before.keys() if tick.get(key) != before.get(key))
+    require(tick == before, f"template {template['id']}: saved Plan snapshot differs in {changed}")
     require(
-        values["decisions"] in text.split("## Decisions", 1)[1], "Plan documentation proof failed"
+        values["decisions"] in text.split("## Decisions", 1)[1],
+        f"template {template['id']}: saved Decisions section lost the literal example value",
     )
 
 

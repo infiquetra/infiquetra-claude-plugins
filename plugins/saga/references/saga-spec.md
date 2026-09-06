@@ -540,12 +540,18 @@ this table is the wiring contract for their own queued items.
 
 | Command | Reads | Writes (`save`) |
 |---|---|---|
-| **/plan** | `scan` (offer "resume existing?" before minting — §2.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (Phase 5.1 follow-up, only when `destination=nonprod-deploy`), `adr_refs`; `## Decisions` = KTDs. |
+| **/plan** | `scan` (§2.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`), `adr_refs`, `decisions`, `orchestration_mode`, `orchestration_recommended`, `orchestration_ref` (only when `orchestration_mode=cc-workflows-ultracode`), `orchestration_operator_choice` (derived from an explicit mode flag unless an explicit choice is supplied; omitting both preserves the prior choice or starts empty). |
 | **/work** | `restore` (rehydrate `round`/`phase`/`checks_run`/`next_step`) | primary writer: per-phase ticks, round bump (`rounds_seen`), `checks_run`, `work_session_paths`, `issue_ref` adoption, `status=done` at completion. |
 | **/code-review** | the diff + `scan`/`restore` (the existing work-thread) | review-track consumer: appends `review_paths` (append-only, never mints); **never advances `lifecycle_phase`** (preserves it). |
 | **/qa** | `restore` (the work-thread) | qa-track consumer: writes `qa_paths`; on PASS advances `lifecycle_phase` `work`→`qa`; on FAIL keeps `lifecycle_phase=work`. Never mints. |
 | **/resume** | `restore` (cold reconstruction) + `scan` (candidate list) | routes to `/work` or `/handoff`; may save a `status=paused`/`active` re-entry tick. |
 | **/loop** | `scan` at start (offer resume) | creation tick + a tick per routing decision; `status=handed-off` when routing to `/handoff`. |
+
+The `/plan` row is rendered from `plugins/saga/references/plan-save-contract.yaml` by
+`python3 plugins/saga/scripts/plan_save_contract.py render --write`.
+`tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract`
+fails when they differ. Do not hand-edit the `/plan` row. See the
+[maintainer runbook](plan-save-contract.md) for editing, checks, and recovery.
 
 `/handoff` derives `maturity` from `lifecycle_phase` (§3.3) at handoff time; it does not read a stored
 `maturity` because there isn't one.

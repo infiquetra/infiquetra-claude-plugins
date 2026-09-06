@@ -1,0 +1,110 @@
+[
+  {
+    "guard": "shell-data",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_values_are_shell_data",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'shlex.quote(value)' -> 'value'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:35+00:00"
+  },
+  {
+    "guard": "marker-injection",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_rejects_corrupting_structure",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: '(\"\\\\n\", \"\\\\r\", \"\\\\x00\", \"<!--\", \"-->\")' -> '(\"\\\\n\", \"\\\\r\", \"\\\\x00\")'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:37+00:00"
+  },
+  {
+    "guard": "conditional-fixed",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_rejects_corrupting_structure",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'and fixed[when[\"field\"]] != when[\"equals\"]' -> 'and False'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:39+00:00"
+  },
+  {
+    "guard": "identity",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_rejects_corrupting_structure",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'if {item[\"name\"] for item in data[\"identity\"]} != identity:' -> 'if False:'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:41+00:00"
+  },
+  {
+    "guard": "comment-terminator",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_rejects_corrupting_structure",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: '(\"\\\\x00\", \"\\\\n\", \"\\\\r\", \"<!--\", \"-->\")' -> '(\"\\\\x00\", \"\\\\n\", \"\\\\r\")'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:43+00:00"
+  },
+  {
+    "guard": "conflict",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_rejects_corrupting_structure",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'if re.search(r\"(?m)^(?:<{7}|={7}|>{7}|\\\\|{7})(?: |$)\", text):' -> 'if False:'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:45+00:00"
+  },
+  {
+    "guard": "engine-exception",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'except Exception as exc:' -> 'except ImportError as exc:'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:49+00:00"
+  },
+  {
+    "guard": "schema-observed",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'observed {str(schema)[:80]!r}' -> 'observed an unsupported version'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:53+00:00"
+  },
+  {
+    "guard": "unbounded-error",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'str(actual)[:240]' -> 'str(value)'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:52:58+00:00"
+  },
+  {
+    "guard": "usage-code",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'message + \"; run --help\", \"usage\"' -> 'message + \"; run --help\", \"invalid_contract\"'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:53:02+00:00"
+  },
+  {
+    "guard": "empty-root",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: 'if not args.root.strip():' -> 'if False:'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:53:07+00:00"
+  },
+  {
+    "guard": "write-root",
+    "guard_ref": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout",
+    "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: '\"outcome\": \"rendered\", \"root\": str(root)' -> '\"outcome\": \"rendered\", \"wrong_root_key\": str(root)'",
+    "result": "caught",
+    "baseline_exit": 0,
+    "detail": "",
+    "timestamp": "2026-09-05T21:53:11+00:00"
+  }
+]

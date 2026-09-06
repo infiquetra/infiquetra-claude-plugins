@@ -1,0 +1,487 @@
+{
+  "source_sha256": {
+    "plugins/saga/scripts/plan_save_contract.py": "6d7a49f6c30498b1d3fd24d67ad83c5b816db3ae9481a466fc35bd0937dee122",
+    "tests/test_saga_spec_consumer_row.py": "5b10a0231efe038be66f86b9573c4e7278e9b626e84f6d914d269febc09ec3dc",
+    "tests/test_wiring_canary.py": "7a8f28fddad63517905fe14920da252709418c4aea3a74e31bd1e6fea05c17d6",
+    "tools/canary_registry.json": "9a32cb38734533c86f18c0403e928e44a1221074cea95909e0bc6cca2cd5059d"
+  },
+  "outcomes": [
+    {
+      "mutation": "baseline",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "restored": true,
+      "output": "{\"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout\"}\n"
+    },
+    {
+      "mutation": "real-wrong-option-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.28s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "real-wrong-option-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.32s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "extra-next_step-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.22s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "extra-next_step-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.25s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "extra-review_paths-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.18s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "extra-review_paths-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.10s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-lifecycle_phase-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.12s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-lifecycle_phase-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.15s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-phase_status-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.31s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-phase_status-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.14s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-plan_path-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.17s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-plan_path-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.14s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-destination-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "{\"outcome\": \"invalid\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes ('deploy_autonomy').when: condition must reference another declared field\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes ('deploy_autonomy').when\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-destination-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "{\"outcome\": \"invalid\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes ('deploy_autonomy').when: condition must reference another declared field\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes ('deploy_autonomy').when\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-deploy_autonomy-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\n]+\\\\b\\\", values[\\\"adr_refs\\\"]),\\n                \\\"orchestration_recommended\\\": values[\\\"orchestration_recommended\\\"],\\n                \\\"orchestration_mode\\\": values[\\\"orchestration_mode\\\"],\\n                \\\"orchestration_operator_choice\\\": values[\\\"orchestration_mode\\\"],\\n>               \\\"deploy_autonomy\\\": values[\\\"deploy_autonomy\\\"]\\n                                   ^^^^^^^^^^^^^^^^^^^^^^^^^\\n                if values[\\\"destination\\\"] == \\\"nonprod-deploy\\\"\\n                else \\\"\\\",\\n                \\\"orchestration_ref\\\": values[\\\"orchestration_ref\\\"]\\n                if values[\\\"orchestration_mode\\\"] == \\\"cc-workflows-ultracode\\\"\\n                else \\\"\\\",\\n            }\\nE           KeyError: 'deploy_autonomy'\\n\\ntests/test_saga_spec_consumer_row.py:459: KeyError\\n=========================== short test summary info ============================\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n3 failed, 9 passed in 3.26s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-deploy_autonomy-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\n]+\\\\b\\\", values[\\\"adr_refs\\\"]),\\n                \\\"orchestration_recommended\\\": values[\\\"orchestration_recommended\\\"],\\n                \\\"orchestration_mode\\\": values[\\\"orchestration_mode\\\"],\\n                \\\"orchestration_operator_choice\\\": values[\\\"orchestration_mode\\\"],\\n>               \\\"deploy_autonomy\\\": values[\\\"deploy_autonomy\\\"]\\n                                   ^^^^^^^^^^^^^^^^^^^^^^^^^\\n                if values[\\\"destination\\\"] == \\\"nonprod-deploy\\\"\\n                else \\\"\\\",\\n                \\\"orchestration_ref\\\": values[\\\"orchestration_ref\\\"]\\n                if values[\\\"orchestration_mode\\\"] == \\\"cc-workflows-ultracode\\\"\\n                else \\\"\\\",\\n            }\\nE           KeyError: 'deploy_autonomy'\\n\\ntests/test_saga_spec_consumer_row.py:459: KeyError\\n=========================== short test summary info ============================\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n3 failed, 9 passed in 3.33s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-adr_refs-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.19s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-adr_refs-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.10s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-decisions-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.11s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-decisions-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.16s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-orchestration_mode-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "{\"outcome\": \"invalid\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: templates[1] ('cc-workflows-ultracode').fixed: unknown field 'orchestration_mode'\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"templates[1] ('cc-workflows-ultracode').fixed\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-orchestration_mode-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "{\"outcome\": \"invalid\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: templates[1] ('cc-workflows-ultracode').fixed: unknown field 'orchestration_mode'\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"templates[1] ('cc-workflows-ultracode').fixed\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-orchestration_recommended-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.23s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-orchestration_recommended-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.10s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-orchestration_ref-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 3.30s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "drop-orchestration_ref-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 3.26s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "wrong-condition-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "tes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\n                                   ^^^^^^^^^^^^^^^^^^^^^^^^^\\n                if values[\\\"destination\\\"] == \\\"nonprod-deploy\\\"\\n                else \\\"\\\",\\n                \\\"orchestration_ref\\\": values[\\\"orchestration_ref\\\"]\\n                if values[\\\"orchestration_mode\\\"] == \\\"cc-workflows-ultracode\\\"\\n                else \\\"\\\",\\n            }\\nE           KeyError: 'deploy_autonomy'\\n\\ntests/test_saga_spec_consumer_row.py:459: KeyError\\n=========================== short test summary info ============================\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n6 failed, 6 passed in 2.94s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "wrong-condition-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "tes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\n                                   ^^^^^^^^^^^^^^^^^^^^^^^^^\\n                if values[\\\"destination\\\"] == \\\"nonprod-deploy\\\"\\n                else \\\"\\\",\\n                \\\"orchestration_ref\\\": values[\\\"orchestration_ref\\\"]\\n                if values[\\\"orchestration_mode\\\"] == \\\"cc-workflows-ultracode\\\"\\n                else \\\"\\\",\\n            }\\nE           KeyError: 'deploy_autonomy'\\n\\ntests/test_saga_spec_consumer_row.py:459: KeyError\\n=========================== short test summary info ============================\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n6 failed, 6 passed in 2.93s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "literal-adr-delimiter-validate",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.20s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "literal-adr-delimiter-write",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "restored": true,
+      "output": "ave-contract.yaml: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nan_examples_save_the_intended_tick[inline-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\\n12 failed in 2.17s\\n\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "wording-only",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "restored": true,
+      "output": "{\"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout\"}\n"
+    },
+    {
+      "mutation": "wording-only-check",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--check"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "restored": true,
+      "output": "{\"outcome\": \"clean\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout\", \"diff\": \"\", \"changed\": []}\n"
+    },
+    {
+      "mutation": "bypass-preflight",
+      "command": [
+        "-m",
+        "pytest",
+        "tests/test_saga_spec_consumer_row.py::test_plan_save_contract_binds_to_engine",
+        "-q",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/pytest-bypass-preflight"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "restored": true,
+      "output": "  def test_plan_save_contract_binds_to_engine(contract_api: ModuleType, tmp_path: Path) -> None:\n        api = contract_api\n        original = api.load().data\n        tree(api, tmp_path)\n        for old, new in [(\"adr_refs\", \"p5_impossible_926\"), (\"orchestration_recommended\", \"next_step\")]:\n            data = copy.deepcopy(original)\n            next(i for i in data[\"writes\"] if i[\"name\"] == old)[\"name\"] = new\n            (tmp_path / api.CONTRACT).write_text(yaml.safe_dump(data, sort_keys=False))\n            before = {p: (tmp_path / p).read_bytes() for p in (api.SKILL, api.SPEC)}\n            for command in [(\"validate\",), (\"render\", \"--write\")]:\n                result = cli(api, tmp_path, *command)\n>               assert result.returncode == 2, result.stdout + result.stderr\nE               AssertionError: {\"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/pytest-bypass-preflight/test_plan_save_contract_binds_0\"}\nE                 \nE               assert 0 == 2\nE                +  where 0 = CompletedProcess(args=['/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3', '/private/var/folders/ky/...fy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/pytest-bypass-preflight/test_plan_save_contract_binds_0\"}\\n', stderr='').returncode\n\ntests/test_saga_spec_consumer_row.py:200: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_save_contract_binds_to_engine\n1 failed in 0.39s\n"
+    },
+    {
+      "mutation": "hollow-after-first-statement",
+      "command": [
+        "-m",
+        "pytest",
+        "tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth",
+        "-q",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/pytest-hollow-after-first-statement"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "restored": true,
+      "output": "                                                      [100%]\n=================================== FAILURES ===================================\n_____________________ test_plan_contract_guards_have_teeth _____________________\n\n    def test_plan_contract_guards_have_teeth() -> None:\n        \"\"\"P5 cannot wait for a scheduled run to discover a hollow guard (#926).\"\"\"\n        entries = [\n            entry\n            for entry in canary.load_registry(REPO_ROOT / \"tools/canary_registry.json\")\n            if entry[\"id\"].startswith(\"plan-save-contract-\")\n        ]\n        assert entries, \"Plan contract behavioral canaries are missing\"\n        for entry in entries:\n            record = canary.run_entry(entry, REPO_ROOT)\n>           assert record[\"result\"] == \"caught\", f\"{entry['guard']}: {record}\"\nE           AssertionError: tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract: {'guard': 'plan-save-contract-row', 'guard_ref': 'tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract', 'mutation': \"replace_text in plugins/saga/references/saga-spec.md: '| **/plan** |' -> '| **/plan-canary** |'\", 'result': 'toothless', 'baseline_exit': 0, 'detail': '', 'timestamp': '2026-09-05T22:14:49+00:00'}\nE           assert 'toothless' == 'caught'\nE             \nE             - caught\nE             + toothless\n\ntests/test_wiring_canary.py:46: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth - As...\n1 failed in 2.06s\n"
+    },
+    {
+      "mutation": "guard-file-deleted",
+      "command": [
+        "-m",
+        "pytest",
+        "tests/test_saga_plugin.py::test_provider_onboarding_contract_is_packaged_and_documented",
+        "-q",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/pytest-guard-file-deleted"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "restored": true,
+      "output": "         \"engine_promotion.py fixture-http/fixture-chat --json\",\n            \"reviewed pull request\",\n        ):\n            assert required in guide\n    \n        for script in (\n            \"engine_onboarding.py\",\n            \"engine_registry_conformance.py\",\n            \"engine_promotion.py\",\n            \"plan_save_contract.py\",\n        ):\n            path = PLUGIN_ROOT / \"scripts\" / script\n            assert path.is_file(), f\"{path.relative_to(ROOT)}: required packaged script is missing\"\n    \n        # Keep this inventory outside the guard it protects: deleting the guard must be red.\n        contract = PLUGIN_ROOT / \"references/plan-save-contract.yaml\"\n        guard = ROOT / \"tests/test_saga_spec_consumer_row.py\"\n        boundaries = ROOT / \"tests/test_saga_plan_contract_boundaries.py\"\n        for path in (contract, guard, boundaries):\n>           assert path.is_file(), (\n                f\"{path.relative_to(ROOT)}: required Plan contract guard input is missing\"\n            )\nE           AssertionError: tests/test_saga_spec_consumer_row.py: required Plan contract guard input is missing\nE           assert False\nE            +  where False = is_file()\nE            +    where is_file = PosixPath('/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout/tests/test_saga_spec_consumer_row.py').is_file\n\ntests/test_saga_plugin.py:166: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_saga_plugin.py::test_provider_onboarding_contract_is_packaged_and_documented\n1 failed in 0.26s\n"
+    },
+    {
+      "mutation": "restored",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "restored": true,
+      "output": "{\"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\", \"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c5-semantic-proofs-pbf1j6m0/checkout\"}\n"
+    }
+  ]
+}

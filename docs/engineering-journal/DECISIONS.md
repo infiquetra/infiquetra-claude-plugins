@@ -1,5 +1,177 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-06
+
+### Plan documentation proof is callable without the test runner {#926-plan-proof-without-pytest}
+
+Cycle 5 identified one dependency problem in three lenses (agentusab05, arch09, testing07).
+At `6b7587f7`, a Python/PyYAML environment without pytest refused a valid carrier, and the
+25 guards took 194.43 seconds locally. Moving existing readers, fact checks and saved-result
+expectations into `plan_save_proof.py` removes the tool's reverse dependency on test files.
+Both tests and the maintainer command use that proof; neither renderer nor carrier supplies
+the expected Plan outcomes. Explicit checks survive `python -O`. No new contract or schema.
+
+The proof calls the existing Saga parser/build/save chain with an explicit private root.
+Its Git runner reports unavailable: these temporary directories have no repository, so
+repeated Git discovery earned nothing. The actual CLI remains independently exercised by
+all twelve destination/backend cases, with whole snapshot and body assertions. Both paths
+check engine-derived save destinations before writing. Saga and effort runtime bytes stay
+unchanged. Candidate facts are verified before either generated document can be written.
+
+Alternatives: dropping proof or limiting it to CI would restore the prior silent-green
+field-swap failure. Keeping pytest perpetuates the verified environment and startup costs.
+Copying expectations into a second validator would create competing policy. Extracting the
+existing proof keeps one oracle and the external inventory, negative controls and ordinary
+mutation canaries that detect its removal or bypass. This is a maintenance tool, not a
+new runtime validation framework; no general predicates, document targets or plugins added.
+
+Validation for this unit: 68 focused tests pass in 25.08 seconds, including a real isolated
+Python/PyYAML environment with neither pytest nor a tests directory, optimized execution,
+field/condition/factual drift refusal, shell data and both containment paths. Full gate and
+mutation receipts follow at the frozen final revision; independent review owns scores.
+
+### Fixed documentation facts use independent positive assertions {#926-plan-fixed-facts-independent-proof}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+**Historical cycle-5 mechanism; the pytest dependency is superseded by
+[the callable-proof decision](#926-plan-proof-without-pytest). Factual obligations remain.**
+
+The carrier keeps field/condition/example data and native/proxy declarations. Removed effort
+seam, parameter and reference configuration earned nothing: those owners already exist in the
+engine and convention. The loader now handles structure and identity; the one existing pytest
+binding supplies engine choices, observed effort behavior and whole saved-result semantics to
+both regression tests and the mandatory edit-time preflight. `runpy` replaces custom module
+registration. The renderer cannot authorize itself by agreeing with its own output.
+
+Fixed generated statements use narrow positive assertions: the actual scan boundary, both tier
+resolver attributes, the paired cell, the native/proxy explanation and the complete coupling
+note. Inline controls falsify the renderer and rerender together. A registered canary removes
+that independent factual assertion; ordinary pytest must then report the guard toothless.
+Free prose remains outside these assertions. Symmetric generated markers carry the source,
+renderer and named guard, and the surviving Plan example elsewhere links to its generated owner.
+
+Additional enum predicates are exercised one at a time because the carrier permits only a
+single equality per condition. This closes an observed gap where making ADR references
+conditional on `kind: task` escaped the destination/backend matrix. Valid fixed examples and
+underscore IDs still work. This adds test scenarios without adding a second validator or a
+Cartesian product to the canonical examples. The historical records now explicitly correct
+omitted previous-comments findings and distinguish worker release custody from integrator
+changes. See the [59-finding ledger](../evidence/issue-926/cycle4-finding-dispositions.md).
+
+The maintainer script has 287 AST statements versus 310 at `b4ef1925`; its 507 physical lines
+include diagnostics, formatting and ownership text (499 at that baseline, 466 at `04cbb0ce`).
+This is not a claim of a physical-line reduction against cycle 3. The reduction is in configurable
+policy and executable statements; remaining write/rollback handling serves the required refusal
+and recovery behavior. No runtime dependency or runtime behavior changes. Revisit this choice
+if the carrier needs general conditions, more document targets, or arbitrary prose semantics;
+those would exceed this maintenance unit rather than justify a generic validator.
+
+### The documentation write command requires the existing saved-result proof {#926-plan-write-requires-behavior-proof}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+**Historical cycle-5 mechanism; the pytest dependency is superseded by
+[the callable-proof decision](#926-plan-proof-without-pytest). Factual obligations remain.**
+
+The edit-time CLI runs the focused real-save test before it can write. The importable
+loader and renderer remain usable by that test; the selected test does not invoke this
+CLI. This is a repository maintenance command, like the gate, and requires the checkout's
+development environment. Installed copies must match the target checkout's tool.
+
+This replaces the broad prose-flag scan rather than introducing another policy classifier
+or a second hardcoded field contract. The behavioral test states Plan's expected results
+and checks the entire stored snapshot, including preservation of unrelated state. The
+ordinary pytest gate runs the existing mutation-canary machinery, so a hollow behavioral
+guard cannot silently wait for a scheduled run. No Saga runtime imports the maintainer tool
+or these tests. The [unit receipt](../work-sessions/2026-09-05-saga-plan-contract-926-repair.md)
+records the data-drift, wording-only, preflight-bypass, hollow-guard, and deletion probes.
+
+
+### Plan example values are data, not shell fragments {#926-plan-literal-placeholders}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+Cycle 4's independent review rejected the preceding implementation and its closure claims.
+Its v2 placeholders mixed data with authored shell syntax, allowing comments and command
+substitution to change the command. v3 stores raw scalars; the renderer quotes every value.
+A real Bash argument-capture test proves that controlled hashes, pipes, quotes, and
+substitution payloads remain inert. Tests bind identity classification to the engine's
+identity function and reject structural values that can destroy output delimiters.
+
+The older decision below is the cycle-4 design record, not a claim that cycle 4 passed.
+The [current repair receipt](../work-sessions/2026-09-05-saga-plan-contract-926-repair.md)
+separates completed units from pending failures and records their mutations.
+
+
+### Saga Plan facts use a smaller contract with independent producer and behavior checks {#926-plan-save-contract-single-source}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+**Historical decision for `04cbb0ce`; superseded after independent cycle-4 rejection.**
+The intended guarantees in this entry were not all achieved. The source still defined an
+unused `REMEDY`, the tier/Reads prose was unbound, and the first-statement inventory could
+miss hollow guards. The current decisions above and repair receipt correct those claims.
+The runbook has since been narrowed to its verified editing, protocol and recovery contract;
+it does not document both generators or every stored Saga field.
+
+**Decision at submission.** Cycle 4 replaced the unreleased documentation v1 carrier with v2. YAML remains the single
+list of Plan save fields, conditions, examples and effort mechanisms. `load()` validates real
+`Saga` fields and save options, enum placeholder vocabularies, the save flags named in Plan's
+upstream instructions, and `inject_effort` behavior before either rendering command can write.
+The upstream inventory reads only code tokens before Phase 5.3; generated documents do not
+supply expected field lists or mechanisms. Saved-tick tests independently assert Plan's semantic
+outcomes, including both destinations and backends, so a real but wrong field/condition fails.
+
+**Date:** 2026-09-05 · **Issue:** #926 (P5 / #918) · **Authority:** the operator's cycle-4 repair
+dispatch supersedes the cycle-3 cap outcome and permits a smaller design. The original accepted
+[plan](../plans/2026-09-05-saga-plan-maintenance-926-p5-structured-contract-plan.md) remains the
+historical design; this decision and the cycle-4 work session record its implementation amendment.
+
+**What earned nothing.** Removed free-form factual `notes`, per-template `omit`, configurable
+operator-choice rules, the generic `reads`/producer/owner data, the recursive alias graph walk,
+per-example ownership markers, a foreign `--contract` input, the global retry remedy, a dead
+`flags_of` helper, and pure-function self-comparison assertions. These were configuration or
+checks without an independent oracle. Two stable example groups now accept additional examples
+without marker edits. Identity is correctly described as stored addressing data. Operator-choice
+semantics are documented beside their real save/refusal tests, not configurable policy. The
+restored tier regression checks require both resolver attributes and the model/effort cell.
+
+**Alternatives weighed.** Shipping only the four prose corrections with **no checks** would be
+smaller and acceptable for ordinary editorial work. It was considered explicitly for cycle 4,
+but would abandon the operator's required field/condition, malformed-input and bypass proofs
+after two demonstrated silent-green guards. The chosen scope keeps only the existing three
+outputs and the checks needed to falsify those properties. A natural-language classifier or
+exact-phrase tripwire was rejected by the operator; no suppression convention is reintroduced.
+A generic schema framework, plugin system, transaction service and coverage of the other five
+consumer rows would increase scope without serving P5. No runtime changes are permitted.
+
+**Recovery and limits.** The solo edit-time tool stages both files, replaces each atomically,
+and rolls back completed replacements on an ordinary I/O failure. Failed rollback retains named
+backup files; it does not claim transactional crash recovery or support concurrent writers.
+`--root` selects code, YAML and documents together. JSON distinguishes schema family/version
+refusals; marker failures tell the maintainer to restore markers, not to repeat a refused render.
+The [maintainer runbook](../../plugins/saga/references/plan-save-contract.md) describes the complete
+editing and recovery path, both generation systems, and which facts are stored by Saga itself.
+
+**Falsifiability.** Independent output parsing catches a renderer that drops a declared field
+and then rerenders. Real saves prove the intended Plan tick, conditional writes and operator-choice
+refusals. Inline altered-input controls catch bypassed helpers; packaging inventory detects a
+missing or hollow guard; each guard has a scheduled mutation canary. A coordinated rewrite of all
+oracles remains outside this guarantee, as does the truth of arbitrary newly added English prose.
+The upstream token inventory intentionally requires every mentioned real save option to be in
+the carrier; introducing a new upstream option is a contract edit. Team Execution's older note
+remains issue #993's responsibility. Independent Saga Code Review belongs to the coordinator;
+these tests and mutation receipts are preparation, not a review acceptance claim.
+
+### Plan's interim reader decision is superseded {#926-plan-drift-checks-derive-dont-restate}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+The [interim shared-reader decision](ARCHIVE.md#926-plan-interim-record-superseded) is superseded.
+Its parser and routing repairs remain; field extraction and the classifier are replaced.
+Historical plans and archived decisions retain their original text by operator approval.
+
 ## 2026-09-05
 
 ### Source resolution refuses the original outside the root and shares one decision {#912-refuse-original-outside-root}

@@ -269,9 +269,9 @@ commands:
     inputs: Requirements doc, issue, source artifact, or request.
     outputs: Plan document under docs/plans/ and a plan saga tick.
     durable_artifacts: [docs/plans/]
-    saga_state_behavior: Writes lifecycle_phase=plan with phase_status complete when the plan is done.
+    saga_state_behavior: Saves the Plan tick; see the [/plan consumer row in saga-spec §11](../../references/saga-spec.md#11-consumer-contract-rebuild-targets) for written fields and their conditions.
     routes_in: [idea-ready, requirements-ready, docs/brainstorms/, docs/specs/]
-    routes_out: [/doc-review, /work]
+    routes_out: [/doc-review, /work, /handoff, /brainstorm]
     gates: Does not implement or run the review gauntlet.
     ownership_boundary: Owns HOW planning only.
     common_mistakes:

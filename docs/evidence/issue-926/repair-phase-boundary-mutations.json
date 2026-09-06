@@ -1,0 +1,122 @@
+{
+  "baseline_revision": "e5f963e2",
+  "source_hashes": {
+    "plugins/saga/scripts/plan_save_contract.py": "fe3ee14df5c3f85e14dd6f9a14df3d3a513bca142a380da3a6546203f5ed0b57",
+    "tests/saga_plan_contract.py": "daea226f5d2b520f6aeb279f95dfebb8cdfcac42a9db94c8d3939ce3061ca782",
+    "tests/test_saga_spec_consumer_row.py": "49f5a13ef03bcf5070d68bc39b2a9e4862400d5f553e14392fa61f2a52c2ff05",
+    "tools/canary_registry.json": "88b00dba61a73fd4baadc5b39347db288bce668e5b955aa0b1794f8ba1aa44fb"
+  },
+  "before": [
+    {
+      "case": "baseline",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-zzi6w0r7/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n"
+    },
+    {
+      "case": "missing-phase-and-render-drift",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-zzi6w0r7/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n"
+    },
+    {
+      "case": "missing-phase-and-render-drift",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-zzi6w0r7/checkout\", \"outcome\": \"rendered\", \"changed\": [\"plugins/saga/skills/plan/SKILL.md\"]}\n"
+    },
+    {
+      "case": "ordinary-test-after-accepted-write",
+      "command": [
+        "-m",
+        "pytest",
+        "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick",
+        "-q",
+        "-o",
+        "addopts=",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-zzi6w0r7/pytest"
+      ],
+      "exit": 1,
+      "output": "# 5.3 heading\n\ntests/saga_plan_contract.py:25: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-plan-only]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-pr]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-merge]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-nonprod-deploy]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-plan-only]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-pr]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-merge]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[team-execution-nonprod-deploy]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-plan-only]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-pr]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-merge]\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[cc-workflows-ultracode-nonprod-deploy]\n12 failed in 0.60s\n"
+    },
+    {
+      "case": "restored",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-zzi6w0r7/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n"
+    }
+  ],
+  "after": [
+    {
+      "case": "baseline",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-a3febcuu/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n"
+    },
+    {
+      "case": "missing-phase-and-render-drift",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "output": "ga_spec_consumer_row.py: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nF\\n=================================== FAILURES ===================================\\n_________ test_plan_examples_save_the_intended_tick[inline-plan-only] __________\\ntests/test_saga_spec_consumer_row.py:699: in test_plan_examples_save_the_intended_tick\\n    assert_regions(api, contract, candidate[api.SKILL], candidate[api.SPEC])\\ntests/test_saga_spec_consumer_row.py:161: in assert_regions\\n    phase = plan_phase_53(text=skill)\\n            ^^^^^^^^^^^^^^^^^^^^^^^^^\\ntests/saga_plan_contract.py:26: in plan_phase_53\\n    assert len(matches) == 1, f\\\"{PLAN_SKILL}: expected exactly one ### {heading} heading\\\"\\n           ^^^^^^^^^^^^^^^^^\\nE   AssertionError: /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-a3febcuu/checkout/plugins/saga/skills/plan/SKILL.md: expected exactly one ### 5.3 heading\\n=========================== short test summary info ============================\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-plan-only]\\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\\n1 failed in 0.15s\\n\", \"code\": \"verification\", \"file\": \"tests/test_saga_spec_consumer_row.py\", \"entry\": \"writes / saved examples\"}\n"
+    },
+    {
+      "case": "missing-phase-and-render-drift",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "output": "ga_spec_consumer_row.py: writes / saved examples: tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick failed (exit 1); inspect the example/contract and restore the checkout's test dependencies; do not change the runtime to satisfy this check.\\nF\\n=================================== FAILURES ===================================\\n_________ test_plan_examples_save_the_intended_tick[inline-plan-only] __________\\ntests/test_saga_spec_consumer_row.py:699: in test_plan_examples_save_the_intended_tick\\n    assert_regions(api, contract, candidate[api.SKILL], candidate[api.SPEC])\\ntests/test_saga_spec_consumer_row.py:161: in assert_regions\\n    phase = plan_phase_53(text=skill)\\n            ^^^^^^^^^^^^^^^^^^^^^^^^^\\ntests/saga_plan_contract.py:26: in plan_phase_53\\n    assert len(matches) == 1, f\\\"{PLAN_SKILL}: expected exactly one ### {heading} heading\\\"\\n           ^^^^^^^^^^^^^^^^^\\nE   AssertionError: /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-a3febcuu/checkout/plugins/saga/skills/plan/SKILL.md: expected exactly one ### 5.3 heading\\n=========================== short test summary info ============================\\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick[inline-plan-only]\\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\\n1 failed in 0.16s\\n\", \"code\": \"verification\", \"file\": \"tests/test_saga_spec_consumer_row.py\", \"entry\": \"writes / saved examples\"}\n"
+    },
+    {
+      "case": "restored",
+      "command": [
+        "plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-phase-proof-a3febcuu/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n"
+    }
+  ],
+  "canaries": [
+    {
+      "guard": "plan-save-contract-phase-boundary",
+      "guard_ref": "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+      "mutation": "replace_text in tests/test_saga_spec_consumer_row.py: 'phase = plan_phase_53(text=skill)' -> 'phase = skill'",
+      "result": "caught",
+      "baseline_exit": 0,
+      "detail": "",
+      "timestamp": "2026-09-05T23:30:04+00:00"
+    },
+    {
+      "guard": "verification-first-error",
+      "guard_ref": "tests/test_saga_spec_consumer_row.py::test_plan_renderer_refusals_and_rollback",
+      "mutation": "replace_text in plugins/saga/scripts/plan_save_contract.py: '\"-q\", \"-x\", \"--tb=short\"' -> '\"-q\", \"--tb=short\"'",
+      "result": "caught",
+      "baseline_exit": 0,
+      "detail": "",
+      "timestamp": "2026-09-05T23:30:15+00:00"
+    }
+  ]
+}

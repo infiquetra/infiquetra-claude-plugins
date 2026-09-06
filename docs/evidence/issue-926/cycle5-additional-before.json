@@ -1,0 +1,59 @@
+[
+  {
+    "mutation": "baseline",
+    "command": [
+      "validate"
+    ],
+    "exit": 0,
+    "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-final-probes-98fy1hik\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+    "stderr": "",
+    "seconds": 0.441,
+    "documents_unchanged": true
+  },
+  {
+    "mutation": "operator-choice-falsehood",
+    "command": [
+      "render",
+      "--write"
+    ],
+    "exit": 0,
+    "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-final-probes-98fy1hik\", \"outcome\": \"rendered\", \"changed\": [\"plugins/saga/references/saga-spec.md\"]}\n",
+    "stderr": "",
+    "seconds": 0.474,
+    "documents_unchanged": false
+  },
+  {
+    "mutation": "operator-choice-falsehood-restored",
+    "command": [
+      "validate"
+    ],
+    "exit": 0,
+    "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-final-probes-98fy1hik\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+    "stderr": "",
+    "seconds": 0.491,
+    "documents_unchanged": true
+  },
+  {
+    "mutation": "foreign-save-command",
+    "command": [
+      "render",
+      "--write"
+    ],
+    "exit": 0,
+    "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-final-probes-98fy1hik\", \"outcome\": \"rendered\", \"changed\": [\"plugins/saga/skills/plan/SKILL.md\"]}\n",
+    "stderr": "",
+    "seconds": 0.467,
+    "documents_unchanged": false
+  },
+  {
+    "mutation": "foreign-save-command-restored",
+    "command": [
+      "validate"
+    ],
+    "exit": 0,
+    "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-final-probes-98fy1hik\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+    "stderr": "",
+    "seconds": 0.451,
+    "documents_unchanged": true
+  }
+]

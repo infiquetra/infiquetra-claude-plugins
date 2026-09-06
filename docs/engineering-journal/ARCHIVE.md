@@ -516,6 +516,115 @@ the Infiquetra command after normal README and marketplace documentation.
 
 ## Superseded
 
+### Saga Plan interim shared-reader decision {#926-plan-interim-record-superseded}
+
+**SUPERSEDED** 2026-09-05 by the
+[structured-contract decision](DECISIONS.md#926-plan-save-contract-single-source).
+The a736c166 repair remains the verified baseline; the accepted redesign replaces its
+negative classifier and document-derived field comparison. Original interim record follows.
+
+### Saga Plan contract readers share one parser; negative-check policy remains pending {#926-plan-interim-original-text}
+
+**Decision.** The consumer-row and routing checks import section extraction, fenced-template
+collection and flag harvesting from `tests/saga_plan_contract.py`. The helper lives beside its
+consumers because this repository has no shared parser package; `conftest.py` remains for fixtures.
+It reads the documented templates, including titled backtick and tilde fences, and uses POSIX
+quoting to distinguish shell comments from hashes inside values. It does not execute those
+commands or certify their shell control flow. The positive field set is the union of the save
+variants, minus identity flags, compared with the `/plan` cell's declared fields. The command
+card points to that cell instead of maintaining another field list.
+
+**Date:** 2026-09-05 · **Issue:** #926 (unit P5, parent #918 Wave Two) · **Origin:** interim
+D1–D6 repair after Saga Code Review cycle 2 at `337710f3`. This corrects the cycle-2 record's
+claims about derivation coverage, operator-choice derivation and the negative matcher.
+
+**Why.** Editing only one of two copied parsers made titled save variants invisible to the
+routing check. Sharing the parser removes that divergence. Quote-aware tokenization preserves
+real options following a quoted `#926`, while ignoring flags inside actual comments or values.
+Both document readers now take explicit text: the comparison and the altered-text probe use
+the same call path. The former self-guard caught a naive row-for-skill swap but missed a helper
+that returned the row only when called without arguments. The default path has been removed;
+the probe demonstrates sensitivity to its added option, not immunity to every possible rewrite.
+Its synthetic option name is checked against both documents and the engine source and extended
+until absent, so the proof does not reserve a real or future production flag.
+
+`orchestration_operator_choice` is stored. A supplied choice takes precedence; otherwise an
+explicit `--orchestration-mode` fills it. With neither flag, a new saga's choice is empty and a
+resumed saga retains its prior choice. The previous claim of derivation on every save was false.
+The row's parse convention covers only flag-written fields in the `/plan` cell; its
+parenthesized notes describe conditions and the additional stored choice.
+
+**Negative check, unchanged and unresolved.** Its current patterns combine an effort token
+with an emission-only idiom, a bounded negation/verb pattern, an un-prefixed denial or a
+matched adjective. The adjective pattern includes bare `advisory` as well as `advisory only`,
+`inert`, and forms of `ignore`; it does not establish what those words refer to. It can reject
+correct prose and miss rewordings split across clauses. HTML comments remain whole while prose
+is split into clauses. The unanchored, case-insensitive `drift-check-opt-out` substring skips
+an entire such span, even if the token occurs in a path or reference. The previous record
+mistook these mechanical matches for semantic guarantees. This interim repair changes none of
+that behavior and makes no choice among narrowing, dropping or repairing the negative check.
+
+**Rejected.** Keeping two matching fence regexes (the next edit could diverge again); splitting
+comments at a literal hash (quoted values can contain hashes); a fourth field enumeration in
+the command card (another unbound copy); a fixed supposedly nonexistent production flag
+(the former `--orchestration-downgrade` already exists). The CLI's option inventory alone
+cannot say which flags Plan declares, so it does not replace the document-derived comparison.
+Binding all documented templates to executable CLI behavior remains beyond this interim repair.
+
+**Revisit when.** The operator selects the negative-check policy; the save-template syntax
+changes beyond the reader's documented scope; or the runtime changes operator-choice derivation.
+The Team Execution effort-comment duplicate remains tracked separately by #993.
+
+
+### Saga Plan drift checks derive from the documents, and the negative one matches claim classes  {#926-plan-cycle2-record-superseded}
+
+**SUPERSEDED** 2026-09-05. Preserved from `337710f3`; its claims about the self-guard,
+operator-choice derivation and adjective matcher are incorrect. See the
+[corrected decision](DECISIONS.md#926-plan-drift-checks-derive-dont-restate).
+
+**Decision.** Issue 926's two drift checks (`tests/test_saga_spec_consumer_row.py`) never restate
+what they guard. The positive check derives its expected field set from Plan's own fenced
+`saga.py save` blocks — union across save variants (inline omits `--orchestration-ref`,
+ultracode omits `--deploy-autonomy`), shell `#` comments stripped, identity flags dropped —
+and parses the consumer row by the convention stated beside it (backticked identifiers outside
+parentheses). The negative check matches a claim class, not a sentence: an effort token sharing
+one span with the `emission only` idiom, a negation governing a consume/honor/dispatch/enforce
+verb (including `un-` forms such as `unconsumed`, which carry their own negation), or a
+dead-end adjective (inert, advisory-only, ignored). Prose sentences are split into clauses so
+the negation must share one clause with the effort token; HTML comment blocks stay whole
+because the stale claim spanned source lines. A visible `drift-check-opt-out` sentinel lets a
+span that describes the matcher itself (the CHANGELOG bullet) opt out explicitly rather than
+by file extension.
+
+**Date:** 2026-09-05 · **Issue:** #926 (unit P5, parent #918 Wave Two) · **Origin:** Saga Code
+Review cycle 1 (`repairs_requested`): the first-cut negative pattern missed `unconsumed` — the
+exact word of the acceptance criterion — because it demanded a non-word character before the
+verb; the first-cut fence pattern missed titled fences; and the first-cut convention sentence
+denied `orchestration_operator_choice`, a real stored field the engine derives on every save.
+
+**Why.** A duplicated list drifts exactly like the row it protects, which issue 926 rejects by
+name — so the expected set is derived, and a self-guard (deriving from altered skill text
+surfaces a forged flag the row lacks) fails if the derivation is ever swapped for the row
+itself. A pinned literal sentence prevents nothing, so the negative pattern catches rewordings
+(`nothing honors it`), the criterion word (`unconsumed`), and inert/advisory phrasings, while
+clause-splitting plus verb-form bounding (`reads?|reading`, never bare `read`) keeps three
+legitimate in-tree spans and the repaired comment green. The convention sentence is scoped to
+the `/plan` row only: the same convention is false of four of the other five consumer rows,
+which are pre-existing drift explicitly out of scope.
+
+**Rejected.** A whole-file `re.DOTALL` regex (matches an effort mention in one section against a
+negation in another); pinning the exact stale sentence (prevents nothing); parsing `saga.py`
+`argparse` declarations (every field any command may write, not what Plan writes); an allowlist
+of derived-but-flagless fields (the second hardcoded list issue 926 refuses); excluding
+`CHANGELOG.md` from the negative scope (four lenses confirmed the scope; the sentinel covers
+the self-describing bullet instead).
+
+**Revisit when.** A new spawn kind gains effort handling (the replacement comment's
+two-real-knob-plus-proxy account and the matcher both need re-reading); a third Phase 5.3 save
+variant appears (the union proof asserts the current two-variant shape); or the team-execution
+follow-up (#993) widens the negative scope from `plugins/saga/` to `plugins/`.
+
+
 ### "Installed-hook version skew fail-closes workflow children" (pre-correction of `#installed-hook-skew-fail-close-637`)  {#installed-hook-skew-fail-close-637-v1}
 
 **SUPERSEDED 2026-07-22** (next session after it was written) by the corrected inline

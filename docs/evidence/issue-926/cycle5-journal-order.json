@@ -1,0 +1,57 @@
+{
+  "failed_gate_revision": "c273af8c14e73534890f81bafc567b618bab2082",
+  "failed_gate_exit": 1,
+  "failed_gate_result": "GATE RED \u2014 1 blocking step(s) failed: Journal newest-first guard (new entries)\n",
+  "records": [
+    {
+      "file": "docs/engineering-journal/LEARNINGS.md",
+      "base_ref": "7f6d786b0aeaacf5582018c593f29f670d1b8fc9",
+      "before": [
+        "docs/engineering-journal/LEARNINGS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 A real-save documentation probe must contain the engine's de",
+        "docs/engineering-journal/LEARNINGS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 Candidate validation must use the same boundary parser as sa",
+        "docs/engineering-journal/LEARNINGS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 Documentation classifiers can have no measured margin under",
+        "docs/engineering-journal/LEARNINGS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 Executable documentation must not choose a test's program {#",
+        "docs/engineering-journal/LEARNINGS.md: add a `## <today>` heading at the top and put new entries under it; do not append at the end of the file"
+      ],
+      "moved_entries": [
+        "### A real-save documentation probe must contain the engine's derived destination {#926-save-probe-identity-containment}",
+        "### Candidate validation must use the same boundary parser as saved output {#926-candidate-phase-boundary}",
+        "### Executable documentation must not choose a test's program {#926-doc-command-execution-boundary}",
+        "### Documentation classifiers can have no measured margin under copy editing {#926-prose-classifier-zero-span-margin}"
+      ],
+      "after": [],
+      "mutation": "move an unmerged entry below the newest date",
+      "mutation_output": [
+        "docs/engineering-journal/LEARNINGS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 A real-save documentation probe must contain the engine's de",
+        "docs/engineering-journal/LEARNINGS.md: add a `## <today>` heading at the top and put new entries under it; do not append at the end of the file"
+      ],
+      "restored": []
+    },
+    {
+      "file": "docs/engineering-journal/DECISIONS.md",
+      "base_ref": "7f6d786b0aeaacf5582018c593f29f670d1b8fc9",
+      "before": [
+        "docs/engineering-journal/DECISIONS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 Fixed documentation facts use independent positive assertion",
+        "docs/engineering-journal/DECISIONS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 Plan example values are data, not shell fragments {#926-plan",
+        "docs/engineering-journal/DECISIONS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 Plan's interim reader decision is superseded {#926-plan-drif",
+        "docs/engineering-journal/DECISIONS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 Saga Plan facts use a smaller contract with independent prod",
+        "docs/engineering-journal/DECISIONS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 The documentation write command requires the existing saved-",
+        "docs/engineering-journal/DECISIONS.md: add a `## <today>` heading at the top and put new entries under it; do not append at the end of the file"
+      ],
+      "moved_entries": [
+        "### Fixed documentation facts use independent positive assertions {#926-plan-fixed-facts-independent-proof}",
+        "### The documentation write command requires the existing saved-result proof {#926-plan-write-requires-behavior-proof}",
+        "### Plan example values are data, not shell fragments {#926-plan-literal-placeholders}",
+        "### Saga Plan facts use a smaller contract with independent producer and behavior checks {#926-plan-save-contract-single-source}",
+        "### Plan's interim reader decision is superseded {#926-plan-drift-checks-derive-dont-restate}"
+      ],
+      "after": [],
+      "mutation": "move an unmerged entry below the newest date",
+      "mutation_output": [
+        "docs/engineering-journal/DECISIONS.md: new entry filed outside the newest section (`## 2026-09-06`) \u2014 Fixed documentation facts use independent positive assertion",
+        "docs/engineering-journal/DECISIONS.md: add a `## <today>` heading at the top and put new entries under it; do not append at the end of the file"
+      ],
+      "restored": []
+    }
+  ]
+}

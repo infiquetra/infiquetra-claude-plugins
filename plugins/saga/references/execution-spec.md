@@ -411,12 +411,8 @@ actual generated script, not a description of it:
 5. **Persist** — write the saga tick with `--orchestration-ref` pointing at the **spec JSON** (the
    canonical artifact — the `.workflow.js` is regenerable, so the ref is the spec, not the script):
 
-   ```bash
-   python3 plugins/saga/scripts/saga.py save \
-     --orchestration-mode cc-workflows-ultracode \
-     --orchestration-ref docs/workflows/<name>-spec.json \
-     --orchestration-recommended <recommend_execution_backend() output>
-   ```
+   Use the [generated Plan save example](../skills/plan/SKILL.md#53-write-the-saga-tick)
+   for `cc-workflows-ultracode`, substituting the actual values.
 
 The spec JSON is the durable canonical artifact; the `.workflow.js` can be regenerated at any time via
 `emit`. `/work` re-emits fresh from the spec at execution time, so an intermediate re-plan that changed the

@@ -405,12 +405,11 @@ _EFFORT_EMISSION_MARKER = "EFFORT-EMISSION MARKER (#362 U5, R7, KTD6)"
 
 
 def test_effort_emitted_into_plan_tier_table() -> None:
-    """`/plan`'s per-unit tier table documents that its cell carries the resolver's
-    `effort` field, not just a bare model literal (R7 emission, KTD6 emission-only)."""
+    """A generated note must still tell Plan to carry both resolved tier attributes."""
     text = PLAN_SKILL_MD.read_text(encoding="utf-8")
-    assert _EFFORT_EMISSION_MARKER in text
     assert "tier_resolver.resolve(...).model" in text
-    assert ".effort" in text
+    assert "tier_resolver.resolve(...).effort" in text
+    assert "`<model>/<effort>`" in text
 
 
 def test_effort_emitted_into_team_execution_a7_table() -> None:

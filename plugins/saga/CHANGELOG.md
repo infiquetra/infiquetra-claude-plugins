@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.157.1] - 2026-09-06
+
+- The Plan documentation validator resolves the effort engine from the checkout named by
+  `--root` instead of falling through to the operator's installed plugins. A checkout that
+  carries fleet-core but no marketplace manifest was silently validated against whatever the
+  machine had installed, so the guard suite passed locally and failed in CI.
+
+## [0.157.0] - 2026-09-05
+
+- Plan documentation validation and rendering work with Python/PyYAML alone. The existing
+  independent saved-result proof runs without pytest; regression tests retain real CLI coverage.
+
+### Fixed
+
+- **Plan's routing checks share one template parser.** Titled save variants and
+  hashes inside quoted values remain visible to the routing tests. The consumer-row check now
+  binds generated documentation to a structured contract and binds that contract to the engine.
+  The command card links to the consumer row instead of copying its fields. Operator-choice
+  notes distinguish an explicit choice, derivation from an explicit mode flag, and preservation
+  on progress saves.
+- **Plan no longer claims to produce artifacts it does not produce.** The derived-state sentence
+  named the work-session path, which the specification assigns to Work, and named a committed
+  plan, which Plan never produces because it writes a file and never runs `git commit`. It now
+  names the plan document and the saga tick. The board-move trigger clause drops "is committed"
+  because Plan cannot observe that condition at Phase 5.0; the trigger still requires the plan
+  document to exist and have cleared review.
+- **The effort-emission comment described a world that has since changed.** It named issue #363's
+  effort-rider work as still ahead of the repository; that work shipped and the issue closed, so
+  the comment's account of how a resolved tier reaches a spawned agent was stale. It now names
+  the honoring seam,
+  `fleet_commons.effort_rider.inject_effort`, and distinguishes real enforcement from proxy: the
+  `workflow` and `external-engine` spawn kinds carry effort on a real control, while the `agent`
+  spawn kind prepends an `EFFORT_RIDER` directive because the Agent tool has no per-call effort
+  parameter. The operator's model-and-effort confirmation is unchanged.
+- **The specification's `/plan` consumer row disagreed with the skill.** It omitted four fields
+  declared by Plan. The row now lists all ten with their conditions, rendered from
+  `references/plan-save-contract.yaml`. The row also states the derived operator-choice consequence. Tests execute the examples
+  and inspect the whole saved result, including preservation of unrelated state.
+
+### Added
+
+- **Plan's save examples and effort note are generated from a checked documentation contract.**
+  `scripts/plan_save_contract.py` requires the existing candidate-document and saved-result proof before writing; it binds
+  fields, enum choices and factual clauses to `saga.py` and `effort_rider.inject_effort`. `render --check`
+  reports drift; `render --write` stages both documents and rolls back a failed replacement.
+  Both commands support an explicit checkout root and return JSON. Stable example groups allow
+  new save examples without marker edits. Generated regions name their source, renderer and
+  guard. Ordinary prose stays outside the contract. Guard inventory and behavioral mutation
+  canaries run in the ordinary test gate to detect drift and bypass. The maintainer runbook documents the
+  generated regions, editing workflow, recovery and the limits of these checks.
+
 ## [0.156.0] - 2026-09-01
 
 ### Changed

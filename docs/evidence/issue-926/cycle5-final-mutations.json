@@ -1,0 +1,852 @@
+{
+  "baseline_revision": "a2047d6b68254fc025c2f0343dcbdb5a0579ead7",
+  "source_hashes": {
+    "plugins/saga/scripts/plan_save_contract.py": "6f9e257364fb303ecc12f02d2b3b332524036e2a483152a5351c0ac45a142ac6",
+    "plugins/saga/scripts/plan_save_proof.py": "487809da2a2b7dd8b2c3e9dd58a11d3dbb71e1c1ee8db57281fd249f68bcaf6d",
+    "plugins/saga/references/plan-save-contract.yaml": "1d5f330e1de42afcf3df56d2202b0235cfca465629a1cbe78df24d84c7cd2ba3",
+    "plugins/saga/skills/plan/SKILL.md": "1cfa956cf3d57e09a822cad00b5930d9108a7c99e1c799aec444081f6c4d0406",
+    "plugins/saga/references/saga-spec.md": "71f481d9e3ed2111e1c8ad1d942ea308de6d11f4f8dbc789aa95907042480578",
+    "tests/test_saga_spec_consumer_row.py": "c8935b39c238d856a93446b436339d8555d2123b74bae4ff444cb39d8743b5d4"
+  },
+  "records": [
+    {
+      "mutation": "baseline",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.455,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "real-wrong-field-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes / saved examples: plan-only/inline: 'orchestration_recommended'; correct the candidate, not the runtime\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "seconds": 0.125,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "real-wrong-field-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes / saved examples: plan-only/inline: 'orchestration_recommended'; correct the candidate, not the runtime\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "seconds": 0.127,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "real-wrong-field-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.444,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "phase-status-drift-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes / saved examples: plan-only/inline: template default: saved Plan snapshot differs in ['phase_status']; correct the candidate, not the runtime\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "seconds": 0.123,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "phase-status-drift-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes / saved examples: plan-only/inline: template default: saved Plan snapshot differs in ['phase_status']; correct the candidate, not the runtime\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "seconds": 0.125,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "phase-status-drift-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.446,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "condition-drift-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes / saved examples: pr/inline: template default: saved Plan snapshot differs in ['deploy_autonomy']; correct the candidate, not the runtime\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "seconds": 0.205,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "condition-drift-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes / saved examples: pr/inline: template default: saved Plan snapshot differs in ['deploy_autonomy']; correct the candidate, not the runtime\", \"code\": \"verification\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes / saved examples\"}\n",
+      "seconds": 0.2,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "condition-drift-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.444,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "duplicate-key-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: line 5 key 'schema': mapping keys must be unique strings; remove the duplicate/invalid entry\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"line 5 key 'schema'\"}\n",
+      "seconds": 0.065,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "duplicate-key-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: line 5 key 'schema': mapping keys must be unique strings; remove the duplicate/invalid entry\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"line 5 key 'schema'\"}\n",
+      "seconds": 0.062,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "duplicate-key-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.437,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "invalid-field-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes ('p5_impossible_field'): --p5-impossible-field is not a saga.py save option\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes ('p5_impossible_field')\"}\n",
+      "seconds": 0.094,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "invalid-field-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: writes ('p5_impossible_field'): --p5-impossible-field is not a saga.py save option\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"writes ('p5_impossible_field')\"}\n",
+      "seconds": 0.094,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "invalid-field-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.405,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "effort-map-inversion-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: effort_honoring.spawn_kinds ('agent'): declaration disagrees with inject_effort behavior\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"effort_honoring.spawn_kinds ('agent')\"}\n",
+      "seconds": 0.097,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "effort-map-inversion-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/plan-save-contract.yaml: effort_honoring.spawn_kinds ('agent'): declaration disagrees with inject_effort behavior\", \"code\": \"invalid_contract\", \"file\": \"plugins/saga/references/plan-save-contract.yaml\", \"entry\": \"effort_honoring.spawn_kinds ('agent')\"}\n",
+      "seconds": 0.093,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "effort-map-inversion-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.44,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-effort-inversion-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/skills/plan/SKILL.md: generated facts: plugins/saga/skills/plan/SKILL.md: effort/tier factual clauses differ from runtime proof\", \"code\": \"verification\", \"file\": \"plugins/saga/skills/plan/SKILL.md\", \"entry\": \"generated facts\"}\n",
+      "seconds": 0.101,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-effort-inversion-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/skills/plan/SKILL.md: generated facts: plugins/saga/skills/plan/SKILL.md: effort/tier factual clauses differ from runtime proof\", \"code\": \"verification\", \"file\": \"plugins/saga/skills/plan/SKILL.md\", \"entry\": \"generated facts\"}\n",
+      "seconds": 0.099,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-effort-inversion-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.458,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-tier-inversion-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/skills/plan/SKILL.md: generated facts: plugins/saga/skills/plan/SKILL.md: effort/tier factual clauses differ from runtime proof\", \"code\": \"verification\", \"file\": \"plugins/saga/skills/plan/SKILL.md\", \"entry\": \"generated facts\"}\n",
+      "seconds": 0.096,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-tier-inversion-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/skills/plan/SKILL.md: generated facts: plugins/saga/skills/plan/SKILL.md: effort/tier factual clauses differ from runtime proof\", \"code\": \"verification\", \"file\": \"plugins/saga/skills/plan/SKILL.md\", \"entry\": \"generated facts\"}\n",
+      "seconds": 0.099,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-tier-inversion-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.487,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-reads-inversion-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/saga-spec.md: /plan consumer row: plugins/saga/references/saga-spec.md: Plan Reads cell differs\", \"code\": \"verification\", \"file\": \"plugins/saga/references/saga-spec.md\", \"entry\": \"/plan consumer row\"}\n",
+      "seconds": 0.103,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-reads-inversion-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/saga-spec.md: /plan consumer row: plugins/saga/references/saga-spec.md: Plan Reads cell differs\", \"code\": \"verification\", \"file\": \"plugins/saga/references/saga-spec.md\", \"entry\": \"/plan consumer row\"}\n",
+      "seconds": 0.096,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "renderer-reads-inversion-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.438,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "operator-choice-falsehood-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/saga-spec.md: /plan consumer row: plugins/saga/references/saga-spec.md: operator-choice derivation clause differs from the engine rule\", \"code\": \"verification\", \"file\": \"plugins/saga/references/saga-spec.md\", \"entry\": \"/plan consumer row\"}\n",
+      "seconds": 0.109,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "operator-choice-falsehood-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/references/saga-spec.md: /plan consumer row: plugins/saga/references/saga-spec.md: operator-choice derivation clause differs from the engine rule\", \"code\": \"verification\", \"file\": \"plugins/saga/references/saga-spec.md\", \"entry\": \"/plan consumer row\"}\n",
+      "seconds": 0.095,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "operator-choice-falsehood-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.464,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "foreign-save-command-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/skills/plan/SKILL.md: generated facts: plugins/saga/skills/plan/SKILL.md: template default must use the checkout's canonical saga.py save command\", \"code\": \"verification\", \"file\": \"plugins/saga/skills/plan/SKILL.md\", \"entry\": \"generated facts\"}\n",
+      "seconds": 0.101,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "foreign-save-command-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/skills/plan/SKILL.md: generated facts: plugins/saga/skills/plan/SKILL.md: template default must use the checkout's canonical saga.py save command\", \"code\": \"verification\", \"file\": \"plugins/saga/skills/plan/SKILL.md\", \"entry\": \"generated facts\"}\n",
+      "seconds": 0.103,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "foreign-save-command-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.43,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "missing-phase-boundary-validate",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/skills/plan/SKILL.md: generated facts: plugins/saga/skills/plan/SKILL.md: expected exactly one ### 5.3 heading\", \"code\": \"verification\", \"file\": \"plugins/saga/skills/plan/SKILL.md\", \"entry\": \"generated facts\"}\n",
+      "seconds": 0.093,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "missing-phase-boundary-render",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--write"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"invalid\", \"error\": \"plugins/saga/skills/plan/SKILL.md: generated facts: plugins/saga/skills/plan/SKILL.md: expected exactly one ### 5.3 heading\", \"code\": \"verification\", \"file\": \"plugins/saga/skills/plan/SKILL.md\", \"entry\": \"generated facts\"}\n",
+      "seconds": 0.094,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "missing-phase-boundary-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.451,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "wording-only",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "render",
+        "--check"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"clean\", \"diff\": \"\", \"changed\": []}\n",
+      "seconds": 0.419
+    },
+    {
+      "mutation": "inventory-baseline",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_plugin.py::test_provider_onboarding_contract_is_packaged_and_documented",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/inventory-baseline"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.23s\n",
+      "seconds": 0.569,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "guard-deleted",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_plugin.py::test_provider_onboarding_contract_is_packaged_and_documented",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/guard-deleted"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "output": "F\n=================================== FAILURES ===================================\n_________ test_provider_onboarding_contract_is_packaged_and_documented _________\n\n    def test_provider_onboarding_contract_is_packaged_and_documented() -> None:\n        guide = _read(ROOT / \"docs\" / \"adding-a-provider.md\")\n        match = re.search(r\"```json\\n(.*?)\\n```\", guide, flags=re.DOTALL)\n        assert match is not None\n        example = json.loads(match.group(1))\n        assert set(example) == {\n            \"transport\",\n            \"engine_id\",\n            \"variant\",\n            \"base_url\",\n            \"model\",\n            \"auth_key_env\",\n            \"context_window\",\n            \"cost_speed_rank\",\n            \"cost_class\",\n            \"cost_per_token\",\n            \"budget_ceiling_usd\",\n            \"latency_class\",\n            \"model_identity\",\n            \"last_validated\",\n            \"capability_profile\",\n            \"prompting_protocol\",\n            \"sources\",\n        }\n        assert set(example[\"cost_per_token\"]) == {\"input_usd\", \"output_usd\"}\n        for required in (\n            \"tools/add-engine.sh --spec provider.json\",\n            \"engine-bridge-http\",\n            \"http-bridge\",\n            \"trust_tier: probation\",\n            \"engine_registry_conformance.py\",\n            \"engine_promotion.py fixture-http/fixture-chat --json\",\n            \"reviewed pull request\",\n        ):\n            assert required in guide\n    \n        for script in (\n            \"engine_onboarding.py\",\n            \"engine_registry_conformance.py\",\n            \"engine_promotion.py\",\n            \"plan_save_contract.py\",\n            \"plan_save_proof.py\",\n        ):\n            path = PLUGIN_ROOT / \"scripts\" / script\n            assert path.is_file(), f\"{path.relative_to(ROOT)}: required packaged script is missing\"\n    \n        # Keep this inventory outside the guard it protects: deleting the guard must be red.\n        contract = PLUGIN_ROOT / \"references/plan-save-contract.yaml\"\n        guard = ROOT / \"tests/test_saga_spec_consumer_row.py\"\n        boundaries = ROOT / \"tests/test_saga_plan_contract_boundaries.py\"\n        for path in (contract, guard, boundaries):\n>           assert path.is_file(), (\n                f\"{path.relative_to(ROOT)}: required Plan contract guard input is missing\"\n            )\nE           AssertionError: tests/test_saga_spec_consumer_row.py: required Plan contract guard input is missing\nE           assert False\nE            +  where False = is_file()\nE            +    where is_file = PosixPath('/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/tests/test_saga_spec_consumer_row.py').is_file\n\ntests/test_saga_plugin.py:167: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_saga_plugin.py::test_provider_onboarding_contract_is_packaged_and_documented\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed in 0.28s\n",
+      "seconds": 0.622,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "inventory-restored",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_plugin.py::test_provider_onboarding_contract_is_packaged_and_documented",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/inventory-restored"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.25s\n",
+      "seconds": 0.627,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "factual-control-baseline",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/factual-control-baseline"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.17s\n",
+      "seconds": 0.539,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "factual-proof-self-derived",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/factual-proof-self-derived"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "output": "F\n=================================== FAILURES ===================================\n_______________ test_plan_docs_generated_regions_match_contract ________________\n\ncontract_api = <module 'p5_contract' from '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py'>\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b4ca810>\n\n    def test_plan_docs_generated_regions_match_contract(\n        contract_api: ModuleType, monkeypatch: pytest.MonkeyPatch\n    ) -> None:\n        api = contract_api\n        contract = api.load()\n        skill, spec = (ROOT / api.SKILL).read_text(), (ROOT / api.SPEC).read_text()\n        assert_regions(api, contract, skill, spec)\n        real_note = api.render_effort_note\n        with monkeypatch.context() as patch:\n            patch.setattr(\n                api,\n                \"render_effort_note\",\n                lambda c: real_note(c).replace(\"`<model>/<effort>`\", \"`<model>`\"),\n            )\n            rewritten = api.rendered_documents(contract, skill, spec)\n            # A faulty renderer and its freshly rewritten output agree. The independent\n            # factual assertion must still fail; source-to-itself equality is insufficient.\n>           with pytest.raises(AssertionError, match=\"factual clauses differ\"):\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           Failed: DID NOT RAISE <class 'AssertionError'>\n\ntests/test_saga_spec_consumer_row.py:327: Failed\n=========================== short test summary info ============================\nFAILED tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed in 0.13s\n",
+      "seconds": 0.491,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "factual-control-restored",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/factual-control-restored"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.16s\n",
+      "seconds": 0.529,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "prewrite-baseline",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/prewrite-baseline"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": ".                                                                        [100%]\n1 passed in 2.83s\n",
+      "seconds": 3.2,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "prewrite-proof-bypassed",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/prewrite-proof-bypassed"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "output": "uleType, tmp_path: Path) -> None:\n        \"\"\"Offline docs editing uses only Python/PyYAML, including optimized Python.\"\"\"\n        api = contract_api\n        checkout = tmp_path / \"checkout\"\n        tree(api, checkout)\n        assert not (checkout / \"tests\").exists()\n        environment = tmp_path / \"python\"\n        venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)\n        python = environment / \"bin/python\"\n        site = Path(\n            subprocess.check_output(\n                [str(python), \"-I\", \"-c\", 'import sysconfig; print(sysconfig.get_path(\"purelib\"))'],\n                text=True,\n            ).strip()\n        )\n        shutil.copytree(Path(yaml.__file__).parent, site / \"yaml\")\n        absent = subprocess.run(\n            [\n                str(python),\n                \"-I\",\n                \"-c\",\n                'import importlib.util; import yaml; assert importlib.util.find_spec(\"pytest\") is None',\n            ],\n            capture_output=True,\n            text=True,\n            check=False,\n        )\n        assert absent.returncode == 0, absent.stdout + absent.stderr\n        script = checkout / \"plugins/saga/scripts/plan_save_contract.py\"\n    \n        def run(*args: str) -> subprocess.CompletedProcess[str]:\n            return subprocess.run(\n                [str(python), \"-I\", \"-O\", str(script), \"--root\", str(checkout), *args],\n                cwd=tmp_path,\n                capture_output=True,\n                text=True,\n                check=False,\n            )\n    \n        for args in ((\"validate\",), (\"render\", \"--check\"), (\"render\", \"--write\")):\n            result = run(*args)\n            assert result.returncode == 0 and not result.stderr, result.stdout + result.stderr\n            assert json.loads(result.stdout)[\"root\"] == str(checkout.resolve())\n        assert not (checkout / \".claude\").exists(), \"proof wrote Saga state into the checkout\"\n        originals = {path: (checkout / path).read_bytes() for path in (api.SKILL, api.SPEC)}\n        contract_path = checkout / api.CONTRACT\n        raw = contract_path.read_text()\n        for old, new in (\n            (\"name: orchestration_recommended\", \"name: next_step\"),\n            (\"equals: nonprod-deploy\", \"equals: pr\"),\n            (\"agent: proxy\", \"agent: native\"),\n            (\"value: complete\", \"value: pending\"),\n        ):\n            assert old in raw\n            contract_path.write_text(raw.replace(old, new))\n            result = run(\"render\", \"--write\")\n>           assert result.returncode == 2, result.stdout + result.stderr\nE           AssertionError: {\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/prewrite-proof-bypassed/test_contract_cli_without_pyte0/checkout\", \"outcome\": \"rendered\", \"changed\": [\"plugins/saga/skills/plan/SKILL.md\", \"plugins/saga/references/saga-spec.md\"]}\nE             \nE           assert 0 == 2\nE            +  where 0 = CompletedProcess(args=['/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/prewrite-proof...\": \"rendered\", \"changed\": [\"plugins/saga/skills/plan/SKILL.md\", \"plugins/saga/references/saga-spec.md\"]}\\n', stderr='').returncode\n\ntests/test_saga_plan_contract_boundaries.py:302: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed in 0.67s\n",
+      "seconds": 1.017,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "prewrite-restored",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/prewrite-restored"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": ".                                                                        [100%]\n1 passed in 2.75s\n",
+      "seconds": 3.148,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "hollow-guard-normal-execution",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/hollow-guard-normal-execution"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "output": "F\n=================================== FAILURES ===================================\n_____________________ test_plan_contract_guards_have_teeth _____________________\n\n    def test_plan_contract_guards_have_teeth() -> None:\n        \"\"\"P5 cannot wait for a scheduled run to discover a hollow guard (#926).\"\"\"\n        entries = [\n            entry\n            for entry in canary.load_registry(REPO_ROOT / \"tools/canary_registry.json\")\n            if entry[\"id\"].startswith(\"plan-save-contract-\")\n        ]\n        assert entries, \"Plan contract behavioral canaries are missing\"\n        for entry in entries:\n            record = canary.run_entry(entry, REPO_ROOT)\n>           assert record[\"result\"] == \"caught\", f\"{entry['guard']}: {record}\"\nE           AssertionError: tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract: {'guard': 'plan-save-contract-row', 'guard_ref': 'tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract', 'mutation': \"replace_text in plugins/saga/references/saga-spec.md: '| **/plan** |' -> '| **/plan-canary** |'\", 'result': 'toothless', 'baseline_exit': 0, 'detail': '', 'timestamp': '2026-09-06T05:26:19+00:00'}\nE           assert 'toothless' == 'caught'\nE             \nE             - caught\nE             + toothless\n\ntests/test_wiring_canary.py:46: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth - As...\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed in 1.64s\n",
+      "seconds": 2.038,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "hollow-guard-restored",
+      "command": [
+        "/Users/jefcox/workspace/infiquetra/orch-cp918-p5/.venv/bin/python3",
+        "-m",
+        "pytest",
+        "tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth",
+        "-q",
+        "-x",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/hollow-guard-restored"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": ".                                                                        [100%]\n1 passed in 70.72s (0:01:10)\n",
+      "seconds": 71.108,
+      "documents_unchanged": true
+    },
+    {
+      "mutation": "final-restored",
+      "command": [
+        "/tmp/p5-c6-minimal-env/bin/python",
+        "-I",
+        "-O",
+        "/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout/plugins/saga/scripts/plan_save_contract.py",
+        "validate"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "output": "{\"root\": \"/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/p5-c6-mutants-g75b_79e/checkout\", \"outcome\": \"valid\", \"schema\": \"plan_save_contract.v3\"}\n",
+      "seconds": 0.46,
+      "documents_unchanged": true
+    }
+  ]
+}

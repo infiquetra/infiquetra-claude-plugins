@@ -1,5 +1,54 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-09-06
+
+### A green local gate proved only that the operator had a plugin installed {#926-fleet-root-host-leak}
+
+The issue-926 guard suite passed on the maintainer's machine and failed nine tests in CI, all
+of them this unit's own guards, all with the same error: `fleet-commons: could not resolve a
+fleet-core root`.
+
+**Evidence:** PR #995, CI run 34038381356. Reproduced locally by redirecting `$HOME` to an
+empty directory: 9 failed / 18 passed, the same nine. With `$HOME` intact: 27 passed. Fixed in
+`plugins/saga/scripts/plan_save_contract.py` (`fleet_root()`), pinned by
+`tests/test_saga_plan_contract_boundaries.py::test_contract_cli_resolves_the_engine_from_the_checkout`.
+
+**Mechanism:** `plan_save_contract.py` takes a `--root` documented as "target checkout (code,
+YAML and docs together)" and loads the effort engine from it. The engine imports
+`fleet_commons_shim`, whose `resolve_root()` walks four rungs: the `FLEET_COMMONS_ROOT`
+variable, an ancestor walk-up that requires `.claude-plugin/marketplace.json`, then
+`~/.claude/plugins/installed_plugins.json`, then a plugin-cache sibling scan. Every temporary
+checkout the tests build copies `plugins/fleet-core/scripts` but no marketplace manifest, so
+rung 2 fails and rung 3 answers from the maintainer's installed plugins. The tool was
+validating against the machine, not against `--root` — a containment escape that reads as a
+passing test, because the fallback is only absent somewhere else. Nine review lenses missed it
+for the same reason: the fallback resolved on the reviewer's machine too.
+
+**Generalizable rule:** when a tool takes an explicit root and then loads code that resolves
+its own dependencies, bind that resolution to the same root — and prove it with the ambient
+source removed, not merely present. A dependency resolver with a fallback to the operator's
+home directory turns "the suite is green" into "this machine has it installed".
+
+### Extracting pytest assertions also requires extracting their diagnostics {#926-proof-extraction-diagnostics}
+
+Removing the test runner from Plan documentation editing preserved the independent proof,
+but bare test assertions had relied on pytest to display the failed expression. Callable
+checks now name the fact, and whole-snapshot mismatches list differing field names without
+printing values. Explicit checks remain active under Python optimization. The minimal
+Python/PyYAML test verifies both failures and success without a tests directory.
+
+Two isolated mutations also showed that existing regression assertions for the canonical
+save executable and operator-choice clause were absent from the pre-write proof. Moving
+those positive checks to that boundary blocks both false renders before document writes.
+This is evidence for checking callers after extraction, not adding a prose classifier.
+The final gate also showed that a newer date section changes the filing obligation for all
+entries new versus the PR merge base, including prior repair commits. Refile those unmerged
+entries together, and retain their original dates explicitly.
+
+The reproduction, restoration and guard-bypass outputs are in the
+[cycle-5 repair receipt](../evidence/issue-926/cycle5-final-mutations.json).
+
+
 > **Empirical findings + mechanisms + fixes + validations.** When something turns out to be true that wasn't obvious — about a plugin's runtime behavior, the marketplace registry, hook timing, skill activation, MCP env propagation, build/test tooling, or a deploy gotcha — it goes here. Include the **evidence** (PR / commit / file:line / reproduction) and the **mechanism** (why it's true), not just the observation.
 >
 > **Append new entries to the top.** Most-recent first. Format:
@@ -18,6 +67,90 @@
 > **Generalizable rule.** The lesson stripped of this specific incident — what would I tell a future-me hitting a similar shape?
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
+
+
+### A real-save documentation probe must contain the engine's derived destination {#926-save-probe-identity-containment}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+**Evidence.** Saga slugifies task IDs but preserves issue IDs verbatim. A final security audit
+at `b7a28ba4` supplied a traversal-shaped issue ID to the new real-save probe; it wrote outside
+the probe workspace, within a disposable parent directory used for the reproduction.
+**Fix.** Before launching the fixed Saga executable, the test helper asks the real parser and
+builder for the incoming Saga ID, resolves the actual `SAGAS_DIR` destination, and requires it
+to remain within that test's private workspace. This also covers an explicit Saga-ID override
+and escaping symlinks. Task IDs that the engine safely slugifies remain valid. Canonical example
+checks now exercise both issue and task identity behavior, even without a kind predicate.
+**Scope.** This contains documentation-test execution. Saga's existing runtime path behavior
+is unchanged under P5's explicit boundary; any runtime input-policy change belongs to separate
+work. No additional maintainer-validator policy or copied ID derivation was added.
+**Validation.** The same traversal is refused before execution, a safe ID still saves, and both
+containment and issue-scenario bypasses turn the named test red.
+[Receipt](../evidence/issue-926/repair-save-containment-mutations.json). The earlier gate was
+stopped by its verified PID and descendants; its interrupted result is retained separately.
+
+### Candidate validation must use the same boundary parser as saved output {#926-candidate-phase-boundary}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+**Evidence.** After cycle-4 repairs, a final audit changed a literal plan path and removed the
+Phase 5.3 heading together. The candidate differed from the document, so the test parsed the
+whole candidate instead of using the shared phase reader. `validate` and `render --write`
+returned 0, then all twelve ordinary saved-example cases failed on the written document.
+**Fix.** The shared reader accepts explicit candidate text; both candidate and file paths use
+its same heading/count/order checks. A missing 5.3 or 5.4 heading refuses before writing even
+with simultaneous output drift. The CLI stops at the first pytest failure with a short traceback,
+so its bounded diagnostic contains the actual assertion rather than twelve repeated summaries.
+The verification envelope names the test file rather than blaming every failure on the YAML.
+**Validation.** The identical mutation now returns 2 with unchanged documents; restoring the
+heading returns 0. Bypassing candidate phase parsing and removing first-failure reporting each
+turn their named test red. [Mutation receipt](../evidence/issue-926/repair-phase-boundary-mutations.json).
+
+### Executable documentation must not choose a test's program {#926-doc-command-execution-boundary}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+**Evidence.** Cycle 4 security review changed the maintainer's recommender example to an
+out-of-checkout Python file. `test_plan_docs_wording_changes_do_not_fail` passed while that
+file executed: selecting a fence by a filename substring did not constrain its command.
+**Fix.** The test now requires the exact recommender command prefix and resolves its fixed
+script inside the checkout before launching it. Absolute paths, traversal, another repository
+script, interpreter options, and an escaping symlink are refused.
+**Validation.** The same documentation-only mutation now fails before the harmless marker
+file is created; the restored example passes. See the [repair receipt](../work-sessions/2026-09-05-saga-plan-contract-926-repair.md).
+**Generalizable rule.** Documentation can supply example arguments to an executable test;
+it must not select that test's interpreter or program.
+
+### Documentation classifiers can have no measured margin under copy editing {#926-prose-classifier-zero-span-margin}
+
+*Originally recorded 2026-09-05; refiled 2026-09-06 with this unmerged PR.*
+
+**Context.** Saga Plan's negative drift classifier failed two review cycles; repairing individual
+patterns added false positives and still missed ordinary rewordings.
+**Evidence.** The cycle-2 measurement recorded in the
+[accepted plan](../plans/2026-09-05-saga-plan-maintenance-926-p5-structured-contract-plan.md)
+counted 32,262 spans, 126 with an effort token, 261 with a matched adjective, and zero with both.
+The adjective branch had no coverage on the actual corpus; moving words between clauses changed
+its verdict without changing the fact. The old field comparison also stayed green for a
+`risk_tier` entry rejected by the real save parser.
+**Mechanism.** Lexical co-occurrence is sensitive to editorial boundaries. Comparing two
+restatements establishes agreement, not truth. YAML has its own boundary: an unquoted `#993`
+was a comment in the accepted example and disappeared from the first render. Inspecting the
+migration diff exposed it; v1 used a block scalar to preserve the prescribed note. That
+was a historical fix: v2 moved the note to a Python literal without binding its facts,
+which independent cycle-4 review rejected. The current generated-region test independently
+pins the complete factual note and falsifies a renderer/output pair that agrees on a lie.
+**Fix.** Bind one structured source to the parser and observed runtime behavior, render the
+owned documentation, and leave free prose outside the contract. Keep independent inventory,
+inline mutation proofs, and scheduled canaries; report baseline errors separately from
+`caught` and `toothless` outcomes.
+**Validation.** U1 and U2 tests pass against real engines and edited document copies. The
+[work-session](../work-sessions/2026-09-05-saga-plan-contract-926.md) records the final mutations
+and gate result.
+**Generalizable rule.** Validate structured facts against their owner, and test the validator's
+sensitivity using both changed facts and changed outputs.
+**Refs.** [Decision](DECISIONS.md#926-plan-save-contract-single-source).
+
 
 ## 2026-09-05
 

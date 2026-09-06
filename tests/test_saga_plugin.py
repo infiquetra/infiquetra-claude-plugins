@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -45,9 +46,20 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.156.0"  # issue 912: handoff envelope schema 1.1 and the
-    # fail-closed maturity vocabulary. 0.150.0 through 0.155.0 were all taken by unrelated runs
-    # while this branch was repairing, so the bump is re-derived from the current origin/main tip.
+    assert plugin_json["version"] == "0.157.1"  # issue #926 (unit P5, issue #918 Wave Two):
+    # Plan's documentation corrections -- the derived-state sentence, the board-move trigger
+    # clause, the effort-emission comment's native-vs-proxy description, and the saga-spec
+    # /plan consumer row -- plus the two drift checks that keep them from relapsing.
+    # Successor to the cycle-2 repair of the integrated review's
+    # WK2-WK4 findings: the /qa preamble and certificate comment issue #930 named, the halt/allowlist
+    # attribution, a CLI for the build-unit tier resolver, validation of an explicit plan tier, and
+    # three guard tests that could not fail. Successor to issue #930's maintenance sweep at 0.154.0
+    # — teardown as fifth ceremony call, first-time move, gated/allowlist separation,
+    # and the full artifact_pointer path.
+    # Successor to issue #929's build-unit tier resolution at 0.153.0
+    # Successor to issue 912's handoff envelope schema 1.1 at 0.156.0, which took that
+    # version on origin/main while this branch was in review; the bump is re-derived
+    # from the current origin/main tip.
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -137,8 +149,59 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
     ):
         assert required in guide
 
-    for script in ("engine_onboarding.py", "engine_registry_conformance.py", "engine_promotion.py"):
-        assert (PLUGIN_ROOT / "scripts" / script).exists()
+    for script in (
+        "engine_onboarding.py",
+        "engine_registry_conformance.py",
+        "engine_promotion.py",
+        "plan_save_contract.py",
+        "plan_save_proof.py",
+    ):
+        path = PLUGIN_ROOT / "scripts" / script
+        assert path.is_file(), f"{path.relative_to(ROOT)}: required packaged script is missing"
+
+    # Keep this inventory outside the guard it protects: deleting the guard must be red.
+    contract = PLUGIN_ROOT / "references/plan-save-contract.yaml"
+    guard = ROOT / "tests/test_saga_spec_consumer_row.py"
+    boundaries = ROOT / "tests/test_saga_plan_contract_boundaries.py"
+    for path in (contract, guard, boundaries):
+        assert path.is_file(), (
+            f"{path.relative_to(ROOT)}: required Plan contract guard input is missing"
+        )
+    functions = [
+        node
+        for path in (guard, boundaries)
+        for node in ast.parse(_read(path), filename=str(path)).body
+        if isinstance(node, ast.FunctionDef)
+    ]
+    for name in (
+        "test_plan_save_contract_loads_and_rejects_malformed_entries",
+        "test_plan_save_contract_binds_to_engine",
+        "test_operator_choice_rule_matches_engine",
+        "test_saga_spec_plan_consumer_row_matches_contract",
+        "test_plan_docs_generated_regions_match_contract",
+        "test_plan_docs_wording_changes_do_not_fail",
+        "test_plan_examples_save_the_intended_tick",
+        "test_plan_renderer_edit_workflow",
+        "test_plan_renderer_refusals_and_rollback",
+        "test_contract_values_are_shell_data",
+        "test_contract_rejects_corrupting_structure",
+        "test_contract_cli_reports_operation_and_checkout",
+    ):
+        matches = [node for node in functions if node.name == name]
+        assert len(matches) == 1, f"{guard.relative_to(ROOT)}: expected exactly one {name}"
+    # Syntax proves presence only. The ordinary pytest gate runs behavioral canaries
+    # in test_wiring_canary.py; it detects bypasses after any statement, not only return-first.
+    execution_guard = ROOT / "tests/test_wiring_canary.py"
+    assert execution_guard.is_file(), "tests/test_wiring_canary.py: missing behavioral gate"
+    assert any(
+        isinstance(node, ast.FunctionDef) and node.name == "test_plan_contract_guards_have_teeth"
+        for node in ast.parse(_read(execution_guard)).body
+    ), "tests/test_wiring_canary.py: missing Plan behavioral gate"
+    registry = json.loads((ROOT / "tools/canary_registry.json").read_text())
+    protected = {entry["guard"].split("::")[-1] for entry in registry}
+    assert {node.name for node in functions if node.name.startswith("test_")} <= protected, (
+        "Plan contract: every guard needs a behavioral mutation run by the ordinary pytest gate"
+    )
 
     dispatch_docs = "\n".join(
         _read(PLUGIN_ROOT / "references" / name)

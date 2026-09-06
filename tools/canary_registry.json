@@ -26,14 +26,14 @@
   {
     "id": "manifest-consumer-matrix",
     "guard": "tests/test_manifest_consumer_matrix.py::test_manifest_no_orphan_field",
-    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md §13.3 (R17, no orphan field).",
+    "invariant": "Every provenance_manifest.py dataclass field has a named reader row in saga-spec.md \u00a713.3 (R17, no orphan field).",
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/scripts/provenance_manifest.py",
       "find": "    execution_id: str\n    saga_ref: str",
       "replace": "    execution_id: str\n    canary_mutant_field: str\n    saga_ref: str"
     },
-    "mutation_description": "Add a schema field to the Manifest dataclass with no matching §13.3 matrix row (orphan field)."
+    "mutation_description": "Add a schema field to the Manifest dataclass with no matching \u00a713.3 matrix row (orphan field)."
   },
   {
     "id": "team-execution-pointers",
@@ -46,5 +46,240 @@
       "replace": "    if False and (ref_oid.returncode != 0 or ref_oid.stdout.strip() != pointer.hash):"
     },
     "mutation_description": "Neuter the L1 holding-ref integrity check so a moved ref no longer raises HASH_MISMATCH."
+  },
+  {
+    "id": "plan-save-contract-row",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_saga_spec_plan_consumer_row_matches_contract",
+    "invariant": "Remove the uniquely identified Plan row; no full-row fixture is copied.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/saga-spec.md",
+      "find": "| **/plan** |",
+      "replace": "| **/plan-canary** |"
+    },
+    "mutation_description": "Remove the uniquely identified Plan row; no full-row fixture is copied."
+  },
+  {
+    "id": "plan-save-contract-engine-binding",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_save_contract_binds_to_engine",
+    "invariant": "Replace the intended recommendation field with a different genuine save option.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/plan-save-contract.yaml",
+      "find": "name: orchestration_recommended",
+      "replace": "name: next_step"
+    },
+    "mutation_description": "Replace the intended recommendation field with a different genuine save option."
+  },
+  {
+    "id": "plan-save-contract-malformed",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_save_contract_loads_and_rejects_malformed_entries",
+    "invariant": "Duplicate a structured schema key; the loader must refuse.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/plan-save-contract.yaml",
+      "find": "schema: plan_save_contract.v3",
+      "replace": "schema: plan_save_contract.v3\nschema: plan_save_contract.v3"
+    },
+    "mutation_description": "Duplicate a structured schema key; the loader must refuse."
+  },
+  {
+    "id": "plan-save-contract-operator-choice",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_operator_choice_rule_matches_engine",
+    "invariant": "Falsify the stored operator-choice derivation rule.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/saga-spec.md",
+      "find": "derived from an explicit mode flag unless an explicit",
+      "replace": "derived on every save unless an explicit"
+    },
+    "mutation_description": "Falsify the stored operator-choice derivation rule."
+  },
+  {
+    "id": "plan-save-contract-regions",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+    "invariant": "Remove a generated example boundary; rendering must refuse ambiguous ownership.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/skills/plan/SKILL.md",
+      "find": "<!-- BEGIN GENERATED PLAN SAVE EXAMPLES: default -->",
+      "replace": "<!-- MISSING GENERATED PLAN SAVE EXAMPLES: default -->"
+    },
+    "mutation_description": "Remove a generated example boundary; rendering must refuse ambiguous ownership."
+  },
+  {
+    "id": "plan-save-contract-wording",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_docs_wording_changes_do_not_fail",
+    "invariant": "Introduce a prose-only rejection in the renderer; the wording-independence guard must detect it.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    replacements = []",
+      "replace": "    if \"Produce an **executable** saga\" in skill:\n        fail(\"prose\", \"injected prose classifier\", source=SKILL)\n    replacements = []"
+    },
+    "mutation_description": "Introduce a prose-only rejection in the renderer; the wording-independence guard must detect it."
+  },
+  {
+    "id": "plan-save-contract-saved-tick",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_examples_save_the_intended_tick",
+    "invariant": "Move the deploy condition to another real destination; saved-tick semantics must fail.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/references/plan-save-contract.yaml",
+      "find": "equals: nonprod-deploy",
+      "replace": "equals: pr"
+    },
+    "mutation_description": "Move the deploy condition to another real destination; saved-tick semantics must fail."
+  },
+  {
+    "id": "plan-save-contract-add-example",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_renderer_edit_workflow",
+    "invariant": "Forbid an ordinary additional example; the maintainer workflow test must fail.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    keys(data, {\"schema\", \"identity\", \"writes\", \"templates\", \"effort_honoring\"}, \"contract\")",
+      "replace": "    keys(data, {\"schema\", \"identity\", \"writes\", \"templates\", \"effort_honoring\"}, \"contract\")\n    if len(data[\"templates\"]) > 2:\n        fail(\"templates\", \"injected extension refusal\")"
+    },
+    "mutation_description": "Forbid an ordinary additional example; the maintainer workflow test must fail."
+  },
+  {
+    "id": "plan-save-contract-rollback",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_renderer_refusals_and_rollback",
+    "invariant": "Bypass rollback after a second-document replace failure; the filesystem assertion must fail.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "            for path in reversed(written):",
+      "replace": "            for path in []:  # injected rollback bypass"
+    },
+    "mutation_description": "Bypass rollback after a second-document replace failure; the filesystem assertion must fail."
+  },
+  {
+    "id": "plan-save-contract-shell",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_values_are_shell_data",
+    "invariant": "shell boundary is independently exercised.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "shlex.quote(value)",
+      "replace": "value"
+    },
+    "mutation_description": "Bypass the shell boundary."
+  },
+  {
+    "id": "plan-save-contract-structure",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_rejects_corrupting_structure",
+    "invariant": "structure boundary is independently exercised.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "if {item[\"name\"] for item in data[\"identity\"]} != identity:",
+      "replace": "if False:"
+    },
+    "mutation_description": "Bypass the structure boundary."
+  },
+  {
+    "id": "plan-save-contract-cli",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_reports_operation_and_checkout",
+    "invariant": "cli boundary is independently exercised.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "code=\"usage\"",
+      "replace": "code=\"invalid_contract\""
+    },
+    "mutation_description": "Bypass the cli boundary."
+  },
+  {
+    "id": "plan-save-contract-factual-self-guard",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+    "invariant": "A false renderer and its matching output must still fail the independent factual assertion.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_proof.py",
+      "find": "actual == [\"\\n\".join(expected)]",
+      "replace": "True or actual == [\"\\n\".join(expected)]"
+    },
+    "mutation_description": "Bypass the factual assertion while retaining renderer-to-output equality."
+  },
+  {
+    "id": "plan-save-contract-conflict-recovery",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_conflict_recovery",
+    "invariant": "Resolve the whole Git conflict before any document write succeeds.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "if re.search(r\"(?m)^(?:<{7}|={7}|>{7}|\\|{7})(?: |$)\", text):",
+      "replace": "if False:"
+    }
+  },
+  {
+    "id": "plan-save-contract-phase-boundary",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract",
+    "invariant": "Candidate text always uses the shared Phase 5.3 boundary parser, even during drift.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_proof.py",
+      "find": "phase = plan_phase_53(text=skill)",
+      "replace": "phase = skill"
+    }
+  },
+  {
+    "id": "plan-save-contract-save-containment",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_save_workspace_is_contained",
+    "invariant": "Real-save probes cannot write outside their private workspace, including explicit/derived issue IDs and symlinks.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "tests/test_saga_spec_consumer_row.py",
+      "find": "assert target.is_relative_to(tmp_path.resolve())",
+      "replace": "assert True or target.is_relative_to(tmp_path.resolve())"
+    }
+  },
+  {
+    "id": "plan-save-contract-no-pytest",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest",
+    "invariant": "Documentation commands work offline without pytest; mandatory candidate verification cannot be bypassed.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    proof.verify(SimpleNamespace(**globals()), contract, candidate)",
+      "replace": "    __import__(\"subprocess\").run([sys.executable, \"-m\", \"pytest\", \"--version\"], check=True)"
+    },
+    "mutation_description": "Reintroduce pytest as a documentation dependency."
+  },
+  {
+    "id": "plan-save-contract-proof-containment",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_save_workspace_is_contained",
+    "invariant": "The callable save proof contains actual engine-derived paths before writing.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_proof.py",
+      "find": "target.is_relative_to(workspace.resolve()),",
+      "replace": "True or target.is_relative_to(workspace.resolve()),"
+    }
+  },
+  {
+    "id": "plan-save-contract-proof-required",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_without_pytest",
+    "invariant": "Skipping the independent proof cannot pass the normal tests.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    proof.verify(SimpleNamespace(**globals()), contract, candidate)",
+      "replace": "    return  # injected proof bypass"
+    }
+  },
+  {
+    "id": "plan-save-contract-engine-root",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_resolves_the_engine_from_the_checkout",
+    "invariant": "the effort engine resolves from --root, not the operator's installed plugins.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "        with fleet_root(root):\n            result = SimpleNamespace(**runpy.run_path(str(target)))",
+      "replace": "        result = SimpleNamespace(**runpy.run_path(str(target)))"
+    },
+    "mutation_description": "Let fleet-core resolution fall through to the operator's installed plugins."
   }
 ]

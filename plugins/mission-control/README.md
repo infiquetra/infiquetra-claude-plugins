@@ -12,7 +12,7 @@ All operations run locally via the `gh` CLI, providing:
 - **Flow metrics** — cycle time, throughput, WIP age using GitHub timeline events
 - **Rollout tracking** — gap analysis and full SDLC deployment to any Infiquetra repo
 - **Milestone management** — create and track Objectives via GitHub Milestones
-- **Flow helpers** — `flow set-field` / `flow assign-mimir` / `flow link-sub-issue` / `flow verify-label` / `flow validate-card` / `flow field-options` / `flow discover-project`. Operator-facing GraphQL + REST helpers for project field assignment, covered Team Mimir intake, native sub-issue linking, self-healing label create, and card pre-flight validation. `Status`/`Stage` writes (W6) are the constrained lifecycle-field mutation: atomic across every board carrying the issue (all-carrying-boards-or-none, halt-and-raise on a failed compensation), with `--project` validated as a carrying board and an optional `--reason` recorded per board.
+- **Flow helpers** — `flow set-field` / `flow assign-mimir` / `flow link-sub-issue` / `flow verify-label` / `flow validate-card` / `flow repair-window` / `flow field-options` / `flow discover-project`. Operator-facing GraphQL + REST helpers for project field assignment, covered Team Mimir intake, native sub-issue linking, self-healing label create, cited repair-window transitions, and card pre-flight validation. `Status`/`Stage` writes (W6) are the constrained lifecycle-field mutation: atomic across every board carrying the issue (all-carrying-boards-or-none, halt-and-raise on a failed compensation), with `--project` validated as a carrying board and an optional `--reason` recorded per board.
 
 ## Quick Start
 

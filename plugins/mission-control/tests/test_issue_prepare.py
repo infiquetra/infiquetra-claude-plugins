@@ -41,6 +41,10 @@ plugins/mission-control/tests/test_issue_prepare.py
 uv run pytest plugins/mission-control/tests/test_issue_prepare.py
 ```
 
+### Risk
+medium
+The change is confined to the prepared-issue draft pipeline.
+
 ### Context library links
 _none_
 """
@@ -59,7 +63,8 @@ Rapid Action
 Keep issue creation separate from draft review.
 
 ### Risk
-Low operational risk.
+low
+The change is confined to the rapid-action preparation path.
 
 ### Transfer notes
 - [ ] No cross-team transfer requested.
@@ -485,7 +490,21 @@ def test_olympus_requires_actionable_labels_and_risk(tmp_path) -> None:
 
     assert not readiness.passed
     assert any("Missing expected labels" in gap for gap in readiness.blocking_gaps)
-    assert "Missing author-visible risk metadata" in readiness.blocking_gaps
+
+    # #1000 U2: Risk is a common body field derived from `### Risk` on every
+    # read — strip the section from the draft body and the card blocks again,
+    # naming Risk (the retired sidecar/metadata projection no longer decides).
+    draft.write_text(
+        draft.read_text().replace(
+            "### Risk\nmedium\nThe change is confined to the prepared-issue draft pipeline.\n\n",
+            "",
+        )
+    )
+    issue = sdlc_manager._read_prepared_issue(draft)
+    readiness = sdlc_manager._readiness_for_prepared_issue(issue)
+
+    assert not readiness.passed
+    assert any("Risk" in gap for gap in readiness.blocking_gaps)
 
 
 def test_sidecar_conflict_blocks_draft_parse(tmp_path) -> None:

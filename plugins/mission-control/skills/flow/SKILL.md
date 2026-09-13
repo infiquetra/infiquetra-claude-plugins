@@ -4,7 +4,7 @@ description: |
   Operator-facing GraphQL + REST helpers for the active project boards. Wraps
   the GitHub APIs the orchestrator uses, so Jeff can do per-card work
   (set Initiative/Objective fields, link or unlink sub-issues, validate card bodies,
-  self-heal labels, discover project mappings, assign covered issues to Team Mimir) without writing GraphQL by
+  self-heal labels, open or close repair windows, discover project mappings, assign covered issues to Team Mimir) without writing GraphQL by
   hand. Each command is idempotent where possible, and surfaces partial
   failures clearly.
 when_to_use: |
@@ -42,6 +42,11 @@ when_to_use: |
   - "Make sure the high-priority label exists on campps-mvp"
   - "Verify the type labels are on this repo's label set"
   - "Create the capability label if it's missing"
+
+  Open or close a repair window (a card's own verification failed):
+  - "Open a repair window on #42 — here's the failing test run"
+  - "Close the repair window on campps-mvp#42; the fix passed every scenario"
+  - "Record that this card's own verification failed, with the citation"
 
   Pre-flight an issue body against the card_validator schema:
   - "Validate the card body for #42"
@@ -117,6 +122,21 @@ sdlc_manager.py flow verify-label \
 
 # Pre-flight a card body against the card_validator schema
 sdlc_manager.py flow validate-card --repo campps-mvp --number 42
+
+# Open a repair window: adds the schema-declared `repair-window` label and
+# posts the FAILING result as the citation. --citation is required and must
+# be non-blank. Idempotent: a card already carrying the label is a no-op.
+sdlc_manager.py flow repair-window \
+  --repo campps-mvp --number 42 \
+  --action open \
+  --citation "uv run pytest tests/test_x.py::test_y -q → 1 failed"
+
+# Close a repair window: removes the label and posts the PASSING result.
+# Close only when a later deployed version passes every prescribed scenario.
+sdlc_manager.py flow repair-window \
+  --repo campps-mvp --number 42 \
+  --action close \
+  --citation "uv run pytest tests/test_x.py::test_y -q → 1 passed"
 ```
 
 ## Idempotency contract (per command)
@@ -131,6 +151,7 @@ sdlc_manager.py flow validate-card --repo campps-mvp --number 42
 | `unlink-sub-issue` | yes (verified issues + absent relationship returns 404 -> success) | Verifies both issues first; rejects PR-as-parent; propagates auth/rate-limit/server errors |
 | `verify-label` | yes (no-op if exists; create if 404) | Raises on auth/rate-limit/server errors (NOT silently treated as missing) |
 | `validate-card` | read-only | Exits non-zero if card body fails validation |
+| `repair-window` | yes (open: label already present = no mutation, no second comment; close: label absent = no mutation, no second comment) | Refuses BEFORE any network call when `--citation` is missing/blank, or when the vendored schema does not declare a `marker_kind: label` repair-window marker, or when the marker's declared `marker_source` labels config does not define it. Never writes a project field. |
 
 ## Hard rules
 
@@ -139,6 +160,7 @@ sdlc_manager.py flow validate-card --repo campps-mvp --number 42
 - **Verify-label distinguishes 404 from other errors.** A 401/403/5xx must NOT be silently treated as missing — that would create labels under the wrong auth context or mask real failures.
 - **Link only real decomposition.** Capabilities are top-level by default and grouped by the `Objective` field. Both sub-issue commands require an issue parent; PRs are rejected.
 - **Assign-Mimir never creates policy.** It does not admit repositories, create `intake:mimir`, use alternate credentials, or comment. Team Mimir's live exact-repository coverage and the repository-owned label must already exist.
+- **A repair window is a cited label, never a project field.** The encoding (the `repair-window` label and its definition source) is read from the schema's `repair_window_encoding` block — an outdated schema is a refusal, not a guess. Every transition cites the test result verbatim (failing on open, passing on close).
 
 ## Where this fits in the broader workflow
 

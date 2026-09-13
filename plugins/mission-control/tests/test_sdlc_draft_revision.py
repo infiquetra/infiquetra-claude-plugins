@@ -49,6 +49,10 @@ plugins/mission-control/tests/test_sdlc_draft_revision.py
 uv run pytest plugins/mission-control/tests/test_sdlc_draft_revision.py
 ```
 
+### Risk
+medium
+The change is confined to the prepared-issue draft pipeline.
+
 ### Context library links
 _none_
 """

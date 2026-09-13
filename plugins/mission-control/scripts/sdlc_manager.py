@@ -3764,6 +3764,187 @@ def flow_verify_label(
 
 
 # ===========================
+# REPAIR WINDOW (#1000, schema decision E9)
+# ===========================
+# The schema's `work_hierarchy...own_verification_failed.repair_window_encoding`
+# block declares how a card's own-verification-failed window is durably encoded:
+# a LABEL (`marker_kind: "label"`, `marker: "repair-window"`), whose definition
+# lives in the SDLC labels config (`marker_source: "config/labels.json"`). The
+# verb reads that declaration rather than hardcoding the encoding, and refuses
+# schemas old enough to lack the block — a repair window is never guessed from
+# a Status (decision E1 retired every project-field encoding of Risk; the
+# marker is likewise never a GraphQL project-field write).
+_REPAIR_WINDOW_MARKER_PATH = (
+    "work_hierarchy",
+    "parent_stage_derivation",
+    "parent_outcome_state",
+    "own_verification_failed",
+    "repair_window_encoding",
+)
+
+
+def _repair_window_marker(schema: dict[str, Any]) -> dict[str, Any] | None:
+    """Read the schema's repair-window marker block (None when absent/too shallow)."""
+    cursor: Any = schema
+    for key in _REPAIR_WINDOW_MARKER_PATH:
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(key)
+    return cursor if isinstance(cursor, dict) else None
+
+
+def flow_repair_window(
+    repo: str,
+    number: int,
+    action: str,
+    citation: str | None,
+    fmt: str = "text",
+) -> None:
+    """Open or close a repair window on a card (#1000).
+
+    The window is the schema-declared `repair-window` LABEL on the card plus a
+    comment citing the test result that justifies the transition — never a
+    GraphQL project-field write.
+
+    - ``open``: adds the marker label and posts the FAILING result. Idempotent:
+      a card already carrying the label is a no-op (no second comment).
+    - ``close``: removes the marker label and posts the PASSING result.
+      Idempotent: a card without the label is a no-op.
+
+    Refusals, both BEFORE any network call:
+
+    - ``citation`` missing or blank. The schema's events require citing the
+      failing result (open) / passing result (close) verbatim; an uncited
+      window transition is unauditable and is refused.
+    - the schema does not declare a ``marker_kind: "label"`` marker with a
+      non-empty ``marker`` (schema too old), OR it declares a ``marker_source``
+      whose labels config does not define the marker. The encoding must be
+      resolvable from its declared source — never invented at write time.
+    """
+    if action not in ("open", "close"):
+        raise RuntimeError(f"flow repair-window action must be 'open' or 'close', not {action!r}")
+    if not citation or not citation.strip():
+        raise RuntimeError(
+            "flow repair-window requires a --citation carrying the test result "
+            f"that justifies the {action}: the failing result on open, the "
+            "passing result on close. Refusing to transition a repair window "
+            "without its citation."
+        )
+
+    config = load_config()
+    marker_block = _repair_window_marker(config.get("sdlc_schema") or {})
+    if (
+        not marker_block
+        or marker_block.get("marker_kind") != "label"
+        or not marker_block.get("marker")
+    ):
+        raise RuntimeError(
+            "vendored SDLC schema does not declare a repair-window marker "
+            f"({'.'.join(_REPAIR_WINDOW_MARKER_PATH)} with marker_kind 'label' "
+            "and a non-empty marker); this schema is too old to encode repair "
+            "windows — update the vendored schema rather than guessing the "
+            "encoding"
+        )
+    marker_name = str(marker_block["marker"])
+
+    # Resolve the marker's definition from its declared source so the label can
+    # be self-healed with its canonical color/description. An unresolvable
+    # definition is a refusal — never write a marker label from thin air.
+    color: str | None = None
+    description: str | None = None
+    source = marker_block.get("marker_source")
+    if source:
+        definition = None
+        labels_config = config.get("labels")
+        if isinstance(labels_config, dict):
+            entries = labels_config.get("labels", [])
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict) and entry.get("name") == marker_name:
+                        definition = entry
+                        break
+        if definition is None:
+            raise RuntimeError(
+                f"schema declares the {marker_name!r} repair-window marker with "
+                f"marker_source {source!r}, but that labels config does not "
+                f"define {marker_name!r}; re-sync the SDLC labels source before "
+                "transitioning repair windows"
+            )
+        color = definition.get("color")
+        description = definition.get("description")
+
+    present = _get_item_labels(repo, number)
+    if action == "open":
+        if marker_name in present:
+            _out(
+                {
+                    "action": "repair_window_noop",
+                    "window": "open",
+                    "repo": repo,
+                    "number": number,
+                    "marker": marker_name,
+                },
+                fmt,
+            )
+            return
+        if source:
+            flow_verify_label(repo, marker_name, color, description, fmt)
+        issue_label_add(repo, number, marker_name)
+        issue_comment(
+            repo,
+            number,
+            "Repair window OPENED: this card's own verification failed, so the "
+            f"`{marker_name}` label is now present. The window stays open exactly "
+            "while repairs run — consumers read the marker, they never re-derive "
+            "the boolean from a Status.\n\nFailing result citation:\n\n```\n"
+            f"{citation.strip()}\n```\n\nClose the window only when a later "
+            "deployed version passes every prescribed scenario:\n"
+            f"`flow repair-window --repo {repo} --number {number} --action close "
+            '--citation "<passing result>"`',
+        )
+        _out(
+            {
+                "action": "repair_window_opened",
+                "repo": repo,
+                "number": number,
+                "marker": marker_name,
+            },
+            fmt,
+        )
+    else:
+        if marker_name not in present:
+            _out(
+                {
+                    "action": "repair_window_noop",
+                    "window": "close",
+                    "repo": repo,
+                    "number": number,
+                    "marker": marker_name,
+                },
+                fmt,
+            )
+            return
+        issue_label_remove(repo, number, marker_name)
+        issue_comment(
+            repo,
+            number,
+            "Repair window CLOSED: a later deployed version passed every "
+            f"prescribed scenario, so the `{marker_name}` label is removed.\n\n"
+            "Passing result citation:\n\n```\n"
+            f"{citation.strip()}\n```",
+        )
+        _out(
+            {
+                "action": "repair_window_closed",
+                "repo": repo,
+                "number": number,
+                "marker": marker_name,
+            },
+            fmt,
+        )
+
+
+# ===========================
 # CARD VALIDATOR (generated-data-backed pre-flight, mirrors home-lab card_validator.py)
 # ===========================
 # Pre-flight-checks an issue body before plan-review fires. This is the
@@ -3834,6 +4015,61 @@ def _split_sections(body: str) -> dict[str, str]:
         end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
         sections[header] = body[start:end].strip()
     return sections
+
+
+# #1000 R3: the Risk tier vocabulary and the UNKNOWN marker. The generated
+# SEMANTIC_CHECKS deliberately carry no risk entry — the tier-vocabulary check is
+# mission-control's own READER logic (KTD2), so these live here, not in the
+# vendored DATA. `UNKNOWN` is exact-uppercase; the tiers are exact-lowercase
+# (matching the config/labels.json `risk:<level>` option values).
+_RISK_TIER_VOCABULARY = ("low", "medium", "high", "very-high")
+_RISK_UNKNOWN_TOKEN = "UNKNOWN"
+# The justification seeded alongside UNKNOWN — the missing Architect assessment
+# is the one sentence the section carries until the Architect fills it in.
+_RISK_UNKNOWN_JUSTIFICATION = "Architect has not yet assessed blast radius."
+
+
+def _risk_from_body(body: str) -> tuple[str | None, list[str]]:
+    """Parse the `### Risk` section of a card body (the single Risk reader, #1000 R3).
+
+    The body is the ONLY source of a card's Risk: the sidecar ``risk`` value, the
+    frontmatter ``risk:`` line, and any ``risk:<level>`` label are projections or
+    scaffold seeds, never consulted here. Returns ``(token, errors)``:
+
+    * ``token`` is a vocabulary tier or ``UNKNOWN`` exactly when the section is
+      well-formed — a first line equal to one of the tokens and at least one
+      justification line below it that is neither empty nor a placeholder.
+    * ``errors`` is non-empty exactly when the section is missing, empty, or
+      malformed; every message names "Risk" so blocking gaps are greppable.
+
+    Works on a bare body or a full prepared draft (front matter + H1 + body): the
+    header parser only sees ``###`` sections, so both shapes parse identically.
+    """
+    section = _split_sections(body).get("Risk")
+    if section is None:
+        return None, [
+            "Missing Risk section: expected '### Risk' opening with a tier token "
+            "(low, medium, high, very-high, or UNKNOWN) followed by a one-sentence justification."
+        ]
+    non_empty = [ln.strip() for ln in section.splitlines() if ln.strip()]
+    if not non_empty:
+        return None, [
+            "Risk section is empty: expected a tier token (low, medium, high, "
+            "very-high, or UNKNOWN) on the first line and a one-sentence justification."
+        ]
+    token = non_empty[0]
+    if token not in (*_RISK_TIER_VOCABULARY, _RISK_UNKNOWN_TOKEN):
+        return None, [
+            "Risk section must open with a tier token (low, medium, high, "
+            f"very-high, or UNKNOWN); {token!r} is not one."
+        ]
+    justification = [ln for ln in non_empty[1:] if ln.lower() not in _PLACEHOLDER_LINES]
+    if not justification:
+        return None, [
+            "Risk section is missing its justification: add a one-sentence "
+            "rationale below the tier token."
+        ]
+    return token, []
 
 
 def validate_card_body(body: str) -> tuple[bool, list[str]]:
@@ -3975,6 +4211,15 @@ def validate_card_body_for_context(
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         if lines and all(ln.lower() in _PLACEHOLDER_LINES for ln in lines):
             errors.append(f"'{header}' contains only placeholder text")
+
+    # #1000 R3: the Risk section's FORMAT (tier token + justification) is
+    # mission-control reader logic layered here — the shim stays the vendored
+    # always-required surface, and the matrix keys the risk-conditional fields
+    # off the tier. A present-but-malformed Risk (prose first line, missing
+    # justification, unrecognized token) blocks alongside the matrix checks; the
+    # missing-section case is already reported above by both header passes.
+    _risk_token, risk_errors = _risk_from_body(body)
+    errors.extend(risk_errors)
 
     return (valid and not errors, errors)
 
@@ -4256,7 +4501,7 @@ _CONTRACT_ISSUE_TYPES = frozenset(
 # IMPORTANT — PROJECT FIELD REALITY (verified 2026-05-04):
 # As of today, the only single-select field on the Olympus project (#1) is
 # `Status`. `Initiative`, `Objective`, `Capability Size`, `Business Value`,
-# `Technical Risk`, `Target Quarter` are all "decided, not yet created" per
+# `Target Quarter` are all "decided, not yet created" per
 # Phase A carry-over #2 in `infiquetra-sdlc`. The interactive flow is built
 # to handle the post-create world (per-project schema discovery silently
 # skips prompts for fields the project doesn't expose), so today operators
@@ -4293,9 +4538,11 @@ _APPROVABLE_APPROVAL_STATES = frozenset({_APPROVAL_NEEDS_OPERATOR})
 # VALUES (not the project's live field schema): "field-schema discovery" against
 # a real project stays behind `_resolve_project_field` (live GraphQL), which
 # `flow set-field` uses. Lifecycle Origin is the auto-populated field (R10) —
-# never author-supplied. Risk maps to the `Technical Risk` single-select named
-# in the PROJECT FIELD REALITY note above.
-_PREPARED_FIELD_RISK = "Technical Risk"
+# never author-supplied. Risk is deliberately NOT among these fields: decision
+# E1 (#1000, 2026-09-13) retired the risk project-field projection — Risk lives
+# in the body's `### Risk` section and is re-derived from it on every read;
+# no board field ever carries the value. Historical sidecars keep whatever key
+# they were written with; nothing reads it, so no migration.
 _PREPARED_FIELD_OBJECTIVE = "Objective"
 _PREPARED_FIELD_ISSUE_TYPE = "Issue Type"
 _PREPARED_FIELD_LIFECYCLE_ORIGIN = "Lifecycle Origin"
@@ -4361,8 +4608,9 @@ def _prepared_project_fields(
     populate; do not read more into the presence of this key than "recorded".
     """
     fields: dict[str, str] = {_PREPARED_FIELD_ISSUE_TYPE: issue.issue_type}
-    if issue.risk:
-        fields[_PREPARED_FIELD_RISK] = issue.risk
+    # Risk is NOT recorded here — decision E1 (#1000) retired the project-field
+    # projection; the body's `### Risk` section is the only source, re-derived
+    # on read.
     # Lifecycle Origin is auto-populated from the handoff maturity that drove
     # this draft (R10) — it is the compile step's record of "where this card
     # came from", never an author-required input.
@@ -4810,6 +5058,7 @@ def _contract_field_placeholder(
     field: str,
     source: str,
     source_artifact: SourceArtifact | None,
+    risk: str | None = None,
 ) -> str:
     if field == "objective":
         return source
@@ -4817,6 +5066,18 @@ def _contract_field_placeholder(
         return _context_links_from_source(source_artifact)
     if field == "acceptance_criteria":
         return "- [ ] _No response_"
+    if field == "risk":
+        # #1000 R3: the compiled scaffold seeds the body Risk with the supplied
+        # tier, or UNKNOWN when none was supplied. The seed is never a bare
+        # token — it always carries a justification line so the seeded section
+        # passes the Risk reader; UNKNOWN passes prepare/create with the
+        # missing-Architect warning instead of blocking.
+        if risk in _RISK_TIER_VOCABULARY:
+            return (
+                f"{risk}\n"
+                "Risk seeded from the prepare request; confirm the blast radius before Active."
+            )
+        return f"{_RISK_UNKNOWN_TOKEN}\n{_RISK_UNKNOWN_JUSTIFICATION}"
     return "_No response_"
 
 
@@ -4829,7 +5090,7 @@ def _contract_scaffold_body(
     sections: list[str] = []
     for field in _required_contract_field_keys(issue_type, risk):
         header = _CONTRACT_FIELD_HEADERS[field]
-        value = _contract_field_placeholder(field, source, source_artifact)
+        value = _contract_field_placeholder(field, source, source_artifact, risk)
         sections.append(f"### {header}\n{value}")
     return "\n\n".join(sections)
 
@@ -4970,11 +5231,12 @@ def _source_to_issue_body_unstamped(
 TBD
 
 ### Risk
-TBD
+{_RISK_UNKNOWN_TOKEN}
+{_RISK_UNKNOWN_JUSTIFICATION}
 
 ### Transfer notes
 - [ ] Record any explicit cross-team transfer target, or leave as none.
-""" + _render_handoff_context(handoff_maturity, source_artifact)
+""" + _render_handoff_context(handoff_maturity, source_artifact, next_action)
     return f"""### Objective
 {stripped}
 
@@ -5037,7 +5299,11 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         project=field("project"),
         status=field("status"),
         labels=_normalize_label_list(metadata.get("labels") or sidecar.get("labels")),
-        risk=field("risk") or None,
+        # #1000 R3: Risk is re-derived from the body on every read — the
+        # frontmatter/sidecar `risk` values are write-time projections. A
+        # hand-edit of the body's Risk section is therefore honored (the R3b
+        # fill-in path) without touching the metadata.
+        risk=_risk_from_body(body)[0],
         mode=field("mode") or None,
         stage=field("stage") or None,
         body=body.strip(),
@@ -5286,7 +5552,6 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
             "Target repo / surface": "target repo/surface",
             "Mode": "mode",
             "Constraints": "constraints",
-            "Risk": "risk",
             "Transfer notes": "transfer notes",
         }
         for header, label in required.items():
@@ -5295,8 +5560,23 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
                 blocking.append(f"Missing Asgard {label}")
         if not issue.mode:
             blocking.append("Missing Asgard mode metadata")
-        if not issue.risk:
-            blocking.append("Missing Asgard risk metadata")
+        # #1000 R3/R4: the separate Asgard risk-metadata gate is retired — the
+        # single Risk reader governs the body's `### Risk` for Asgard cards too
+        # (missing, malformed, or UNKNOWN all flow through the same contract as
+        # the actionable types above).
+        _asgard_risk_token, asgard_risk_errors = _risk_from_body(issue.body)
+        blocking.extend(asgard_risk_errors)
+
+    # #1000 R4: UNKNOWN passes readiness — the card can be created — but the
+    # missing Architect assessment is surfaced as a warning on every surface,
+    # and the Planning-to-Active gate (planning_to_active_risk_ready) refuses
+    # the move until a real tier lands in the body.
+    if issue.risk == _RISK_UNKNOWN_TOKEN:
+        warnings.append(
+            "Risk is UNKNOWN: the Architect blast-radius assessment is missing; "
+            "the card may be created but stays in Planning until the "
+            "Planning-to-Active Risk gate receives a real tier."
+        )
 
     return PreparedReadiness(
         profile=issue.team,
@@ -5304,6 +5584,21 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
         blocking_gaps=blocking,
         warnings=warnings,
     )
+
+
+def planning_to_active_risk_ready(body: str) -> bool:
+    """Planning-to-Active Risk gate (#1000 R4): refuse any card whose body Risk
+    is not a real, well-formed tier.
+
+    Accepts a bare card body or a full prepared draft (front matter + H1 +
+    sections) — the reader only looks at `### Risk` sections. A MISSING,
+    UNKNOWN, or malformed Risk all refuse the move; only ``low`` / ``medium`` /
+    ``high`` / ``very-high`` with a justification pass. This is the gate that
+    keeps a created UNKNOWN-risk card in Planning until the Architect's
+    assessment lands in the body.
+    """
+    token, _errors = _risk_from_body(body)
+    return token in _RISK_TIER_VOCABULARY
 
 
 def _sidecar_payload(
@@ -6399,7 +6694,7 @@ def issue_create(
 
     **Today's reality (2026-05-04)**: the Olympus project (#1) only exposes
     `Status` as a single-select field. Initiative, Objective, Capability
-    Size, Business Value, Technical Risk, Target Quarter are all "decided,
+    Size, Business Value, Target Quarter are all "decided,
     not yet created" per Phase A carry-over #2. The per-project schema
     discovery silently skips prompts for missing fields, so today operators
     will see only the type, parent, Status, and confirm prompts. When the
@@ -6514,7 +6809,6 @@ def issue_create(
         for adaptive_field in (
             "Capability Size",
             "Business Value",
-            "Technical Risk",
             "Target Quarter",
         ):
             opts = _project_field_options(project_name, adaptive_field)
@@ -7082,6 +7376,33 @@ def main() -> None:
     flow_validate_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     flow_validate_p.add_argument("--number", required=True, type=int)
 
+    flow_repair_p = flow_sp.add_parser(
+        "repair-window",
+        help=(
+            "Open/close a repair window (schema-declared repair-window label + "
+            "test-result citation; idempotent; never a project-field write)"
+        ),
+    )
+    flow_repair_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
+    flow_repair_p.add_argument("--number", required=True, type=int)
+    # dest != "action": the flow subparsers already claim dest="action" for the
+    # subcommand name — a bare --action would overwrite it and the dispatch
+    # would never see "repair-window".
+    flow_repair_p.add_argument(
+        "--action",
+        dest="repair_action",
+        required=True,
+        choices=("open", "close"),
+    )
+    flow_repair_p.add_argument(
+        "--citation",
+        required=True,
+        help=(
+            "Verbatim test result justifying this transition: the FAILING "
+            "result on open, the PASSING result on close"
+        ),
+    )
+
     # ===========================
     # CONFIG
     # ===========================
@@ -7287,6 +7608,8 @@ def main() -> None:
                 flow_verify_label(args.repo, args.name, args.color, args.description, fmt)
             elif args.action == "validate-card":
                 flow_validate_card(args.repo, args.number, fmt)
+            elif args.action == "repair-window":
+                flow_repair_window(args.repo, args.number, args.repair_action, args.citation, fmt)
 
         elif args.resource == "config":
             if args.action == "show":

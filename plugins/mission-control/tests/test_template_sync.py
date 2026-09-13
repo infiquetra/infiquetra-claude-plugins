@@ -40,6 +40,7 @@ EXPECTED_ACTIONABLE_REQUIRED_FIELDS = [
     "Context library links",
     "Acceptance criteria",
     "Verification",
+    "Risk",
 ]
 
 

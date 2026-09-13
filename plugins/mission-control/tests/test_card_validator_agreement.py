@@ -120,6 +120,12 @@ def _require_authority(override_path: Path | None = None) -> Any:
     return _load_home_lab_authority(found)
 
 
+# #1000 U2 dated divergence: mission-control's validate_card_body (the vendored
+# shim) requires the common `### Risk` header, while the home-lab authority
+# validator is still pre-Risk and keys risk off `risk:` labels. The canonical
+# corpus therefore carries a valid Risk section -- an extra header passes BOTH
+# validators, so the corpus stays agreed -- but "Risk" must NOT be added to the
+# missing-headers corpus below, which asserts both validators FAIL on it.
 VALID_CARD_CANONICAL = """### Objective
 Add schema validator that gates plan-review on structured card fields.
 
@@ -147,6 +153,10 @@ tests/test_card_validator.py::test_accepts_fully_populated_card
 cd ansible/roles/hermes_orchestrator/files
 pytest tests/test_card_validator.py -v
 ```
+
+### Risk
+medium
+The change is confined to the card validator gate.
 
 ### Notes / conventions
 - GitHub issue forms render fields as `### <Field Label>` headers
@@ -250,6 +260,10 @@ def test_verdict_agreement_reordered_h3_headers() -> None:
 ```bash
 pytest -v
 ```
+
+### Risk
+medium
+The change is confined to the card validator gate.
 
 ### Objective
 Add feature with reordered sections.

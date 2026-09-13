@@ -49,6 +49,10 @@ plugins/mission-control/tests/test_issue_prepare_compile_approve.py
 uv run pytest plugins/mission-control/tests/test_issue_prepare_compile_approve.py
 ```
 
+### Risk
+medium
+The change is confined to the prepared-issue draft pipeline.
+
 ### Context library links
 _none_
 """
@@ -82,6 +86,10 @@ plugins/mission-control/tests/test_issue_prepare_compile_approve.py
 ```bash
 uv run pytest plugins/mission-control/tests/test_issue_prepare_compile_approve.py
 ```
+
+### Risk
+medium
+The change is confined to the prepared-issue draft pipeline.
 
 ### Context library links
 _none_
@@ -121,13 +129,15 @@ def test_issue_prepare_populates_project_fields(tmp_path) -> None:
 
     fields = _sidecar(draft)["project_fields"]
 
-    # Issue type + Risk come straight from metadata; Lifecycle Origin is the
+    # Issue type comes straight from metadata; Lifecycle Origin is the
     # auto-populated field (R10) carrying the handoff maturity that drove this
     # draft. No source artifact was supplied, so no Objective is invented.
     assert fields["Issue Type"] == "capability"
-    assert fields["Technical Risk"] == "medium"
     assert fields["Lifecycle Origin"] == "requirements-ready"
     assert "Objective" not in fields
+    # #1000 decision E1: Risk has no project-field projection — the sidecar
+    # never records it; the body's `### Risk` section is the only source.
+    assert not any("risk" in key.lower() for key in fields)
 
 
 def test_needs_operator_approval_state(tmp_path) -> None:

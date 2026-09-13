@@ -53,12 +53,13 @@ PARITY_PATH = VENDOR_DIR / "check_issue_contract_parity.py"
 # INDEPENDENT oracle: the sha256 of the vendored issue_contract_data.py, pinned
 # here as a literal. Update this DELIBERATELY when re-vendoring a new artifact
 # from infiquetra-sdlc -- a silent data+manifest edit cannot pass this.
-# Updated 2026-06-14 for the U8 context-package expansion.
-EXPECTED_DATA_SHA256 = "22fa2b5b77acd739a7a0648d163f3292ddf433903e3f2c97f8c8f2e2feb0afec"
+# Updated 2026-09-13 for the common Risk field (#1000 U2, SDLC commit 67845cd).
+EXPECTED_DATA_SHA256 = "de8c98c8ef16d2c5887bb9b1e48a807c0952e614ca2e97776fc3ad3dbd3f52e5"
 # INDEPENDENT oracle for the vendored shim module (same discipline as the data
 # oracle above). Update DELIBERATELY when re-vendoring the shim from sdlc.
-# Updated 2026-06-14 for the U8 context-package expansion.
-EXPECTED_SHIM_SHA256 = "65d972ff3a049ba8103c501d61cdf16266f12eba35c749d76a937fcfe87357ff"
+# Updated 2026-09-13 for the common Risk field (#1000 U2, SDLC commit 67845cd;
+# the shim manifest is generated locally -- the source ships no shim sidecar).
+EXPECTED_SHIM_SHA256 = "0e853d5c3a8e36297e8ef0e48f58180bd3ab95373f5a6c969f40f9800c57aa80"
 
 
 def _load_parity():
@@ -137,7 +138,8 @@ def test_vendored_schema_carries_issue_fields_block() -> None:
 # REQUIRED_FIELDS). A wrong header or a required-flag flip fails here.
 # Updated 2026-06-14 for the U8 context-package expansion (Intent + risk-
 # conditional fields + Lifecycle Origin; context_library_links promoted to
-# required). Order is the U10/R11 canonical order.
+# required); 2026-09-13 for the common Risk field (#1000 U2). Order is the
+# U10/R11 canonical order.
 EXPECTED_FIELD_HEADERS = {
     "objective": "Objective",
     "intent": "Intent",
@@ -151,6 +153,7 @@ EXPECTED_FIELD_HEADERS = {
     "notes": "Notes / conventions",
     "acceptance_criteria": "Acceptance criteria",
     "verification": "Verification",
+    "risk": "Risk",
     "lifecycle_origin": "Lifecycle Origin",
 }
 # The always-required core (risk-independent). The risk-conditional + auto fields
@@ -164,6 +167,7 @@ EXPECTED_REQUIRED_FIELDS = (
     "context_library_links",
     "acceptance_criteria",
     "verification",
+    "risk",
 )
 
 
@@ -192,7 +196,9 @@ def test_vendored_data_carries_risk_matrix() -> None:
 # (U4); a wrong header, a lost lowercased-placeholder, or a renamed regex const
 # fails here. Updated 2026-06-14: Intent + Context library links are now required
 # H3 headers (R1/R4); the risk-conditional fields + Lifecycle Origin are OPTIONAL
-# at the shim layer (it has no Risk input). The placeholder set stays LOWERCASED.
+# at the shim layer (it has no Risk-tier input). Updated 2026-09-13 (#1000 U2):
+# the common Risk H3 header is REQUIRED at the shim layer too. The placeholder
+# set stays LOWERCASED.
 EXPECTED_SHIM_REQUIRED_H3 = (
     "Objective",
     "Intent",
@@ -202,6 +208,7 @@ EXPECTED_SHIM_REQUIRED_H3 = (
     "Context library links",
     "Acceptance criteria",
     "Verification",
+    "Risk",
 )
 EXPECTED_SHIM_OPTIONAL_H3 = (
     "Inputs inventory",

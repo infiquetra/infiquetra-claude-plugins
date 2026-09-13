@@ -24,7 +24,7 @@ when_to_use: |
   - Remove stale completed items from active board views
 
   WIP analysis and standup:
-  - Check WIP limits and bottlenecks
+  - Check WIP counts and bottlenecks
   - Generate a right-to-left standup or board-review summary
   - Identify blocked or aging work
 ---
@@ -141,23 +141,17 @@ python3 sdlc_manager.py board discover-fields --project asgard
 python3 sdlc_manager.py board discover-fields --project operations
 ```
 
-## WIP Limits Reference
+## WIP Counts Reference
 
-| Board | Status | Limit |
-|-------|--------|-------|
-| Operations | Shaping | 10 |
-| Operations | Ready | 10 |
-| Operations | Active | 5 |
-| Operations | Verify | 5 |
-| Asgard | Shaping | 8 |
-| Asgard | Ready | 8 |
-| Asgard | Active | 5 |
-| Asgard | Verify | 5 |
+WIP limits are retired (#999): the SDLC schema defines no per-column limits, and the
+hard-coded historical numbers (Operations 10/5, Asgard 8/5) went with them. `board wip`
+reports a count per status and no limit; `board view` prints plain counts without limit
+decoration.
 
-CAMPPS is an initiative rollup board and does not enforce per-column WIP limits.
-When WIP is exceeded, stop pulling new work on that board and focus on finishing, swarming,
-or leaving cards in `Blocked`. No active board carries a pause column; a paused card is
-expressed through labels and issue state, not a workflow status.
+When a column's count grows past what can actually be finished, stop pulling new work on
+that board and focus on finishing, swarming, or leaving cards in `Blocked`. No active
+board carries a pause column; a paused card is expressed through labels and issue state,
+not a workflow status.
 
 ## Natural Language Examples
 
@@ -170,8 +164,8 @@ expressed through labels and issue state, not a workflow status.
 **"Add this issue to Operations"**
 -> Confirm repo and issue number, then `board add --project operations --repo <repo> --number <N>`
 
-**"Are we over WIP limits?"**
--> Run `board wip` for the relevant board.
+**"How much WIP is on the board?"**
+-> Run `board wip` for the relevant board; it shows a count per status (no limits).
 
 **"Let's prep for standup"**
 -> `board standup --project <the requested active board>` (`--project` is required).

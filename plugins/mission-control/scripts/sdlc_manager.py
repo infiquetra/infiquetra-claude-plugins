@@ -460,26 +460,6 @@ def _status_order(
     return ordered
 
 
-def _wip_limits(config: dict, project_name: str, proj: dict) -> dict[str, Any]:
-    """Return schema-backed WIP limits for the project."""
-    schema = config.get("sdlc_schema", {})
-    board_key = _project_board_key(project_name, proj)
-    limits = schema.get("wip_limits", {}).get(board_key, {})
-    if limits:
-        return cast(dict[str, Any], limits)
-
-    legacy_limits = config.get("legacy_rollout_config", {}).get("wip_limits", {})
-    if project_name == "mount-olympus" and isinstance(legacy_limits, dict) and legacy_limits:
-        return {
-            "Ready": legacy_limits.get("ready", 10),
-            "In Development": legacy_limits.get("in_development", 10),
-            "E2E Testing": legacy_limits.get("e2e_testing", 3),
-            "Deployment Ready": legacy_limits.get("deployment_ready", 5),
-        }
-
-    return {"Ready": 10, "In Progress": 10 if project_name == "mount-olympus" else 5}
-
-
 def _terminal_statuses(config: dict, project_name: str, proj: dict) -> list[str]:
     workflow = _project_workflow(config, project_name, proj)
     statuses = list(workflow.get("terminal_statuses", []))
@@ -1229,7 +1209,6 @@ def board_view(project_name: str, status_filter: str | None, fmt: str) -> None:
             continue
         columns.setdefault(status, []).append(item)
 
-    wip_limits = _wip_limits(config, project_name, proj)
     column_order = _status_order(config, project_name, proj, columns)
 
     if fmt == "json":
@@ -1242,22 +1221,12 @@ def board_view(project_name: str, status_filter: str | None, fmt: str) -> None:
 
     for col in column_order:
         col_items = columns.get(col, [])
-        if not col_items and col not in wip_limits:
+        if not col_items:
             continue
 
-        limit = wip_limits.get(col)
-        if isinstance(limit, int):
-            limit_str = f" [WIP: {len(col_items)}/{limit}]"
-            over_limit = len(col_items) > limit
-        elif isinstance(limit, str):
-            limit_str = f" [WIP: {len(col_items)}; limit {limit}]"
-            over_limit = False
-        else:
-            limit_str = f" [{len(col_items)} items]"
-            over_limit = False
-        marker = " OVER LIMIT" if over_limit else ""
-
-        print(f"### {col}{limit_str}{marker}")
+        # WIP limits are retired (#999): the schema defines none, so columns
+        # report a plain count without limit decoration.
+        print(f"### {col} [{len(col_items)} items]")
         for item in col_items:
             content = item.get("content", {})
             repo = content.get("repository", {}).get("name", "unknown")
@@ -1437,41 +1406,27 @@ def board_archive(project_name: str, dry_run: bool, fmt: str) -> None:
 
 
 def board_wip(project_name: str, fmt: str) -> None:
-    """Show WIP counts vs limits."""
+    """Show WIP counts per status (limits are retired; the schema defines none)."""
     config = load_config()
     proj = get_project_config(config, project_name)
     _, items = get_project_items(proj["number"])
 
-    wip_limits = _wip_limits(config, project_name, proj)
-
-    counts: dict[str, int] = {}
+    columns: dict[str, list[dict]] = {}
     for item in items:
         status = get_item_status(item)
         if status:
-            counts[status] = counts.get(status, 0) + 1
+            columns.setdefault(status, []).append(item)
 
     print(f"\nWIP Status — {proj['name']}")
     print("=" * 50)
-    violations = []
-    for col, limit in wip_limits.items():
-        if col == "pause_states" or limit is None:
-            continue
-        count = counts.get(col, 0)
-        if isinstance(limit, int):
-            over = count > limit
-            if over:
-                violations.append(col)
-            bar = "X" * count + "." * max(0, limit - count)
-            marker = " OVER LIMIT" if over else ""
-            print(f"  {col:20} {count:2}/{limit:<2} [{bar}]{marker}")
-        else:
-            print(f"  {col:20} {count:2} (limit: {limit})")
+    if not columns:
+        print("  (no cards carrying a Status)")
+        return
 
-    if violations:
-        print(f"\nWIP VIOLATIONS: {', '.join(violations)}")
-        print("Stop pulling new work until WIP returns to limit.")
-    else:
-        print("\nAll WIP limits respected.")
+    for col in _status_order(config, project_name, proj, columns):
+        count = len(columns.get(col, []))
+        if count:
+            print(f"  {col:20} {count:2}")
 
 
 def board_standup(project_name: str, fmt: str) -> None:

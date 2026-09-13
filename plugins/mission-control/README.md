@@ -119,7 +119,7 @@ python3 $SCRIPT board move --project campps --repo athena-service --number 42 --
 python3 $SCRIPT board archive --project asgard --dry-run
 python3 $SCRIPT board archive --project campps --dry-run
 
-# Check WIP counts vs limits
+# Check WIP counts per status (limits are retired; the schema defines none)
 python3 $SCRIPT board wip --project asgard
 
 # Standup prep (right-to-left board review)
@@ -277,7 +277,7 @@ python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md --overri
 | File | Purpose |
 |------|---------|
 | `config/project-mappings.json` | Project IDs, field IDs, repo-to-project mapping |
-| `config/sdlc-schema.json` | Canonical board/team/workflow/WIP/deployment-state schema |
+| `config/sdlc-schema.json` | Canonical board/team/workflow/deployment-state schema |
 | `config/labels.json` | Label definitions and auto-label rules |
 | `config/beads-config.json` | (legacy — file removed from infiquetra-sdlc on 2026-04-26; reads degrade gracefully to `{}`. The `legacy_rollout_config` key in `load_config` documents the migration.) |
 
@@ -289,14 +289,12 @@ python3 $SCRIPT issue create-prepared docs/sdlc-issue-drafts/<draft>.md --overri
 | Asgard | Asgard | Rapid action, incubation, and mission-mode work close to Jeff |
 | CAMPPS | Asgard | Portfolio-level execution board for the CAMPPS initiative (initiative-scoped; archived on completion) |
 
-## WIP Limits
+## WIP Counts
 
-| Board / Column | Limit |
-|--------|-------|
-| Operations / Shaping | 10 |
-| Operations / Active | 5 |
-| Asgard / Shaping | 8 |
-| Asgard / Active | 5 |
+WIP limits are retired (#999): the SDLC schema defines no per-column limits, and the
+hard-coded historical numbers went with them. `board wip` reports a count per status
+and no limit — use it to spot bottlenecks, and stop pulling new work when a column
+cannot be finished.
 
 ## Metric Targets
 

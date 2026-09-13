@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
 import os
 import shlex
@@ -303,37 +302,9 @@ def test_maturity_vocabularies_in_sync() -> None:
     assert "pending-confirmation" in spec_text
     for val in handoff_mats:
         assert val in spec_text, f"saga-spec missing {val}"
-    # Third vocabulary (AM-08/API-07): mission-control's prepared-issue choices tuple,
-    # loaded here directly so a future value added to HANDOFF_MATURITIES without adding it
-    # here (or recording an exclusion) trips this guard. `pending-confirmation` is the one
-    # deliberate exclusion, with its reason recorded in handoff_maturity_exclusions.
-    mc_spec = importlib.util.spec_from_file_location(
-        "mc_sdlc_check", ROOT / "plugins/mission-control/scripts/sdlc_manager.py"
-    )
-    assert mc_spec is not None and mc_spec.loader is not None
-    mc = importlib.util.module_from_spec(mc_spec)
-    sys.modules[mc_spec.name] = mc
-    with pytest.MonkeyPatch.context() as mp, open(Path(os.devnull), "w") as devnull:
-        mp.setattr(sys, "argv", ["sdlc_manager.py", "--help"])
-        with contextlib.redirect_stdout(devnull), contextlib.suppress(SystemExit):
-            mc_spec.loader.exec_module(mc)
-    mc_values = set(mc._HANDOFF_MATURITY_CHOICES)  # type: ignore[attr-defined]
-    handoff_maturity_exclusions: dict[str, str] = {
-        "pending-confirmation": (
-            "mission-control issue prepare rejects the parked/unroutable maturity with a "
-            "runtime error instead of accepting it (safe direction; tracked for its own add) — "
-            "see plugins/mission-control/scripts/sdlc_manager.py _HANDOFF_MATURITY_CHOICES"
-        )
-    }
-    for val in handoff_mats - set(handoff_maturity_exclusions):
-        assert val in mc_values, (
-            f"mission-control handoff vocab missing {val!r}; update the exclusion map or "
-            "mission-control's _HANDOFF_MATURITY_CHOICES"
-        )
-    for excluded, reason in handoff_maturity_exclusions.items():
-        assert excluded in handoff_mats, (
-            f"exclusion {excluded!r} no longer exists in HANDOFF_MATURITIES: {reason}"
-        )
+    # #942: mission-control no longer carries its own maturity vocabulary — it
+    # delegates to this module's readiness-owner API, so the third (consumer)
+    # vocabulary copy and its exclusion map are retired with it.
 
 
 def test_non_delimited_frontmatter_carrier_fails_closed(tmp_path: Path) -> None:
@@ -1194,3 +1165,181 @@ def test_out_of_root_diagnostic_escapes_nul_and_other_controls(tmp_path: Path) -
     assert r"a\nb\rc\td\x00.md" in envelope["suggested_command"]
     assert all(char not in envelope["suggested_command"] for char in "\n\r\t\x00")
     assert all(char not in envelope["handoff_maturity"] for char in "\n\r\t\x00")
+
+
+# ---------------------------------------------------------------------------
+# #942 owner-side assess_source / assess_declared parity (MC-ALIGN-07-TEST-AUTHOR)
+# ---------------------------------------------------------------------------
+
+
+def _assess_source():
+    fn = getattr(HE, "assess_source", None)
+    assert callable(fn), "assess_source is not implemented"
+    return fn
+
+
+def _assess_declared():
+    fn = getattr(HE, "assess_declared", None)
+    assert callable(fn), "assess_declared is not implemented"
+    return fn
+
+
+def _maturity(assessment: object) -> str:
+    if isinstance(assessment, str):
+        return assessment
+    return str(assessment.maturity)
+
+
+def _next_action(assessment: object) -> str:
+    return str(getattr(assessment, "next_action", "") or "")
+
+
+def _write_owner(root: Path, rel: str, text: str) -> Path:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_readiness_contract_major_and_unknown_prefix_are_exported() -> None:
+    major = getattr(HE, "READINESS_CONTRACT_MAJOR", None)
+    assert major in {1, "1"}
+    prefix = getattr(HE, "UNKNOWN_PREFIX", None)
+    assert prefix == "unknown:"
+
+
+def test_assess_source_pending_confirmation_brainstorm(tmp_path: Path) -> None:
+    _write_owner(
+        tmp_path,
+        "docs/brainstorms/2026-09-13-alignment-boundary.md",
+        "---\nmaturity: pending-confirmation\n---\n\n# Boundary\n",
+    )
+    assessment = _assess_source()("docs/brainstorms/2026-09-13-alignment-boundary.md", tmp_path)
+    assert _maturity(assessment) == "pending-confirmation"
+    assert assessment.routable is False
+    assert "/plan" not in _next_action(assessment)
+    assert "/work" not in _next_action(assessment)
+
+
+def test_assess_source_undeclared_draft_and_state(tmp_path: Path) -> None:
+    draft = _write_owner(
+        tmp_path,
+        "docs/sdlc-issue-drafts/2026-09-13-bare-draft.md",
+        "# Bare draft\n",
+    )
+    draft.with_suffix(".json").write_text('{"title": "bare"}', encoding="utf-8")
+    _write_owner(
+        tmp_path,
+        ".claude/saga/state.json",
+        '{"current_work": {"plan_path": "docs/sdlc-issue-drafts/2026-09-13-bare-draft.md"}}',
+    )
+    assess = _assess_source()
+    draft_assessment = assess("docs/sdlc-issue-drafts/2026-09-13-bare-draft.md", tmp_path)
+    state_assessment = assess(".claude/saga/state.json", tmp_path)
+    assert _maturity(draft_assessment).startswith("unknown:undeclared:")
+    assert _maturity(state_assessment).startswith("unknown:undeclared:")
+    assert draft_assessment.declaration_required is True
+    assert state_assessment.declaration_required is True
+
+
+@pytest.mark.parametrize(
+    "state",
+    (
+        "idea-ready",
+        "requirements-ready",
+        "plan-ready",
+        "resume-ready",
+        "deferred-context",
+        "pending-confirmation",
+    ),
+)
+def test_assess_source_declared_state_overrides_brainstorm_folder(
+    tmp_path: Path, state: str
+) -> None:
+    _write_owner(
+        tmp_path,
+        "docs/brainstorms/declared.md",
+        f"---\nmaturity: {state}\n---\n\n# Declared\n",
+    )
+    assessment = _assess_source()("docs/brainstorms/declared.md", tmp_path)
+    assert _maturity(assessment) == state
+    live = state in {
+        "idea-ready",
+        "requirements-ready",
+        "plan-ready",
+        "resume-ready",
+    }
+    assert (("/plan" in _next_action(assessment)) or ("/work" in _next_action(assessment))) is live
+
+
+def test_assess_source_out_of_root_and_selected_twin(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-owner-outside.md"
+    outside.write_text("---\nmaturity: requirements-ready\n---\n\n# Out\n", encoding="utf-8")
+    _write_owner(
+        tmp_path,
+        "docs/brainstorms/selected-twin.md",
+        "---\nmaturity: plan-ready\n---\n\n# Twin\n",
+    )
+    _write_owner(tmp_path, "docs/brainstorms/ghost.md", "# No declaration\n")
+    outside_twin = tmp_path.parent / "docs" / "brainstorms" / "ghost.md"
+    outside_twin.parent.mkdir(parents=True, exist_ok=True)
+    outside_twin.write_text(
+        "---\nmaturity: requirements-ready\n---\n\n# Outside twin\n",
+        encoding="utf-8",
+    )
+    assess = _assess_source()
+    refused = assess(str(outside), tmp_path)
+    assert _maturity(refused).startswith("unknown:out-of-root:")
+    undeclared_twin = assess(str(outside_twin), tmp_path)
+    assert _maturity(undeclared_twin).startswith("unknown:out-of-root:")
+    twin = assess("docs/brainstorms/selected-twin.md", tmp_path)
+    assert _maturity(twin) == "plan-ready"
+    assert twin.published_source == "docs/brainstorms/selected-twin.md"
+
+
+def test_assess_declared_classifies_vocabulary_and_unknown() -> None:
+    assess = _assess_declared()
+    ready = assess("requirements-ready", "docs/brainstorms/a.md", declaration_required=False)
+    assert _maturity(ready) == "requirements-ready"
+    blank = assess("", "docs/brainstorms/a.md", declaration_required=True)
+    assert _maturity(blank) == "" or str(_maturity(blank)).startswith("unknown:")
+    unknown = assess("bogus", "docs/brainstorms/a.md", declaration_required=False)
+    assert str(_maturity(unknown)).startswith("unknown:unrecognized:")
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "prefix"),
+    (
+        ("bogus.md", "---\nmaturity: bogus-value\n---\n\n# Bogus\n", "unknown:unrecognized:"),
+        (
+            "dup.md",
+            "---\nmaturity: pending-confirmation\nmaturity: plan-ready\n---\n\n# Dup\n",
+            "unknown:",
+        ),
+        ("carrier.md", "maturity: plan-ready\n\n# Carrier\n", "unknown:carrier:"),
+        ("open.md", "---\nmaturity: plan-ready\n", "unknown:unterminated:"),
+        ("blank.md", "---\nmaturity:\n---\n\n# Blank\n", ""),
+    ),
+)
+def test_assess_source_malformed_declarations_fail_closed(
+    tmp_path: Path, name: str, text: str, prefix: str
+) -> None:
+    rel = f"docs/brainstorms/{name}"
+    _write_owner(tmp_path, rel, text)
+    assessment = _assess_source()(rel, tmp_path)
+    maturity = _maturity(assessment)
+    if prefix:
+        assert maturity.startswith(prefix)
+    else:
+        assert maturity == "" or maturity.startswith("unknown:")
+    assert "/plan" not in _next_action(assessment)
+    assert "/work" not in _next_action(assessment)
+
+
+def test_assess_source_unreadable_bytes_are_unknown(tmp_path: Path) -> None:
+    path = tmp_path / "docs" / "brainstorms" / "binary.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe\xfd\xfc\xfb")
+    assessment = _assess_source()("docs/brainstorms/binary.md", tmp_path)
+    assert _maturity(assessment).startswith("unknown:")
+    assert "/plan" not in _next_action(assessment)

@@ -43,7 +43,11 @@ def _install_plugin(cache: Path, plugin: str, version: str, *, parts: tuple[str,
 
 
 def _build_fake_home(
-    tmp_path: Path, *, with_fleet_core: bool = True, decoy_version: str | None = None
+    tmp_path: Path,
+    *,
+    with_fleet_core: bool = True,
+    decoy_version: str | None = None,
+    with_saga: bool = False,
 ) -> tuple[Path, Path]:
     """Fake install root; returns ``(fake_home, mission_control_install)``."""
     fake_home = tmp_path / "home"
@@ -51,7 +55,7 @@ def _build_fake_home(
     cache.mkdir(parents=True)
 
     mission_control = _install_plugin(
-        cache, "mission-control", "2.5.0", parts=(".claude-plugin", "scripts")
+        cache, "mission-control", "2.5.0", parts=(".claude-plugin", "scripts", "config")
     )
     registry: dict[str, list[dict[str, str]]] = {
         f"mission-control@{MARKETPLACE}": [{"installPath": str(mission_control)}]
@@ -67,6 +71,9 @@ def _build_fake_home(
         )
         manifest = decoy / ".claude-plugin" / "plugin.json"
         manifest.write_text(json.dumps({"name": "fleet-core", "version": decoy_version}))
+    if with_saga:
+        saga = _install_plugin(cache, "saga", "0.158.0", parts=(".claude-plugin", "scripts"))
+        registry[f"saga@{MARKETPLACE}"] = [{"installPath": str(saga)}]
 
     (fake_home / ".claude" / "plugins" / "installed_plugins.json").write_text(
         json.dumps({"version": 2, "plugins": registry})
@@ -125,3 +132,50 @@ def test_version_skew_registry_pin_beats_newer_cache_decoy(tmp_path: Path) -> No
     assert "fleet-commons: rung=3 (installed-plugins)" in result.stderr
     provenance = [line for line in result.stderr.splitlines() if line.startswith("fleet-commons:")]
     assert provenance and provenance[0].endswith(f"{os.sep}fleet-core{os.sep}0.1.0")
+
+
+def _run_owner_probe(
+    fake_home: Path, mission_control: Path, tmp_path: Path
+) -> subprocess.CompletedProcess[str]:
+    """Load sdlc_manager's Saga readiness owner in a scrubbed installed layout."""
+    probe = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(mission_control / 'scripts')!r})\n"
+        "import sdlc_manager\n"
+        "owner = sdlc_manager._load_saga_readiness_owner()\n"
+        "print('SAGA_OWNER_PATH=' + str(owner.__file__))\n"
+    )
+    env = {
+        "HOME": str(fake_home),
+        "PATH": os.environ.get("PATH", ""),
+        # Deliberately absent: PYTHONPATH, SAGA_ROOT — only the installed_plugins.json
+        # registry may make saga resolution succeed.
+    }
+    return subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),  # outside the repo working tree
+        timeout=60,
+    )
+
+
+def test_saga_readiness_owner_resolves_via_installed_registry(tmp_path: Path) -> None:
+    """#942: the readiness owner resolves saga through the installed registry too."""
+    fake_home, mission_control = _build_fake_home(tmp_path, with_saga=True)
+    result = _run_owner_probe(fake_home, mission_control, tmp_path)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    line = next(line for line in result.stdout.splitlines() if line.startswith("SAGA_OWNER_PATH="))
+    owner_path = Path(line.removeprefix("SAGA_OWNER_PATH="))
+    assert owner_path.name == "handoff_envelope.py"
+    cache_saga = fake_home / ".claude" / "plugins" / "cache" / MARKETPLACE / "saga"
+    assert owner_path == cache_saga / "0.158.0" / "scripts" / "handoff_envelope.py"
+
+
+def test_missing_saga_fails_the_owner_probe_loud(tmp_path: Path) -> None:
+    fake_home, mission_control = _build_fake_home(tmp_path, with_saga=False)
+    result = _run_owner_probe(fake_home, mission_control, tmp_path)
+    assert result.returncode != 0
+    assert "Saga readiness owner dependency problem" in result.stderr
+    assert "SAGA_ROOT" in result.stderr

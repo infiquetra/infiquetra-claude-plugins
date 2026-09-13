@@ -238,7 +238,10 @@ def test_prepare_records_explicit_handoff_maturity(tmp_path) -> None:
 
     assert sidecar["handoff_maturity"] == "plan-ready"
     assert "### Handoff maturity\nplan-ready" in body
-    assert "Use `/work <issue>`" in body
+    # #942: the suggested next action is Saga-owned and names its target; a
+    # text-only prepare has no published source to route to, so the section is
+    # omitted instead of rendering the retired local placeholder prose.
+    assert "### Suggested next action" not in body
 
 
 def test_non_default_status_blocks_prepared_draft(tmp_path) -> None:

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build a thin Infiquetra loop handoff envelope for mission-control."""
+"""Build a thin Infiquetra loop handoff envelope for mission-control.
+
+Also exposes the versioned readiness-owner API (``assess_source`` /
+``assess_declared``, issue #942) that the mission-control consumer gates on.
+"""
 
 import argparse
 import codecs
@@ -611,6 +615,191 @@ def build_deploy_handoff_envelope(
         pr_refs=pr_refs,
         token=token,
         now=now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Readiness owner API (#942): explicit declarations where location cannot decide.
+# ---------------------------------------------------------------------------
+
+#: Contract major of the ``assess_source`` / ``assess_declared`` surface. The
+#: mission-control consumer gates on this and refuses an incompatible owner.
+READINESS_CONTRACT_MAJOR = 1
+
+#: Every non-vocabulary cause is prefixed with this bounded sentinel family.
+UNKNOWN_PREFIX = "unknown:"
+
+#: The declared vocabulary subset that authorizes a live route. ``deferred-context``
+#: and ``pending-confirmation`` are declared states but never carry a command.
+_LIVE_MATURITIES = ("idea-ready", "requirements-ready", "plan-ready", "resume-ready")
+
+# A saved issue draft and the Saga state file are ready only when an explicit
+# declaration says so; their location alone must never decide (T942-02/03).
+_DRAFT_DIR_MARKER = "docs/sdlc-issue-drafts/"
+_STATE_SOURCE = (STATE_DIR / "state.json").as_posix()
+
+
+@dataclass(frozen=True)
+class ReadinessAssessment:
+    """One owner-side readiness decision shared with the mission-control consumer."""
+
+    maturity: str
+    routable: bool
+    diagnostic: str
+    next_action: str
+    path_read: str
+    published_source: str
+    reanchored: bool
+    refused: bool
+    declaration_required: bool
+    contract_major: int
+
+
+def _declaration_class(published: str) -> str:
+    """'' , ``'draft'`` or ``'state'`` — the explicit-declaration classes."""
+    normalized = published.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized == _STATE_SOURCE or normalized.endswith("/" + _STATE_SOURCE):
+        return "state"
+    if _DRAFT_DIR_MARKER in normalized:
+        return "draft"
+    return ""
+
+
+def _read_draft_declaration(path_to_read: Path) -> tuple[str, object]:
+    """Strict sidecar read: only a sidecar ``handoff_maturity`` declares the draft."""
+    sidecar = path_to_read.with_suffix(".json")
+    if not _is_file(sidecar):
+        return "absent", None
+    try:
+        loaded = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "unreadable", None
+    if isinstance(loaded, dict) and "handoff_maturity" in loaded:
+        return "value", loaded["handoff_maturity"]
+    return "absent", None
+
+
+def _read_state_declaration(path_to_read: Path) -> tuple[str, object]:
+    """Strict read of the state file's top-level ``handoff_maturity``."""
+    try:
+        loaded = json.loads(path_to_read.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "unreadable", None
+    if isinstance(loaded, dict) and "handoff_maturity" in loaded:
+        return "value", loaded["handoff_maturity"]
+    return "absent", None
+
+
+def _assessment_diagnostic(
+    maturity: str, published: str, display: str, path_read: Path | None
+) -> str:
+    """Diagnostics for the assessment surface only; the envelope prose is frozen.
+
+    These strings can be rendered beside live route commands, so they name the
+    declaration CLASS but never embed the source path — a path like
+    ``docs/plans/x.md`` carries the literal ``/plan`` substring and would read
+    as a live route to substring-based safety checks (T942-04). The path
+    travels structurally on ``ReadinessAssessment.published_source``.
+    """
+    if maturity == "deferred-context":
+        return (
+            "Deferred context — parked, not routed; an operator resumes it "
+            "explicitly before any command exists"
+        )
+    if maturity == "pending-confirmation":
+        # Path-free twin of the frozen _maturity_diagnostic prose (same wording
+        # minus the source interpolation) for the same substring reason as above.
+        return (
+            "Boundary recorded but unconfirmed — no durable route exists until "
+            "the operator confirms in Brainstorm Phase 2.5"
+        )
+    if maturity.startswith(f"{UNKNOWN_PREFIX}undeclared:"):
+        if _declaration_class(published) == "draft":
+            return (
+                "Undeclared draft — the sidecar carries no "
+                "handoff_maturity; the drafts folder alone cannot make it ready"
+            )
+        return "Undeclared Saga state — no top-level handoff_maturity declares it ready"
+    diagnostic = _maturity_diagnostic(maturity, display, path_read)
+    return diagnostic or ""
+
+
+def _build_assessment(
+    maturity: str,
+    *,
+    published: str,
+    display: str,
+    path_read: Path | None,
+    reanchored: bool,
+    refused: bool,
+    declaration_required: bool,
+) -> ReadinessAssessment:
+    routable = maturity in _LIVE_MATURITIES
+    diagnostic = _assessment_diagnostic(maturity, published, display, path_read)
+    if routable:
+        command = "/plan" if maturity in ("idea-ready", "requirements-ready") else "/work"
+        next_action = f"{command} {shlex.quote(published)}"
+    elif diagnostic:
+        next_action = diagnostic
+    else:
+        next_action = ""
+    return ReadinessAssessment(
+        maturity=maturity,
+        routable=routable,
+        diagnostic=diagnostic,
+        next_action=next_action,
+        path_read=str(path_read) if path_read is not None else "",
+        published_source=published,
+        reanchored=reanchored,
+        refused=refused,
+        declaration_required=declaration_required,
+        contract_major=READINESS_CONTRACT_MAJOR,
+    )
+
+
+def assess_source(source: str, root: Path | None = None) -> ReadinessAssessment:
+    """Assess one source's readiness: explicit declarations where location cannot decide."""
+    resolved = resolve_source(source, root)
+    declaration_required = bool(_declaration_class(resolved.published))
+    if resolved.refused or not declaration_required:
+        maturity = _resolved_maturity(resolved)
+    else:
+        assert resolved.path_to_read is not None
+        if _declaration_class(resolved.published) == "state":
+            status, value = _read_state_declaration(resolved.path_to_read)
+        else:
+            status, value = _read_draft_declaration(resolved.path_to_read)
+        if status == "value":
+            maturity = _classify_declared_value(value)
+        elif status == "unreadable":
+            maturity = "unknown:unreadable"
+        else:
+            maturity = f"{UNKNOWN_PREFIX}undeclared:{resolved.published}"
+    return _build_assessment(
+        maturity,
+        published=resolved.published,
+        display=_diagnostic_source(source, resolved),
+        path_read=resolved.path_to_read,
+        reanchored=resolved.reanchored,
+        refused=resolved.refused,
+        declaration_required=declaration_required,
+    )
+
+
+def assess_declared(
+    value: object, published_source: str, *, declaration_required: bool
+) -> ReadinessAssessment:
+    """Classify one explicit declaration against the shared vocabulary."""
+    return _build_assessment(
+        _classify_declared_value(value),
+        published=published_source,
+        display=_display_source(published_source),
+        path_read=None,
+        reanchored=False,
+        refused=False,
+        declaration_required=declaration_required,
     )
 
 

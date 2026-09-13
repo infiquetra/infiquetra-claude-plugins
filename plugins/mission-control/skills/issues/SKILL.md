@@ -139,7 +139,9 @@ asks for an Asgard or CAMPPS issue that should be reviewed before mutation.
 `/issue` is the primary user-facing command for this path. `/issue` remains a
 compatibility alias. `--prepare` is the canonical non-mutating mode; `--draft` means the same
 thing. `--from` accepts a local path, GitHub issue/PR URL, branch ref, or natural search hint.
-`--maturity` overrides inferred handoff maturity.
+`--maturity` overrides the source's Saga-assessed handoff maturity; the owner
+classifies the value, so `pending-confirmation` and `deferred-context` are
+accepted alongside the four ready states.
 
 ```bash
 python3 sdlc_manager.py issue prepare \
@@ -182,13 +184,20 @@ interview. Do not author the envelope as prose or invent a second posture questi
 drift-guard test fails on one.
 
 Prepared handoff drafts include `handoff_maturity` in the sidecar and a body section with the
-suggested next action. Maturity values are:
+suggested next action. Readiness vocabulary and assessment are owned by the saga plugin's
+handoff envelope (`#942`) — mission-control delegates to it and keeps no local vocabulary.
+Maturity values are:
 
-- `idea-ready` -> suggest `/plan <issue>`.
-- `requirements-ready` -> suggest `/plan <issue>`.
-- `plan-ready` -> suggest `/work <issue>`.
-- `resume-ready` -> suggest `/work <issue>`.
-- `deferred-context` -> preserve context and clarify before execution.
+- `idea-ready` -> the owner suggests `/plan <published source>`.
+- `requirements-ready` -> the owner suggests `/plan <published source>`.
+- `plan-ready` -> the owner suggests `/work <published source>`.
+- `resume-ready` -> the owner suggests `/work <published source>`.
+- `deferred-context` -> creatable with clarification text; the owner never attaches a live command.
+- `pending-confirmation` -> creatable, proposed-only; the owner never attaches a live command until an operator confirms.
+
+Sources without an explicit declaration fail closed: an undeclared saved draft or Saga state
+file is refused at prepare time (the drafts folder or state path alone never makes it ready),
+and out-of-root sources are refused outright.
 
 Source artifact resolution:
 

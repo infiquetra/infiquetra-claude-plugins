@@ -4459,13 +4459,6 @@ _ISSUE_TYPE_LABELS = {
     "context-update": ["context-update", "documentation"],
 }
 _PREPARED_DRAFT_DIR = Path("docs") / "sdlc-issue-drafts"
-_HANDOFF_MATURITY_CHOICES = (
-    "idea-ready",
-    "requirements-ready",
-    "plan-ready",
-    "resume-ready",
-    "deferred-context",
-)
 _SOURCE_SEARCH_DIRS = (
     Path(".claude") / "saga",
     Path("docs") / "plans",
@@ -4567,6 +4560,12 @@ class SourceArtifact:
     path: str | None = None
     url: str | None = None
     branch: str | None = None
+    # Saga-owned readiness detail (#942): the owner's routing command (live
+    # states only) and its diagnostic prose, carried as plain strings so the
+    # sidecar payload (asdict) stays serializable and create-prepared never
+    # re-derives them.
+    readiness_next_action: str | None = None
+    readiness_diagnostic: str | None = None
 
 
 @dataclass
@@ -4675,19 +4674,106 @@ def _markdown_title(text: str, fallback: str) -> str:
     return fallback
 
 
-def _infer_maturity_from_path(path: Path) -> str:
-    normalized = path.as_posix()
-    if "docs/ideation/" in normalized:
-        return "idea-ready"
-    if "docs/brainstorms/" in normalized:
-        return "requirements-ready"
-    if "docs/plans/" in normalized or "docs/reviews/" in normalized:
-        return "plan-ready"
-    if "docs/work-sessions/" in normalized or "docs/sdlc-issue-drafts/" in normalized:
-        return "resume-ready"
-    if ".claude/saga/" in normalized:
-        return "resume-ready"
-    return "requirements-ready"
+# ---------------------------------------------------------------------------
+# Saga readiness owner (#942): readiness vocabulary and assessment are owned
+# by the saga plugin's handoff_envelope module; this consumer resolves, gates,
+# and delegates — it never infers maturity locally.
+# ---------------------------------------------------------------------------
+
+#: Contract major this consumer requires of the readiness owner.
+_SAGA_READINESS_CONTRACT_MAJOR = 1
+
+#: The full declared vocabulary the owner must recognize. This is a validation
+#: probe (every value must self-classify), NOT a routing table — routing
+#: decisions come from the owner's assessments alone.
+_SAGA_READINESS_VOCABULARY = (
+    "idea-ready",
+    "requirements-ready",
+    "plan-ready",
+    "resume-ready",
+    "deferred-context",
+    "pending-confirmation",
+)
+
+_SAGA_OWNER_MARKER = "scripts/handoff_envelope.py"
+
+
+def _load_saga_readiness_owner() -> Any:
+    """Resolve and load the Saga handoff_envelope module (the readiness owner).
+
+    Saga is a dependency, not an optional extra: a missing plugin, a missing
+    import, or an unresolvable root surfaces as ONE actionable dependency
+    error — the caller never falls back to local inference (#942).
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import fleet_commons_shim
+    except ImportError as e:
+        raise RuntimeError(
+            "Saga readiness owner dependency problem: fleet_commons_shim could not "
+            f"be imported ({e}). Fix: repair the mission-control plugin install."
+        ) from e
+    try:
+        resolution = fleet_commons_shim.load("plugin_resolution")
+        saga_root, _rung = resolution.resolve_plugin_root(
+            "saga",
+            markers=(_SAGA_OWNER_MARKER,),
+            env_var="SAGA_ROOT",
+        )
+        owner_path = saga_root / _SAGA_OWNER_MARKER
+        spec = importlib.util.spec_from_file_location("saga_handoff_envelope", owner_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Saga readiness owner module is unloadable: {owner_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (RuntimeError, OSError, ImportError) as e:
+        raise RuntimeError(
+            "Saga readiness owner dependency problem: the saga plugin could not be "
+            f"resolved ({e}). Fix: install the saga plugin beside mission-control, "
+            f"or point SAGA_ROOT at a checkout containing {_SAGA_OWNER_MARKER}."
+        ) from e
+
+
+def _saga_readiness_owner() -> Any:
+    """Return the Saga readiness owner after a contract and vocabulary gate.
+
+    Gates in order: contract major, required API surface, then a functional
+    vocabulary probe (each known value must self-classify). Any mismatch is an
+    incompatibility error — never a silent fallback (#942).
+    """
+    owner = _load_saga_readiness_owner()
+    major = getattr(owner, "READINESS_CONTRACT_MAJOR", None)
+    if major != _SAGA_READINESS_CONTRACT_MAJOR:
+        raise RuntimeError(
+            "Saga readiness owner is incompatible: contract major "
+            f"{major!r} != required {_SAGA_READINESS_CONTRACT_MAJOR}. Fix: upgrade "
+            "the saga plugin to the readiness-owner release."
+        )
+    assess_source = getattr(owner, "assess_source", None)
+    assess_declared = getattr(owner, "assess_declared", None)
+    if not callable(assess_source) or not callable(assess_declared):
+        raise RuntimeError(
+            "Saga readiness owner is incompatible: missing required API "
+            "(assess_source/assess_declared). Fix: upgrade the saga plugin."
+        )
+    for value in _SAGA_READINESS_VOCABULARY:
+        try:
+            probe = assess_declared(value, "contract-probe", declaration_required=False)
+        except Exception as e:
+            raise RuntimeError(
+                "Saga readiness owner is incompatible: vocabulary probe failed for "
+                f"{value!r} ({e}). Fix: upgrade the saga plugin."
+            ) from e
+        if getattr(probe, "maturity", None) != value:
+            raise RuntimeError(
+                "Saga readiness owner is incompatible: vocabulary probe misclassifies "
+                f"{value!r} as {getattr(probe, 'maturity', None)!r}. Fix: upgrade the "
+                "saga plugin."
+            )
+    return owner
 
 
 def _infer_kind_from_path(path: Path) -> str:
@@ -4721,13 +4807,31 @@ def _source_from_local_path(path: Path, root: Path | None = None) -> SourceArtif
         display_path = resolved.relative_to(root).as_posix()
     except ValueError:
         display_path = resolved.as_posix()
+    # #942: readiness is Saga-owned. The owner assesses the published source —
+    # declaration reads, out-of-root refusal, vocabulary classification — and
+    # this consumer acts on the assessment instead of a folder fallback.
+    readiness_owner = _saga_readiness_owner()
+    assessment = readiness_owner.assess_source(display_path, root)
+    if assessment.refused:
+        raise RuntimeError(
+            f"Source artifact refused (out-of-root): {display_path}. Sources must "
+            "live inside the declared root; name the source inside the root."
+        )
+    maturity = assessment.maturity
+    if not maturity or maturity.startswith("unknown:"):
+        raise RuntimeError(
+            f"Source artifact readiness problem for {display_path}: "
+            f"{maturity or 'blank'}. {assessment.diagnostic}".strip()
+        )
     return SourceArtifact(
-        ref=display_path,
+        ref=assessment.published_source,
         kind=_infer_kind_from_path(Path(display_path)),
         title=_markdown_title(content, resolved.stem),
         content=content,
-        inferred_maturity=_infer_maturity_from_path(Path(display_path)),
+        inferred_maturity=maturity,
         path=display_path,
+        readiness_next_action=assessment.next_action or None,
+        readiness_diagnostic=assessment.diagnostic or None,
     )
 
 
@@ -4764,13 +4868,21 @@ def _source_from_github_url(url: str) -> SourceArtifact:
     title = str(data.get("title") or f"{repo}#{number}").strip()
     body = str(data.get("body") or "").strip()
     content = f"# {title}\n\n{body}".strip()
+    published = str(data.get("url") or url)
+    # #942: even a URL seed is classified by the Saga owner, not assumed here.
+    readiness_owner = _saga_readiness_owner()
+    assessment = readiness_owner.assess_declared(
+        "resume-ready" if is_pr else "requirements-ready", published, declaration_required=False
+    )
     return SourceArtifact(
         ref=f"{owner}/{repo}#{number}",
         kind="github-pr" if is_pr else "github-issue",
         title=title,
         content=content,
-        inferred_maturity="resume-ready" if is_pr else "requirements-ready",
-        url=str(data.get("url") or url),
+        inferred_maturity=assessment.maturity,
+        url=published,
+        readiness_next_action=assessment.next_action or None,
+        readiness_diagnostic=assessment.diagnostic or None,
     )
 
 
@@ -4795,13 +4907,20 @@ def _source_from_branch_ref(ref: str, root: Path | None = None) -> SourceArtifac
         "## Working tree\n\n"
         f"```text\n{status}\n```\n"
     )
+    # #942: the branch seed is classified by the Saga owner, not assumed here.
+    readiness_owner = _saga_readiness_owner()
+    assessment = readiness_owner.assess_declared(
+        "resume-ready", f"branch:{branch}", declaration_required=False
+    )
     return SourceArtifact(
         ref=f"branch:{branch}",
         kind="branch",
         title=f"Branch handoff: {branch}",
         content=content,
-        inferred_maturity="resume-ready",
+        inferred_maturity=assessment.maturity,
         branch=branch,
+        readiness_next_action=assessment.next_action or None,
+        readiness_diagnostic=assessment.diagnostic or None,
     )
 
 
@@ -5003,19 +5122,10 @@ def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = No
     return "\n".join(frontmatter) + f"\n\n# {issue.title}\n\n{clean_body.rstrip()}\n"
 
 
-def _suggested_next_action(handoff_maturity: str) -> str:
-    return {
-        "idea-ready": "Use `/plan <issue>` to shape requirements before implementation.",
-        "requirements-ready": "Use `/plan <issue>` to create an implementation plan.",
-        "plan-ready": "Use `/work <issue>` to execute from the plan-grade context.",
-        "resume-ready": "Use `/work <issue>` to resume from the captured work state.",
-        "deferred-context": "Clarify current intent before planning or working this issue.",
-    }[handoff_maturity]
-
-
 def _render_handoff_context(
     handoff_maturity: str | None,
     source_artifact: SourceArtifact | None,
+    next_action: str | None = None,
 ) -> str:
     if not handoff_maturity and not source_artifact:
         return ""
@@ -5023,10 +5133,13 @@ def _render_handoff_context(
     lines = [
         "### Handoff maturity",
         maturity,
-        "",
-        "### Suggested next action",
-        _suggested_next_action(maturity),
     ]
+    # #942: the suggested next action is Saga-owned — rendered only when the
+    # owner supplied one (live states carry a command; pending-confirmation and
+    # deferred-context carry clarification prose or nothing at all, never a
+    # locally invented route).
+    if next_action:
+        lines.extend(["", "### Suggested next action", next_action])
     if source_artifact:
         lines.extend(
             [
@@ -5184,6 +5297,7 @@ def _source_to_issue_body(
     mode: str | None,
     handoff_maturity: str | None = None,
     source_artifact: SourceArtifact | None = None,
+    next_action: str | None = None,
 ) -> str:
     """Assemble the issue body, then stamp the recommended tier band (AC5).
 
@@ -5192,7 +5306,7 @@ def _source_to_issue_body(
     silently miss it.
     """
     body = _source_to_issue_body_unstamped(
-        source, issue_type, team, repo, risk, mode, handoff_maturity, source_artifact
+        source, issue_type, team, repo, risk, mode, handoff_maturity, source_artifact, next_action
     )
     return _append_tier_band(body, issue_type)
 
@@ -5206,17 +5320,18 @@ def _source_to_issue_body_unstamped(
     mode: str | None,
     handoff_maturity: str | None = None,
     source_artifact: SourceArtifact | None = None,
+    next_action: str | None = None,
 ) -> str:
     _, clean_source = _strip_frontmatter_and_title(source)
     stripped = clean_source.strip()
     if "### " in stripped:
         if "### Handoff maturity" in stripped:
             return stripped
-        return stripped + _render_handoff_context(handoff_maturity, source_artifact)
+        return stripped + _render_handoff_context(handoff_maturity, source_artifact, next_action)
     if issue_type in _DISPATCH_ACTIONABLE_TYPES:
         return _contract_scaffold_body(
             stripped, issue_type, risk, source_artifact
-        ) + _render_handoff_context(handoff_maturity, source_artifact)
+        ) + _render_handoff_context(handoff_maturity, source_artifact, next_action)
     if team == "asgard":
         return f"""### Intent
 {stripped}
@@ -5254,7 +5369,7 @@ TBD
 
 ### Verification
 TBD
-""" + _render_handoff_context(handoff_maturity, source_artifact)
+""" + _render_handoff_context(handoff_maturity, source_artifact, next_action)
 
 
 def _safe_slug(text: str) -> str:
@@ -5447,6 +5562,35 @@ def _extract_unfenced_headers(body: str) -> list[tuple[int, str]]:
     return headers
 
 
+def _saga_maturity_block(maturity: str) -> str | None:
+    """Saga-owned readiness verdict for a stored handoff maturity (#942).
+
+    Returns a blocking-gap message, or None when the owner accepts the value:
+    a live state, or a declared non-routing state (deferred-context /
+    pending-confirmation) that is creatable but never routed. A dependency
+    failure is a blocking gap here — create-prepared reports it and refuses
+    to route instead of crashing or silently trusting the value.
+    """
+    try:
+        readiness_owner = _saga_readiness_owner()
+        assessment = readiness_owner.assess_declared(maturity, "", declaration_required=False)
+    except RuntimeError as e:
+        return f"Handoff maturity {maturity!r} could not be verified: {e}"
+    if not assessment.maturity or assessment.maturity.startswith("unknown:"):
+        return (
+            f"Unknown handoff maturity {maturity!r} — the Saga owner classifies it as "
+            f"{assessment.maturity or 'blank'}"
+        )
+    if assessment.routable:
+        return None
+    if assessment.maturity in ("deferred-context", "pending-confirmation"):
+        return None
+    return (
+        f"Unknown handoff maturity {maturity!r} — the Saga owner classifies it as "
+        f"{assessment.maturity or 'blank'}"
+    )
+
+
 def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     blocking: list[str] = []
     warnings: list[str] = []
@@ -5513,10 +5657,25 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     if missing_labels:
         blocking.append(f"Missing expected labels: {missing_labels}")
 
-    if issue.handoff_maturity and issue.handoff_maturity not in _HANDOFF_MATURITY_CHOICES:
-        allowed = ", ".join(_HANDOFF_MATURITY_CHOICES)
-        blocking.append(f"Unknown handoff maturity {issue.handoff_maturity!r}; expected {allowed}")
-    elif not issue.handoff_maturity:
+    # #942: the maturity vocabulary and verdict belong to the Saga owner. Live
+    # states route; deferred-context and pending-confirmation are creatable
+    # (with their clarification text, no live command); unknown values and
+    # dependency failures block.
+    if issue.handoff_maturity:
+        maturity_block = _saga_maturity_block(issue.handoff_maturity)
+        if maturity_block:
+            blocking.append(maturity_block)
+        elif issue.handoff_maturity == "deferred-context":
+            warnings.append(
+                "Handoff maturity deferred-context: parked — clarify current intent "
+                "before planning or working this issue"
+            )
+        elif issue.handoff_maturity == "pending-confirmation":
+            warnings.append(
+                "Handoff maturity pending-confirmation: scope is proposed, not "
+                "confirmed — an operator must confirm before any route exists"
+            )
+    else:
         warnings.append("Missing handoff maturity metadata")
 
     # W10 (R77, AE32): Stage is author-supplied, with no default and no
@@ -5666,12 +5825,49 @@ def issue_prepare(
     # empty and readiness blocks on the missing Stage instead.
     safe_status = status or _stage_entry_options().get(stage or "", "")
     draft_title = title or f"{issue_type}: {repo} {team} work"
-    maturity = handoff_maturity or (
-        source_artifact.inferred_maturity if source_artifact else "requirements-ready"
+    # #942: maturity resolution order — explicit --maturity wins over the
+    # artifact's Saga assessment; the artifact's owner-derived value comes
+    # next; a text-only prepare (no --from, no --maturity) keeps its
+    # non-routed requirements-ready default WITHOUT loading the owner (lazy
+    # dependency: no source, no assessment, no Saga requirement).
+    next_action: str | None = None
+    if handoff_maturity:
+        readiness_owner = _saga_readiness_owner()
+        published = ""
+        if source_artifact is not None:
+            published = source_artifact.url or source_artifact.path or source_artifact.ref
+        assessment = readiness_owner.assess_declared(
+            handoff_maturity, published, declaration_required=False
+        )
+        maturity = assessment.maturity
+        if not maturity or maturity.startswith("unknown:"):
+            diagnostic = f" {assessment.diagnostic}" if assessment.diagnostic else ""
+            raise RuntimeError(
+                f"Unknown handoff maturity {handoff_maturity!r} — the Saga owner "
+                f"classifies it as {maturity or 'blank'}.{diagnostic}"
+            )
+        # A live route names its target; with no source artifact there is
+        # nothing to route to, so the section is omitted rather than rendering
+        # a command against an empty path.
+        next_action = assessment.next_action or None if published else None
+    elif source_artifact is not None:
+        maturity = source_artifact.inferred_maturity
+        if not maturity or maturity.startswith("unknown:"):
+            diagnostic = (
+                f" {source_artifact.readiness_diagnostic}"
+                if source_artifact.readiness_diagnostic
+                else ""
+            )
+            raise RuntimeError(
+                f"Source artifact is not routable: readiness {maturity or 'blank'} "
+                f"for {source_artifact.ref}.{diagnostic}"
+            )
+        next_action = source_artifact.readiness_next_action
+    else:
+        maturity = "requirements-ready"
+    body = _source_to_issue_body(
+        source, issue_type, team, repo, risk, mode, maturity, source_artifact, next_action
     )
-    if maturity not in _HANDOFF_MATURITY_CHOICES:
-        allowed = ", ".join(_HANDOFF_MATURITY_CHOICES)
-        raise RuntimeError(f"Unknown handoff maturity {maturity!r}; expected {allowed}")
     issue = PreparedIssue(
         title=draft_title,
         repo=repo,
@@ -5680,12 +5876,15 @@ def issue_prepare(
         project=project,
         status=safe_status,
         labels=_issue_expected_labels(issue_type),
-        risk=risk,
+        # #1000 R3: the body is the source of Risk — the `--risk` argument only
+        # seeded the compiled scaffold above and is never carried as metadata
+        # past this point. Supplied bodies pass through untouched, so a missing
+        # or malformed Risk section there derives None and blocks in readiness
+        # no matter what --risk or the risk labels said.
+        risk=_risk_from_body(body)[0],
         mode=mode,
         stage=stage,
-        body=_source_to_issue_body(
-            source, issue_type, team, repo, risk, mode, maturity, source_artifact
-        ),
+        body=body,
         handoff_maturity=maturity,
         source_artifact=_source_artifact_payload(source_artifact),
     )
@@ -7039,8 +7238,8 @@ def main() -> None:
         "--maturity",
         dest="handoff_maturity",
         default=None,
-        choices=_HANDOFF_MATURITY_CHOICES,
-        help="Override inferred handoff maturity",
+        help="Override inferred handoff maturity (classified by the Saga owner; "
+        "accepts pending-confirmation and deferred-context)",
     )
     issue_prepare_p.add_argument("source", nargs="*")
 

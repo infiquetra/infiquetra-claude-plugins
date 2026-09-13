@@ -112,3 +112,63 @@ def test_branch_source_captures_resume_context(tmp_path) -> None:
 def test_missing_source_reports_searched_locations(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="Searched: docs/brainstorms"):
         sdlc_manager.resolve_source_artifact("from the brainstorm", tmp_path)
+
+
+# --- Saga-owned readiness delegation (#942) ---------------------------------
+# The consumer no longer infers maturity from the folder; the saga plugin's
+# handoff_envelope owner assesses every source. These tests pin the consumer's
+# handling of the owner's verdicts.
+
+
+def test_declared_maturity_overrides_folder(tmp_path) -> None:
+    _write(
+        tmp_path,
+        "docs/brainstorms/declared.md",
+        "---\nmaturity: plan-ready\n---\n\n# Declared\n",
+    )
+
+    artifact = sdlc_manager.resolve_source_artifact("docs/brainstorms/declared.md", tmp_path)
+
+    assert artifact.inferred_maturity == "plan-ready"
+    assert artifact.readiness_next_action is not None
+    assert artifact.readiness_next_action.startswith("/work ")
+
+
+def test_pending_confirmation_is_carried_without_a_live_route(tmp_path) -> None:
+    _write(
+        tmp_path,
+        "docs/brainstorms/pending.md",
+        "---\nmaturity: pending-confirmation\n---\n\n# Pending\n",
+    )
+
+    artifact = sdlc_manager.resolve_source_artifact("docs/brainstorms/pending.md", tmp_path)
+
+    assert artifact.inferred_maturity == "pending-confirmation"
+    # A non-routing state never carries a live command, even in prose.
+    assert "/plan" not in (artifact.readiness_next_action or "")
+    assert "/work" not in (artifact.readiness_next_action or "")
+
+
+def test_declared_draft_sidecar_declares_maturity(tmp_path) -> None:
+    path = _write(tmp_path, "docs/sdlc-issue-drafts/declared.md", "# Draft\n")
+    path.with_suffix(".json").write_text(json.dumps({"handoff_maturity": "resume-ready"}))
+
+    artifact = sdlc_manager.resolve_source_artifact("docs/sdlc-issue-drafts/declared.md", tmp_path)
+
+    assert artifact.inferred_maturity == "resume-ready"
+
+
+def test_undeclared_draft_fails_closed(tmp_path) -> None:
+    path = _write(tmp_path, "docs/sdlc-issue-drafts/bare.md", "# Bare\n")
+    path.with_suffix(".json").write_text(json.dumps({"title": "bare draft"}))
+
+    with pytest.raises(RuntimeError, match="undeclared|draft"):
+        sdlc_manager.resolve_source_artifact("docs/sdlc-issue-drafts/bare.md", tmp_path)
+
+
+def test_out_of_root_source_is_refused(tmp_path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
+    outside.write_text("---\nmaturity: plan-ready\n---\n\n# Outside\n")
+
+    with pytest.raises(RuntimeError, match="out-of-root|refus"):
+        sdlc_manager.resolve_source_artifact(str(outside), tmp_path)

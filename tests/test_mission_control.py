@@ -776,15 +776,11 @@ class TestSyncTemplateDocsRelocatedCopy:
             )
             assert str(relocated_ref) in relocated_proc.stdout
         else:
-            # Exit 2 = canonical-template-directory error; exit 1 = drift,
-            # which is the expected state during the dated #999 schema-to-
-            # generated lag (the 2026-09-07.5 schema carries `risk`, while the
-            # templates-reference.md re-render is U2 work). Either way both
-            # copies must behave identically.
-            assert checkout_proc.returncode in (1, 2)
-            if checkout_proc.returncode == 2:
-                assert "Canonical template directory not found:" in checkout_proc.stderr
-                assert "Canonical template directory not found:" in relocated_proc.stderr
+            # Exit 2 = canonical-template-directory error. Exit 1 is template
+            # drift and must fail the check, never be tolerated here.
+            assert checkout_proc.returncode == 2
+            assert "Canonical template directory not found:" in checkout_proc.stderr
+            assert "Canonical template directory not found:" in relocated_proc.stderr
 
     def test_missing_required_contract_data_fails_loudly(self, tmp_path: Path) -> None:
         """Missing required contract data fails loudly naming the resolved path."""

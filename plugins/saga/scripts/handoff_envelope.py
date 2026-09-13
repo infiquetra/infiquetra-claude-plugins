@@ -722,6 +722,38 @@ def _assessment_diagnostic(
                 "handoff_maturity; the drafts folder alone cannot make it ready"
             )
         return "Undeclared Saga state — no top-level handoff_maturity declares it ready"
+    # Path-free twins of the remaining frozen _maturity_diagnostic arms
+    # (review finding #10): same prose minus the source interpolation, and
+    # minus any raw author-declared value — a declared value is author text
+    # and could itself carry a route substring.
+    if maturity == "":
+        return (
+            "Blank maturity — the key is declared but empty; no durable route; "
+            + _maturity_remediation()
+        )
+    if maturity.startswith(f"{UNKNOWN_PREFIX}carrier:"):
+        cause = carrier_detail(path_read) if path_read is not None else "not a top-level key"
+        return (
+            f"Frontmatter carrier — {cause}; no durable route; "
+            "fix frontmatter to be delimited by literal --- lines with a top-level maturity: key"
+        )
+    if maturity.startswith(f"{UNKNOWN_PREFIX}unterminated:"):
+        return (
+            f"Unterminated frontmatter block — {_unterminated_detail(path_read)}; no durable route"
+        )
+    if maturity.startswith(f"{UNKNOWN_PREFIX}out-of-root:"):
+        return (
+            "Source outside the declared root — refused handoff; no durable route; "
+            "name a source inside the declared root"
+        )
+    if maturity == f"{UNKNOWN_PREFIX}unreadable":
+        return (
+            "Unreadable frontmatter — the file could not be opened, or decoded into "
+            "text carrying a maturity declaration; no durable route; re-save the file "
+            "as UTF-8 with a closed --- block and a top-level maturity: key, then re-run"
+        )
+    if maturity.startswith(f"{UNKNOWN_PREFIX}unrecognized:"):
+        return f"Unrecognized maturity value — no durable route; {_maturity_remediation()}"
     diagnostic = _maturity_diagnostic(maturity, display, path_read)
     return diagnostic or ""
 
@@ -765,8 +797,13 @@ def assess_source(source: str, root: Path | None = None) -> ReadinessAssessment:
     declaration_required = bool(_declaration_class(resolved.published))
     if resolved.refused or not declaration_required:
         maturity = _resolved_maturity(resolved)
+    elif resolved.path_to_read is None:
+        # Fail closed (review finding #11): an in-root declaration-class path
+        # with no file behind it carries no declaration. The bounded undeclared
+        # sentinel replaces the former assert — a crash is not a verdict, and
+        # ``python -O`` would strip the assert entirely.
+        maturity = f"{UNKNOWN_PREFIX}undeclared:{resolved.published}"
     else:
-        assert resolved.path_to_read is not None
         if _declaration_class(resolved.published) == "state":
             status, value = _read_state_declaration(resolved.path_to_read)
         else:

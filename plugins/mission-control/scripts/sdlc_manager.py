@@ -5466,6 +5466,17 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
             )
         if not value:
             raise RuntimeError(f"Prepared issue draft is missing required metadata: {key}")
+    # KTD8 (review finding #9): the frontmatter-sidecar mirror must agree on
+    # handoff_maturity too, so a one-sided hand-edit cannot be honored
+    # silently. The key is optional on both carriers — checked only when BOTH
+    # are present, so an absent declaration never blocks.
+    frontmatter_maturity = metadata.get("handoff_maturity")
+    sidecar_maturity = sidecar.get("handoff_maturity")
+    if frontmatter_maturity and sidecar_maturity and frontmatter_maturity != sidecar_maturity:
+        raise RuntimeError(
+            f"Draft metadata handoff_maturity={frontmatter_maturity!r} conflicts "
+            f"with sidecar handoff_maturity={sidecar_maturity!r}"
+        )
     if issue.issue_type not in _ISSUE_TYPES:
         raise RuntimeError(f"Unknown issue type in prepared draft: {issue.issue_type}")
     if issue.team not in _TEAM_CHOICES:

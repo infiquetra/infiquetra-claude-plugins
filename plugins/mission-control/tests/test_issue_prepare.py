@@ -93,8 +93,14 @@ def test_prepare_olympus_writes_ready_draft_and_sidecar(tmp_path) -> None:
     assert sidecar["repo"] == "hermes-claude-code-router"
     assert sidecar["readiness"]["passed"] is True
     assert sidecar["labels"] == ["capability", "needs-plan"]
-    assert sidecar["handoff_maturity"] == "requirements-ready"
-    assert "### Handoff maturity" in draft.read_text()
+    # Review finding #5: a text-only prepare (no --from, no --maturity)
+    # records NO handoff maturity — readiness reports it as a warning and the
+    # body renders no handoff section, and no Saga owner is ever loaded.
+    assert sidecar["handoff_maturity"] is None
+    assert "### Handoff maturity" not in draft.read_text()
+    assert any(
+        "Missing handoff maturity" in warning for warning in sidecar["readiness"]["warnings"]
+    )
 
 
 def test_prepare_olympus_blocks_missing_verification(tmp_path) -> None:
@@ -172,7 +178,9 @@ def test_prepare_asgard_accepts_shaping_quality_input(tmp_path) -> None:
 
     assert sidecar["state"] == "ready_to_create"
     assert sidecar["readiness"]["passed"] is True
-    assert sidecar["readiness"]["warnings"] == []
+    # Review finding #5: the text-only prepare records no handoff maturity,
+    # so readiness reports exactly the missing-maturity warning.
+    assert sidecar["readiness"]["warnings"] == ["Missing handoff maturity metadata"]
 
 
 def test_prepare_asgard_actionable_uses_hermes_contract(tmp_path) -> None:
@@ -529,4 +537,29 @@ def test_sidecar_conflict_blocks_draft_parse(tmp_path) -> None:
     sidecar_path.write_text(json.dumps(sidecar))
 
     with pytest.raises(RuntimeError, match="conflicts with sidecar"):
+        sdlc_manager._read_prepared_issue(draft)
+
+
+def test_maturity_sidecar_conflict_blocks_draft_parse(tmp_path) -> None:
+    """#9: a one-sided handoff_maturity hand-edit is a loud conflict, not honored."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Maturity conflict draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+        handoff_maturity="plan-ready",
+    )
+    sidecar_path = draft.with_suffix(".json")
+    sidecar = json.loads(sidecar_path.read_text())
+    assert sidecar["handoff_maturity"] == "plan-ready"
+    sidecar["handoff_maturity"] = "idea-ready"
+    sidecar_path.write_text(json.dumps(sidecar))
+
+    with pytest.raises(RuntimeError, match="handoff_maturity.*conflicts with sidecar"):
         sdlc_manager._read_prepared_issue(draft)

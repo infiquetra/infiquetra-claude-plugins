@@ -12,8 +12,10 @@
   declaration_required)` classifies explicit declarations against the six-value vocabulary.
   `READINESS_CONTRACT_MAJOR = 1` lets a consumer gate the contract before use. Mission
   Control's prepared-issue path is the first delegated consumer. Assessment-surface diagnostics
-  are path-free so a non-routable result can never carry a literal `/plan` or `/work` substring
-  from a display path; the frozen `_maturity_diagnostic` prose behind
+  are path-free for every non-routable shape (deferred-context, pending-confirmation, undeclared,
+  blank, carrier, unterminated, out-of-root, unreadable, unrecognized) so a non-routable result's
+  `next_action` and diagnostic can never carry a literal `/plan` or `/work` substring from a
+  display path or an author-declared value; the frozen `_maturity_diagnostic` prose behind
   `build_handoff_envelope`'s `suggested_command` is unchanged.
 
 ## [0.157.1] - 2026-09-06

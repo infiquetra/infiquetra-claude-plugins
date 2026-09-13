@@ -5330,6 +5330,47 @@ def _source_to_issue_body(
     return _append_tier_band(body, issue_type)
 
 
+# Machine-rendered handoff sections (review-finding #5 cascade): a prepare
+# owns these the way it owns the sidecar mirror — they are re-rendered from
+# the current maturity/artifact on every compile, never carried from a prior
+# generation.
+_HANDOFF_CONTEXT_SECTIONS = (
+    "### Handoff maturity",
+    "### Suggested next action",
+    "### Source context",
+    f"### {_TIER_BAND_HEADER}",
+)
+
+
+def _strip_trailing_handoff_context(body: str) -> str:
+    """Drop machine-rendered handoff sections from the tail of a supplied body.
+
+    A revision chain passes the prior draft in as the --from source still
+    carrying ITS handoff sections; passing those through verbatim would keep
+    the PREVIOUS source's identity in the body while the sidecar records the
+    new one. Stripping the trailing machine sections lets the caller re-render
+    them from the current maturity/artifact, keeping read, draft, sidecar, and
+    published handoff in agreement (R9). Only unfenced trailing headings are
+    touched, and the tier band is re-stamped idempotently by the wrapper.
+    """
+    lines = body.splitlines()
+    while lines:
+        in_fence = False
+        last_heading = -1
+        for idx, line in enumerate(lines):
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if not in_fence and line.startswith("### "):
+                last_heading = idx
+        if last_heading == -1:
+            break
+        if lines[last_heading].strip() not in _HANDOFF_CONTEXT_SECTIONS:
+            break
+        del lines[last_heading:]
+    return "\n".join(lines).rstrip()
+
+
 def _source_to_issue_body_unstamped(
     source: str,
     issue_type: str,
@@ -5344,9 +5385,15 @@ def _source_to_issue_body_unstamped(
     _, clean_source = _strip_frontmatter_and_title(source)
     stripped = clean_source.strip()
     if "### " in stripped:
-        if "### Handoff maturity" in stripped:
-            return stripped
-        return stripped + _render_handoff_context(handoff_maturity, source_artifact, next_action)
+        # The handoff sections are machine-rendered projections of THIS
+        # prepare (like the sidecar), not author content — a revision chain
+        # passes the prior draft in as the source, so its stale sections are
+        # stripped and re-rendered from the current maturity/artifact
+        # (review-finding #5 cascade: R9 requires the body's source context
+        # to agree with the sidecar on the chosen source).
+        return _strip_trailing_handoff_context(stripped) + _render_handoff_context(
+            handoff_maturity, source_artifact, next_action
+        )
     if issue_type in _DISPATCH_ACTIONABLE_TYPES:
         return _contract_scaffold_body(
             stripped, issue_type, risk, source_artifact
@@ -5621,8 +5668,53 @@ def _saga_maturity_block(maturity: str) -> str | None:
     )
 
 
-def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
-    blocking: list[str] = []
+def _maturity_declaration_conflicts(
+    explicit_maturity: str, source_artifact: SourceArtifact
+) -> list[str]:
+    """Ruling 942-5: reconcile an explicit --maturity with the source's declaration.
+
+    Re-assesses the artifact's named source through the owner and blocks only on
+    a POSITIVELY-confirmed declaration: a declaration-class source (draft
+    sidecar, Saga state), or a pending-confirmation / deferred-context value,
+    which only a real declaration can produce. A path-only fallback is not a
+    declaration, so the override keeps winning there. Known contract residue
+    (flagged to the review): a plain-class file whose FRONTMATTER declares a
+    ready-state value is indistinguishable from the path-only fallback through
+    the owner's major-1 contract, so the override also wins there.
+    """
+    readiness_owner = _saga_readiness_owner()
+    named = source_artifact.path or source_artifact.ref
+    try:
+        assessment = readiness_owner.assess_source(named)
+    except RuntimeError:
+        # The owner cannot re-resolve the named source (dependency problem, or
+        # a path outside the process root). Nothing is confirmed, so no gap —
+        # readiness still governs the recorded maturity.
+        return []
+    if assessment.refused:
+        return []
+    declared = assessment.maturity
+    confirmed = bool(assessment.declaration_required) or declared in (
+        "pending-confirmation",
+        "deferred-context",
+    )
+    if (
+        not confirmed
+        or declared == explicit_maturity
+        or declared != source_artifact.inferred_maturity
+    ):
+        return []
+    return [
+        f"--maturity {explicit_maturity!r} conflicts with the source's declared "
+        f"handoff maturity {declared!r} ({named}); an override must not promote an "
+        "artifact whose own declaration says otherwise"
+    ]
+
+
+def _readiness_for_prepared_issue(
+    issue: PreparedIssue, extra_blocking_gaps: list[str] | None = None
+) -> PreparedReadiness:
+    blocking: list[str] = list(extra_blocking_gaps or [])
     warnings: list[str] = []
 
     if issue.draft_path and Path(issue.draft_path).is_file():
@@ -5857,9 +5949,10 @@ def issue_prepare(
     draft_title = title or f"{issue_type}: {repo} {team} work"
     # #942: maturity resolution order — explicit --maturity wins over the
     # artifact's Saga assessment; the artifact's owner-derived value comes
-    # next; a text-only prepare (no --from, no --maturity) keeps its
-    # non-routed requirements-ready default WITHOUT loading the owner (lazy
-    # dependency: no source, no assessment, no Saga requirement).
+    # next; a text-only prepare (no --from, no --maturity) records NO handoff
+    # maturity (review finding #5): readiness reports the missing-maturity
+    # warning, nothing routes, and the owner is never loaded (lazy dependency:
+    # no source, no assessment, no Saga requirement).
     next_action: str | None = None
     if handoff_maturity:
         readiness_owner = _saga_readiness_owner()
@@ -5894,10 +5987,31 @@ def issue_prepare(
             )
         next_action = source_artifact.readiness_next_action
     else:
-        maturity = "requirements-ready"
+        maturity = None
+    # Ruling 942-5 (review finding #4): an explicit --maturity must reconcile
+    # with the source's own declaration before it wins. A positively-confirmed
+    # differing declaration (sidecar or state file, or a pending-confirmation /
+    # deferred-context value that only a declaration can produce) blocks naming
+    # both values; the override keeps winning over a path-only fallback, which
+    # is not a declaration.
+    extra_gaps: list[str] = []
+    if handoff_maturity and source_artifact is not None:
+        extra_gaps.extend(_maturity_declaration_conflicts(handoff_maturity, source_artifact))
     body = _source_to_issue_body(
         source, issue_type, team, repo, risk, mode, maturity, source_artifact, next_action
     )
+    # Ruling 1000-2 (review finding #3): a `--risk` seed that contradicts a
+    # well-formed `### Risk` section in a supplied body is recorded as a
+    # blocking gap naming both values. The body stays authoritative; the
+    # disagreement is loud instead of silently dropped on the floor. A
+    # malformed or missing body section already blocks through the Risk reader.
+    body_risk_token, body_risk_errors = _risk_from_body(body)
+    if risk and body_risk_token and not body_risk_errors and body_risk_token != risk:
+        extra_gaps.append(
+            f"--risk {risk!r} conflicts with the body's `### Risk` token "
+            f"{body_risk_token!r}; the body is authoritative — align the flag "
+            "with the body or drop the flag before creation"
+        )
     issue = PreparedIssue(
         title=draft_title,
         repo=repo,
@@ -5911,7 +6025,7 @@ def issue_prepare(
         # past this point. Supplied bodies pass through untouched, so a missing
         # or malformed Risk section there derives None and blocks in readiness
         # no matter what --risk or the risk labels said.
-        risk=_risk_from_body(body)[0],
+        risk=body_risk_token,
         mode=mode,
         stage=stage,
         body=body,
@@ -5925,7 +6039,7 @@ def issue_prepare(
     # it can reach approval. The validator runs inside readiness (the olympus
     # profile calls validate_card_body), so a malformed body fails readiness and
     # is forced to `blocked` below — it never reaches `needs_operator_approval`.
-    readiness = _readiness_for_prepared_issue(issue)
+    readiness = _readiness_for_prepared_issue(issue, extra_blocking_gaps=extra_gaps)
 
     target_dir = draft_dir or _PREPARED_DRAFT_DIR
     target_dir.mkdir(parents=True, exist_ok=True)

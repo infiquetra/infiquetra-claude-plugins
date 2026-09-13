@@ -139,9 +139,12 @@ asks for an Asgard or CAMPPS issue that should be reviewed before mutation.
 `/issue` is the primary user-facing command for this path. `/issue` remains a
 compatibility alias. `--prepare` is the canonical non-mutating mode; `--draft` means the same
 thing. `--from` accepts a local path, GitHub issue/PR URL, branch ref, or natural search hint.
-`--maturity` overrides the source's Saga-assessed handoff maturity; the owner
-classifies the value, so `pending-confirmation` and `deferred-context` are
-accepted alongside the four ready states.
+`--maturity` overrides the source's path-derived handoff maturity fallback; the
+owner classifies the value, so `pending-confirmation` and `deferred-context` are
+accepted alongside the four ready states. When the source itself carries a
+declaration (draft sidecar or Saga state) that differs from `--maturity`,
+prepare records a blocking gap naming both values instead of letting the flag
+win.
 
 ```bash
 python3 sdlc_manager.py issue prepare \

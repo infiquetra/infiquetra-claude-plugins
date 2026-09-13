@@ -1,5 +1,48 @@
 # Changelog
 
+## [2.16.0] - 2026-09-13
+
+### Added
+
+- **Saga-owned readiness for prepared sources (issue #942).** `issue prepare` no longer infers
+  handoff maturity from folder location or a local vocabulary. All readiness assessment is
+  delegated to the saga plugin's handoff envelope (`scripts/handoff_envelope.py`), resolved
+  through the installed-plugin registry (or `SAGA_ROOT`) and gated by contract major, API
+  surface, and a six-value functional vocabulary probe; an absent, incompatible, or broken Saga
+  dependency fails closed with a repairable diagnostic naming the fix. Undeclared drafts and
+  Saga state files are refused (`unknown:` sentinels), out-of-root sources are refused outright,
+  and only the four ready states route — `pending-confirmation` and `deferred-context` create
+  with warnings and never carry a live `/plan` or `/work` command. Explicit `--maturity` values
+  are classified by the owner, so those two states are now accepted alongside the four ready
+  ones.
+- **`flow repair-window` verb (issue #1000).** Opens or closes the schema-marker
+  `repair-window` label on an issue over REST labels: citation-first refusal (missing or blank
+  citation never reaches the network), idempotent transitions (open no-ops when the label is
+  present, close no-ops when absent), one citation comment per real transition, and no GraphQL
+  project-field writes. When the vendored schema declares `marker_source`, the marker definition
+  resolves from the loaded config and an old schema lacking the marker refuses.
+
+### Changed
+
+- **Risk is a common body field (issue #1000).** `### Risk` is the 14th required card section:
+  `low`, `medium`, `high`, or `very-high` on the first line plus a non-placeholder
+  justification, or uppercase `UNKNOWN` with an Architect-assessment justification. UNKNOWN
+  cards pass validation and creation with a warning naming the missing assessment; the
+  Planning-to-Active gate refuses UNKNOWN, missing, or malformed Risk. `--risk` seeds only
+  compiled scaffolds — supplied bodies pass through untouched — and risk is re-derived from the
+  body on every read.
+- **Count-only WIP tracking (issue #999).** WIP limits count cards only; the per-card estimate
+  reading is retired along with the schema's estimate keys.
+- **Vendored SDLC schema re-synced to `2026-09-07.5` (issue #999).** The vendored snapshot and
+  generated contract files move to the authoritative source; `workflows.intent_flow` is retired
+  in favor of `workflows.stage_flow`.
+
+### Removed
+
+- **Technical Risk GraphQL project field (issue #1000).** The prepared-field Risk producer, its
+  project-field mapping, and the interactive prompt entry are gone; Technical Risk is retired
+  as a project field (E1) and Risk lives in the body only.
+
 ## [2.15.2] - 2026-08-30
 
 ### Fixed - retire the CAMPPS ladder from the board skill and kanban reference (unit W19, issue infiquetra/infiquetra-sdlc#100)

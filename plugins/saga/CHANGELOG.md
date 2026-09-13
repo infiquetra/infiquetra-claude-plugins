@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.158.0] - 2026-09-13
+
+- **Shared readiness owner on the handoff envelope (issue #942).** `scripts/handoff_envelope.py`
+  now exposes the readiness assessment that lifecycle consumers delegate to instead of
+  re-inferring maturity locally. `assess_source(source, root=None)` resolves a source against
+  the declared root — out-of-root refusal, in-root twin re-anchor, strict sidecar and Saga-state
+  declarations, `unknown:` fail-closed sentinels — and returns a frozen `ReadinessAssessment`
+  (maturity, routable, diagnostic, next_action, path_read, published_source, reanchored,
+  refused, declaration_required, contract_major). `assess_declared(value, published_source, *,
+  declaration_required)` classifies explicit declarations against the six-value vocabulary.
+  `READINESS_CONTRACT_MAJOR = 1` lets a consumer gate the contract before use. Mission
+  Control's prepared-issue path is the first delegated consumer. Assessment-surface diagnostics
+  are path-free so a non-routable result can never carry a literal `/plan` or `/work` substring
+  from a display path; the frozen `_maturity_diagnostic` prose behind
+  `build_handoff_envelope`'s `suggested_command` is unchanged.
+
 ## [0.157.1] - 2026-09-06
 
 - The Plan documentation validator resolves the effort engine from the checkout named by

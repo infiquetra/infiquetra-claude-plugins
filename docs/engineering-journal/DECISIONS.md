@@ -1,5 +1,88 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-13
+
+### Prepared-source readiness has one owner: saga's handoff envelope {#942-saga-readiness-owner}
+
+Mission Control no longer infers handoff maturity for prepared sources. The
+`issue prepare` path delegates every readiness assessment to
+`plugins/saga/scripts/handoff_envelope.py` — saga's `assess_source` and
+`assess_declared` — resolved through the installed-plugin registry (or
+`SAGA_ROOT`) and gated by a three-step probe: contract major
+(`READINESS_CONTRACT_MAJOR = 1`), API callables, and a functional vocabulary
+probe that asks the owner to classify all six maturity values at call time.
+Mission Control keeps no local vocabulary tuple and no folder-location
+inference; both were deleted.
+
+The sentinel decision is fail-closed everywhere: an undeclared draft or Saga
+state file refuses with an `unknown:` sentinel (the drafts folder or state
+path alone never makes a source ready), an out-of-root source is refused
+before it is read, and a missing or incompatible Saga dependency is a
+blocking readiness gap with a repairable diagnostic naming the fix — never a
+silent fallback to inference. Only the four ready states route;
+`pending-confirmation` and `deferred-context` create with warnings and never
+carry a live command.
+
+Alternatives rejected: keeping a synchronized local vocabulary tuple — the
+two vocabularies had already drifted once, which is the defect this closes;
+inferring maturity from the artifact path — location is not a declaration
+and it produced the retired `_infer_maturity_from_path`; and copying saga's
+parser into mission-control — a second owner guarantees divergence. Lazy
+loading without a module cache is deliberate: per-test monkeypatching of the
+loader is part of the consumer's contract surface.
+
+Revisit when saga changes its maturity vocabulary or bumps
+`READINESS_CONTRACT_MAJOR`; the probe fails closed on both, so the revisit
+is forced by the gate, not by a drift hunt.
+
+### Risk is a body field, not a project field {#1000-risk-body-field}
+
+`### Risk` is the 14th required card section: one of `low`, `medium`,
+`high`, `very-high` on the first line plus a non-placeholder justification,
+or uppercase `UNKNOWN` with an explicit Architect-assessment justification.
+UNKNOWN cards pass validation and creation with a warning that names the
+missing assessment; the Planning-to-Active gate refuses UNKNOWN, missing, or
+malformed Risk. `--risk` seeds only compiled scaffolds; a supplied body is
+never rewritten by metadata, and risk is re-derived from the body on every
+read. The retired Technical Risk GraphQL project field (E1) is removed from
+the prepared-field producers, mappings, and the interactive prompt.
+
+The repair-window marker ships as a REST label verb (`flow repair-window`)
+with citation-first refusal, idempotent open/close, and no GraphQL
+project-field write — the citation comment is the evidence surface, not a
+field value.
+
+Alternatives rejected: keeping Risk as a GraphQL project field — project
+fields cannot be re-derived from the card and had already diverged from
+bodies (the E1 retirement reason); seeding missing Risk sections from
+`--risk` metadata — a validator that can be satisfied by the same flag that
+bypassed it validates nothing. Body-is-source keeps one authoritative copy
+that reads and writes agree on.
+
+Revisit when project-side automation needs to query Risk without reading
+issue bodies; that would need a derived-index decision, not a return to the
+retired field.
+
+### The vendored SDLC schema tracks the live source, and WIP is count-only {#999-schema-resync-count-only-wip}
+
+The vendored `config/sdlc-schema.json` and generated contract files were
+re-synced to the authoritative `2026-09-07.5` source. The retired
+`workflows.intent_flow` is gone from the vendored copy and from every reader;
+`workflows.stage_flow` is the only board workflow. WIP limits are count-only:
+the per-card estimate keys are retired from the schema and the readers count
+cards, because no live consumer read the estimates and the keys invited
+divergence between two ways of being "at WIP".
+
+Alternatives rejected: leaving the stale pin — the vendored copy disagreed
+with the live boards, and the resolution chain (remote → vendored → local)
+meant an offline machine read a workflow that no longer exists; keeping a
+compat shim for `intent_flow` readers — every reader was migrated in the
+same change, so the shim would have had no consumer on the day it shipped.
+
+Revisit when the SDLC source reintroduces per-card sizing or a second
+workflow; the vendored resync is mechanical and the readers are keyed to
+schema version, not to date.
+
 ## 2026-09-06
 
 ### Plan documentation proof is callable without the test runner {#926-plan-proof-without-pytest}

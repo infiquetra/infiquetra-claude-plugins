@@ -4804,7 +4804,6 @@ def _source_from_local_path(path: Path, root: Path | None = None) -> SourceArtif
         resolved = root / resolved
     if not resolved.exists() or not resolved.is_file():
         raise RuntimeError(f"Source artifact path does not exist or is not a file: {path}")
-    content = resolved.read_text(encoding="utf-8")
     try:
         display_path = resolved.relative_to(root).as_posix()
     except ValueError:
@@ -4812,6 +4811,12 @@ def _source_from_local_path(path: Path, root: Path | None = None) -> SourceArtif
     # #942: readiness is Saga-owned. The owner assesses the published source —
     # declaration reads, out-of-root refusal, vocabulary classification — and
     # this consumer acts on the assessment instead of a folder fallback.
+    # Review finding #2: the assessment happens BEFORE any byte of the file is
+    # read, so a refused source is never opened; and the bytes then come from
+    # the assessment's own read (`assessment.path_read`), which is the
+    # re-anchored twin when the owner re-anchored — read, draft, sidecar, and
+    # published source agree on the chosen source instead of pairing the
+    # twin's identity with the outside original's content.
     readiness_owner = _saga_readiness_owner()
     assessment = readiness_owner.assess_source(display_path, root)
     if assessment.refused:
@@ -4825,10 +4830,16 @@ def _source_from_local_path(path: Path, root: Path | None = None) -> SourceArtif
             f"Source artifact readiness problem for {display_path}: "
             f"{maturity or 'blank'}. {assessment.diagnostic}".strip()
         )
+    if not assessment.path_read:
+        raise RuntimeError(
+            f"Source artifact readiness problem for {display_path}: the Saga "
+            f"owner resolved no readable file ({maturity})."
+        )
+    content = Path(assessment.path_read).read_text(encoding="utf-8")
     return SourceArtifact(
         ref=assessment.published_source,
         kind=_infer_kind_from_path(Path(display_path)),
-        title=_markdown_title(content, resolved.stem),
+        title=_markdown_title(content, Path(assessment.path_read).stem),
         content=content,
         inferred_maturity=maturity,
         path=display_path,
@@ -4975,7 +4986,13 @@ def find_source_artifacts(hint: str, root: Path | None = None) -> list[SourceArt
                 continue
             text = candidate.read_text(encoding="utf-8")
             if _source_matches_hint(candidate, text, hint):
-                artifact = _source_from_local_path(candidate, root)
+                try:
+                    artifact = _source_from_local_path(candidate, root)
+                except RuntimeError:
+                    # Review finding #6: a non-routable candidate is simply
+                    # not a match — an undeclared, blank, or refused file is
+                    # skipped and the search continues instead of aborting.
+                    continue
                 matches.append((candidate.stat().st_mtime, artifact))
     matches.sort(key=lambda item: item[0], reverse=True)
     return [artifact for _, artifact in matches]

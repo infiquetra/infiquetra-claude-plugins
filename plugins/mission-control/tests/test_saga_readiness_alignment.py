@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -68,7 +68,9 @@ The change is confined to a pin test.
 def isolate_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     copy = tmp_path / "vendored-sdlc-schema.json"
     copy.write_bytes(VENDORED_SCHEMA.read_bytes())
-    schema = json.loads(copy.read_text(encoding="utf-8"))
+    loaded = json.loads(copy.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    schema = cast(dict[str, Any], loaded)
     monkeypatch.setattr(sdlc_manager, "_VENDORED_SDLC_SCHEMA_PATH", copy)
     monkeypatch.setattr(sdlc_manager, "_resolve_sdlc_schema", lambda _path: schema)
 
@@ -174,6 +176,15 @@ def _maturity_of(obj: Any) -> str:
 
 def _next_action_of(obj: Any) -> str:
     return str(getattr(obj, "next_action", "") or "")
+
+
+def _incomplete_vocab_assess_declared(
+    value: object, _published: object, *, declaration_required: bool = False
+) -> SimpleNamespace:
+    token = str(value)
+    if token == "idea-ready":
+        return SimpleNamespace(maturity="idea-ready")
+    return SimpleNamespace(maturity=f"unknown:unrecognized:{token}")
 
 
 def test_t942_01_pending_confirmation_stays_pending_confirmation(
@@ -444,6 +455,7 @@ def test_t942_07_missing_saga_is_a_dependency_diagnostic(
             READINESS_CONTRACT_MAJOR=1,
             HANDOFF_MATURITIES=("idea-ready",),
             assess_source=lambda *_a, **_k: None,
+            assess_declared=_incomplete_vocab_assess_declared,
         ),
     ),
     ids=("missing-contract", "wrong-major", "incomplete-vocab"),
@@ -522,6 +534,27 @@ def test_t942_09_malformed_and_unknown_declarations_fail_closed(
     unreadable.write_bytes(b"\xff\xfe\xfd\xfc\xfb")
     saga = assess("docs/brainstorms/binary.md", tmp_path)
     assert _maturity_of(saga).startswith("unknown:")
+    assert _has_live_route(_next_action_of(saga)) is False
+    draft_dir = tmp_path / "out-binary.md"
+    draft_dir.mkdir()
+    with pytest.raises((RuntimeError, UnicodeDecodeError), match="unknown|utf-8|codec|unreadable"):
+        sdlc_manager.issue_prepare(
+            repo="hermes-claude-code-router",
+            issue_type="enhancement",
+            team="campps",
+            project="campps",
+            source=F_VALID_LOW,
+            title="binary.md",
+            status=None,
+            risk=None,
+            mode=None,
+            draft_dir=draft_dir,
+            stage="Intake",
+            source_artifact=sdlc_manager.resolve_source_artifact(
+                "docs/brainstorms/binary.md", tmp_path
+            ),
+        )
+    assert list(draft_dir.glob("*.md")) == []
 
 
 def test_t942_10_no_local_parser_and_entry_points_agree(
@@ -532,11 +565,50 @@ def test_t942_10_no_local_parser_and_entry_points_agree(
     assert "_infer_maturity_from_path" not in source
     assert not hasattr(sdlc_manager, "_HANDOFF_MATURITY_CHOICES")
 
-    path = _brainstorm_pending(tmp_path)
-    rel = path.relative_to(tmp_path).as_posix()
     owner, assess = _assess_source()
-    saga = assess(rel, tmp_path)
-    artifact = sdlc_manager.resolve_source_artifact(rel, tmp_path)
-    assert artifact.inferred_maturity == _maturity_of(saga)
-    assert artifact.ref == getattr(saga, "published_source", artifact.ref)
-    assert _has_live_route(_next_action_of(saga)) is (_maturity_of(saga) in LIVE_COMMAND_STATES)
+    resolvable: list[str] = []
+    refused: list[str] = []
+
+    pending = _brainstorm_pending(tmp_path)
+    resolvable.append(pending.relative_to(tmp_path).as_posix())
+    for folder, name, state in (
+        ("docs/brainstorms", "idea.md", "idea-ready"),
+        ("docs/plans", "plan.md", "plan-ready"),
+        ("docs/brainstorms", "deferred.md", "deferred-context"),
+        ("docs/brainstorms", "pending.md", "pending-confirmation"),
+    ):
+        path = _declared_markdown(tmp_path, folder, name, state)
+        resolvable.append(path.relative_to(tmp_path).as_posix())
+    resolvable.append(_declared_draft(tmp_path, "resume-ready").relative_to(tmp_path).as_posix())
+    twin = _write(
+        tmp_path,
+        "docs/brainstorms/selected-twin.md",
+        "---\nmaturity: plan-ready\n---\n\n# Twin\n",
+    )
+    resolvable.append(twin.relative_to(tmp_path).as_posix())
+
+    _draft_bare(tmp_path)
+    refused.append("docs/sdlc-issue-drafts/2026-09-13-bare-draft.md")
+    _write(tmp_path, "docs/brainstorms/bogus.md", "---\nmaturity: bogus-value\n---\n\n# Bogus\n")
+    refused.append("docs/brainstorms/bogus.md")
+    _write(tmp_path, "docs/brainstorms/blank.md", "---\nmaturity:\n---\n\n# Blank\n")
+    refused.append("docs/brainstorms/blank.md")
+    outside = tmp_path.parent / f"{tmp_path.name}-t942-10-outside.md"
+    outside.write_text("---\nmaturity: requirements-ready\n---\n\n# Out\n", encoding="utf-8")
+    refused.append(str(outside))
+
+    for rel in resolvable:
+        saga = assess(rel, tmp_path)
+        artifact = sdlc_manager.resolve_source_artifact(rel, tmp_path)
+        assert artifact.inferred_maturity == _maturity_of(saga), rel
+        assert artifact.ref == getattr(saga, "published_source", artifact.ref), rel
+        assert _has_live_route(_next_action_of(saga)) is (
+            _maturity_of(saga) in LIVE_COMMAND_STATES
+        ), rel
+
+    for rel in refused:
+        saga = assess(rel, tmp_path)
+        assert _maturity_of(saga) == "" or _maturity_of(saga).startswith("unknown:"), rel
+        assert _has_live_route(_next_action_of(saga)) is False, rel
+        with pytest.raises((RuntimeError, UnicodeDecodeError)):
+            sdlc_manager.resolve_source_artifact(rel, tmp_path)

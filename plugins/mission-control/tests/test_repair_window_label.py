@@ -8,7 +8,7 @@ import copy
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -54,11 +54,40 @@ def _with_marker(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _without_marker(schema: dict[str, Any]) -> dict[str, Any]:
+    out = copy.deepcopy(schema)
+    cursor: Any = out
+    for key in MARKER_PATH[:-1]:
+        if not isinstance(cursor, dict):
+            return out
+        nxt = cursor.get(key)
+        if not isinstance(nxt, dict):
+            return out
+        cursor = nxt
+    cursor.pop(MARKER_PATH[-1], None)
+    return out
+
+
+def _with_marker_and_source(schema: dict[str, Any]) -> dict[str, Any]:
+    out = _with_marker(schema)
+    cursor: dict[str, Any] = out
+    for key in MARKER_PATH[:-1]:
+        nxt = cursor.get(key)
+        assert isinstance(nxt, dict)
+        cursor = nxt
+    encoding = cursor[MARKER_PATH[-1]]
+    assert isinstance(encoding, dict)
+    encoding["marker_source"] = "config/labels.json"
+    return out
+
+
 @pytest.fixture
 def isolate_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     copy_path = tmp_path / "vendored-sdlc-schema.json"
     copy_path.write_bytes(VENDORED_SCHEMA.read_bytes())
-    schema = json.loads(copy_path.read_text(encoding="utf-8"))
+    loaded = json.loads(copy_path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    schema = cast(dict[str, Any], loaded)
     monkeypatch.setattr(sdlc_manager, "_VENDORED_SDLC_SCHEMA_PATH", copy_path)
 
     def _blocked_gh(*args: object, **kwargs: object) -> str:
@@ -75,14 +104,20 @@ def _repair_window():
 
 
 def _install_verb_harness(
-    monkeypatch: pytest.MonkeyPatch, schema: dict[str, Any], *, labels: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    schema: dict[str, Any],
+    *,
+    labels: list[str],
+    labels_config: dict[str, Any] | None = None,
 ) -> dict[str, MagicMock]:
+    config: dict[str, Any] = {
+        "sdlc_schema": schema,
+        "project_mappings": {"projects": {}},
+    }
+    if labels_config is not None:
+        config["labels"] = labels_config
     monkeypatch.setattr(sdlc_manager, "_resolve_sdlc_schema", lambda _path: schema)
-    monkeypatch.setattr(
-        sdlc_manager,
-        "load_config",
-        lambda: {"sdlc_schema": schema, "project_mappings": {"projects": {}}},
-    )
+    monkeypatch.setattr(sdlc_manager, "load_config", lambda: config)
     graphql = MagicMock(return_value={})
     monkeypatch.setattr(sdlc_manager, "_graphql", graphql)
     add = MagicMock()
@@ -235,9 +270,10 @@ def test_t1000_08_refuses_blank_citation_before_network(
 def test_t1000_08_refuses_schema_without_marker(
     tmp_path: Path, isolate_schema: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    harness = _install_verb_harness(monkeypatch, isolate_schema, labels=[])
+    schema = _without_marker(isolate_schema)
+    harness = _install_verb_harness(monkeypatch, schema, labels=[])
     fn = _repair_window()
-    with pytest.raises(RuntimeError, match="schema|marker|repair-window"):
+    with pytest.raises(RuntimeError, match="too old"):
         fn(
             repo="hermes-claude-code-router",
             number=42,
@@ -247,4 +283,45 @@ def test_t1000_08_refuses_schema_without_marker(
         )
     harness["add"].assert_not_called()
     harness["comment"].assert_not_called()
+    harness["verify"].assert_not_called()
+    _no_project_field_write(harness["graphql"])
+
+
+def test_t1000_08_marker_source_self_heals_label_definition(
+    tmp_path: Path, isolate_schema: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schema = _with_marker_and_source(isolate_schema)
+    labels_config = {
+        "labels": [
+            {
+                "name": "repair-window",
+                "color": "B60205",
+                "description": "Own verification failed; repair window open",
+            }
+        ]
+    }
+    present: list[str] = []
+    harness = _install_verb_harness(monkeypatch, schema, labels=[], labels_config=labels_config)
+    monkeypatch.setattr(sdlc_manager, "_get_item_labels", lambda *_a, **_k: list(present))
+
+    def _add(_repo: str, _number: int, label: str, fmt: str = "text") -> None:
+        if label not in present:
+            present.append(label)
+
+    harness["add"].side_effect = _add
+    fn = _repair_window()
+    fn(
+        repo="hermes-claude-code-router",
+        number=42,
+        action="open",
+        citation=F_CITE_FAIL,
+        fmt="json",
+    )
+    harness["verify"].assert_called_once()
+    assert harness["verify"].call_args.args[0] == "hermes-claude-code-router"
+    assert harness["verify"].call_args.args[1] == "repair-window"
+    assert harness["verify"].call_args.args[2] == "B60205"
+    assert harness["verify"].call_args.args[3] == ("Own verification failed; repair window open")
+    harness["add"].assert_called()
+    harness["comment"].assert_called_once()
     _no_project_field_write(harness["graphql"])

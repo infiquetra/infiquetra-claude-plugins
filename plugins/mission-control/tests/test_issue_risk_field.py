@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -79,7 +79,9 @@ def _names_risk(messages: list[str]) -> bool:
 def isolate_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     copy = tmp_path / "vendored-sdlc-schema.json"
     copy.write_bytes(VENDORED_SCHEMA.read_bytes())
-    schema = json.loads(copy.read_text(encoding="utf-8"))
+    loaded = json.loads(copy.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    schema = cast(dict[str, Any], loaded)
     monkeypatch.setattr(sdlc_manager, "_VENDORED_SDLC_SCHEMA_PATH", copy)
     monkeypatch.setattr(sdlc_manager, "_resolve_sdlc_schema", lambda _path: schema)
 
@@ -121,11 +123,14 @@ def _prepare(
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
         sidecar["labels"] = labels
         sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+    assert isinstance(draft, Path)
     return draft
 
 
 def _sidecar(draft: Path) -> dict[str, Any]:
-    return json.loads(draft.with_suffix(".json").read_text(encoding="utf-8"))
+    loaded = json.loads(draft.with_suffix(".json").read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return cast(dict[str, Any], loaded)
 
 
 def _mapped_config() -> dict[str, Any]:

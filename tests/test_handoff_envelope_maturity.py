@@ -1187,7 +1187,9 @@ def _assess_declared():
 def _maturity(assessment: object) -> str:
     if isinstance(assessment, str):
         return assessment
-    return str(assessment.maturity)
+    maturity = getattr(assessment, "maturity", None)
+    assert isinstance(maturity, str)
+    return maturity
 
 
 def _next_action(assessment: object) -> str:

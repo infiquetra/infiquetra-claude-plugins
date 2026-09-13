@@ -2,6 +2,22 @@
 
 ## 2026-09-13
 
+### A schema-too-old refusal test must strip the marker block, not reuse the live schema {#1000-schema-too-old-fixture}
+
+T1000-08's original "schema without marker" case fed the current vendored schema
+(which already declares `repair_window_encoding` plus `marker_source`) through a
+harness whose `load_config` omitted `labels`. The verb then refused on the
+unresolvable-definition branch, and the too-old branch never ran.
+
+**Evidence:** `flow_repair_window` (`sdlc_manager.py`) checks marker presence first
+("this schema is too old") and only then resolves `marker_source` against
+`config["labels"]`. Finding #8 in the 2026-09-13 Mission Control alignment code
+review.
+
+**Generalizable rule:** when a schema grows a required encoding block, a
+"schema too old" test must delete that block from a copied fixture. Reusing the
+current schema plus an incomplete `load_config` proves a different refusal.
+
 ### A `backend:` claim in frontmatter opts any document in docs/plans into the plan shape {#1004-plan-contract-backend-claim}
 
 The campaign's test-evidence documents (test scenarios, finite test plan)

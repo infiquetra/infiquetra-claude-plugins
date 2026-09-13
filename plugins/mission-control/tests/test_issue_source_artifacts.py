@@ -172,3 +172,37 @@ def test_out_of_root_source_is_refused(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="out-of-root|refus"):
         sdlc_manager.resolve_source_artifact(str(outside), tmp_path)
+
+
+# --- Review repairs (2026-09-13 code review) ---------------------------------
+
+
+def test_reanchored_twin_supplies_the_read_bytes(tmp_path) -> None:
+    """#2: a re-anchored source reads the twin's bytes, never the outside original's."""
+    twin = _write(
+        tmp_path,
+        "docs/plans/twin.md",
+        "---\nmaturity: plan-ready\n---\n\n# Twin declared bytes\n",
+    )
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-root"
+    outside = _write(outside_dir, "docs/plans/twin.md", "OUTSIDE-ORIGINAL-BYTES\n")
+
+    artifact = sdlc_manager.resolve_source_artifact(str(outside), tmp_path)
+
+    # The published identity is the twin's, so the content must be the twin's
+    # too — read, draft, sidecar, and published source agree.
+    assert artifact.ref == "docs/plans/twin.md"
+    assert artifact.content == twin.read_text()
+    assert "OUTSIDE-ORIGINAL-BYTES" not in artifact.content
+    assert artifact.inferred_maturity == "plan-ready"
+
+
+def test_hint_search_skips_undeclared_draft_and_keeps_matching(tmp_path) -> None:
+    """#6: an undeclared draft in the drafts folder is skipped, not fatal."""
+    path = _write(tmp_path, "docs/sdlc-issue-drafts/declared-draft.md", "# Declared draft\n")
+    path.with_suffix(".json").write_text(json.dumps({"handoff_maturity": "resume-ready"}))
+    _write(tmp_path, "docs/sdlc-issue-drafts/historical-undeclared.md", "# Historical draft\n")
+
+    matches = sdlc_manager.find_source_artifacts("draft", tmp_path)
+
+    assert [match.ref for match in matches] == ["docs/sdlc-issue-drafts/declared-draft.md"]

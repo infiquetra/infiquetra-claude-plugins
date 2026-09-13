@@ -563,3 +563,128 @@ def test_maturity_sidecar_conflict_blocks_draft_parse(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="handoff_maturity.*conflicts with sidecar"):
         sdlc_manager._read_prepared_issue(draft)
+
+
+# --- Review repairs (2026-09-13 code review) ---------------------------------
+
+
+def test_risk_flag_conflicting_with_body_records_blocking_gap(tmp_path) -> None:
+    """#3: a --risk seed contradicting the body's well-formed Risk section blocks."""
+    body = OLYMPUS_BODY.replace("### Risk\nmedium\n", "### Risk\nhigh\n")
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=body,
+        title="Risk conflict draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+        stage="Intake",
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+
+    assert sidecar["state"] == "blocked"
+    assert sidecar["readiness"]["passed"] is False
+    conflict = [gap for gap in sidecar["readiness"]["blocking_gaps"] if "--risk" in gap]
+    assert conflict, sidecar["readiness"]["blocking_gaps"]
+    assert "'medium'" in conflict[0] and "'high'" in conflict[0]
+
+
+def test_explicit_maturity_conflicting_with_declared_source_blocks(tmp_path, monkeypatch) -> None:
+    """#4: --maturity may not promote a source whose own declaration differs."""
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "docs" / "sdlc-issue-drafts" / "pending-declared.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Pending declared draft\n")
+    path.with_suffix(".json").write_text(json.dumps({"handoff_maturity": "pending-confirmation"}))
+    artifact = sdlc_manager.resolve_source_artifact(
+        "docs/sdlc-issue-drafts/pending-declared.md", tmp_path
+    )
+    assert artifact.inferred_maturity == "pending-confirmation"
+
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="enhancement",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Maturity override conflict",
+        status=None,
+        risk=None,
+        mode=None,
+        draft_dir=tmp_path / "out",
+        stage="Intake",
+        source_artifact=artifact,
+        handoff_maturity="plan-ready",
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "blocked"
+    conflict = [gap for gap in sidecar["readiness"]["blocking_gaps"] if "--maturity" in gap]
+    assert conflict, sidecar["readiness"]["blocking_gaps"]
+    assert "'plan-ready'" in conflict[0] and "'pending-confirmation'" in conflict[0]
+
+
+def test_explicit_maturity_still_wins_over_path_fallback(tmp_path, monkeypatch) -> None:
+    """#4: the override wins over a path-only fallback, which is not a declaration."""
+    monkeypatch.chdir(tmp_path)
+    plain = tmp_path / "docs" / "brainstorms" / "plain-source.md"
+    plain.parent.mkdir(parents=True, exist_ok=True)
+    plain.write_text("# Plain brainstorm source\n")
+    artifact = sdlc_manager.resolve_source_artifact("docs/brainstorms/plain-source.md", tmp_path)
+    assert artifact.inferred_maturity == "requirements-ready"
+
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="enhancement",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Path fallback override",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path / "out",
+        stage="Intake",
+        source_artifact=artifact,
+        handoff_maturity="plan-ready",
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["handoff_maturity"] == "plan-ready"
+    assert not [gap for gap in sidecar["readiness"]["blocking_gaps"] if "--maturity" in gap]
+
+
+def test_text_only_prepare_works_with_saga_absent(tmp_path, monkeypatch) -> None:
+    """#5: a text-only prepare never loads the owner, so it works with Saga absent."""
+
+    def _missing_owner() -> object:
+        raise RuntimeError("Saga readiness owner dependency problem (test stub)")
+
+    monkeypatch.setattr(sdlc_manager, "_load_saga_readiness_owner", _missing_owner)
+
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Saga-less text-only draft",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+        stage="Intake",
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["state"] == "ready_to_create"
+    assert sidecar["readiness"]["passed"] is True
+    assert sidecar["handoff_maturity"] is None
+    assert any(
+        "Missing handoff maturity" in warning for warning in sidecar["readiness"]["warnings"]
+    )

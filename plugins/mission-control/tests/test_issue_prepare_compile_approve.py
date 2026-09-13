@@ -129,11 +129,12 @@ def test_issue_prepare_populates_project_fields(tmp_path) -> None:
 
     fields = _sidecar(draft)["project_fields"]
 
-    # Issue type comes straight from metadata; Lifecycle Origin is the
-    # auto-populated field (R10) carrying the handoff maturity that drove this
-    # draft. No source artifact was supplied, so no Objective is invented.
+    # Issue type comes straight from metadata; Lifecycle Origin (R10) carries
+    # the handoff maturity that drove this draft. A text-only prepare records
+    # NO handoff maturity (review finding #5), so the field is absent. No
+    # source artifact was supplied, so no Objective is invented either.
     assert fields["Issue Type"] == "capability"
-    assert fields["Lifecycle Origin"] == "requirements-ready"
+    assert "Lifecycle Origin" not in fields
     assert "Objective" not in fields
     # #1000 decision E1: Risk has no project-field projection — the sidecar
     # never records it; the body's `### Risk` section is the only source.

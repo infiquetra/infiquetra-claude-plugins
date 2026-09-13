@@ -127,7 +127,12 @@ def test_prepare_revision_twice_yields_single_document(tmp_path: Path) -> None:
     # Assert single H1 title and single body
     text3 = draft3.read_text()
     assert text3.count("# Second revision") == 1
-    assert "First revision" not in text3
+    # The machine-rendered handoff sections are a pure projection (R9): the
+    # body compiler strips any trailing ones and re-renders fresh, so draft3
+    # names its actual source (draft2, titled "First revision") instead of
+    # carrying draft2's stale section verbatim. The two-steps-back source
+    # (draft1, "Initial draft") is gone.
+    assert "- Source title: First revision" in text3
     assert "Initial draft" not in text3
 
     # Sidecar and readiness pass

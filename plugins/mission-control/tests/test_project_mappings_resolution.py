@@ -222,13 +222,13 @@ def test_vendored_sdlc_schema_declares_current_live_boards() -> None:
     assert data["boards"]["operations"]["live_creation"] == "created_2026-05-29_project_3"
     assert data["boards"]["asgard"]["status"] == "active"
     assert data["boards"]["asgard"]["live_creation"] == "created_2026-05-29_project_2"
-    assert data["workflows"]["intent_flow"]["statuses"] == [
-        "Idea",
+    assert data["workflows"]["stage_flow"]["stages"] == [
+        "Intake",
         "Shaping",
-        "Ready",
+        "Planning",
         "Active",
         "Verify",
-        "Done",
+        "Retro",
     ]
 
 

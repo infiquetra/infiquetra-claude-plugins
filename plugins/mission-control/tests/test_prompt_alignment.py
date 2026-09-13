@@ -43,8 +43,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.15.2"
-    )  # W19: retired CAMPPS ladder removed from board skill docs (infiquetra-sdlc#100)
+        plugin_json["version"] == "2.16.0"
+    )  # 2.16.0: schema resync, Risk body field, Saga readiness delegation (issues 999/1000/942)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]
@@ -170,7 +170,7 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
     schema = json.loads(_read(PLUGIN_ROOT / "config/sdlc-schema.json"))
     roles = schema["work_hierarchy"]["roles"]
 
-    assert schema["schema_version"] == "2026-08-29"
+    assert schema["schema_version"] == "2026-09-07.5"
     assert roles["objective"]["project_view_group_by"] == "Objective"
     assert roles["outcome"]["required_by_default"] is False
     assert roles["capability"]["default_parent_role"] is None
@@ -180,10 +180,10 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
     assert schema["teams"]["olympus"]["board"] is None
     assert "olympus" not in schema["boards"]
     assert schema["boards"]["campps"]["status"] == "active"
-    # 2026-08-29 schema: the Asgard field set slimmed to the lifecycle pair
-    # (Stage/Status) + Objective/Priority; Mode, target surface, risk and
-    # transfer intent moved into the issue body per the card contract, and the
-    # retired target_team_values list was deleted from team_routing.
+    # The Asgard field set slimmed to the lifecycle pair (Stage/Status) +
+    # Objective/Priority; Mode, target surface, risk and transfer intent moved
+    # into the issue body per the card contract, and the retired
+    # target_team_values list was deleted from team_routing.
     assert "Stage" in schema["fields"]["asgard"]
     assert "Transfer Target" not in schema["fields"]["asgard"]
     assert "Promotion Target" not in schema["fields"]["asgard"]

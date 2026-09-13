@@ -1,5 +1,61 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-09-13
+
+### A `backend:` claim in frontmatter opts any document in docs/plans into the plan shape {#1004-plan-contract-backend-claim}
+
+The campaign's test-evidence documents (test scenarios, finite test plan)
+landed in `docs/plans/` carrying `backend: team-execution` frontmatter, and
+the full gate went red on `test_plan_artifact_conformance.py`: with
+`backend:` present the plan-artifact contract holds the documents to the
+marker triple (Implementation Units / Key Technical Decisions / the `U1`
+U-ID prefix), which a scenario catalog does not have and should not fake.
+
+**Evidence:** `plugins/saga/scripts/plan_artifact_conformance.py`
+(legacy = absence of `backend:`, and nothing else — KTD3; legacy findings
+are reported, never failing) and the corpus precedent
+`docs/plans/2026-07-15-cross-runtime-outcome-acceptance-plan.md`, the one
+prior `type: test` document, which carries no `backend:` field. The trap is
+silent until a full-suite run because the scanner runs in the gate's test
+step, not at authoring time.
+
+**Mechanism:** `backend:` is not metadata — it is a contract trigger. The
+planning process stamped execution-plan frontmatter onto evidence documents,
+and the contract reasonably believed the claim.
+
+**Generalizable rule:** documents in `docs/plans/` that define evidence
+(scenarios, test plans, groundings) must not carry a `backend:` field;
+only documents whose units are independently landable through a backend
+claim it. When a non-execution document fails the marker contract, the
+repair is to drop the `backend:` claim, not to fabricate unit markers.
+
+### A substring route-oracle trips over the very paths it routes to {#942-substring-route-oracle}
+
+The T942 oracle asserts a non-routable assessment never carries a live
+command by checking `"/plan" not in text and "/work" not in text`. The
+owner's diagnostic embedded the display path, and a source at
+`docs/plans/declared.md` contains the literal `/plan` — so the two
+deferred/pending states failed their own no-route assertion because the file
+lived in the plans directory.
+
+**Evidence:** `plugins/saga/scripts/handoff_envelope.py`
+(`_assessment_diagnostic`, made path-free) and
+`plugins/mission-control/tests/test_saga_readiness_alignment.py` (`_has_live_route`). The
+defect was masked through U4 because the consumer raised before the oracle's
+assert ran — the red baseline hid it, and the first fully-green consumer run
+exposed it.
+
+**Mechanism:** the oracle treats prose as if it could not contain route
+syntax, but prose quotes paths and paths share names with commands. The
+command vocabulary and the directory namespace are not disjoint, so a raw
+substring check over any text that may quote a path is unsound in both
+directions.
+
+**Generalizable rule:** when an oracle must distinguish "contains a route
+command" from "mentions a path", make the non-routable prose path-free
+before making the oracle smarter — a diagnostic that quotes no paths cannot
+collide with the command namespace, and the oracle stays a substring check.
+
 ## 2026-09-06
 
 ### A green local gate proved only that the operator had a plugin installed {#926-fleet-root-host-leak}

@@ -2939,9 +2939,11 @@ def _lifecycle_field_boards(repo: str, number: int, field_name: str) -> list[dic
             value = field_value.get("name")
             if value:
                 prior_value = value
+        project_number = project.get("number")
+        key = number_to_key.get(project_number) if isinstance(project_number, int) else None
         records.append(
             {
-                "key": number_to_key.get(project.get("number")),
+                "key": key,
                 "title": project.get("title"),
                 "project_number": project.get("number"),
                 "item_id": item.get("id"),
@@ -3089,7 +3091,7 @@ def _set_lifecycle_field_cross_board(
             )
             written.append(entry)
     except Exception as write_exc:
-        divergent: list[dict[str, Any]] = []
+        unrestored: list[dict[str, Any]] = []
         restored: list[str] = []
         for entry in written:
             new_value = option_name
@@ -3098,7 +3100,7 @@ def _set_lifecycle_field_cross_board(
                 # KTD8: the board carried no prior value (or the prior option no
                 # longer resolves), and no clear mutation exists — the board
                 # cannot be put back. Report it, never silently leave it.
-                divergent.append(
+                unrestored.append(
                     {
                         "board": entry["key"],
                         "held_value": new_value,
@@ -3119,15 +3121,15 @@ def _set_lifecycle_field_cross_board(
                 )
                 restored.append(entry["key"])
             except Exception as restore_exc:
-                divergent.append(
+                unrestored.append(
                     {
                         "board": entry["key"],
                         "held_value": new_value,
                         "reason": f"restore failed: {restore_exc}",
                     }
                 )
-        if divergent:
-            divergent_boards = {d["board"] for d in divergent}
+        if unrestored:
+            divergent_boards = {d["board"] for d in unrestored}
             board_state = [
                 {
                     "board": entry["key"],
@@ -3139,11 +3141,11 @@ def _set_lifecycle_field_cross_board(
             ]
             raise LifecycleMutationHaltError(
                 f"COMPENSATION FAILED writing {field_name}='{option_name}' to "
-                f"{repo}#{number}. {len(divergent)} already-written board(s) could "
+                f"{repo}#{number}. {len(unrestored)} already-written board(s) could "
                 f"not be restored: "
                 + "; ".join(
                     f"{d['board']} still shows '{d['held_value']}' ({d['reason']})"
-                    for d in divergent
+                    for d in unrestored
                 )
                 + f". Restored OK: {restored or 'none'}. Board state now: "
                 + "; ".join(f"{s['board']} shows '{s['shows']}'" for s in board_state)

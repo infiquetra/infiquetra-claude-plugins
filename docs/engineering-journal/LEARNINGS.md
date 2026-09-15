@@ -1,5 +1,77 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-09-15
+
+### A release bump is incomplete until its dependent version guards are in the plan  {#993-release-bump-plan-inventory}
+
+**Context.** Run #993 moved Team Execution's release surfaces from 3.1.0 to 3.1.1 while correcting the live-effort marker. The accepted plan covered the manifest, changelog, and generated marketplace entry, but its custody and scenario inventory did not include a separate test that also pinned the old version.
+
+**Evidence.** At `tests/test_team_execution_plugin.py:65`, the full gate on Volund's U1 tree failed on `plugin_json["version"] == "3.1.0"` after the U1 work correctly required 3.1.1: 7,826 passed, 7 skipped, 1 xfailed, 1 failed. Volund's a8.1 card `t_dbe1a320` reported the failure and refused both an out-of-custody test edit and a gate exception. Kvasir's correction overlay (repair-plan attachment 151) added U1b custody for that test and ordered U1b before U1; PR #1008 / commit `130d58dc29d599f02706fbf7c124c88f5d0afd42` removed the stale pin, and PR #1009 / commit `72f02386fafce347b6882a428fc83f660e198a4b` then passed the 25-step gate.
+
+**Mechanism.** Release-surface parity checks compare the metadata triad with itself; they do not enumerate independent consumers that snapshot the released version. A version change therefore invalidated a guard outside the original custody map. Because the test belonged to the test-author lane, the implementer could not repair it without violating custody; the first full gate was the first place where the plan gap became a concrete deadlock.
+
+**Fix.** The plan was corrected rather than weakened: U1b retained `entry["version"] == plugin_json["version"]` with `plugin.json` as the source of truth, merged before U1, and the six-path run scope plus B1 review set were amended. The final parent merged as `b0e102ae0a534ba60ae86dbff802bc7ee4784139` and deployed as Team Execution 3.1.1.
+
+**Generalizable rule.** Treat every release-surface bump as a dependency-inventory event: enumerate version assertions and drift guards, assign their test custody, and put their update scenario in the same plan before assigning the release unit. A parity triad is not proof that its consumers moved.
+
+**Refs.** Run #993 plan attachment 147; repair-plan attachment 151; PRs [#1008](https://github.com/infiquetra/infiquetra-claude-plugins/pull/1008) and [#1009](https://github.com/infiquetra/infiquetra-claude-plugins/pull/1009); related `{#fleet-core-version-pins-outside-parity-627}`.
+
+### When a sibling advances the parent, recreate the unit branch from the new head  {#993-unit-branch-base-retarget}
+
+**Context.** U1 was initially branched before U1b merged. After U1b landed, Volund correctly rebased the worktree onto the new parent head, but the remote U1 branch still pointed at the pre-U1b head.
+
+**Evidence.** The old unit branch was at `d93c21970cc65ba949c61b5b61ae808af1ac77fd`; U1b moved the parent to `dde0b22da789aca4bb884b87b0c6985c1e7c3d16`. The rail then refused the U1 commit with `protected-surface BLOCKED` because `tests/test_team_execution_plugin.py` appeared as one net-deleted test line relative to the stale remote U1 head. No token, commit, or PR was created by that attempt. The Delivery Manager created `asgard/infiquetra-claude-plugins-993-u1-fix1` from `dde0b22d` and retargeted the card with `asgard_retarget.py`; the resulting U1 commit `72f02386...` and PR #1009 landed without a force-push or gate exception. The run record's `u1_retarget` receipt records the old branch, new branch, base SHA, and the untouched superseded ref.
+
+**Mechanism.** The protected-surface guard compares the worktree/index against the remote unit head. A sibling's already-landed test replacement is therefore interpreted as a deletion when the unit ref still names the pre-sibling tree. Force-pushing the old ref would erase the branch-base transition from the audit trail and would not change the fact that the guard is comparing the wrong baseline.
+
+**Fix.** The approved recovery is a fresh branch from the new parent head plus card retargeting. The superseded branch remains remote and untouched; the unit resumes on the new ref.
+
+**Generalizable rule.** If a parent advances before an unmerged unit commits, create a new `-fix<k>` branch from the exact parent head and retarget the unit; never force-push a stale unit branch and never waive a protected-surface guard to hide the base mismatch.
+
+**Refs.** Run #993 `u1_retarget`; a8.1 card `t_dbe1a320`; PR [#1009](https://github.com/infiquetra/infiquetra-claude-plugins/pull/1009).
+
+### A hermetic cache setting can change subprocess timing enough to invalidate a debounce gate  {#993-cache-prefix-breaks-timing}
+
+**Context.** The first functional run on the deployed merge artifact failed TP-18 even though the same tree had passed the same 25-step gate three times earlier. The failing assertion was a scheduling-sensitive throughput check, not a changed Team Execution behavior.
+
+**Evidence.** Huginn's investigation attachment 168 reproduced `tests/test_orchestrate_wait_debounce.py:364`, `assert 6 > 10`, deterministically on an idle machine: the a14 wrapper's `PYTHONPYCACHEPREFIX=<empty dir>` plus `PYTHONDONTWRITEBYTECODE=1` setting failed 1/1 with the pair and passed 1/1 without it. Child `import json` rose from 19.5 ms to 50.5 ms median, reducing the one-second window from 16–17 to 5–7 wait calls. The A/B bisect isolated `PYTHONPYCACHEPREFIX` as the failing knob; HOME-only controls remained at 17–20 waits. The test was outside the six-path run diff. Dropping the pair and rerunning TP-18/TP-19 on artifact `b0e102ae` produced 25/25 gate steps green, 7,827 passed, 7 skipped, 1 xfailed, and replay acceptance passed (attachment 170).
+
+**Mechanism.** The cache-prefix setting forced each spawned interpreter to recompile the standard library. That startup cost consumed the timing margin the debounce test was measuring. The environment was called hermetic because it isolated filesystem inputs, but it also changed interpreter startup behavior; the green rail gates had used the normal cache state.
+
+**Fix.** The Delivery Manager removed the cache-prefix pair from the functional gate environment and reran the failing scenarios. No repository change was made; the delivered artifact remained byte-identical.
+
+**Generalizable rule.** A hermetic-environment change is a behavioral change until measured otherwise. A/B every new cache, bytecode, or startup setting against the green-gate baseline before relying on it for subprocess-timing tests; isolate filesystem inputs without invalidating the timing regime under test.
+
+**Refs.** Huginn investigation attachment 168; Ullr rerun attachment 170; `tests/test_orchestrate_wait_debounce.py:364`; merge artifact `b0e102ae0a534ba60ae86dbff802bc7ee4784139`.
+
+### Durable review artifacts turn a reviewer crash into a post-only recovery  {#993-artifacts-before-review-terminal}
+
+**Context.** The quality lens for PR #1010 hit four protocol-violation crashes in the WAL-unlock fault class. The fourth attempt nevertheless completed the expensive work before the worker lost its terminal kanban call.
+
+**Evidence.** Alvis's attempt 4 wrote and attached `review-quality.md` and `verdict-quality.json`, then posted the one APPROVE review 5214896728 on PR #1010 at frozen head `2c488a827293d9abe0f962b160bbf580fc8672e1`. The Delivery Manager verified the stored artifact bytes and the live GitHub review list, then completed the card without a fifth review or a substitute. The quality verdict remained PASS 8.75 with zero findings; attachments 158 and 163 are the durable records.
+
+**Mechanism.** The crash removed only the lifecycle acknowledgement. Because the review artifacts and external review were durable first, the missing terminal call did not erase the result or require re-deriving it. Without those receipts, a retry could not distinguish "review completed" from "worker died before reviewing."
+
+**Fix.** The reviewer workflow keeps artifact creation, attachment, and the GitHub review ahead of `kanban_complete`; recovery verifies the exact stored bytes and review event and performs only the missing lifecycle step.
+
+**Generalizable rule.** For any expensive review with an independently durable output, persist and verify the output and external side effect before the fragile terminal acknowledgement. A crash after those receipts is a bounded post-only recovery, not evidence that the work should be repeated.
+
+**Refs.** a10.1 quality card `t_e616b1b1`; PR [#1010 review 5214896728](https://github.com/infiquetra/infiquetra-claude-plugins/pull/1010#pullrequestreview-5214896728); run #993 review consensus.
+
+### Verdict aggregation must recognize the producer's head-field alias  {#993-verdict-revision-alias}
+
+**Context.** Review cycle 1 reached consensus only after the controller normalized verdict copies that used `revision` to the aggregator's expected `sha` field.
+
+**Evidence.** `~/.hermes/asgard-skills/asgard-run/scripts/lens_verdict.py:10-16` documents `sha`, and `:35-40` computes head uniformity with `v.get("sha")`. The security and quality verdict artifacts for PR #1010 carried the same frozen head only as `revision`; the first `decide` invocation returned `invalid: mixed or missing head SHA across lens verdicts` until Vor copied that value into `sha`. The normalized values were byte-preserving, and the final aggregate was `state=success` at `2c488a827293d9abe0f962b160bbf580fc8672e1` with all three GitHub review events matching.
+
+**Mechanism.** The producer and consumer serialized one semantic identifier under two field names. `dict.get("sha")` converts that naming drift into a missing measurement, so a valid review becomes an invalid panel rather than a stale review. Workspace-only normalization repairs the current decision but leaves the contract mismatch ready to recur.
+
+**Fix (or queued).** Queue a source-level compatibility change at the aggregation boundary: read `sha` first, fall back to `revision`, and refuse when both are present but disagree; add fixtures for each accepted shape. This learn step records the gap and does not change the Asgard tooling.
+
+**Generalizable rule.** At a wire-format boundary, normalize documented aliases once and validate conflicts explicitly; do not make every caller hand-edit a copy of an otherwise valid artifact. Pin the alias behavior with producer and consumer fixtures.
+
+**Refs.** `lens_verdict.py:10-16,35-40`; a10.1.verdict card `t_57b7153c`; PR [#1010](https://github.com/infiquetra/infiquetra-claude-plugins/pull/1010).
+
 ## 2026-09-13
 
 ### A schema-too-old refusal test must strip the marker block, not reuse the live schema {#1000-schema-too-old-fixture}

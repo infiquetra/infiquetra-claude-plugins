@@ -4,6 +4,16 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [3.1.1] - 2026-09-15
+
+### Fixed
+
+- Corrected Team Execution's effort marker to distinguish Workflow/external-engine real controls
+  from the native Agent-tool `EFFORT_RIDER` proxy through the live
+  `inject_effort(prompt, effort, spawn_kind)` seam.
+- Added Team Execution-scoped recurrence protection for the marker correction while preserving
+  the paired `<model>/<effort>` cell shape.
+
 ## [3.1.0] - 2026-08-20
 
 ### Changed

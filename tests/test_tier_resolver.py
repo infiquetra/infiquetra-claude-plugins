@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import sys
 
 import pytest
@@ -391,9 +392,10 @@ def test_role_tier_resolves_for_all_agents() -> None:
 
 
 # ---------------------------------------------------------------------------
-# U5 (R7, KTD6): effort *emission* into /plan's per-unit tier table and
+# U5 (R7, KTD6): effort emission into /plan's per-unit tier table and
 # team-execution's A7 worker table, plus the spawn-site-enumeration drift
-# guard over sandbox-spawn-sites.md. Emission only — honoring is #363.
+# guard over sandbox-spawn-sites.md. Team Execution's marker also describes
+# live dispatch-time honoring (#993); #363 remains the A7 parser/cell-shape pin.
 # ---------------------------------------------------------------------------
 
 TEAM_EXECUTION_SKILL_MD = (
@@ -420,6 +422,58 @@ def test_effort_emitted_into_team_execution_a7_table() -> None:
     assert "fleet_commons.tier_resolver.resolve(...).model" in text
     assert ".effort" in text
     assert "#363" in text
+
+
+def test_team_execution_effort_marker_describes_live_honoring() -> None:
+    """Team Execution's EFFORT-EMISSION MARKER describes live dispatch-time
+    honoring via inject_effort, not an emission-only / no-honoring account,
+    while keeping the `<model>/<effort>` cell-shape clause (#993).
+    """
+    text = TEAM_EXECUTION_SKILL_MD.read_text(encoding="utf-8")
+    opener = "<!-- EFFORT-EMISSION MARKER"
+    start = text.find(opener)
+    assert start != -1, "Team Execution SKILL.md is missing the EFFORT-EMISSION MARKER opener"
+    closer = "-->"
+    close = text.find(closer, start)
+    assert close != -1, "Team Execution SKILL.md is missing the EFFORT-EMISSION MARKER closer"
+    marker = text[start : close + len(closer)]
+    normalized = re.sub(r"\s+", " ", marker)
+
+    assert "inject_effort(prompt, effort, spawn_kind)" in normalized, (
+        "EFFORT-EMISSION MARKER must name the live inject_effort(prompt, effort, spawn_kind) seam"
+    )
+    assert "Workflow" in normalized and "external-engine" in normalized, (
+        "EFFORT-EMISSION MARKER must describe Workflow and external-engine routes"
+    )
+    assert "real control" in normalized, (
+        "EFFORT-EMISSION MARKER must say Workflow/external-engine routes use real controls"
+    )
+    assert "pass through" in normalized, (
+        "EFFORT-EMISSION MARKER must say Workflow/external-engine routes pass through the seam"
+    )
+    assert "native Agent tool" in normalized, (
+        "EFFORT-EMISSION MARKER must name the native Agent tool limitation"
+    )
+    assert "no real per-call effort knob" in normalized, (
+        "EFFORT-EMISSION MARKER must say the native Agent tool has no real per-call effort knob"
+    )
+    assert "EFFORT_RIDER[effort]" in normalized, (
+        "EFFORT-EMISSION MARKER must name the labeled EFFORT_RIDER[effort] proxy directive"
+    )
+    assert "`<model>/<effort>`" in normalized, (
+        "EFFORT-EMISSION MARKER must keep the <model>/<effort> cell-shape clause"
+    )
+    assert ".model" in normalized and ".effort" in normalized, (
+        "EFFORT-EMISSION MARKER must keep resolver .model / .effort sources"
+    )
+
+    lowered = normalized.casefold()
+    assert "emission only" not in lowered, (
+        "EFFORT-EMISSION MARKER must not claim emission-only (retired account)"
+    )
+    assert "no dispatch-time honoring" not in lowered, (
+        "EFFORT-EMISSION MARKER must not claim dispatch-time honoring is absent (retired account)"
+    )
 
 
 def _parse_spawn_site_work_shapes(text: str) -> list[tuple[str, str]]:

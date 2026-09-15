@@ -1,5 +1,67 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-15
+
+### Release-bump plans own dependent drift guards, not only the release-surface triad  {#993-release-bump-owns-drift-guards}
+
+**Decision.** A plan that changes a plugin version must enumerate every test or consumer assertion that can reject the new value, assign its custody, and schedule its update in the same release graph. For #993 that meant adding U1b for `tests/test_team_execution_plugin.py` before the Team Execution 3.1.1 release unit U1.
+
+**Rationale.** The first U1 full gate found a hardcoded 3.1.0 assertion outside U1's four-path custody even though manifest/marketplace/changelog parity was correct. Keeping the gate strict exposed a plan omission; the corrected overlay, U1b commit `130d58dc`, U1 commit `72f02386`, and the final 25-step green gate prove the ordered repair.
+
+**Alternatives rejected.** A documented gate exception was rejected because it would make the release gate permissive at exactly the version-drift boundary. Letting the release implementer edit the test was rejected because it violates exclusive test custody. Adding a new literal without preserving source-of-truth parity was rejected because it would replace one stale pin with another.
+
+**Revisit when.** The release tooling can produce a complete, authoritative consumer inventory and the plan validator checks that inventory; until then, the planner owns the explicit grep-and-custody step.
+
+**Refs.** LEARNINGS `{#993-release-bump-plan-inventory}`; run #993 plan attachment 147 and repair-plan attachment 151; PRs #1008 and #1009.
+
+### Parent-head advancement uses a fresh branch and card retarget, never a force-push  {#993-fresh-branch-parent-retarget}
+
+**Decision.** When a sibling merges after a unit branch is cut, create a new `-fix<k>` branch from the exact new parent head, retarget the unit card, and leave the superseded ref untouched. Do not force-push the stale unit branch and do not waive a protected-surface guard.
+
+**Rationale.** U1's remote ref at `d93c2197` made the already-landed U1b test replacement look like a deletion after the worktree moved to `dde0b22d`. Branch-create plus `asgard_retarget.py` changed the comparison baseline without rewriting history; U1 then committed and opened PR #1009 from the fix1 ref.
+
+**Alternatives rejected.** Force-pushing the original unit branch hides the base transition and rewrites an audit anchor. A gate exception hides a real baseline mismatch. Weakening the protected-surface guard changes a safety invariant to accommodate branch bookkeeping. Editing the sibling's test again would duplicate work and violate custody.
+
+**Revisit when.** The rail natively binds a unit to an immutable parent-head snapshot and can advance that binding with an auditable event; the fresh-ref rule remains the safe fallback.
+
+**Refs.** LEARNINGS `{#993-unit-branch-base-retarget}`; run #993 `u1_retarget`; PR #1009.
+
+### Hermetic gate environments preserve the green interpreter-cache regime  {#993-hermetic-cache-baseline}
+
+**Decision.** Functional and full-gate wrappers must not add `PYTHONPYCACHEPREFIX` or related bytecode-cache isolation on top of the green baseline unless the timing-sensitive suite has an explicit A/B result proving equivalence. Filesystem isolation remains required, but interpreter startup behavior is part of the test environment contract.
+
+**Rationale.** The a14 wrapper's cache-prefix pair forced stdlib recompilation per subprocess and deterministically changed the debounce result from 16–17 waits to 5–7. Huginn's idle-machine A/B failed only with the setting; removing it made the unchanged `b0e102ae` artifact pass TP-18 and TP-19.
+
+**Alternatives rejected.** Calling the failing result a random test flake was rejected by deterministic A/B reproduction. Keeping the pair and weakening or rewriting the debounce assertion was rejected because the repository code was unchanged and the setting, not the behavior, caused the failure. Removing all hermetic controls was rejected; the correction removes only the load-bearing cache setting.
+
+**Revisit when.** Timing-sensitive tests use a cache-independent oracle or the gate provisions and measures a documented prewarmed interpreter regime whose performance is part of the acceptance contract.
+
+**Refs.** LEARNINGS `{#993-cache-prefix-breaks-timing}`; Huginn attachment 168; Ullr attachment 170.
+
+### Expensive review work is durably recorded before terminal acknowledgement  {#993-artifacts-before-terminal}
+
+**Decision.** Reviewers must write and attach their report and verdict, post the matching GitHub review, and only then call the terminal kanban operation. A crash after those receipts is recovered by readback and a post-only lifecycle completion; it is not an automatic request to re-review.
+
+**Rationale.** Alvis's quality lens crashed four times in the WAL-unlock fault class. Attempt 4 nevertheless left attachments 158/163 and APPROVE review 5214896728 at the frozen head. The Delivery Manager verified the bytes and live review list and completed the card without spending another review pass or substituting a reviewer.
+
+**Alternatives rejected.** Calling `kanban_complete` first loses the review if the worker dies before publishing it. Re-running the full lens after durable artifacts exist wastes review capacity and risks a second, conflicting event. Treating a successful process exit as proof of publication is unsafe; the stored bytes and provider readback are the evidence.
+
+**Revisit when.** Kanban can atomically commit the artifact receipts, external review, and terminal state, with a readback contract equivalent to the current two-sided verification. Artifact-first ordering remains useful even then for human recovery.
+
+**Refs.** LEARNINGS `{#993-artifacts-before-review-terminal}`; a10.1 quality card `t_e616b1b1`; PR #1010 review 5214896728.
+
+### The lens verdict parser accepts `revision` as a compatible head alias  {#993-lens-verdict-head-alias}
+
+**Decision.** At the aggregation boundary, `lens_verdict.py` should read `sha` first and accept `revision` as a fallback for the same semantic head, while refusing an artifact whose two fields disagree. Add fixtures for `sha`-only, `revision`-only, and conflicting inputs. This is queued from #993; this journal PR does not modify the tooling.
+
+**Rationale.** The controller's first `decide` run rejected a valid panel because `lens_verdict.py:35-40` reads only `v.get("sha")`, while the security and quality producers emitted the frozen head under `revision`. Vor had to normalize workspace copies before the three matching GitHub reviews could aggregate successfully. The failure was a wire-name mismatch, not a stale revision.
+
+**Alternatives rejected.** Requiring every producer to change immediately to `sha` leaves already-produced valid artifacts unreadable and spreads a compatibility migration across every lens. Repeating ad hoc workspace normalization makes the outcome depend on controller procedure rather than the artifact contract. Silently preferring one field when both disagree would accept conflicting evidence; disagreement must remain invalid.
+
+**Revisit when.** A versioned verdict schema makes `sha` the sole required field and all supported producers and stored artifacts have migrated; the fallback can then be retired in a deliberate schema-major change.
+
+**Refs.** LEARNINGS `{#993-verdict-revision-alias}`; `lens_verdict.py:10-16,35-40`; a10.1.verdict card `t_57b7153c`.
+
 ## 2026-09-13
 
 ### Prepared-source readiness has one owner: saga's handoff envelope {#942-saga-readiness-owner}

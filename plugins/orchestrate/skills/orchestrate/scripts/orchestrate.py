@@ -3826,6 +3826,7 @@ def cmd_review_result(args: argparse.Namespace) -> int:
     r = Run.load()
     selector = getattr(args, "controller", None)
     controllers = r.review_controllers()
+    controller: Unit | None
     if selector is not None:
         controller = r.review_controller_for(selector)
     elif len(controllers) > 1:
@@ -4134,10 +4135,10 @@ def cmd_status(args: argparse.Namespace) -> int:
                     break
 
     for request in operator_requests:
-        owner = one_line(str(request.get("owner", "?")))
+        request_owner = one_line(str(request.get("owner", "?")))
         fix_id = one_line(str(request.get("fix_id", "?")))
         touched_paths = one_line(", ".join(str(path) for path in request.get("touched_paths", [])))
-        print(f"OPERATOR ACTION: {owner} owns fix {fix_id} for {touched_paths}")
+        print(f"OPERATOR ACTION: {request_owner} owns fix {fix_id} for {touched_paths}")
     return 0
 
 

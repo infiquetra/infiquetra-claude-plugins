@@ -17,7 +17,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -1707,7 +1707,7 @@ def test_land_exit_4_outranks_leftover_landing_path_exit_3(
     def fail_remove(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if cmd[:4] == ["git", "worktree", "remove", "--force"] and cmd[-1] == str(land_path):
             return subprocess.CompletedProcess(cmd, 1, "", "simulated cleanup failure")
-        return original_run(cmd, **kwargs)
+        return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
     monkeypatch.setattr(orchestrate, "run", fail_remove)
     assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4

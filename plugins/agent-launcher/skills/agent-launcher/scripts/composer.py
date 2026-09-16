@@ -359,13 +359,45 @@ def _classify_block(block: _ComposerBlock, *, glyph: str) -> ComposerInspection:
     return ComposerInspection(ComposerState.UNCLASSIFIABLE)
 
 
+def _only_blanks_between(
+    rows: list[str],
+    earlier: _ComposerBlock,
+    later: _ComposerBlock,
+    *,
+    ignore: tuple[_ComposerBlock, ...] = (),
+) -> bool:
+    """True when nothing but blank rows sit between two marker blocks.
+
+    Adjacent blocks have an empty interval. Rows that belong to ignored empty-decoy
+    blocks in between are not content. A leftover content row is scrollback above a
+    live empty box (CORR-05). Blank-only (or decoy-only) separation is a painted
+    empty marker under a still-staged draft (issue 1002 F110 / R5).
+    """
+    start = earlier.start_row + len(earlier.lines)
+    end = later.start_row
+    if end < start:
+        return False
+    decoy_rows: set[int] = set()
+    for block in ignore:
+        decoy_rows.update(range(block.start_row, block.start_row + len(block.lines)))
+    return all(i in decoy_rows or not rows[i].strip() for i in range(start, end))
+
+
+def _is_empty_decoy(inspection: ComposerInspection, block: _ComposerBlock, *, glyph: str) -> bool:
+    """An empty or unclassifiable-empty marker that can stand in for a painted decoy."""
+    return not _visible_after_marker(block.lines, glyph) and inspection.state in (
+        ComposerState.EMPTY,
+        ComposerState.UNCLASSIFIABLE,
+    )
+
+
 def inspect_composer(ansi_text: str, *, vendor: str) -> ComposerInspection:
     """Inspect the live composer block and let that block decide the outcome.
 
-    The last block is the live box when a blank or content row sits above it, so a
-    submitted echo never stands in for a lower empty box. An immediately adjacent
-    empty marker under a staged draft is painted chrome, and the staged inspection
-    wins so the write stops (issue 1002 F110).
+    The last block is the live box when a content row sits above it, so a submitted
+    echo never stands in for a lower empty box. Empty markers with only blank rows
+    (or nothing) between them and an earlier staged block are painted chrome, and
+    the staged inspection wins so the write stops (issue 1002 F110).
     """
     if vendor not in COMPOSER_GLYPH_BY_VENDOR:
         return ComposerInspection(ComposerState.UNSUPPORTED_VENDOR)
@@ -377,18 +409,18 @@ def inspect_composer(ansi_text: str, *, vendor: str) -> ComposerInspection:
         return ComposerInspection(ComposerState.NOT_FOUND)
     classified = [_classify_block(block, glyph=glyph) for block in blocks]
     last = classified[-1]
-    # An immediately adjacent empty marker is painted chrome under a live draft, not a new
-    # empty box. A blank or content row between blocks keeps last-block-wins so a submitted
-    # echo above a live empty box still reads empty (CORR-05).
-    last_block = blocks[-1]
-    if (
-        last.state is ComposerState.UNCLASSIFIABLE
-        and last_block.adjacent_to_previous
-        and not _visible_after_marker(last_block.lines, glyph)
-    ):
+    rows = ansi_text.splitlines()
+    if _is_empty_decoy(last, blocks[-1], glyph=glyph):
+        intermediates: list[_ComposerBlock] = []
         for index in range(len(blocks) - 2, -1, -1):
             if classified[index].state is ComposerState.STAGED:
-                return classified[index]
+                ignored = tuple(intermediates) + (blocks[-1],)
+                if _only_blanks_between(rows, blocks[index], blocks[-1], ignore=ignored):
+                    return classified[index]
+                break
+            if _is_empty_decoy(classified[index], blocks[index], glyph=glyph):
+                intermediates.append(blocks[index])
+                continue
             break
     return last
 

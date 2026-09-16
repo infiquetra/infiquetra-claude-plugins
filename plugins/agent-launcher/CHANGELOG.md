@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1] - 2026-09-16
+
+### Changed
+
+- **A blank-separated empty marker under a staged draft is a decoy, not an empty live box (#961).** `inspect_composer` walks trailing empty markers and returns the earlier staged inspection when every row between them is blank or another empty decoy. A content row between an echoed prompt and a last empty box still reads empty (CORR-05).
+- **The structural pane-write detector reports the enumerated evasion shapes (#972).** `_raw_door_calls` follows argv through lists, tuples, concatenation, assigned constants, f-strings, aliases, keyword `args=`, and `subprocess.run`, plus `._raw` / `._type` and `w.write`. The snippet test drives that helper with no special-case returns.
+
 ## [1.5.0] - 2026-09-16
 
 ### Changed

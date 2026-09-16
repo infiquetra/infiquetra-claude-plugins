@@ -24,12 +24,13 @@ The table below is the executable unit. Implementation is the companion plan `do
 ## How to run
 
 ```bash
-python3 -m pytest plugins/agent-launcher/tests/test_launcher_contract.py::test_blank_separated_empty_marker_below_staged_is_a_decoy plugins/agent-launcher/tests/test_launcher_contract.py::test_two_trailing_empty_markers_below_staged_are_decoys plugins/agent-launcher/tests/test_launcher_contract.py::test_an_empty_live_box_below_an_echo_reads_empty plugins/agent-launcher/tests/test_launcher_contract.py::test_structural_detector_kills_enumerated_evasion_shapes plugins/agent-launcher/tests/test_launcher_contract.py::test_every_pane_write_goes_through_the_one_writer -q
+python3 -m pytest plugins/agent-launcher/tests/test_launcher_contract.py::test_blank_separated_empty_marker_below_staged_is_a_decoy plugins/agent-launcher/tests/test_launcher_contract.py::test_ansi_only_separator_below_staged_is_a_decoy plugins/agent-launcher/tests/test_launcher_contract.py::test_two_trailing_empty_markers_below_staged_are_decoys plugins/agent-launcher/tests/test_launcher_contract.py::test_an_empty_live_box_below_an_echo_reads_empty plugins/agent-launcher/tests/test_launcher_contract.py::test_structural_detector_kills_enumerated_evasion_shapes plugins/agent-launcher/tests/test_launcher_contract.py::test_every_pane_write_goes_through_the_one_writer -q
 ```
 
 | ID | Issue | Finding | Shipped function | Input | Action | Expected outcome | Test |
 |---|---|---|---|---|---|---|---|
 | TP-F110c | #961 | Blank-separated empty marker classifies EMPTY | `inspect_composer` | `❯ staged draft\n\n❯ ` vendor `claude` | classify | `STAGED` text `staged draft`, not `EMPTY` | `test_blank_separated_empty_marker_below_staged_is_a_decoy` |
+| TP-F110e | #961 | ANSI-only separator classifies EMPTY | `inspect_composer` | `❯ staged draft\n\\x1b[0m\n❯ ` and a background-only SGR spacer | classify | `STAGED` text `staged draft`; blank uses the parser's ANSI-stripped predicate | `test_ansi_only_separator_below_staged_is_a_decoy` |
 | TP-F110d | #961 | Two trailing empty markers classify UNCLASSIFIABLE | `inspect_composer` | `❯ staged draft\n❯ \n❯ ` vendor `claude` | classify | `STAGED` text `staged draft`, not `UNCLASSIFIABLE` | `test_two_trailing_empty_markers_below_staged_are_decoys` |
 | TP-F110b | #961 | Content row between echo and empty box | `inspect_composer` / `composer_staged_text` | `❯ earlier submitted prompt\npane output line\n❯ ` | classify | empty string (CORR-05 last-block-wins) | `test_an_empty_live_box_below_an_echo_reads_empty` |
 | TP-F121 | #972 | Enumerated evasions miss `_raw_door_calls` | `_raw_door_calls` | each snippet in `test_structural_detector_kills_enumerated_evasion_shapes` | parse and walk | helper returns a non-empty list; no special-case `return` in that test | `test_structural_detector_kills_enumerated_evasion_shapes` |

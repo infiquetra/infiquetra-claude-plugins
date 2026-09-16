@@ -1057,7 +1057,9 @@ def test_an_empty_marker_followed_by_two_blank_rows_is_empty(launcher: ModuleTyp
     assert result.text == ""
 
 
-def test_an_echo_a_blank_row_and_an_empty_marker_read_empty(launcher: ModuleType) -> None:
+def test_content_row_between_echo_and_empty_marker_is_live_empty(
+    launcher: ModuleType,
+) -> None:
     """CORR-05: a content row between an echoed prompt and a last empty marker is a live
     empty box, not a decoy. Blank-only separation is the F110 painted-marker case."""
     result = launcher.inspect_composer(
@@ -4179,6 +4181,19 @@ def test_blank_separated_empty_marker_below_staged_is_a_decoy(launcher: ModuleTy
     result = launcher.inspect_composer("❯ staged draft\n\n❯ ", vendor="claude")
     assert result.state is launcher.ComposerState.STAGED
     assert result.text == "staged draft"
+
+
+def test_ansi_only_separator_below_staged_is_a_decoy(launcher: ModuleType) -> None:
+    """Issue 1002 F110: a painted ANSI-only row is a blank to the parser, so it cannot
+    authorize a write over a still-staged draft. Production reads --format ansi."""
+    dump = "❯ staged draft\n\x1b[0m\n❯ "
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "staged draft"
+    painted = "❯ staged draft\n\x1b[48;2;55;55;55m   \x1b[0m\n❯ "
+    painted_result = launcher.inspect_composer(painted, vendor="claude")
+    assert painted_result.state is launcher.ComposerState.STAGED
+    assert painted_result.text == "staged draft"
 
 
 def test_two_trailing_empty_markers_below_staged_are_decoys(launcher: ModuleType) -> None:

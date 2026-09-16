@@ -165,6 +165,11 @@ def strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
 
 
+def _row_without_sgr(line: str) -> str:
+    """Printable row text after SGR/OSC and non-breaking space, before class."""
+    return strip_ansi(line).replace("\xa0", " ")
+
+
 def _without_border(text: str) -> tuple[str, int]:
     """Return row content without a paired box border and its original content column.
 
@@ -207,7 +212,7 @@ def _classify_row(line: str, *, glyph: str, marker_column: int | None) -> tuple[
     marker column of the block in play -- open, or awaiting settlement after a blank row --
     or ``None`` when no block is in play; it decides only the indented/terminator split.
     """
-    clean = strip_ansi(line).replace("\xa0", " ")
+    clean = _row_without_sgr(line)
     if not clean.strip():
         return _RowClass.BLANK, 0
     candidate, column = _without_border(clean)
@@ -279,7 +284,7 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
                 # another vendor's glyph (`> quoted draft`) is that draft, not an empty box
                 # that authorises a write. Stop absorbing once the block has visible text so
                 # menu rows under a filled box stay content (F13).
-                candidate, _ = _without_border(strip_ansi(line).replace("\xa0", " "))
+                candidate, _ = _without_border(_row_without_sgr(line))
                 if candidate[:1] in COMPOSER_MARKERS and not candidate.startswith(glyph):
                     current.lines.append(line)
                     separated = False
@@ -304,7 +309,7 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
 
 
 def _visible_after_marker(lines: list[str], glyph: str) -> str:
-    clean_lines = [_without_border(strip_ansi(line).replace("\xa0", " "))[0] for line in lines]
+    clean_lines = [_without_border(_row_without_sgr(line))[0] for line in lines]
     first = clean_lines[0]
     if first.startswith(glyph):
         clean_lines[0] = first[len(glyph) :]
@@ -380,7 +385,7 @@ def _only_blanks_between(
     decoy_rows: set[int] = set()
     for block in ignore:
         decoy_rows.update(range(block.start_row, block.start_row + len(block.lines)))
-    return all(i in decoy_rows or not rows[i].strip() for i in range(start, end))
+    return all(i in decoy_rows or not _row_without_sgr(rows[i]).strip() for i in range(start, end))
 
 
 def _is_empty_decoy(inspection: ComposerInspection, block: _ComposerBlock, *, glyph: str) -> bool:

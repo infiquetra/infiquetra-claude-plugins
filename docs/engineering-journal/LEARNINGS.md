@@ -10,7 +10,7 @@
 
 **Mechanism.** Last-block-wins treats a painted empty glyph as the live box. Adjacent-only looks like the rule until a blank row or a second empty marker sits between the draft and the decoy.
 
-**Fix.** Walk trailing empty decoys. Return the earlier `STAGED` block when every row between them is blank or another empty decoy. A leftover content row keeps last-block-wins.
+**Fix.** Walk trailing empty decoys. Return the earlier `STAGED` block when every row between them is blank or another empty decoy, using the parser's ANSI-stripped blank predicate (`_row_without_sgr`) so a painted SGR-only spacer is not content. A leftover content row keeps last-block-wins.
 
 **Generalizable rule.** A plan that names "blank separators" is not satisfied by an adjacent-only special case. The contract test must drive the dump the plan named, not a neighbour of it.
 

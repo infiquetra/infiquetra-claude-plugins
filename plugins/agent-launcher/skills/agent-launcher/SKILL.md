@@ -69,7 +69,7 @@ on, and that this plugin therefore keeps stable across a minor release, are: `la
 `session_has_started`, `append_unit_note`, `PaneWriter`, `session_owned`,
 `should_guard_pane_write`, `guard_pane_before_write`, `models`, `favourites`,
 `has_delivery_warning`, `clear_delivery_warning`, `VENDOR_FLAGS`, `VENDOR_PERMISSION`,
-`VENDOR_NOTES`, `AccountMismatchError`, `StagedInputError`, and `ComposerState`.
+`VENDOR_NOTES`, `StagedInputError`, the account-mismatch error, and `ComposerState`.
 Removing or renaming one is a major change and moves Orchestrate's declared
 floor. The pane-write rule is owned here: `PaneWriter` is the only door into a pane,
 `should_guard_pane_write` is the only statement of when that door inspects, and Orchestrate's

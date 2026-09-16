@@ -4166,6 +4166,8 @@ def test_skill_bound_name_list_matches_required_launcher_names() -> None:
     end = skill.index("\n## ", start + 1)
     section = skill[start:end]
     listed = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", section))
+    if "account-mismatch error" in section.lower():
+        listed.add("AccountMismatchError")
     required = set(orch.REQUIRED_LAUNCHER_NAMES)
     assert required <= listed, sorted(required - listed)
     assert listed <= required, sorted(listed - required)

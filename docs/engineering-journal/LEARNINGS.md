@@ -2,7 +2,7 @@
 
 ## 2026-09-16
 
-### A Herdr `done` row is evidence the session already ran  {#1002-done-is-started}
+### A Herdr `done` row is evidence the session already ran  {#1002-done-means-started}
 
 **Context.** Issue 1002 children #954, #969, and #970 are three consequences of one set: `NEVER_STARTED_STATUSES` included `"done"`.
 

@@ -1673,9 +1673,7 @@ def pane_text(unit: Any, text: str) -> str:
     base = TASK_DIR.resolve()
     path = (TASK_DIR / f"{unit.name}.md").resolve()
     if path != base and base not in path.parents:
-        raise SystemExit(
-            f"task file {unit.name!r} resolves outside {TASK_DIR}: {path}"
-        )
+        raise SystemExit(f"task file {unit.name!r} resolves outside {TASK_DIR}: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n")
     lead = text.split(" ", 1)[0] if re.match(r"^\s*[/$]", text) else ""
@@ -1764,9 +1762,7 @@ class PaneWriter:
             if attempt.returncode == 0:
                 return
             if not pane_id:
-                raise SystemExit(
-                    f"{unit.name}: agent prompt refused and no pane to fall back to"
-                )
+                raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
             type_into_pane(pane_text(unit, line))
             fallback_note = (
                 "prompted through its pane; this agent does not report interactive readiness"

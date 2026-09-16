@@ -272,9 +272,8 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
                 # draft rows, so that asymmetry is accepted and recorded.
                 current.lines.append(line)
                 separated = False
-            elif (
-                row_class is _RowClass.TERMINATOR
-                and not _visible_after_marker(current.lines, glyph)
+            elif row_class is _RowClass.TERMINATOR and not _visible_after_marker(
+                current.lines, glyph
             ):
                 # Issue 1002 F102: a still-empty Claude/Codex box whose next row begins with
                 # another vendor's glyph (`> quoted draft`) is that draft, not an empty box

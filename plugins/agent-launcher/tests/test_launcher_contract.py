@@ -4108,9 +4108,7 @@ def test_failed_or_timed_out_composer_read_refuses_the_write(
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(launcher, "run", fake_run)
-    unit = launcher.LaunchRequest(
-        name="worker", vendor="claude", launch_receipt={"owned": False}
-    )
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", launch_receipt={"owned": False})
     monkeypatch.setattr(
         launcher,
         "pane_input_inspection",
@@ -4118,7 +4116,9 @@ def test_failed_or_timed_out_composer_read_refuses_the_write(
     )
     with pytest.raises(SystemExit, match="input box read_timeout"):
         launcher.PaneWriter(unit, "w1:p1", wrote_before=True).write("hello")
-    assert [c for c in recorded if c[:3] in (["herdr", "pane", "run"], ["herdr", "agent", "prompt"])] == []
+    assert [
+        c for c in recorded if c[:3] in (["herdr", "pane", "run"], ["herdr", "agent", "prompt"])
+    ] == []
 
 
 def test_opencode_echo_of_typed_token_is_not_session_confirmation(
@@ -4140,7 +4140,7 @@ def test_workspace_id_for_name_bounds_the_herdr_list(
 
     def fake_run(cmd: list[str], **k: object) -> subprocess.CompletedProcess[str]:
         seen.append(k.get("timeout"))
-        payload = {"result": {"workspaces": []}}
+        payload: dict[str, object] = {"result": {"workspaces": []}}
         return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
 
     monkeypatch.setattr(launcher, "run", fake_run)
@@ -4288,9 +4288,7 @@ def test_launch_without_pane_id_is_a_named_stop(
 
     def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
         if cmd[:3] == ["herdr", "tab", "list"]:
-            return subprocess.CompletedProcess(
-                cmd, 0, json.dumps({"result": {"tabs": []}}), ""
-            )
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"result": {"tabs": []}}), "")
         return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
 
     monkeypatch.setattr(launcher, "run", fake_run)
@@ -4365,9 +4363,7 @@ def test_forcing_the_guard_off_at_each_write_site_is_observed() -> None:
             for line, fn in _raw_door_calls(mutated)
             if filename == "orchestrate.py"
             or not (
-                writer_class_lines["launcher.py"][0]
-                <= line
-                <= writer_class_lines["launcher.py"][1]
+                writer_class_lines["launcher.py"][0] <= line <= writer_class_lines["launcher.py"][1]
             )
         ]
         assert strays, f"mutation of {filename}:{func_name} was not observed"

@@ -1139,6 +1139,15 @@ class ReviewResult:
                 raise ReviewConsensusError("scoring result requires a completed cycle")
         if self.outcome == "accepted" and self.failing_lenses:
             raise ReviewConsensusError("accepted result cannot carry failing lenses")
+        if (
+            self.outcome == "accepted"
+            and not self.failing_lenses
+            and not self.unresolved_fix_ids
+            and any(item.status == "active" for item in self.findings)
+        ):
+            raise ReviewConsensusError(
+                "accepted result cannot carry findings still marked active"
+            )
         if self.outcome == "repairs_requested" and (
             not self.failing_lenses or len(self.cycle_history) >= MAX_REVIEW_CYCLES
         ):
@@ -1307,8 +1316,17 @@ class RunnerDeliveryResolution:
     review_result: ReviewResult | None = None
 
 
-def consolidate_fix_requests(findings: Iterable[ReviewFinding]) -> tuple[FixRequest, ...]:
-    """Consolidate actionable findings without joining disjoint worker paths."""
+def consolidate_fix_requests(
+    findings: Iterable[ReviewFinding],
+    *,
+    lifecycle: str | None = None,
+) -> tuple[FixRequest, ...]:
+    """Consolidate actionable findings without joining disjoint worker paths.
+
+    ``lifecycle`` namespaces the identity string so two reviews that share owner,
+    autofix class, and finding labels still mint different identifiers. Omitted or
+    empty keeps today's unscoped identity bytes.
+    """
     candidates = sorted(
         (item for item in findings if _is_fix_request_candidate(item)),
         key=lambda item: (
@@ -1349,7 +1367,13 @@ def consolidate_fix_requests(findings: Iterable[ReviewFinding]) -> tuple[FixRequ
     for group in groups:
         grouped = sorted(group["findings"], key=lambda item: item.finding_id)
         finding_ids = tuple(item.finding_id for item in grouped)
-        identity = "|".join((group["owner"], group["autofix_class"], *finding_ids)).encode()
+        namespace = lifecycle.strip() if isinstance(lifecycle, str) else ""
+        identity_parts = (
+            (namespace, group["owner"], group["autofix_class"], *finding_ids)
+            if namespace
+            else (group["owner"], group["autofix_class"], *finding_ids)
+        )
+        identity = "|".join(identity_parts).encode()
         requests.append(
             FixRequest(
                 fix_id=f"fix-{hashlib.sha256(identity).hexdigest()[:12]}",
@@ -1389,6 +1413,7 @@ class ReviewCycleState:
         *,
         evidence_ledger: Mapping[str, str] | None = None,
         policy: ReviewScoringPolicy | None = None,
+        lifecycle: str | None = None,
     ) -> None:
         """Initialize review cycle state for a set of selected lenses.
 
@@ -1397,6 +1422,8 @@ class ReviewCycleState:
                 to run and track across cycles. Must contain at least one valid lens from the policy.
             evidence_ledger: Optional initial mapping of evidence keys to values.
             policy: Optional custom `ReviewScoringPolicy` (defaults to `DEFAULT_SCORING_POLICY`).
+            lifecycle: Optional child-lifecycle identifier used only to namespace fix
+                identifiers. Not a `ReviewResult` field. Omitted or empty is unscoped.
 
         Raises:
             ReviewConsensusError: If `selected_lenses` is empty or contains duplicates.
@@ -1411,6 +1438,10 @@ class ReviewCycleState:
         for lens_id in self._selected_lenses:
             self._policy.dimensions_for(lens_id)
         self._evidence_ledger = _review_text_mapping(evidence_ledger or {}, label="evidence_ledger")
+        if lifecycle is None or (isinstance(lifecycle, str) and not lifecycle.strip()):
+            self._lifecycle: str | None = None
+        else:
+            self._lifecycle = _review_text(lifecycle, label="lifecycle")
         self._lens_results: dict[str, LensReviewResult] = {}
         self._findings: tuple[ReviewFinding, ...] = ()
         self._cycle_history: tuple[CycleRecord, ...] = ()
@@ -1622,7 +1653,7 @@ class ReviewCycleState:
             findings=cycle_findings,
             external_review=external_review,
         )
-        fix_requests = consolidate_fix_requests(next_findings)
+        fix_requests = consolidate_fix_requests(next_findings, lifecycle=self._lifecycle)
         fix_ids = {item.fix_id for item in fix_requests}
         newly_resolved = set(_review_text_tuple(resolved_fix_ids, label="resolved_fix_ids"))
         if not newly_resolved <= fix_ids:
@@ -1731,14 +1762,42 @@ class ReviewCycleState:
             outcome: ReviewOutcome = "repairs_requested"
         else:
             outcome = self._terminal_outcome
+        findings = self._findings
+        fix_requests = consolidate_fix_requests(findings, lifecycle=self._lifecycle)
+        unresolved = tuple(
+            item.fix_id for item in fix_requests if item.fix_id not in self._resolved_fix_ids
+        )
+        if outcome == "accepted" and not self._failing_lenses and not unresolved:
+            findings = tuple(
+                replace(item, status="resolved") if item.status == "active" else item
+                for item in findings
+            )
+            self._findings = findings
+            next_results: dict[str, LensReviewResult] = {}
+            for lens_id, lens_result in self._lens_results.items():
+                updated_evidence = tuple(
+                    replace(item, resolved=True)
+                    if not item.resolved
+                    and any(
+                        finding.finding_id == item.finding_id and finding.lens_id == lens_id
+                        for finding in findings
+                    )
+                    else item
+                    for item in lens_result.score.findings
+                )
+                updated_score = replace(lens_result.score, findings=updated_evidence)
+                lens_findings = tuple(item for item in findings if item.lens_id == lens_id)
+                next_results[lens_id] = replace(
+                    lens_result,
+                    score=_score_with_typed_findings(
+                        updated_score, lens_findings, policy=self._policy
+                    ),
+                )
+            self._lens_results = next_results
         lens_results = tuple(
             self._lens_results[lens_id]
             for lens_id in self._selected_lenses
             if lens_id in self._lens_results
-        )
-        fix_requests = consolidate_fix_requests(self._findings)
-        unresolved = tuple(
-            item.fix_id for item in fix_requests if item.fix_id not in self._resolved_fix_ids
         )
         attempted = tuple(
             lens_id
@@ -1755,7 +1814,7 @@ class ReviewCycleState:
             selected_lenses=self._selected_lenses,
             attempted_lenses=attempted,
             lens_results=lens_results,
-            findings=self._findings,
+            findings=findings,
             cycle_history=self._cycle_history,
             failing_lenses=self._failing_lenses,
             fix_requests=fix_requests,
@@ -1791,6 +1850,7 @@ class ReviewCycleState:
             "terminal_outcome": self._terminal_outcome,
             "current_outcome": current_outcome,
             "review_incomplete_reason": self._review_incomplete_reason,
+            **({"lifecycle": self._lifecycle} if self._lifecycle else {}),
         }
 
     def to_json(self) -> str:
@@ -1821,6 +1881,7 @@ class ReviewCycleState:
             evidence_ledger=_review_text_mapping(
                 payload.get("evidence_ledger"), label="evidence_ledger"
             ),
+            lifecycle=payload.get("lifecycle"),
         )
         lens_results = tuple(
             LensReviewResult.from_dict(item)

@@ -1,0 +1,359 @@
+{
+  "attempted_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing"
+  ],
+  "best_available_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+  "collection_operation": {
+    "operation": "collect",
+    "schema": "review_result.v1"
+  },
+  "cycle_history": [
+    {
+      "attempted_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security",
+        "testing"
+      ],
+      "cycle": 1,
+      "delta_checks": [],
+      "failing_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security"
+      ],
+      "lens_results": [
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "architectural-fit-ownership-single-sources": 7.0,
+            "conventions-portability-configuration": 10.0,
+            "dependency-direction": 10.0,
+            "readability-naming-error-contracts": 8.0,
+            "separation-of-concerns": 9.0,
+            "significant-decision-documentation": 10.0,
+            "simplicity-abstraction-duplication-changeability": 8.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 8.857142857142858,
+          "failing_dimensions": [],
+          "lens_id": "architecture-maintainability",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145",
+          "score_accepted": false,
+          "scoring_findings": []
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "boundary-types-serialization-numeric-time": 7.0,
+            "caller-enum-consumer-completeness": 9.0,
+            "intent-behavior-completeness": 9.0,
+            "side-effects-errors-resource-lifecycle": 9.0,
+            "state-data-invariants-transactions-concurrency": 9.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 8.6,
+          "failing_dimensions": [],
+          "lens_id": "correctness",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145",
+          "score_accepted": false,
+          "scoring_findings": []
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "authentication-authorization-tenant-isolation": 7.0,
+            "confidentiality-logs-errors-egress": 9.0,
+            "dependency-supply-chain": 9.5,
+            "input-trust-boundaries-injection": 9.0,
+            "secrets-cryptography-session-handling": 9.5
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 8.8,
+          "failing_dimensions": [],
+          "lens_id": "security",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145",
+          "score_accepted": false,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "behavior-sensitive-assertions": 9.5,
+            "determinism-isolation-diagnostics-maintainability": 9.5,
+            "negative-edge-state-concurrency-time": 9.5,
+            "realistic-seams-mocks-integration-evidence": 9.5,
+            "requirements-regression-coverage": 9.5
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 9.5,
+          "failing_dimensions": [],
+          "lens_id": "testing",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145",
+          "score_accepted": true,
+          "scoring_findings": []
+        }
+      ],
+      "revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145",
+      "unresolved_fix_ids": []
+    },
+    {
+      "attempted_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security"
+      ],
+      "cycle": 2,
+      "delta_checks": [
+        {
+          "cause": "Added test_ansi_only_separator_below_staged_is_a_decoy; CORR-05 and F121 tests still pass on 5be9e761.",
+          "checked_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+          "evidence_refs": [
+            "plugins/agent-launcher/tests/test_launcher_contract.py:4186",
+            "plugins/agent-launcher/tests/test_launcher_contract.py:4530"
+          ],
+          "lens_id": "testing",
+          "passed": true,
+          "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145"
+        }
+      ],
+      "failing_lenses": [],
+      "lens_results": [
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "architectural-fit-ownership-single-sources": 9.5,
+            "conventions-portability-configuration": 9.5,
+            "dependency-direction": 9.5,
+            "readability-naming-error-contracts": 9.5,
+            "separation-of-concerns": 9.5,
+            "significant-decision-documentation": 9.0,
+            "simplicity-abstraction-duplication-changeability": 9.5
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 9.428571428571429,
+          "failing_dimensions": [],
+          "lens_id": "architecture-maintainability",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "boundary-types-serialization-numeric-time": 9.0,
+            "caller-enum-consumer-completeness": 9.5,
+            "intent-behavior-completeness": 9.5,
+            "side-effects-errors-resource-lifecycle": 9.5,
+            "state-data-invariants-transactions-concurrency": 9.5
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 9.4,
+          "failing_dimensions": [],
+          "lens_id": "correctness",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "authentication-authorization-tenant-isolation": 9.0,
+            "confidentiality-logs-errors-egress": 9.0,
+            "dependency-supply-chain": 9.0,
+            "input-trust-boundaries-injection": 9.0,
+            "secrets-cryptography-session-handling": 9.0
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 9.0,
+          "failing_dimensions": [],
+          "lens_id": "security",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+          "score_accepted": true,
+          "scoring_findings": []
+        }
+      ],
+      "revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+      "unresolved_fix_ids": []
+    }
+  ],
+  "evidence_ledger": {},
+  "external_advisory_reviews": [],
+  "failing_lenses": [],
+  "findings": [],
+  "fix_requests": [],
+  "lens_results": [
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "architectural-fit-ownership-single-sources": 9.5,
+        "conventions-portability-configuration": 9.5,
+        "dependency-direction": 9.5,
+        "readability-naming-error-contracts": 9.5,
+        "separation-of-concerns": 9.5,
+        "significant-decision-documentation": 9.0,
+        "simplicity-abstraction-duplication-changeability": 9.5
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 9.428571428571429,
+      "failing_dimensions": [],
+      "lens_id": "architecture-maintainability",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "boundary-types-serialization-numeric-time": 9.0,
+        "caller-enum-consumer-completeness": 9.5,
+        "intent-behavior-completeness": 9.5,
+        "side-effects-errors-resource-lifecycle": 9.5,
+        "state-data-invariants-transactions-concurrency": 9.5
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 9.4,
+      "failing_dimensions": [],
+      "lens_id": "correctness",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "authentication-authorization-tenant-isolation": 9.0,
+        "confidentiality-logs-errors-egress": 9.0,
+        "dependency-supply-chain": 9.0,
+        "input-trust-boundaries-injection": 9.0,
+        "secrets-cryptography-session-handling": 9.0
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 9.0,
+      "failing_dimensions": [],
+      "lens_id": "security",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "behavior-sensitive-assertions": 9.5,
+        "determinism-isolation-diagnostics-maintainability": 9.5,
+        "negative-edge-state-concurrency-time": 9.5,
+        "realistic-seams-mocks-integration-evidence": 9.5,
+        "requirements-regression-coverage": 9.5
+      },
+      "cycle": 1,
+      "delta_check": {
+        "cause": "Added test_ansi_only_separator_below_staged_is_a_decoy; CORR-05 and F121 tests still pass on 5be9e761.",
+        "checked_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+        "evidence_refs": [
+          "plugins/agent-launcher/tests/test_launcher_contract.py:4186",
+          "plugins/agent-launcher/tests/test_launcher_contract.py:4530"
+        ],
+        "lens_id": "testing",
+        "passed": true,
+        "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145"
+      },
+      "derived_overall": 9.5,
+      "failing_dimensions": [],
+      "lens_id": "testing",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145",
+      "score_accepted": true,
+      "scoring_findings": []
+    }
+  ],
+  "next_action": "continue",
+  "outcome": "accepted",
+  "residual_summary": {
+    "final_lens_scores": {
+      "architecture-maintainability": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 9.428571428571429,
+        "failing_dimensions": [],
+        "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8"
+      },
+      "correctness": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 9.4,
+        "failing_dimensions": [],
+        "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8"
+      },
+      "security": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 9.0,
+        "failing_dimensions": [],
+        "reviewed_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8"
+      },
+      "testing": {
+        "accepted": true,
+        "delta_check": {
+          "cause": "Added test_ansi_only_separator_below_staged_is_a_decoy; CORR-05 and F121 tests still pass on 5be9e761.",
+          "checked_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+          "evidence_refs": [
+            "plugins/agent-launcher/tests/test_launcher_contract.py:4186",
+            "plugins/agent-launcher/tests/test_launcher_contract.py:4530"
+          ],
+          "lens_id": "testing",
+          "passed": true,
+          "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145"
+        },
+        "derived_overall": 9.5,
+        "failing_dimensions": [],
+        "reviewed_revision": "8b396a98402db653a54dbc1b8c02f5d6713ee145"
+      }
+    },
+    "review_incomplete_reason": null,
+    "score_regressions": [],
+    "unresolved_fix_ids": []
+  },
+  "resume_transitions": [
+    "continue"
+  ],
+  "revision_binding": {
+    "best_available_revision": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+    "lens_revisions": {
+      "architecture-maintainability": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+      "correctness": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+      "security": "5be9e76125232b288945e2b1b0e3b4b51b07e1e8",
+      "testing": "8b396a98402db653a54dbc1b8c02f5d6713ee145"
+    }
+  },
+  "schema": "review_result.v1",
+  "selected_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing"
+  ],
+  "unresolved_fix_ids": []
+}

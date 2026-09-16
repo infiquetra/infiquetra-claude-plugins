@@ -64,13 +64,13 @@ python3 "$S" redeliver --vendor <tool> --task <tab-name> --cwd "$PWD" --prompt <
 Orchestrate does not import this plugin; it reads `launcher.py` and executes it into its own
 namespace, so the launcher's top-level names become Orchestrate's. The names Orchestrate relies
 on, and that this plugin therefore keeps stable across a minor release, are: `launch`,
-`redeliver`, `agent_argv`, `agent_row`, `session_has_started`, `launcher`, `launchable`,
-`roster`, `live_agents`,
-`close_run_session`, `tab_close_failure`, `verify_unit_preflight`, `append_unit_note`,
-`PaneWriter`, `session_owned`, `should_guard_pane_write`, `guard_pane_before_write`, `models`,
-`favourites`, `has_delivery_warning`, `clear_delivery_warning`, `VENDOR_FLAGS`,
-`VENDOR_PERMISSION`, `VENDOR_NOTES`, the two stop classes (`StagedInputError` and the
-account-mismatch error), and `ComposerState`. Removing or renaming one is a major change and moves Orchestrate's declared
+`redeliver`, `agent_argv`, `launcher`, `launchable`, `roster`, `live_agents`,
+`close_run_session`, `tab_close_failure`, `verify_unit_preflight`, `agent_row`,
+`session_has_started`, `append_unit_note`, `PaneWriter`, `session_owned`,
+`should_guard_pane_write`, `guard_pane_before_write`, `models`, `favourites`,
+`has_delivery_warning`, `clear_delivery_warning`, `VENDOR_FLAGS`, `VENDOR_PERMISSION`,
+`VENDOR_NOTES`, `AccountMismatchError`, `StagedInputError`, and `ComposerState`.
+Removing or renaming one is a major change and moves Orchestrate's declared
 floor. The pane-write rule is owned here: `PaneWriter` is the only door into a pane,
 `should_guard_pane_write` is the only statement of when that door inspects, and Orchestrate's
 own senders construct a `PaneWriter` rather than carrying a rule of their own

@@ -2,6 +2,30 @@
 
 ## 2026-09-16
 
+### Companion ingest uses one four-state classification  {#1003-companion-state-classification}
+
+**Decision.** Orchestrate classifies the Agent Launcher companion as `missing`, `below-floor`, `ingested-but-unusable`, or `usable`. `status`, `check`, and the write gates all read that classification. `_AGENT_LAUNCHER_AVAILABLE` is true only for `usable` and `below-floor`.
+
+**Rationale.** F107 and F127 drifted because `status` and `check` branched on ingest-succeeded while writes branched on `_AGENT_LAUNCHER_ERROR`. A floor-satisfying tree missing `live_agents` stayed "available" for reads and killed `status`. A name-only stub satisfied the name check and no-op'd composer inspection (F106).
+
+**Alternatives rejected.** A second boolean beside `_AGENT_LAUNCHER_AVAILABLE` (two flags drift). Exec-then-trust-names (F106). Restricted-namespace exec (out of scope). Skipping to the next compatible cache version (hides the pairing fault). Restoring `say()`.
+
+**Revisit when.** A new Orchestrate subcommand reaches Herdr, or the companion floor moves.
+
+**Refs.** Issue #1003 children #952, #957, #958, #978; `{#907-agent-launcher-floor-owner}`; plan `docs/plans/2026-09-16-issue-1003-companion-contract-plan.md` KTD1–KTD4.
+
+### Companion source is AST-validated before exec  {#1003-ast-validate-before-exec}
+
+**Decision.** Before `exec` into Orchestrate's globals, parse the companion source and require every `REQUIRED_LAUNCHER_NAMES` member as a top-level def, class, or assignment target, and require `guard_pane_before_write` to call `pane_input_inspection`. A source that fails is not exec'd. Floor failures still exec so read-only commands keep Herdr.
+
+**Rationale.** Name presence is not usability. A 30-line stub whose names exist as `return None` passed `_bind_missing_launcher_names` and left composer inspection a no-op (#957). Assignment targets count so `ComposerState = _COMPOSER.ComposerState` satisfies the name.
+
+**Alternatives rejected.** Exec then probe at runtime (the stub is already bound). Wrapping the guard with an Orchestrate-owned inspect (forks `{#907-pane-writer-owns-the-write-rule}`).
+
+**Revisit when.** The launcher grows a second inspect door the AST probe must name.
+
+**Refs.** Issue #957; plan KTD2.
+
 ### A Herdr `done` session has started  {#1002-done-is-started}
 
 **Decision.** `NEVER_STARTED_STATUSES` is `(None, "idle", "unknown")`. `session_has_started` is true for `done`. `redeliver` and Orchestrate `cmd_redrive` therefore refuse a finished session.

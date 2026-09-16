@@ -42,6 +42,7 @@ OLD_SOURCE_RENAMES = (
     ("def should_guard_pane_write(", "def legacy_should_guard_pane_write("),
     ("def session_has_started(", "def legacy_session_has_started("),
     ("def redeliver(", "def legacy_redeliver("),
+    ("def live_agents(", "def legacy_live_agents("),
 )
 
 
@@ -131,7 +132,7 @@ def test_agent_launcher_metadata_is_marketplace_registered() -> None:
     )
 
     assert plugin_json["name"] == "agent-launcher"
-    assert plugin_json["version"] == "1.5.1"
+    assert plugin_json["version"] == "1.5.2"
     assert "Herdr" in plugin_json["description"]
     assert {"agent-launcher", "agents", "herdr", "launch", "sessions"} <= set(
         plugin_json["keywords"]
@@ -450,7 +451,9 @@ def test_a_launcher_root_that_lacks_the_bound_names_is_the_named_companion_fault
     assert "claude plugin update agent-launcher@infiquetra-plugins" in output
     assert "NameError" not in output and "Traceback" not in output
     status = _run_installed_orchestrate(script, ["status"], cwd=repo, env_overrides=env)
-    assert status.returncode == 0, status.stderr + status.stdout
+    status_out = status.stderr + status.stdout
+    assert status.returncode == 0, status_out
+    assert "Traceback" not in status_out and "NameError" not in status_out
 
 
 def test_missing_composer_is_deferred_and_reported_without_a_traceback(tmp_path: Path) -> None:
@@ -842,8 +845,39 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
                 f"{state}/{command}: liveness was not asked of herdr"
             )
         return
-    if state in ("below-floor", "old-source"):
-        # Cycle 2, F56: no command in these two states may write a pane, whatever bucket it
+    if state == "old-source":
+        # Names missing at the floor: ingested-but-unusable. Writes refuse with the
+        # update remedy; status degrades; check does not agree (F107, F127).
+        _assert_no_pane_write(calls, command, state)
+        if command in GATED_SUBCOMMANDS:
+            assert code != 0, f"{state}/{command}: ran against a missing-name companion"
+            assert "does not define" in output, f"{state}/{command}: {output}"
+            assert "claude plugin update agent-launcher@infiquetra-plugins" in output, (
+                f"{state}/{command}: no update remedy: {output}"
+            )
+            assert "NameError" not in output and "Traceback" not in output, (
+                f"{state}/{command}: {output}"
+            )
+            _assert_no_pane_write(calls, command, state)
+        elif command in ("status",):
+            assert code == 0, f"{state}/{command}: {output}"
+            assert "Traceback" not in output and "NameError" not in output
+            assert not any(c[:2] == ["agent", "list"] for c in calls), (
+                f"{state}/{command}: liveness was asked of a missing-name companion"
+            )
+        elif command in ("check",):
+            assert code != 0, f"{state}/{command}: check agreed without liveness: {output}"
+            assert "the record agrees with the repository" not in output
+            assert "LIVENESS UNCHECKED" in output
+            assert not any(c[:2] == ["agent", "list"] for c in calls)
+        elif command in INGEST_ONLY_SUBCOMMANDS:
+            assert code != 0, f"{state}/{command}: served by a missing-name companion"
+            assert "does not define" in output, f"{state}/{command}: {output}"
+        else:
+            assert "NameError" not in output and "Traceback" not in output
+        return
+    if state == "below-floor":
+        # Cycle 2, F56: no command in this state may write a pane, whatever bucket it
         # is in -- asserted for every command, not only the gated ones.
         _assert_no_pane_write(calls, command, state)
         if command in GATED_SUBCOMMANDS:
@@ -888,15 +922,19 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
         assert EXPECTED_REMEDIATION in output, f"{state}/{command}: {output}"
         _assert_no_pane_write(calls, command, state)
     elif command in ("status", "check"):
-        assert code == 0, f"{state}/{command}: a read-only command died: {output}"
-        assert output.count("simulated roster drift") == 1, (
-            f"{state}/{command}: the fault was not printed exactly once: {output}"
-        )
         assert not any(c[:2] == ["agent", "list"] for c in calls), (
             f"{state}/{command}: liveness was asked without a companion"
         )
         if command == "status":
+            assert code == 0, f"{state}/{command}: a read-only command died: {output}"
+            assert output.count("simulated roster drift") == 1, (
+                f"{state}/{command}: the fault was not printed exactly once: {output}"
+            )
             assert "unknown" in output, f"{state}/{command}: liveness not unknown: {output}"
+        else:
+            assert code != 0, f"{state}/{command}: check agreed without liveness: {output}"
+            assert "the record agrees with the repository" not in output
+            assert "LIVENESS UNCHECKED" in output
     elif command in ("wait", "settle", "adopt"):
         assert code != 0, f"{state}/{command}: ran without the companion's Herdr reads"
         assert "simulated roster drift" in output, f"{state}/{command}: {output}"
@@ -1053,7 +1091,6 @@ def test_each_companion_fault_names_its_own_cause_and_remedy(tmp_path: Path) -> 
 
 
 LAUNCHER_ONLY_NAMES = (
-    "ComposerState",
     "ComposerInspection",
     "inspect_composer",
     "pane_input_inspection",
@@ -1091,6 +1128,7 @@ def test_a_launcher_that_fails_mid_file_binds_nothing(tmp_path: Path) -> None:
         assert orch.run is orch._subprocess_run, "a failed ingest left the launcher's run bound"
         for name in LAUNCHER_ONLY_NAMES:
             assert not hasattr(orch, name), f"{name} survived a failed ingest"
+        assert orch.ComposerState is orch._agent_launcher_required
     finally:
         sys.modules.pop("_orchestrate_midfile_probe", None)
 
@@ -1239,3 +1277,226 @@ def test_every_sibling_plugin_path_goes_through_the_layout_helper() -> None:
         and not (helper.lineno <= node.lineno <= (helper.end_lineno or helper.lineno))
     ]
     assert strays == [], f"raw parents[] index outside _plugin_root at lines {strays}"
+
+
+def _required_launcher_names() -> tuple[str, ...]:
+    tree = ast.parse(
+        _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "scripts" / "orchestrate.py")
+    )
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "REQUIRED_LAUNCHER_NAMES":
+                names = ast.literal_eval(node.value)
+                assert isinstance(names, tuple)
+                return tuple(str(item) for item in names)
+    raise AssertionError("REQUIRED_LAUNCHER_NAMES is not assigned at module top level")
+
+
+def _write_name_only_stub(root: Path, names: tuple[str, ...]) -> None:
+    """A ~30-line companion whose bound names exist but do not inspect a pane."""
+    script = root / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    script.parent.mkdir(parents=True)
+    exceptions = {"AccountMismatchError", "StagedInputError"}
+    mappings = {"VENDOR_FLAGS", "VENDOR_PERMISSION", "VENDOR_NOTES"}
+    lines = [
+        '"""name-only stub: names exist, guard does not inspect."""',
+        "def _noop(*a, **k):",
+        "    return None",
+        "class _E(Exception):",
+        "    pass",
+        "class PaneWriter:",
+        "    write = _noop",
+    ]
+    for name in names:
+        if name == "PaneWriter":
+            continue
+        if name in exceptions:
+            lines.append(f"{name} = _E")
+        elif name in mappings:
+            lines.append(f"{name} = {{}}")
+        elif name == "ComposerState":
+            lines.append("class ComposerState:")
+            lines.append("    STAGED = 'staged'")
+        else:
+            lines.append(f"{name} = _noop")
+    script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    manifest = root / ".claude-plugin" / "plugin.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps({"name": "agent-launcher", "version": _declared_floor()}),
+        encoding="utf-8",
+    )
+
+
+def test_a_name_only_stub_is_not_a_usable_companion(tmp_path: Path) -> None:
+    """F106: bound names without inspect behaviour are ingested-but-unusable."""
+    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    stub = tmp_path / "name-only-stub"
+    _write_name_only_stub(stub, _required_launcher_names())
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "HERDR_LOG": str(tmp_path / "herdr-stub.log"),
+        "AGENT_LAUNCHER_ROOT": str(stub),
+    }
+    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
+    status = _run_installed_orchestrate(script, ["status"], cwd=repo, env_overrides=env)
+    status_out = status.stderr + status.stdout
+    assert status.returncode == 0, status_out
+    assert "Traceback" not in status_out
+    check = _run_installed_orchestrate(script, ["check"], cwd=repo, env_overrides=env)
+    check_out = check.stderr + check.stdout
+    assert check.returncode != 0
+    assert "the record agrees with the repository" not in check_out
+    assert "LIVENESS UNCHECKED" in check_out
+    go = _run_installed_orchestrate(script, ["go"], cwd=repo, env_overrides=env)
+    go_out = go.stderr + go.stdout
+    assert go.returncode != 0
+    assert "unusable" in go_out
+    assert "claude plugin update agent-launcher@infiquetra-plugins" in go_out
+    assert "not found" not in go_out
+    assert "NameError" not in go_out and "Traceback" not in go_out
+
+
+def test_a_launcher_root_that_lacks_a_read_path_bound_name_degrades_status(
+    tmp_path: Path,
+) -> None:
+    """F107: missing live_agents must not SystemExit status."""
+    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    old_tree = tmp_path / "missing-live-agents"
+    shutil.copytree(
+        tmp_path / "cache-at-floor" / MARKETPLACE / "agent-launcher" / _declared_floor(),
+        old_tree,
+    )
+    launcher = old_tree / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    text = launcher.read_text(encoding="utf-8")
+    assert "def live_agents(" in text
+    launcher.write_text(
+        text.replace("def live_agents(", "def legacy_live_agents("), encoding="utf-8"
+    )
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "HERDR_LOG": str(tmp_path / "herdr-read-path.log"),
+        "AGENT_LAUNCHER_ROOT": str(old_tree),
+    }
+    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
+    status = _run_installed_orchestrate(script, ["status"], cwd=repo, env_overrides=env)
+    status_out = status.stderr + status.stdout
+    assert status.returncode == 0, status_out
+    assert "Traceback" not in status_out and "NameError" not in status_out
+    assert "does not define" in status_out and "live_agents" in status_out
+    check = _run_installed_orchestrate(script, ["check"], cwd=repo, env_overrides=env)
+    check_out = check.stderr + check.stdout
+    assert check.returncode != 0
+    assert "the record agrees with the repository" not in check_out
+    assert "LIVENESS UNCHECKED" in check_out
+    go = _run_installed_orchestrate(script, ["go"], cwd=repo, env_overrides=env)
+    go_out = go.stderr + go.stdout
+    assert go.returncode != 0
+    assert "does not define" in go_out and "live_agents" in go_out
+    assert "claude plugin update agent-launcher@infiquetra-plugins" in go_out
+
+
+def test_check_does_not_agree_when_liveness_was_not_performed(tmp_path: Path) -> None:
+    """F127: missing companion must not print agreement and exit 0."""
+    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    empty = tmp_path / "empty-launcher-root"
+    empty.mkdir()
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "AGENT_LAUNCHER_ROOT": str(empty),
+    }
+    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
+    check = _run_installed_orchestrate(script, ["check"], cwd=repo, env_overrides=env)
+    check_out = check.stderr + check.stdout
+    assert check.returncode != 0
+    assert "the record agrees with the repository" not in check_out
+    assert "LIVENESS UNCHECKED" in check_out
+    assert "Traceback" not in check_out
+
+
+def test_highest_cache_version_that_dropped_a_bound_name_is_not_a_write_companion(
+    tmp_path: Path,
+) -> None:
+    """F101: cache sort picks the highest version; a dropped name is not a write companion."""
+    cache = tmp_path / "cache" / MARKETPLACE
+    orch_install = _install_plugin(
+        cache, "orchestrate", _declared_version("orchestrate"), parts=(".claude-plugin", "skills")
+    )
+    floor_ver = _declared_floor()
+    _install_plugin(cache, "agent-launcher", floor_ver, parts=(".claude-plugin", "skills"))
+    high = _install_plugin(cache, "agent-launcher", "9.0.0", parts=(".claude-plugin", "skills"))
+    _set_plugin_version(high, "9.0.0")
+    _strip_new_launcher_names(high)
+    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "HERDR_LOG": str(tmp_path / "herdr-cache-high.log"),
+        "CLAUDE_PLUGIN_ROOT": str(orch_install),
+    }
+    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
+    installed_script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
+    go = _run_installed_orchestrate(installed_script, ["go"], cwd=repo, env_overrides=env)
+    go_out = go.stderr + go.stdout
+    assert go.returncode != 0
+    assert "does not define" in go_out
+    assert "claude plugin update agent-launcher@infiquetra-plugins" in go_out
+    assert "NameError" not in go_out and "Traceback" not in go_out
+    assert "not found" not in go_out
+
+
+def test_orchestrate_install_sentence_names_the_agent_launcher_floor() -> None:
+    """F122: the bolded install sentence names the declared agent-launcher floor."""
+    command = _read(ORCHESTRATE_ROOT / "commands" / "orchestrate.md")
+    floor = _declared_floor()
+    bold = next(
+        line
+        for line in command.splitlines()
+        if line.startswith("**Install ") and line.endswith("**")
+    )
+    assert "agent-launcher" in bold
+    assert floor in bold
+
+
+def test_write_gate_comments_name_the_live_write_path() -> None:
+    """F126: land and review-result gate comments name PaneWriter, not say."""
+    source = _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "scripts" / "orchestrate.py")
+    tree = ast.parse(source)
+    for func_name in ("cmd_land", "cmd_review_result"):
+        func = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == func_name
+        )
+        comment = None
+        for raw in source.splitlines()[func.lineno - 1 : (func.end_lineno or func.lineno)]:
+            if "assert_agent_launcher_available" in raw:
+                comment = raw
+                break
+        assert comment is not None, func_name
+        assert "say" not in comment
+        assert "PaneWriter" in comment
+
+
+def test_live_docs_do_not_present_deleted_say_or_used_pane_as_current() -> None:
+    """F111: live helper docstrings do not present say() or used_pane as current.
+
+    The character inspect cap is current again after issue 1002; do not delete it.
+    """
+    learnings = _read(ROOT / "docs" / "engineering-journal" / "LEARNINGS.md")
+    assert "PANE_INSPECT_MAX_CHARS" in learnings
+    contract = _read(ROOT / "plugins" / "agent-launcher" / "tests" / "test_launcher_contract.py")
+    tree = ast.parse(contract)
+    wanted = {
+        "_prepare_resend_launch",
+        "test_redeliver_inspects_before_the_first_write_on_an_owned_unit",
+    }
+    found: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in wanted:
+            found.add(node.name)
+            doc = ast.get_docstring(node) or ""
+            assert "say()" not in doc, node.name
+            assert "used_pane" not in doc, node.name
+    assert found == wanted

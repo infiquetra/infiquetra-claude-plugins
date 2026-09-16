@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.4.0] - 2026-09-16
+
+### Changed
+
+- **Companion ingest classifies missing, below-floor, ingested-but-unusable, and usable once (#1003).** A floor-satisfying tree that dropped a bound name, or a name-only stub whose `guard_pane_before_write` does not call `pane_input_inspection`, is not exec'd as a live companion. `status` degrades when a read-path name is missing instead of dying in `SystemExit`. `check` records `LIVENESS UNCHECKED` and exits 1 when herdr was not asked, instead of printing `the record agrees with the repository`.
+- **`REQUIRED_LAUNCHER_NAMES` includes `ComposerState` and is cross-checked against SKILL.md (#1003).** The `land` and `review-result` gate comments name `PaneWriter`. The bolded install sentence names the agent-launcher floor.
+
 ## [4.3.0] - 2026-09-02
 
 ### Added

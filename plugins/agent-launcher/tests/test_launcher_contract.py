@@ -1929,12 +1929,12 @@ def _prepare_resend_launch(
     pane_dump: str,
     preexisting_tabs: frozenset[str],
 ) -> tuple[Any, list[list[str]], list[str], list[str]]:
-    """Drive the real send/say and the resend loop with only the Herdr boundary stubbed.
+    """Drive the real PaneWriter send and the resend loop with only the Herdr boundary stubbed.
 
     Whether `herdr agent prompt` succeeds or is refused selects the two delivery doors: a
-    refusal makes say() type into the pane, which is the used_pane half of the resend
-    predicate. Returns the unit, every recorded command, the pane-typing writes, and the
-    guard calls made by the counting wrapper around the real guard.
+    refusal makes PaneWriter type into the pane, which is the wrote_before half of
+    should_guard_pane_write. Returns the unit, every recorded command, the pane-typing
+    writes, and the guard calls made by the counting wrapper around the real guard.
     """
     recorded: list[list[str]] = []
     pane_writes: list[str] = []
@@ -2173,7 +2173,7 @@ def test_redeliver_records_no_wrapper_create_and_keeps_the_tab(
 def test_redeliver_inspects_before_the_first_write_on_an_owned_unit(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The used_pane half of the pre-send predicate, observable only here: a redelivery
+    """The wrote_before half of should_guard_pane_write, observable only here: a redelivery
     into a pane this launcher owns still inspects before its first write, because the stop
     that made the redelivery necessary was an inspection that found text. A still-staged
     pane raises with no send."""
@@ -4145,6 +4145,30 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     assert "#907-agent-launcher-floor-owner" in orchestrate_src
     assert "#907-input-box-visible-length" in composer
     assert "#907-staged-input-redeliver" in orchestrate_src
+
+
+def test_shipped_launcher_defines_every_name_orchestrate_requires() -> None:
+    """F101: dropping a required name from shipped launcher.py fails the suite."""
+    orch = _load(ORCHESTRATE, "_orchestrate_pairing_names")
+    source = LAUNCHER.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    defined = orch._top_level_defined_names(tree)
+    missing = [name for name in orch.REQUIRED_LAUNCHER_NAMES if name not in defined]
+    assert missing == [], missing
+    assert orch._guard_calls_pane_input_inspection(tree)
+
+
+def test_skill_bound_name_list_matches_required_launcher_names() -> None:
+    """F129: SKILL.md's bound-name list and REQUIRED_LAUNCHER_NAMES are the same set."""
+    orch = _load(ORCHESTRATE, "_orchestrate_skill_bound_names")
+    skill = SKILL_MD.read_text(encoding="utf-8")
+    start = skill.index("## The surface Orchestrate binds")
+    end = skill.index("\n## ", start + 1)
+    section = skill[start:end]
+    listed = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", section))
+    required = set(orch.REQUIRED_LAUNCHER_NAMES)
+    assert required <= listed, sorted(required - listed)
+    assert listed <= required, sorted(listed - required)
 
 
 def test_journal_43_pane_citations_are_named_not_reproducible() -> None:

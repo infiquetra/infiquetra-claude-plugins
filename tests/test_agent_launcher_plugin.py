@@ -131,7 +131,7 @@ def test_agent_launcher_metadata_is_marketplace_registered() -> None:
     )
 
     assert plugin_json["name"] == "agent-launcher"
-    assert plugin_json["version"] == "1.4.0"
+    assert plugin_json["version"] == "1.5.0"
     assert "Herdr" in plugin_json["description"]
     assert {"agent-launcher", "agents", "herdr", "launch", "sessions"} <= set(
         plugin_json["keywords"]
@@ -163,7 +163,14 @@ def test_orchestrate_declares_agent_launcher_dependency_in_metadata() -> None:
     )
     floors = {entry["name"]: entry.get("version") for entry in declared if isinstance(entry, dict)}
     launcher_version = json.loads(_read(PLUGIN_ROOT / ".claude-plugin" / "plugin.json"))["version"]
-    assert floors.get("agent-launcher") == f">={launcher_version}", declared
+    # The floor names the release that introduced the required behaviour, not the launcher's
+    # current version (DECISIONS {#907-agent-launcher-floor-owner}). Lockstep is asserted
+    # against in test_orchestrate_keeps_its_agent_launcher_floor.
+    declared_floor = floors.get("agent-launcher")
+    assert isinstance(declared_floor, str) and declared_floor.startswith(">="), declared
+    floor_tuple = tuple(int(part) for part in declared_floor[2:].split("."))
+    current_tuple = tuple(int(part) for part in launcher_version.split("."))
+    assert floor_tuple <= current_tuple, (declared_floor, launcher_version)
 
     orch_entry = next(
         plugin for plugin in marketplace["plugins"] if plugin["name"] == "orchestrate"

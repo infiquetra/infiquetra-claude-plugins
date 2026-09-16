@@ -1,5 +1,35 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-09-16
+
+### A Herdr `done` row is evidence the session already ran  {#1002-done-means-started}
+
+**Context.** Issue 1002 children #954, #969, and #970 are three consequences of one set: `NEVER_STARTED_STATUSES` included `"done"`.
+
+**Evidence.** `session_has_started` at `launcher.py` treated `done` like `idle`. `redeliver` sent again. `took_the_task` returned false, so the unit stayed `prompt_undelivered` and redrive was unbounded.
+
+**Mechanism.** Herdr reports `done` after a session took its task and finished. Counting that with `idle` inverted the retry gate.
+
+**Fix.** Drop `"done"` from the never-started set. Require the documented receipt keys. Refuse `prompt_delivered is True` even when `input_box` is staged.
+
+**Generalizable rule.** One vocabulary for "has this session started?" must match the vendor's status meanings, not a local convenience set that makes retry easier.
+
+**Refs.** Issues #954, #969, #970; `{#1002-done-is-started}`.
+
+### An unobserved composer is not an empty composer  {#1002-failed-read-refuses}
+
+**Context.** `guard_pane_before_write` recorded `read_failed` / `read_timeout` and returned, after which `PaneWriter` wrote.
+
+**Evidence.** `test_unreadable_box_is_marked_and_the_prompt_still_goes` asserted `len(sends) == 1` on a nonzero pane read.
+
+**Mechanism.** The styled-composer trade is about client styling, not a missing observation. Treating timeout as empty concatenates into an unreadable box.
+
+**Fix.** Those two states raise `SystemExit` and do not write. `unclassifiable` / `not_found` / `unsupported_vendor` stay fail-open.
+
+**Generalizable rule.** Fail-open only for classified ambiguity. Absence of a measurement is a stop.
+
+**Refs.** Issue #965; `{#1002-failed-read-refuses-write}`.
+
 ## 2026-09-15
 
 ### A release bump is incomplete until its dependent version guards are in the plan  {#993-release-bump-plan-inventory}

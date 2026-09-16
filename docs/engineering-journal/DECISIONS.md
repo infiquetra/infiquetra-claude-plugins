@@ -1,5 +1,103 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-16
+
+### A Herdr `done` session has started  {#1002-done-is-started}
+
+**Decision.** `NEVER_STARTED_STATUSES` is `(None, "idle", "unknown")`. `session_has_started` is true for `done`. `redeliver` and Orchestrate `cmd_redrive` therefore refuse a finished session.
+
+**Rationale.** Herdr reports `done` after a session took its task and finished. Counting `done` with `idle` made `took_the_task` return false, recorded `PROMPT_UNDELIVERED`, and opened every retry door onto a session that already carried the work (#954, #969, #970).
+
+**Alternatives rejected.** Keeping `done` in the never-started set and adding a second redeliver-only gate. Two gates on one vocabulary already drifted once in the 1.4.0 repair.
+
+**Revisit when.** Herdr introduces a status that means "exited without taking a prompt".
+
+**Refs.** Issue #1002 children #954, #969, #970; plan `docs/plans/2026-09-16-issue-1002-agent-launcher-findings-plan.md` KTD1.
+
+### PaneWriter doors are nested inside `write`  {#1002-nested-pane-writer-doors}
+
+**Decision.** `herdr agent prompt` and `herdr pane run` exist only as nested functions inside `PaneWriter.write`. The class has no `_raw` or `_type` methods.
+
+**Rationale.** A single-underscore method is convention. The issue 907 review mutant called `writer._raw` and the structural test still passed (#955). Nested functions are not attributes.
+
+**Alternatives rejected.** `inspect.stack()` caller checks. Name mangling, which remains callable.
+
+**Revisit when.** The language or a linter can make a method callable only from one other method.
+
+**Refs.** Issue #955; plan KTD2.
+
+### Empty marker below a staged block is a decoy only without a content row between them  {#1002-decoy-empty-marker}
+
+**Decision.** `inspect_composer` returns the earlier `STAGED` block when the last block is `EMPTY` and every row between them is blank. A content row between an earlier staged block and a last empty marker keeps last-block-wins, so an echo above a live empty box still reads empty.
+
+**Rationale.** Last-block-wins lets a painted glyph authorize a write over the real draft (#961). Preferring any earlier staged block would refuse a working launch whose scrollback still shows a submitted prompt.
+
+**Alternatives rejected.** Always last-block-wins (F110). Always prefer any earlier staged block (breaks `test_an_empty_live_box_below_an_echo_reads_empty`).
+
+**Revisit when.** The composer parser has a cursor or focus signal from the vendor, not only painted rows.
+
+**Refs.** Issue #961; `{#907-styled-composer-trade}`; plan KTD3.
+
+### Failed composer observation refuses the write  {#1002-failed-read-refuses-write}
+
+**Decision.** `READ_FAILED` and `READ_TIMEOUT` raise from `guard_pane_before_write`. `UNCLASSIFIABLE`, `NOT_FOUND`, and `UNSUPPORTED_VENDOR` still prompt under `{#907-styled-composer-trade}`.
+
+**Rationale.** A timed-out or failed pane read is the absence of an observation, not client styling. Authorizing that write treats an unobservable pane as empty (#965).
+
+**Alternatives rejected.** Refusing all five inconclusive states, which would stop OpenCode picker inspects and uncharacterised vendors.
+
+**Revisit when.** The picker path can inspect a real composer instead of the picker chrome.
+
+**Refs.** Issue #965; plan KTD4.
+
+### OpenCode picker options are the effort ladder  {#1002-opencode-ladder-only}
+
+**Decision.** `parse_opencode_variants` keeps a token only when it is in `OPENCODE_VARIANT_RANKS`. A row that is only the typed token is not `"session"` confirmation.
+
+**Rationale.** The menu-row regex matches ordinary markdown bullets, so agent prose became picker options (#964). The launcher's own echo of the keystroke satisfied confirmation (#966).
+
+**Alternatives rejected.** A picker-header heuristic across OpenCode versions. Waiting until the echo leaves the pane.
+
+**Revisit when.** OpenCode exposes a structured picker API.
+
+**Refs.** Issues #964, #966, #983; plan KTD5, KTD6.
+
+### Account label is scraped from the visible tail  {#1002-account-label-tail}
+
+**Decision.** `pane_account_label` searches only the last three visible rows.
+
+**Rationale.** Whole-pane last-match lets agent output that names `user [personal]:` certify the tenant (#968). The wrapper statusline sits at the tail.
+
+**Alternatives rejected.** First-match. Whole-pane last-match.
+
+**Revisit when.** Herdr reports the statusline as a distinct field.
+
+**Refs.** Issue #968; plan KTD7.
+
+### Composer inspect window has both a row cap and a byte cap  {#1002-inspect-row-and-byte-caps}
+
+**Decision.** Keep `PANE_INSPECT_MAX_LINES = 4000` and restore `PANE_INSPECT_MAX_CHARS = 65536`. Trim whole rows from the head of the tail window until both bounds hold.
+
+**Rationale.** The F45 row cap fixed a mid-row cut and dropped the byte bound, so a wide viewport is unbounded and a >4000-row short viewport that the byte cap would have admitted now reads `not_found` (#981).
+
+**Alternatives rejected.** Rows only. Bytes only.
+
+**Revisit when.** Herdr can return the composer region without a full viewport.
+
+**Refs.** Issue #981; plan KTD8.
+
+### The pane-write structural test is a net, not a proof of impossibility  {#1002-structural-test-is-a-net}
+
+**Decision.** The AST detector reports the enumerated evasion shapes. `getattr` / `sys.modules` remain residual. The class docstring does not claim an unguarded write is impossible by construction.
+
+**Rationale.** The 1.4.0 test recognised one syntactic shape per rule and passed sixteen of twenty-one review mutants, including `writer._raw` (#972). Claiming impossibility is a false guarantee.
+
+**Alternatives rejected.** Leaving the "impossible by construction" wording. Trying to catch every dynamic Python call.
+
+**Revisit when.** A single module-level Herdr facade can be the only `subprocess.run` in the file.
+
+**Refs.** Issues #955, #971, #972; plan KTD9.
+
 ## 2026-09-15
 
 ### Release-bump plans own dependent drift guards, not only the release-surface triad  {#993-release-bump-owns-drift-guards}

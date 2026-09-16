@@ -2,6 +2,66 @@
 
 ## 2026-09-16
 
+### Named review slots migrate run-global state, then become the authority  {#908-review-slot-migration}
+
+**Decision.** `Run.review_slot` copies the four run-global review fields into a newly scoped named slot when that slot is still default-empty. A named slot that already holds a different result is a `SystemExit`, not an overwrite. After a successful copy or a scoped write, `run_global_linked` skips further comparison so a later ingest cannot collide with leftover run-level bytes.
+
+**Rationale.** A controller that reviewed unscoped wrote to run-level fields. Assigning `lifecycle` flipped the key and initialised an empty named slot, so `status` and closeout read never-reviewed. Aliasing the lists would restore two live authorities.
+
+**Alternatives rejected.** A one-shot migrate command (operators read through `status` and `review-result`). Clearing run-level fields (older Orchestrate still loads them). Comparing named vs run-level on every read after a later scoped write (false conflict).
+
+**Revisit when.** A command exists that assigns `lifecycle` other than by mutating the unit field.
+
+**Refs.** Issue #898; plan KTD1.
+
+### Replacement identity is lifecycle-first  {#908-replacement-identity}
+
+**Decision.** A scoped replacement stems from the controller's lifecycle with `-repair-{slug}`, strips an existing `-fix-` prefix, and uses `{lifecycle}-repair` as `workspace`. The template name stays in the unit note.
+
+**Rationale.** Name and workspace are what an operator greps during an incident. Copying them from an unscoped template of another slice made providers-slice repair look like shell-slice work.
+
+**Alternatives rejected.** Keeping the template name and only changing workspace. A lineage registry.
+
+**Revisit when.** Replacements need to share a workspace with the template for vendor reasons.
+
+**Refs.** Issue #902; plan KTD2.
+
+### Land exit 4 is any owed unmade resubmission  {#908-land-exit-4}
+
+**Decision.** `cmd_land` returns 4 when a review resubmission was owed and not made: prompt failure, staged withhold, or operator-hold. Exit 4 outranks leftover-landing-path exit 3. The documented table names all three unmade paths.
+
+**Rationale.** Staged withhold already moved from 0 to 4. Operator-hold still exited 0 with `review_resubmit_pending` true, so a caller could not tell "converged" from "parked on a human". A leftover path returning 3 first hid the stalled repair cycle.
+
+**Alternatives rejected.** A new exit code. Leaving operator-hold at 0 because the prose already said HELD.
+
+**Revisit when.** A fourth unmade path appears.
+
+**Refs.** Issues #959, #974; plan KTD10.
+
+### Fix identifiers namespace on cycle state, not the result schema  {#908-fix-id-lifecycle}
+
+**Decision.** `ReviewCycleState` takes an optional `lifecycle` and persists it on `review_cycle_state.v1`. `consolidate_fix_requests` includes it in the identity string when non-empty. `review_result.v1` gains no field.
+
+**Rationale.** Two reviews that shared owner, autofix class, and `F-n` labels minted the same twelve-hex id. Lengthening the digest does not help identical identity strings. Putting lifecycle on `ReviewResult` would change the artifact schema the parent forbids.
+
+**Alternatives rejected.** Constructor-only with no cycle-state round trip (resume would mint unscoped ids). A registry. Changing finding labels.
+
+**Revisit when.** A second namespacing axis (run id) is required.
+
+**Refs.** Issue #899; plan KTD7.
+
+### Partial-dispatch skip lives on the controller slot  {#908-dispatch-once}
+
+**Decision.** After a successful repair prompt, `dispatch_review_routing` appends the fix id to `review_slot()["dispatched_fix_ids"]`. A retry skips ids already in that list.
+
+**Rationale.** `_park_fix_request` rebuilds request dicts from the artifact, wiping a flag on the request. A list on the worker misses a retry that selects a different holder for the same id.
+
+**Alternatives rejected.** A `dispatched` key on the request dict. A list on `Unit`. Skipping by unit name.
+
+**Revisit when.** Assignments and replacements also need prompt-once memory.
+
+**Refs.** Issue #976; plan KTD11.
+
 ### Companion ingest uses one four-state classification  {#1003-companion-state-classification}
 
 **Decision.** Orchestrate classifies the Agent Launcher companion as `missing`, `below-floor`, `ingested-but-unusable`, or `usable`. `status`, `check`, and the write gates all read that classification. `_AGENT_LAUNCHER_AVAILABLE` is true only for `usable` and `below-floor`.

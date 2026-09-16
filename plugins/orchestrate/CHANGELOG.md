@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.5.0] - 2026-09-16
+
+### Fixed
+
+- **Review-slot migration on late lifecycle assignment (#898).** Assigning a `lifecycle` after an unscoped review copies `review_result`, `review_outcome`, `review_resubmit_pending`, and `operator_fix_requests` into the named slot. A conflicting named slot is a stop, not an overwrite.
+- **Replacement identity (#902).** A scoped mint names the controller's lifecycle and uses `{lifecycle}-repair` as the workspace. Template `-fix-` stems are not compounded. Lineage stays in the unit note.
+- **Terminal-unit routing (#892).** `failed`, `orphaned`, `account_mismatch`, and `parked` workers are not reused and are not flipped back to `running`. A request whose only match is terminal mints a replacement.
+- **Terminal and cycle-regressed ingest (#893).** `review-result` refuses a non-identical ingest into `accepted` or `cycle_cap_best_available`, and refuses a shorter `cycle_history` than the slot already stored. Byte-identical replay is unchanged.
+- **Faithful status (#895).** A stored result with unset outcome prints `recorded-but-unrouted`. A note that contradicts the typed outcome is named and does not displace it.
+- **Lifecycle-scoped resubmit (#884, #956).** `land` resubmits only controllers whose own lifecycle landed repairs in this invocation, never a controller already `running`. A non-staged write failure on one controller does not abort later controllers.
+- **Land exit 4 (#959, #974).** An owed unmade resubmission, including operator-hold, exits 4 and outranks leftover-landing-path exit 3.
+- **Dispatch-once retry (#976).** `dispatched_fix_ids` on the controller slot skips a worker that already took its repair when `review-result` is retried after a partial dispatch.
+
 ## [4.4.0] - 2026-09-16
 
 ### Changed

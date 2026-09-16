@@ -540,6 +540,56 @@ def test_cmd_start_carries_and_validates_the_ceiling(
     assert orchestrate.Run.load().review_controller_ceiling == 2
 
 
+def test_late_lifecycle_assignment_migrates_run_global_review_state(
+    orchestrate: ModuleType,
+) -> None:
+    """#898: a controller reviewed unscoped, then gained a lifecycle, must still see its result."""
+    controller = _controller(orchestrate, "cr-late")
+    run = _run(orchestrate, controller)
+    raw = json.dumps({"schema": "review_result.v1", "outcome": "accepted"}, sort_keys=True)
+    requests = [{"fix_id": "held"}]
+    run.write_review_slot(
+        controller,
+        review_result=raw,
+        review_outcome="accepted",
+        review_resubmit_pending=True,
+        operator_fix_requests=requests,
+    )
+    assert run.review_result == raw
+    controller.lifecycle = "c2"
+    slot = run.review_slot(controller)
+    assert slot["review_result"] == raw
+    assert slot["review_outcome"] == "accepted"
+    assert slot["review_resubmit_pending"] is True
+    assert slot["operator_fix_requests"] == requests
+    assert slot["operator_fix_requests"] is not run.operator_fix_requests
+
+
+def test_late_lifecycle_assignment_refuses_a_conflicting_named_slot(
+    orchestrate: ModuleType,
+) -> None:
+    """#898: a named slot that already holds different bytes is a stop, not an overwrite."""
+    controller = _controller(orchestrate, "cr-late", lifecycle="c2")
+    run = _run(orchestrate, controller)
+    named = json.dumps({"schema": "review_result.v1", "outcome": "accepted"}, sort_keys=True)
+    global_raw = json.dumps(
+        {"schema": "review_result.v1", "outcome": "cycle_cap_best_available"},
+        sort_keys=True,
+    )
+    run.review_states[controller.name] = {
+        "review_result": named,
+        "review_outcome": "accepted",
+        "review_resubmit_pending": False,
+        "operator_fix_requests": [],
+    }
+    run.review_result = global_raw
+    run.review_outcome = "cycle_cap_best_available"
+    with pytest.raises(SystemExit, match="conflicts with run-global"):
+        run.review_slot(controller)
+    assert run.review_states[controller.name]["review_result"] == named
+    assert run.review_result == global_raw
+
+
 def test_wait_reason_names_the_ceiling_holdback(orchestrate: ModuleType) -> None:
     """An empty wait_reason means eligible-not-yet-launched, so starvation must not look like that."""
     run = _run(

@@ -1145,9 +1145,7 @@ class ReviewResult:
             and not self.unresolved_fix_ids
             and any(item.status == "active" for item in self.findings)
         ):
-            raise ReviewConsensusError(
-                "accepted result cannot carry findings still marked active"
-            )
+            raise ReviewConsensusError("accepted result cannot carry findings still marked active")
         if self.outcome == "repairs_requested" and (
             not self.failing_lenses or len(self.cycle_history) >= MAX_REVIEW_CYCLES
         ):

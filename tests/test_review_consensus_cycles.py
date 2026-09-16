@@ -723,20 +723,16 @@ def test_fix_identifiers_differ_across_lifecycles_and_are_stable_within_one() ->
     restored = CONSENSUS.ReviewCycleState.from_json(first.to_json())
     restored_payload = json.loads(first.to_json())
     assert restored_payload["lifecycle"] == "c2"
-    assert "lifecycle" not in json.loads(
-        CONSENSUS.ReviewCycleState(("correctness",)).to_json()
-    )
+    assert "lifecycle" not in json.loads(CONSENSUS.ReviewCycleState(("correctness",)).to_json())
     restored_again = CONSENSUS.ReviewCycleState(("correctness",), lifecycle="c2")
-    restored_again_result = restored_again.record_cycle(
-        "revision-1", scores, findings=(finding,)
-    )
+    restored_again_result = restored_again.record_cycle("revision-1", scores, findings=(finding,))
     assert restored_again_result.fix_requests[0].fix_id == first_result.fix_requests[0].fix_id
     assert json.loads(restored.to_json())["lifecycle"] == "c2"
 
     unscoped = CONSENSUS.ReviewCycleState(("correctness",)).record_cycle(
         "revision-1", scores, findings=(finding,)
     )
-    assert unscoped.fix_requests[0].fix_id == CONSENSUS.consolidate_fix_requests((finding,))[
-        0
-    ].fix_id
+    assert (
+        unscoped.fix_requests[0].fix_id == CONSENSUS.consolidate_fix_requests((finding,))[0].fix_id
+    )
     assert "lifecycle" not in unscoped.to_dict()

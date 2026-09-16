@@ -179,6 +179,7 @@ ACCOUNT_MISMATCH = "account_mismatch"
 STAGED_INPUT_BOX = "staged"
 ORPHANED = "orphaned"
 PARKED = "parked"
+TERMINAL_UNIT_STATUSES = frozenset({FAILED, ORPHANED, ACCOUNT_MISMATCH, PARKED})
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
 RUN_SLOT = "__run__"
@@ -676,12 +677,74 @@ class Run:
         slot.setdefault("review_outcome", None)
         slot.setdefault("review_resubmit_pending", False)
         slot.setdefault("operator_fix_requests", [])
+        slot.setdefault("dispatched_fix_ids", [])
+        if key != RUN_SLOT:
+            self._migrate_run_global_review_state(key, slot)
         return slot
+
+    def _migrate_run_global_review_state(self, key: str, slot: dict[str, Any]) -> None:
+        """Copy run-global review state into a newly scoped named slot (#898).
+
+        Named-slot contents are the authority once present. A different result already in
+        that slot is a named stop, not an overwrite. Two empty named slots must not both
+        inherit the same run-global result.
+        """
+        run_slot = self.review_states.get(RUN_SLOT, {})
+        source_result = run_slot.get("review_result")
+        if source_result is None:
+            source_result = self.review_result
+        if source_result is None:
+            return
+        if slot.get("run_global_linked"):
+            return
+        source_outcome = run_slot.get("review_outcome", self.review_outcome)
+        source_pending = run_slot.get("review_resubmit_pending", self.review_resubmit_pending)
+        source_requests = list(
+            run_slot.get("operator_fix_requests") or self.operator_fix_requests or []
+        )
+        named_empty = (
+            slot.get("review_result") is None
+            and slot.get("review_outcome") is None
+            and not slot.get("review_resubmit_pending")
+            and not slot.get("operator_fix_requests")
+        )
+        if not named_empty:
+            if slot.get("review_result") != source_result:
+                raise SystemExit(
+                    f"controller {key!r} already has a typed review result that conflicts "
+                    "with run-global review state; refusing to overwrite either slot"
+                )
+            slot["run_global_linked"] = True
+            return
+        empty_named = 0
+        for unit in self.review_controllers():
+            if not unit.lifecycle:
+                continue
+            other = slot if unit.name == key else self.review_states.get(unit.name, {})
+            if (
+                other.get("review_result") is None
+                and other.get("review_outcome") is None
+                and not other.get("review_resubmit_pending")
+                and not other.get("operator_fix_requests")
+            ):
+                empty_named += 1
+        if empty_named > 1:
+            raise SystemExit(
+                "run-global review state cannot be copied into more than one empty named "
+                "slot; name which controller owns it"
+            )
+        slot["review_result"] = source_result
+        slot["review_outcome"] = source_outcome
+        slot["review_resubmit_pending"] = bool(source_pending)
+        slot["operator_fix_requests"] = list(source_requests)
+        slot["run_global_linked"] = True
 
     def write_review_slot(self, controller: Unit | None, **changes: Any) -> None:
         """Write typed review state back to whichever slot ``controller`` owns."""
         slot = self.review_slot(controller)
         slot.update(changes)
+        if controller is not None and controller.lifecycle:
+            slot["run_global_linked"] = True
         if controller is None or not controller.lifecycle:
             # Mirror to the run-level fields so a record written here still loads in an older
             # Orchestrate, and so the single-controller view stays true for anything reading it.
@@ -1274,6 +1337,11 @@ def _review_routing_fields(raw_result: str) -> tuple[str, list[dict[str, Any]]]:
     return str(outcome), requests
 
 
+def _unit_is_terminal(unit: Unit) -> bool:
+    """Whether the run has already retired this unit; routing must not revive it."""
+    return unit.status in TERMINAL_UNIT_STATUSES
+
+
 def _unit_is_live(unit: Unit, agents: Sequence[Mapping[str, Any]]) -> bool:
     """Whether Herdr still reports the worker's recorded pane or agent identity."""
     return any(
@@ -1326,10 +1394,22 @@ def _request_prompt(request: Mapping[str, Any], *, run_branch: str = "") -> str:
     )
 
 
-def _replacement_name(template: Unit, request: Mapping[str, Any], existing: set[str]) -> str:
+def _replacement_name(
+    template: Unit,
+    request: Mapping[str, Any],
+    existing: set[str],
+    controller: Unit | None = None,
+) -> str:
     """Create a stable safe unit name without treating the request identity as a path."""
     slug = re.sub(r"[^a-z0-9]+", "-", _fix_request_id(request).lower()).strip("-") or "repair"
-    stem = f"{template.name}-fix-{slug}"[:80].rstrip("-")
+    if controller is not None and controller.lifecycle:
+        stem_base = str(controller.lifecycle).strip()
+    elif controller is not None:
+        stem_base = controller.name
+    else:
+        stem_base = template.name
+    stem_base = re.split(r"-fix(?:-|$)", stem_base, maxsplit=1)[0].rstrip("-") or stem_base
+    stem = f"{stem_base}-repair-{slug}"[:80].rstrip("-")
     candidate = stem
     suffix = 2
     while candidate in existing:
@@ -1342,8 +1422,12 @@ def _replacement_worker(
     template: Unit, request: dict[str, Any], controller: Unit | None, existing: set[str]
 ) -> Unit:
     """Create a fresh Work unit from an approved worker's execution configuration."""
-    name = _replacement_name(template, request, existing)
+    name = _replacement_name(template, request, existing, controller)
     task = f"/saga:work {_request_prompt(request)}"
+    scoped_lifecycle = controller.lifecycle if controller is not None else None
+    workspace = (
+        f"{str(scoped_lifecycle).strip()}-repair" if scoped_lifecycle else template.workspace
+    )
     replacement = Unit(
         name=name,
         vendor=template.vendor,
@@ -1353,17 +1437,18 @@ def _replacement_worker(
         permission=template.permission,
         setup=list(template.setup),
         launch_args=list(template.launch_args),
-        workspace=template.workspace,
+        workspace=workspace,
         account=template.account,
         merge=True,
         role=str(request["owner"]),
         paths=list(request["touched_paths"]),
         fix_requests=[request],
         serialize=[controller.name] if controller is not None else [],
+        note=f"minted from {template.name}",
         # A replacement minted without its controller's lifecycle leaves that child lifecycle:
         # _lifecycle_units cannot see it, so resubmit stops waiting on its outstanding repair and
         # land resubmits the frozen target before the repair exists (#877).
-        lifecycle=template.lifecycle or (controller.lifecycle if controller is not None else None),
+        lifecycle=template.lifecycle or scoped_lifecycle,
     )
     existing.add(name)
     return replacement
@@ -1421,7 +1506,9 @@ def route_review_result(
         reusable = [
             unit
             for unit in matching
-            if _unit_is_live(unit, live) and not (scoped and not unit.lifecycle)
+            if _unit_is_live(unit, live)
+            and not _unit_is_terminal(unit)
+            and not (scoped and not unit.lifecycle)
         ]
         if reusable:
             worker = reusable[0]
@@ -1435,6 +1522,7 @@ def route_review_result(
                 unit
                 for unit in _lifecycle_units(r, controller)
                 if _unit_has_fix_request(unit, fix_id)
+                and not _unit_is_terminal(unit)
                 and (_unit_is_live(unit, live) or unit.name in eligible_names)
             ),
             None,
@@ -1483,11 +1571,19 @@ def dispatch_review_routing(
     routing: ReviewRouting,
     *,
     sender: Callable[[Unit, str], None] | None = None,
+    slot: dict[str, Any] | None = None,
 ) -> list[str]:
     """Send routed requests to live workers; replacement units launch through ordinary ``go``."""
     send_one = sender or _send_with_pane_guard
     dispatched: list[str] = []
+    already = list((slot or {}).get("dispatched_fix_ids") or [])
     for unit, request in routing.dispatches:
+        if _unit_is_terminal(unit):
+            continue
+        fix_id = _fix_request_id(request)
+        if fix_id in already:
+            dispatched.append(unit.name)
+            continue
         try:
             send_one(unit, _request_prompt(request, run_branch=routing.run_branch))
         except StagedInputError as exc:
@@ -1496,8 +1592,11 @@ def dispatch_review_routing(
             print(exc)
             continue
         unit.status = RUNNING
-        append_unit_note(unit, f"outstanding review fix {_fix_request_id(request)}")
+        append_unit_note(unit, f"outstanding review fix {fix_id}")
         dispatched.append(unit.name)
+        already.append(fix_id)
+        if slot is not None:
+            slot["dispatched_fix_ids"] = list(already)
     return dispatched
 
 
@@ -1543,6 +1642,8 @@ def resubmit_review_if_ready(
     revision: str,
     *,
     sender: Callable[[Unit, str], None] | None = None,
+    landed_names: Sequence[str] = (),
+    landed_revisions: Mapping[str, str] | None = None,
 ) -> bool:
     """Resubmit the landed revision through the same controller when every Work repair landed.
 
@@ -1564,17 +1665,43 @@ def resubmit_review_if_ready(
         # so `land` exits 4 exactly as it does for any other resubmission failure (cycle 2, F42).
         sent = False
         withheld: list[str] = []
+        failed: list[str] = []
+        landed = set(landed_names)
+        tips = dict(landed_revisions or {})
         for candidate in pending:
+            if candidate.status == RUNNING:
+                continue
+            if landed:
+                owned = {
+                    unit.name for unit in _lifecycle_units(r, candidate) if unit.name in landed
+                }
+                if not owned:
+                    continue
+                owned_tips = [tips[name] for name in landed_names if name in owned and name in tips]
+                candidate_revision = owned_tips[-1] if owned_tips else revision
+            else:
+                candidate_revision = revision
             try:
-                if _resubmit_one(r, candidate, revision, sender=sender):
+                if _resubmit_one(r, candidate, candidate_revision, sender=sender):
                     sent = True
-                    print(f"resubmitted landed revision {revision} through {candidate.name}")
+                    print(
+                        f"resubmitted landed revision {candidate_revision} through {candidate.name}"
+                    )
             except StagedInputError:
                 withheld.append(candidate.name)
+            except SystemExit as exc:
+                failed.append(f"{candidate.name}: {exc}")
+                print(f"  {candidate.name} resubmission skipped: {exc}")
         if withheld:
             raise StagedInputError(
                 f"resubmission withheld for {', '.join(withheld)}: the composer holds staged "
                 "input; clear it and land again"
+            )
+        if failed:
+            raise SystemExit(
+                "resubmission write failed for "
+                + "; ".join(failed)
+                + "; later controllers were still attempted"
             )
         return sent
 
@@ -3644,6 +3771,50 @@ def cmd_expand(args: argparse.Namespace) -> int:
     return 0
 
 
+def _review_json_object(raw: str | None) -> dict[str, Any] | None:
+    """Parse a stored or incoming review artifact when it is a JSON object."""
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, UnicodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _review_ingest_refusal(slot: Mapping[str, Any], incoming_raw: str) -> str | None:
+    """Named stop for a cycle-regressed or terminal overwrite; None means ingest may proceed."""
+    stored_raw = slot.get("review_result")
+    if not stored_raw or stored_raw == incoming_raw:
+        return None
+    stored = _review_json_object(str(stored_raw))
+    incoming = _review_json_object(incoming_raw)
+    stored_outcome = None
+    if stored is not None and isinstance(stored.get("outcome"), str):
+        stored_outcome = stored["outcome"]
+    elif isinstance(slot.get("review_outcome"), str):
+        stored_outcome = slot["review_outcome"]
+    if stored_outcome in {"accepted", "cycle_cap_best_available"}:
+        return (
+            f"refusing to overwrite terminal review outcome {stored_outcome!r} with a "
+            "different artifact; byte-identical replay is the only admitted exception"
+        )
+    if stored is None or incoming is None:
+        return None
+    stored_history = stored.get("cycle_history")
+    incoming_history = incoming.get("cycle_history")
+    if (
+        isinstance(stored_history, list)
+        and isinstance(incoming_history, list)
+        and len(incoming_history) < len(stored_history)
+    ):
+        return (
+            f"refusing cycle-regressed review result: incoming cycle_history length "
+            f"{len(incoming_history)} is shorter than stored {len(stored_history)}"
+        )
+    return None
+
+
 def cmd_review_result(args: argparse.Namespace) -> int:
     """Persist one typed result verbatim, then act only on its routing fields."""
     assert_agent_launcher_available()  # routing resubmits reach PaneWriter: gate before any write
@@ -3675,6 +3846,9 @@ def cmd_review_result(args: argparse.Namespace) -> int:
     if slot["review_result"] == raw_result and slot["review_outcome"] is not None:
         print("review result is already recorded byte-for-byte; nothing dispatched twice")
         return 0
+    refusal = _review_ingest_refusal(slot, raw_result)
+    if refusal is not None:
+        raise SystemExit(refusal)
 
     # Persist before interpreting even the routing envelope. A bad or unsupported route must not
     # discard the controller's evidence; the operator can inspect the exact string that failed.
@@ -3688,7 +3862,7 @@ def cmd_review_result(args: argparse.Namespace) -> int:
     r.save()  # outstanding requests protect workers before any prompt crosses a process boundary
 
     try:
-        dispatched = dispatch_review_routing(routing)
+        dispatched = dispatch_review_routing(routing, slot=r.review_slot(controller))
     except SystemExit as exc:
         r.save()
         print(f"REVIEW FIX DISPATCH FAILED: {exc}")
@@ -3927,7 +4101,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     operator_requests: list[dict[str, Any]] = []
     for owner, label, slot in slots:
         operator_requests.extend(slot["operator_fix_requests"])
+        scope = f" [{label}]" if label else ""
         if not slot["review_outcome"]:
+            if slot.get("review_result"):
+                print(f"\nCode Review result{scope}: recorded-but-unrouted")
             continue
         outstanding_work = any(unit.fix_requests for unit in _lifecycle_units(r, owner))
         pending = slot["review_resubmit_pending"]
@@ -3944,8 +4121,17 @@ def cmd_status(args: argparse.Namespace) -> int:
             state = "operator-owned fix requests outstanding"
         else:
             state = "recorded"
-        scope = f" [{label}]" if label else ""
-        print(f"\nCode Review result{scope}: {one_line(str(slot['review_outcome']))} ({state})")
+        typed_outcome = str(slot["review_outcome"])
+        print(f"\nCode Review result{scope}: {one_line(typed_outcome)} ({state})")
+        if owner is not None and owner.note:
+            for token in sorted(REVIEW_OUTCOMES, key=len, reverse=True):
+                if re.search(rf"\b{re.escape(token)}\b", owner.note, flags=re.IGNORECASE):
+                    if token != typed_outcome:
+                        print(
+                            f"note contradicts typed outcome: note has {token}, "
+                            f"slot has {typed_outcome}"
+                        )
+                    break
 
     for request in operator_requests:
         owner = one_line(str(request.get("owner", "?")))
@@ -4521,6 +4707,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     # units this invocation merged, and a name recovered by stripping " (+3)" off a display string
     # would break on the first unit name containing a bracket.
     landed_names: list[str] = []
+    landed_tips: dict[str, str] = {}
     completed_fix_ids: list[str] = []
     writeback_failures: list[dict[str, Any]] = []
     announced_units: list[str] = []
@@ -4593,6 +4780,7 @@ def cmd_land(args: argparse.Namespace) -> int:
                     r.save()
                     landed.append(f"{unit.name} (+{recovered_ahead or '?'})")
                     landed_names.append(unit.name)
+                    landed_tips[unit.name] = branch_tip
                     completed_fix_ids.extend(complete_landed_fix_requests(r, [unit.name]))
                     r.save()
                     records = announce_units(r, [unit.name])
@@ -4768,6 +4956,7 @@ def cmd_land(args: argparse.Namespace) -> int:
             r.record_branch_advance(merged_tip)
             landed.append(f"{unit.name} (+{ahead})")
             landed_names.append(unit.name)
+            landed_tips[unit.name] = branch_tip
             completed_fix_ids.extend(complete_landed_fix_requests(r, [unit.name]))
             r.save()
             # The boundary just passed: write it back to the board here, where it happened, rather
@@ -4794,15 +4983,26 @@ def cmd_land(args: argparse.Namespace) -> int:
                 cleanup_failures.append((landing_worktree, detail))
 
     resubmit_failed = False
+    resubmit_owed_unmade = False
     any_pending = r.review_resubmit_pending or any(
         r.review_slot(unit)["review_resubmit_pending"] for unit in r.review_controllers()
     )
     if any_pending:
         try:
-            if resubmit_review_if_ready(r, branch_tip):
+            if resubmit_review_if_ready(
+                r,
+                branch_tip,
+                landed_names=landed_names,
+                landed_revisions=landed_tips,
+            ):
                 print(f"resubmitted landed revision {branch_tip} to the Code Review controller")
+        except StagedInputError as exc:
+            resubmit_failed = True
+            resubmit_owed_unmade = True
+            print(f"REVIEW RESUBMIT FAILED: {exc}")
         except SystemExit as exc:
             resubmit_failed = True
+            resubmit_owed_unmade = True
             print(f"REVIEW RESUBMIT FAILED: {exc}")
         r.save()
 
@@ -4813,6 +5013,7 @@ def cmd_land(args: argparse.Namespace) -> int:
             and held_slot["review_resubmit_pending"]
             and held_slot["operator_fix_requests"]
         ):
+            resubmit_owed_unmade = True
             print(
                 f"REVIEW RESUBMISSION HELD for {held_controller.name} "
                 f"(lifecycle {held_controller.lifecycle}): "
@@ -4831,6 +5032,7 @@ def cmd_land(args: argparse.Namespace) -> int:
         and unscoped_slot["operator_fix_requests"]
         and not outstanding_work
     ):
+        resubmit_owed_unmade = True
         fix_ids = ", ".join(
             one_line(str(request.get("fix_id", "?"))) for request in r.operator_fix_requests
         )
@@ -4856,6 +5058,8 @@ def cmd_land(args: argparse.Namespace) -> int:
     outstanding_writebacks = _report_outstanding_writebacks(r, announced_units)
     if cleanup_failures:
         _report_landing_cleanup_failures(cleanup_failures)
+        if resubmit_owed_unmade or resubmit_failed:
+            return 4
         return 3
     # ``getattr``: a caller that built its own Namespace before this flag existed has no
     # ``clean`` attribute, and a land that worked yesterday must keep working today. Reaping comes
@@ -4877,7 +5081,7 @@ def cmd_land(args: argparse.Namespace) -> int:
             print("nothing reaped: every unit this land merged was kept, for the reasons below")
         for name, reason in kept_reasons.items():
             print(f"kept {name}: {reason}")
-    if resubmit_failed:
+    if resubmit_owed_unmade or resubmit_failed:
         return 4
     return 2 if (writeback_failures or outstanding_writebacks) else 0
 

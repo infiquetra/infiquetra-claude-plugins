@@ -13,6 +13,16 @@ This plan exists before any implementation commit. Every scenario drives a shipp
 
 No scenario re-implements the unit under test, mocks the function under test, or hard-codes an expected value that bypasses the shipped entry point.
 
+## Key Technical Decisions
+
+KTD1. Each scenario calls a shipped composer or launcher function with a representative pane dump or receipt. Re-implementing the unit under test inside the test is not coverage.
+
+## Implementation Units
+
+### U1. Finite scenario table
+
+The table below is the executable unit. Implementation of the behaviors it names is the companion plan `docs/plans/2026-09-16-issue-1002-agent-launcher-findings-plan.md`.
+
 ## How to run
 
 ```bash

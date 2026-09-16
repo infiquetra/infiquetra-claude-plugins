@@ -1318,13 +1318,17 @@ class TestOpenCodeLaunchAndVariantRecipe:
                     stderr="",
                 )
             if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
-                # Live picker output offering up to xhigh (Team Mimir scenario)
+                # Live picker output offering up to xhigh (Team Mimir scenario).
+                # After the select keystroke, the session row (not the typed echo) confirms.
                 picker_output = (
                     "Select a variant:\n> Default\n  minimal\n  low\n  medium\n  high\n  xhigh\n"
                 )
-                return subprocess.CompletedProcess(
-                    cmd, returncode=0, stdout=picker_output, stderr=""
+                selected = any(
+                    c[:4] == ["herdr", "pane", "run", "pane-mimir"] and c[-1] == "xhigh"
+                    for c in executed_cmds
                 )
+                stdout = "variant: xhigh\n" if selected else picker_output
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout=stdout, stderr="")
             if cmd[:3] == ["herdr", "pane", "run"]:
                 return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
             if cmd[:3] == ["herdr", "agent", "prompt"]:
@@ -1388,7 +1392,7 @@ class TestOpenCodeLaunchAndVariantRecipe:
         assert unit.launch_receipt["variant"] == "xhigh"
         assert unit.launch_receipt["pane"] == "pane-mimir"
         assert unit.launch_receipt["verified"] is True
-        assert "variant xhigh verified" in unit.note
+        assert "variant verified" in unit.note
 
     def test_non_opencode_vendor_does_not_send_variants(
         self,
@@ -1434,6 +1438,13 @@ class TestOpenCodeLaunchAndVariantRecipe:
                 )
             if cmd[:3] == ["herdr", "agent", "prompt"]:
                 return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+                empty = (
+                    "\x1b[2m──────────────────────────────\x1b[0m\n"
+                    "❯ \n"
+                    "\x1b[2m──────────────────────────────\x1b[0m\n"
+                )
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout=empty, stderr="")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)

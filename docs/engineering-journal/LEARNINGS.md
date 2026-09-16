@@ -2,6 +2,20 @@
 
 ## 2026-09-16
 
+### Name presence is not companion usability  {#1003-name-presence-is-not-usability}
+
+**Context.** Orchestrate execs the Agent Launcher source into its own globals and then checks that `REQUIRED_LAUNCHER_NAMES` exist. Issue 907's terminal review found a 30-line stub whose names existed as `return None` still counted as a live companion, and a floor-satisfying tree missing `live_agents` killed read-only `status`.
+
+**Evidence.** `_bind_missing_launcher_names` in `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` recorded the fault but left `_AGENT_LAUNCHER_AVAILABLE` true. `cmd_status` and `cmd_check` branched only on that flag. `cmd_check` printed `the record agrees with the repository` and exited 0 when `agents is None`.
+
+**Mechanism.** The name check is a set-membership test. It cannot see a no-op `guard_pane_before_write`. The availability flag means "exec succeeded", which is not "safe to poll Herdr" and not "safe to write a pane".
+
+**Fix.** AST-validate before exec: required names as top-level defs or assignment targets, and `guard_pane_before_write` must call `pane_input_inspection`. Failures are not exec'd. `_AGENT_LAUNCHER_AVAILABLE` is true only when names are live after ingest (below-floor still reads). `cmd_check` records `LIVENESS UNCHECKED` and exits 1 when herdr was not asked.
+
+**Generalizable rule.** A companion contract that only asks "is the name bound?" will accept a stub. Probe the behaviour the name is supposed to perform, and share one classification across read and write gates.
+
+**Refs.** Issue #1003 children #957, #958, #978; `{#1003-companion-state-classification}`; `{#1003-ast-validate-before-exec}`.
+
 ### An adjacent-only decoy walk is not the blank-separator rule  {#1002-decoy-walk-blank-separators}
 
 **Context.** Issue 1002 R5 required a later empty marker with only blank rows above a `STAGED` block to stay `STAGED`. 1.5.0 implemented one immediately-adjacent empty marker and broke after the previous block.

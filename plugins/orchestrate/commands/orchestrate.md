@@ -497,7 +497,7 @@ land in `Planning`; `work`, `fix` and `codereview` in `Active`. That is all five
 `Verify` or `Retro` — those begin only after conditions a run cannot observe — and a `status_map`
 override naming either stage is refused at submission, not merely absent from the default map.
 
-**Install saga 0.151.0 or later and mission-control 2.15.1 or later before relying on this.**
+**Install saga 0.151.0 or later, mission-control 2.15.1 or later, and agent-launcher 1.4.0 or later before relying on this.**
 Both floors are declared in `plugin.json`; saga's is enforced — a saga below its floor is
 refused before any submission, because an older saga silently drops the `Stage` half and reports
 success. The agent-launcher floor is enforced at runtime as a command-by-state matrix:

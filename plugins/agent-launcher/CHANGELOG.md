@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.2] - 2026-09-16
+
+### Changed
+
+- **SKILL.md's bound-name list names `AccountMismatchError` and matches Orchestrate's `REQUIRED_LAUNCHER_NAMES`, including `ComposerState` (#1003).** Removing or renaming one remains a major change that moves Orchestrate's declared floor.
+
 ## [1.5.1] - 2026-09-16
 
 ### Changed

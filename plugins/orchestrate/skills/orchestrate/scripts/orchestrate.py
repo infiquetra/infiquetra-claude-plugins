@@ -12,6 +12,7 @@ delete it -- `herdr agent list` is the real truth.
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import functools
 import glob
@@ -1871,6 +1872,25 @@ def _ingest_agent_launcher() -> bool:
         _AGENT_LAUNCHER_ERROR = _REMEDIATION_MESSAGE
         return False
     try:
+        source = script.read_text(encoding="utf-8")
+    except OSError as exc:
+        _AGENT_LAUNCHER_ERROR = _agent_launcher_error(
+            f"cannot read agent-launcher at {script}: {exc}"
+        )
+        return False
+    missing, unusable = _companion_source_faults(source)
+    if missing:
+        _AGENT_LAUNCHER_ERROR = (
+            f"agent-launcher at {script} does not define {', '.join(missing)}; Orchestrate "
+            f"requires a release that does. {_UPDATE_REMEDIATION}"
+        )
+        return False
+    if unusable:
+        _AGENT_LAUNCHER_ERROR = (
+            f"agent-launcher at {script} is unusable: {unusable}. {_UPDATE_REMEDIATION}"
+        )
+        return False
+    try:
         _validated_agent_launcher(script)
     except _LauncherFloorFailure as exc:
         # A stale launcher is still ingested, so read-only commands -- status, check, wait,
@@ -1893,7 +1913,7 @@ def _ingest_agent_launcher() -> bool:
     snapshot = dict(globals())
     own_doc = globals()["__doc__"]
     try:
-        exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
+        exec(compile(source, str(script), "exec"), globals())
     except (SystemExit, Exception) as exc:
         # The exec is atomic: a launcher that fails partway through its own import binds
         # nothing, not a subset of its names over this module's own definitions.
@@ -1943,7 +1963,84 @@ REQUIRED_LAUNCHER_NAMES = (
     "VENDOR_NOTES",
     "AccountMismatchError",
     "StagedInputError",
+    "ComposerState",
 )
+
+
+def _top_level_defined_names(tree: ast.AST) -> set[str]:
+    """Names a companion module binds at top level: defs, classes, and assignment targets."""
+    names: set[str] = set()
+    body = getattr(tree, "body", ())
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                names.update(_assignment_target_names(target))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def _assignment_target_names(target: ast.AST) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: set[str] = set()
+        for elt in target.elts:
+            names.update(_assignment_target_names(elt))
+        return names
+    return set()
+
+
+def _guard_calls_pane_input_inspection(tree: ast.AST) -> bool:
+    """True when ``guard_pane_before_write`` in this tree calls ``pane_input_inspection``."""
+    body = getattr(tree, "body", ())
+    for node in body:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "guard_pane_before_write"
+        ):
+            for child in ast.walk(node):
+                if (
+                    isinstance(child, ast.Call)
+                    and isinstance(child.func, ast.Name)
+                    and child.func.id == "pane_input_inspection"
+                ):
+                    return True
+            return False
+    return False
+
+
+def _companion_source_faults(source: str) -> tuple[list[str], str | None]:
+    """AST-validate companion source before exec.
+
+    Returns (missing required names, unusable reason). A name-only stub whose
+    ``guard_pane_before_write`` does not call ``pane_input_inspection`` is unusable
+    even when every required name is defined. Floor checking is separate.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [], f"invalid Python: {exc}"
+    defined = _top_level_defined_names(tree)
+    missing = [name for name in REQUIRED_LAUNCHER_NAMES if name not in defined]
+    if not _guard_calls_pane_input_inspection(tree):
+        return missing, "guard_pane_before_write does not call pane_input_inspection"
+    return missing, None
+
+
+def _companion_names_are_live() -> bool:
+    """True when no required name is still the refuse stub after ingest."""
+    for name in REQUIRED_LAUNCHER_NAMES:
+        if name in ("AccountMismatchError", "StagedInputError"):
+            obj = globals().get(name)
+            if not (isinstance(obj, type) and issubclass(obj, BaseException)):
+                return False
+            continue
+        if name not in globals() or globals()[name] is _agent_launcher_required:
+            return False
+    return True
 
 
 def _bind_missing_launcher_names(script: Path) -> None:
@@ -1997,6 +2094,7 @@ if not _ingest_agent_launcher():
     VENDOR_FLAGS = {}
     VENDOR_PERMISSION = {}
     VENDOR_NOTES = {}
+    ComposerState = _agent_launcher_required
 
     class AccountMismatchError(Exception):
         pass
@@ -2004,7 +2102,10 @@ if not _ingest_agent_launcher():
     class StagedInputError(Exception):
         pass
 else:
-    _AGENT_LAUNCHER_AVAILABLE = True
+    # Exec succeeded. Missing names were stubbed by ``_bind_missing_launcher_names``;
+    # those companions are ingested-but-unusable and must not take the live-read path
+    # (F107). A below-floor companion with live names stays available for reads.
+    _AGENT_LAUNCHER_AVAILABLE = _companion_names_are_live()
 
 
 def repo_root() -> Path:
@@ -3545,7 +3646,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
 
 def cmd_review_result(args: argparse.Namespace) -> int:
     """Persist one typed result verbatim, then act only on its routing fields."""
-    assert_agent_launcher_available()  # routing resubmits reach `say`: gate before any write
+    assert_agent_launcher_available()  # routing resubmits reach PaneWriter: gate before any write
     try:
         raw_result = Path(args.file).read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as exc:
@@ -4401,7 +4502,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     incomplete. 4: repairs landed but could not be resubmitted to the recorded Code Review
     controller. A caller scripting this has to be able to tell those failures apart.
     """
-    assert_agent_launcher_available()  # reaching `say` and `close_run_session`: gate first
+    assert_agent_launcher_available()  # reaching PaneWriter and close_run_session: gate first
     r = Run.load()
     if not r.branch:
         raise SystemExit("this run has no run branch; it predates `land` -- start a new run")
@@ -5420,6 +5521,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         _print_companion_fault_once()
         agents = None
+        findings.append("LIVENESS UNCHECKED -- companion missing or unusable; herdr was not asked")
     for unit in r.units:
         if (
             _AGENT_LAUNCHER_AVAILABLE

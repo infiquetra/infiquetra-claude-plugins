@@ -165,6 +165,11 @@ def strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
 
 
+def _row_without_sgr(line: str) -> str:
+    """Printable row text after SGR/OSC and non-breaking space, before class."""
+    return strip_ansi(line).replace("\xa0", " ")
+
+
 def _without_border(text: str) -> tuple[str, int]:
     """Return row content without a paired box border and its original content column.
 
@@ -207,7 +212,7 @@ def _classify_row(line: str, *, glyph: str, marker_column: int | None) -> tuple[
     marker column of the block in play -- open, or awaiting settlement after a blank row --
     or ``None`` when no block is in play; it decides only the indented/terminator split.
     """
-    clean = strip_ansi(line).replace("\xa0", " ")
+    clean = _row_without_sgr(line)
     if not clean.strip():
         return _RowClass.BLANK, 0
     candidate, column = _without_border(clean)
@@ -279,7 +284,7 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
                 # another vendor's glyph (`> quoted draft`) is that draft, not an empty box
                 # that authorises a write. Stop absorbing once the block has visible text so
                 # menu rows under a filled box stay content (F13).
-                candidate, _ = _without_border(strip_ansi(line).replace("\xa0", " "))
+                candidate, _ = _without_border(_row_without_sgr(line))
                 if candidate[:1] in COMPOSER_MARKERS and not candidate.startswith(glyph):
                     current.lines.append(line)
                     separated = False
@@ -304,7 +309,7 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
 
 
 def _visible_after_marker(lines: list[str], glyph: str) -> str:
-    clean_lines = [_without_border(strip_ansi(line).replace("\xa0", " "))[0] for line in lines]
+    clean_lines = [_without_border(_row_without_sgr(line))[0] for line in lines]
     first = clean_lines[0]
     if first.startswith(glyph):
         clean_lines[0] = first[len(glyph) :]
@@ -359,13 +364,45 @@ def _classify_block(block: _ComposerBlock, *, glyph: str) -> ComposerInspection:
     return ComposerInspection(ComposerState.UNCLASSIFIABLE)
 
 
+def _only_blanks_between(
+    rows: list[str],
+    earlier: _ComposerBlock,
+    later: _ComposerBlock,
+    *,
+    ignore: tuple[_ComposerBlock, ...] = (),
+) -> bool:
+    """True when nothing but blank rows sit between two marker blocks.
+
+    Adjacent blocks have an empty interval. Rows that belong to ignored empty-decoy
+    blocks in between are not content. A leftover content row is scrollback above a
+    live empty box (CORR-05). Blank-only (or decoy-only) separation is a painted
+    empty marker under a still-staged draft (issue 1002 F110 / R5).
+    """
+    start = earlier.start_row + len(earlier.lines)
+    end = later.start_row
+    if end < start:
+        return False
+    decoy_rows: set[int] = set()
+    for block in ignore:
+        decoy_rows.update(range(block.start_row, block.start_row + len(block.lines)))
+    return all(i in decoy_rows or not _row_without_sgr(rows[i]).strip() for i in range(start, end))
+
+
+def _is_empty_decoy(inspection: ComposerInspection, block: _ComposerBlock, *, glyph: str) -> bool:
+    """An empty or unclassifiable-empty marker that can stand in for a painted decoy."""
+    return not _visible_after_marker(block.lines, glyph) and inspection.state in (
+        ComposerState.EMPTY,
+        ComposerState.UNCLASSIFIABLE,
+    )
+
+
 def inspect_composer(ansi_text: str, *, vendor: str) -> ComposerInspection:
     """Inspect the live composer block and let that block decide the outcome.
 
-    The last block is the live box when a blank or content row sits above it, so a
-    submitted echo never stands in for a lower empty box. An immediately adjacent
-    empty marker under a staged draft is painted chrome, and the staged inspection
-    wins so the write stops (issue 1002 F110).
+    The last block is the live box when a content row sits above it, so a submitted
+    echo never stands in for a lower empty box. Empty markers with only blank rows
+    (or nothing) between them and an earlier staged block are painted chrome, and
+    the staged inspection wins so the write stops (issue 1002 F110).
     """
     if vendor not in COMPOSER_GLYPH_BY_VENDOR:
         return ComposerInspection(ComposerState.UNSUPPORTED_VENDOR)
@@ -377,18 +414,18 @@ def inspect_composer(ansi_text: str, *, vendor: str) -> ComposerInspection:
         return ComposerInspection(ComposerState.NOT_FOUND)
     classified = [_classify_block(block, glyph=glyph) for block in blocks]
     last = classified[-1]
-    # An immediately adjacent empty marker is painted chrome under a live draft, not a new
-    # empty box. A blank or content row between blocks keeps last-block-wins so a submitted
-    # echo above a live empty box still reads empty (CORR-05).
-    last_block = blocks[-1]
-    if (
-        last.state is ComposerState.UNCLASSIFIABLE
-        and last_block.adjacent_to_previous
-        and not _visible_after_marker(last_block.lines, glyph)
-    ):
+    rows = ansi_text.splitlines()
+    if _is_empty_decoy(last, blocks[-1], glyph=glyph):
+        intermediates: list[_ComposerBlock] = []
         for index in range(len(blocks) - 2, -1, -1):
             if classified[index].state is ComposerState.STAGED:
-                return classified[index]
+                ignored = tuple(intermediates) + (blocks[-1],)
+                if _only_blanks_between(rows, blocks[index], blocks[-1], ignore=ignored):
+                    return classified[index]
+                break
+            if _is_empty_decoy(classified[index], blocks[index], glyph=glyph):
+                intermediates.append(blocks[index])
+                continue
             break
     return last
 

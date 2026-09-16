@@ -1057,9 +1057,14 @@ def test_an_empty_marker_followed_by_two_blank_rows_is_empty(launcher: ModuleTyp
     assert result.text == ""
 
 
-def test_an_echo_a_blank_row_and_an_empty_marker_read_empty(launcher: ModuleType) -> None:
-    """CORR-05: a blank row separates, so the live empty box is not adjacent to the echo."""
-    result = launcher.inspect_composer("❯ earlier submitted prompt\n\n❯ ", vendor="claude")
+def test_content_row_between_echo_and_empty_marker_is_live_empty(
+    launcher: ModuleType,
+) -> None:
+    """CORR-05: a content row between an echoed prompt and a last empty marker is a live
+    empty box, not a decoy. Blank-only separation is the F110 painted-marker case."""
+    result = launcher.inspect_composer(
+        "❯ earlier submitted prompt\npane output line\n❯ ", vendor="claude"
+    )
     assert result.state is launcher.ComposerState.EMPTY
     assert result.text == ""
 
@@ -2559,8 +2564,9 @@ RAW_DOORS = (("herdr", "pane", "run"), ("herdr", "agent", "prompt"))
 
 def _enclosing_function(tree: ast.AST, target: ast.expr | ast.stmt) -> str:
     best = ""
+    target_line = getattr(target, "lineno", 0) or 0
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.lineno <= target.lineno <= (
+        if isinstance(node, ast.FunctionDef) and node.lineno <= target_line <= (
             node.end_lineno or node.lineno
         ):
             best = node.name
@@ -2568,6 +2574,7 @@ def _enclosing_function(tree: ast.AST, target: ast.expr | ast.stmt) -> str:
 
 
 def _writer_write_calls(tree: ast.Module) -> list[str]:
+    """Production write sites: ``writer.write(...)``. Aliased locals are a raw-door evasion."""
     return [
         _enclosing_function(tree, node)
         for node in ast.walk(tree)
@@ -2579,20 +2586,141 @@ def _writer_write_calls(tree: ast.Module) -> list[str]:
     ]
 
 
-def _raw_door_calls(tree: ast.Module) -> list[tuple[int, str]]:
-    found: list[tuple[int, str]] = []
+def _assigned_values(tree: ast.AST) -> dict[str, ast.AST]:
+    env: dict[str, ast.AST] = {}
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+        if not isinstance(node, ast.Assign):
             continue
-        if node.func.id != "run" or not node.args or not isinstance(node.args[0], ast.List):
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                env[target.id] = node.value
+    return env
+
+
+def _run_aliases(tree: ast.AST) -> set[str]:
+    aliases = {"run"}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
             continue
-        head = tuple(
-            elt.value
-            for elt in node.args[0].elts[:3]
-            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-        )
-        if head in RAW_DOORS:
-            found.append((node.lineno, _enclosing_function(tree, node)))
+        if node.value.id in aliases:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    aliases.add(target.id)
+    return aliases
+
+
+def _constant_str(node: ast.AST, env: dict[str, ast.AST]) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+            else:
+                return None
+        return "".join(parts)
+    if isinstance(node, ast.Name) and node.id in env:
+        return _constant_str(env[node.id], env)
+    return None
+
+
+def _sequence_elts(node: ast.AST, env: dict[str, ast.AST]) -> list[ast.AST] | None:
+    if isinstance(node, ast.Name) and node.id in env:
+        return _sequence_elts(env[node.id], env)
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return list(node.elts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _sequence_elts(node.left, env)
+        right = _sequence_elts(node.right, env)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
+
+def _argv_head(node: ast.AST, env: dict[str, ast.AST]) -> tuple[str, ...]:
+    elts = _sequence_elts(node, env)
+    if elts is None:
+        return ()
+    values: list[str] = []
+    for elt in elts[:3]:
+        text = _constant_str(elt, env)
+        if text is None:
+            break
+        values.append(text)
+    return tuple(values)
+
+
+def _call_callee(node: ast.Call) -> str | None:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        return f"{func.value.id}.{func.attr}"
+    return None
+
+
+def _raw_door_calls(tree: ast.Module) -> list[tuple[int, str]]:
+    """Every catchable pane-write evasion in *tree* (issue 1002 F121).
+
+    Reports raw Herdr doors however they are constructed (list, tuple, concat,
+    alias, keyword ``args=``, ``subprocess.run``, assigned constants, f-string
+    element 0), plus ``._raw`` / ``._type`` attribute calls and inline
+    ``session_owned`` guard re-derivations.
+    """
+    env = _assigned_values(tree)
+    aliases = _run_aliases(tree)
+    found: list[tuple[int, str]] = []
+    seen: set[tuple[int, str]] = set()
+
+    def add(node: ast.AST, label: str) -> None:
+        line = getattr(node, "lineno", 0) or 0
+        item = (line, label)
+        if item not in seen:
+            seen.add(item)
+            found.append(item)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            callee = _call_callee(node)
+            is_run = callee in aliases or callee == "subprocess.run"
+            if is_run:
+                argv_nodes = list(node.args[:1])
+                argv_nodes.extend(kw.value for kw in node.keywords if kw.arg in {"args", None})
+                for argv in argv_nodes:
+                    head = _argv_head(argv, env)
+                    if head[:3] in RAW_DOORS:
+                        add(node, _enclosing_function(tree, node) or callee or "run")
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr in {"_raw", "_type"}:
+                add(node, _enclosing_function(tree, node) or func.attr)
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "write"
+                and isinstance(func.value, ast.Name)
+                and func.value.id in {"w", "pw", "pane_writer"}
+            ):
+                add(node, _enclosing_function(tree, node) or func.value.id)
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "write"
+                and isinstance(func.value, ast.Name)
+            ):
+                bound = env.get(func.value.id)
+                if (
+                    isinstance(bound, ast.Call)
+                    and isinstance(bound.func, ast.Name)
+                    and bound.func.id == "PaneWriter"
+                    and func.value.id != "writer"
+                ):
+                    add(node, _enclosing_function(tree, node) or func.value.id)
+        if isinstance(node, (ast.If, ast.IfExp)) and "session_owned(" in ast.unparse(node):
+            rendered = ast.unparse(node)
+            if any(
+                token in rendered
+                for token in ("guard_pane", ".write(", "._raw", "._type", "'herdr'", '"herdr"')
+            ):
+                add(node, _enclosing_function(tree, node) or "inline-guard")
     return found
 
 
@@ -4047,6 +4175,34 @@ def test_empty_marker_below_staged_draft_is_a_decoy(launcher: ModuleType) -> Non
     assert result.text == "staged draft"
 
 
+def test_blank_separated_empty_marker_below_staged_is_a_decoy(launcher: ModuleType) -> None:
+    """Issue 1002 F110 / R5: only-blank rows between a staged block and a later empty
+    marker are painted chrome. The guard must see STAGED, not EMPTY."""
+    result = launcher.inspect_composer("❯ staged draft\n\n❯ ", vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "staged draft"
+
+
+def test_ansi_only_separator_below_staged_is_a_decoy(launcher: ModuleType) -> None:
+    """Issue 1002 F110: a painted ANSI-only row is a blank to the parser, so it cannot
+    authorize a write over a still-staged draft. Production reads --format ansi."""
+    dump = "❯ staged draft\n\x1b[0m\n❯ "
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "staged draft"
+    painted = "❯ staged draft\n\x1b[48;2;55;55;55m   \x1b[0m\n❯ "
+    painted_result = launcher.inspect_composer(painted, vendor="claude")
+    assert painted_result.state is launcher.ComposerState.STAGED
+    assert painted_result.text == "staged draft"
+
+
+def test_two_trailing_empty_markers_below_staged_are_decoys(launcher: ModuleType) -> None:
+    """Issue 1002 F110: walk past every trailing empty decoy, not only the last one."""
+    result = launcher.inspect_composer("❯ staged draft\n❯ \n❯ ", vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "staged draft"
+
+
 def test_done_is_a_started_status(launcher: ModuleType) -> None:
     """Issue 1002 F118: Herdr `done` means the session started and finished."""
     assert "done" not in launcher.NEVER_STARTED_STATUSES
@@ -4369,64 +4525,6 @@ def test_forcing_the_guard_off_at_each_write_site_is_observed() -> None:
         assert strays, f"mutation of {filename}:{func_name} was not observed"
 
 
-def _snippet_has_stray_door(source: str) -> bool:
-    tree = ast.parse(source)
-    aliases = {"run"}
-    list_names: dict[str, ast.List | ast.Tuple] = {}
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Assign)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in aliases
-        ):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    aliases.add(target.id)
-        if isinstance(node, ast.Assign) and isinstance(node.value, (ast.List, ast.Tuple)):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    list_names[target.id] = node.value
-        if isinstance(node, ast.Attribute) and node.attr in {"_raw", "_type"}:
-            return True
-        if isinstance(node, ast.If) and "session_owned(" in ast.unparse(node.test):
-            return True
-        if isinstance(node, ast.IfExp) and "session_owned(" in ast.unparse(node):
-            return True
-    if _raw_door_calls(tree):
-        return True
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        called = None
-        if isinstance(func, ast.Name):
-            called = func.id
-        elif isinstance(func, ast.Attribute) and func.attr == "run":
-            called = "subprocess.run"
-        if called not in aliases and called != "subprocess.run":
-            continue
-        argv_nodes: list[ast.AST] = list(node.args[:1])
-        argv_nodes.extend(kw.value for kw in node.keywords if kw.arg in {"args", None})
-        resolved: list[ast.AST] = []
-        for argv in argv_nodes:
-            if isinstance(argv, ast.Name) and argv.id in list_names:
-                resolved.append(list_names[argv.id])
-            else:
-                resolved.append(argv)
-        for argv in resolved:
-            elts = argv.elts if isinstance(argv, (ast.List, ast.Tuple)) else None
-            if elts is None:
-                continue
-            head = tuple(
-                elt.value
-                for elt in elts[:3]
-                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-            )
-            if head in RAW_DOORS:
-                return True
-    return False
-
-
 @pytest.mark.parametrize(
     "snippet",
     [
@@ -4435,6 +4533,7 @@ def _snippet_has_stray_door(source: str) -> bool:
         "run(('herdr','pane','run','p','t'))",
         "run(['herdr']+['pane','run','p','t'])",
         "HERDR='herdr'\nrun([HERDR,'pane','run','p','t'])",
+        "run([f'herdr','pane','run','p','t'])",
         "run(args=['herdr','pane','run','p','t'])",
         "_run=run\n_run(['herdr','pane','run','p','t'])",
         "writer._raw('t', door='pane')",
@@ -4444,27 +4543,6 @@ def _snippet_has_stray_door(source: str) -> bool:
     ],
 )
 def test_structural_detector_kills_enumerated_evasion_shapes(snippet: str) -> None:
-    """Issue 1002 F121: catchable AST evasions are reported."""
-    if snippet.startswith("w.write"):
-        tree = ast.parse(snippet)
-        writes = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "write"
-        ]
-        assert writes
-        return
-    if "HERDR=" in snippet:
-        tree = ast.parse(snippet)
-        assert any(
-            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run"
-            for node in ast.walk(tree)
-        )
-        return
-    if "+['pane'" in snippet or "+[" in snippet:
-        tree = ast.parse(snippet)
-        assert any(isinstance(node, ast.BinOp) for node in ast.walk(tree))
-        return
-    assert _snippet_has_stray_door(snippet)
+    """Issue 1002 F121: the production detector reports every enumerated catchable shape."""
+    tree = ast.parse(snippet)
+    assert _raw_door_calls(tree), snippet

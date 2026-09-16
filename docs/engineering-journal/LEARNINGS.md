@@ -2,6 +2,34 @@
 
 ## 2026-09-16
 
+### An adjacent-only decoy walk is not the blank-separator rule  {#1002-decoy-walk-blank-separators}
+
+**Context.** Issue 1002 R5 required a later empty marker with only blank rows above a `STAGED` block to stay `STAGED`. 1.5.0 implemented one immediately-adjacent empty marker and broke after the previous block.
+
+**Evidence.** After PR #1013, `inspect_composer("❯ staged draft\n\n❯ ", vendor="claude")` was `EMPTY` and `inspect_composer("❯ staged draft\n❯ \n❯ ", vendor="claude")` was `UNCLASSIFIABLE`. Both authorize a write. CORR-05 (`❯ earlier submitted prompt\npane output line\n❯ `) was already `EMPTY`.
+
+**Mechanism.** Last-block-wins treats a painted empty glyph as the live box. Adjacent-only looks like the rule until a blank row or a second empty marker sits between the draft and the decoy.
+
+**Fix.** Walk trailing empty decoys. Return the earlier `STAGED` block when every row between them is blank or another empty decoy, using the parser's ANSI-stripped blank predicate (`_row_without_sgr`) so a painted SGR-only spacer is not content. A leftover content row keeps last-block-wins.
+
+**Generalizable rule.** A plan that names "blank separators" is not satisfied by an adjacent-only special case. The contract test must drive the dump the plan named, not a neighbour of it.
+
+**Refs.** Issue #961; `{#1002-decoy-empty-marker}`; plan R5.
+
+### A structural detector test that special-cases the shapes it claims to kill is not a net  {#1002-detector-must-drive-production-helper}
+
+**Context.** Issue 1002 F121 required `_raw_door_calls` (the walk `test_every_pane_write_goes_through_the_one_writer` uses) to report the finite-test-plan evasion shapes.
+
+**Evidence.** 1.5.0's snippet test returned early for concat / `HERDR` / `w.write` and reimplemented detection in `_snippet_has_stray_door`. Production `_raw_door_calls` still only matched `run([str,str,str])`.
+
+**Mechanism.** A test can stay green while the production net stays blind if the test is allowed a second detector or a skip list.
+
+**Fix.** Expand `_raw_door_calls` to the enumerated shapes and assert that helper on every snippet, including an f-string element-0 case. No special-case returns.
+
+**Generalizable rule.** The test that claims a detector kills a shape must call the detector that walks production files, on that shape, and require a report.
+
+**Refs.** Issue #972; original plan R13.
+
 ### A Herdr `done` row is evidence the session already ran  {#1002-done-means-started}
 
 **Context.** Issue 1002 children #954, #969, and #970 are three consequences of one set: `NEVER_STARTED_STATUSES` included `"done"`.

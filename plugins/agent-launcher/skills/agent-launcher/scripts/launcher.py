@@ -617,6 +617,10 @@ TAB_CLOSE_SECONDS = 10.0
 # The parser's own regex is linear (cycle 1, F12); this keeps a pathological viewport from
 # turning one inspection into seconds through any other path.
 PANE_INSPECT_MAX_LINES = 4000
+# Bytes as well as rows (issue 1002 F130). The row cap stopped a mid-row cut; without a byte
+# cap a 100-row viewport of huge lines is still unbounded. 131072 admits the measured ~68 KB
+# bordered draft (F45) while still bounding pathological width.
+PANE_INSPECT_MAX_CHARS = 131072
 # How long to give one pane write. The two calls that put a line into a session were the only
 # Herdr calls with no bound, so a wedged daemon hung go and land mid-delivery, after the guard
 # had inspected the composer and before any status was written. A write is a local socket round
@@ -670,10 +674,10 @@ def await_ready(unit: Any, seconds: float = LAUNCH_SETTLE_SECONDS) -> bool:
 
 
 # The Herdr statuses under which a session has not started anything. ``took_the_task`` and the
-# retry door's liveness gate read the same set (cycle 2, F48/F49): a strict "idle" comparison in
-# one place and this set in the other let a session reporting ``done`` or ``unknown`` -- never
-# started, in this vocabulary -- close the retry route for good.
-NEVER_STARTED_STATUSES = (None, "idle", "done", "unknown")
+# retry door's liveness gate read the same set. ``done`` is started: Herdr reports it after a
+# session took its task and finished (issue 1002 F103/F118). ``unknown`` and a missing row are
+# still not evidence of work.
+NEVER_STARTED_STATUSES = (None, "idle", "unknown")
 
 
 def session_has_started(row: dict | None) -> bool:
@@ -733,6 +737,7 @@ def parse_opencode_variants(text: str) -> list[str]:
             if (
                 token
                 and token.lower() not in ignored
+                and token.lower() in OPENCODE_VARIANT_RANKS
                 and not any(token.lower() == o.lower() for o in options)
             ):
                 options.append(token)
@@ -741,7 +746,9 @@ def parse_opencode_variants(text: str) -> list[str]:
         for word in re.findall(
             r"\b(?:Default|minimal|low|medium|high|xhigh|max|maximum)\b", line, re.IGNORECASE
         ):
-            if not any(word.lower() == o.lower() for o in options):
+            if word.lower() in OPENCODE_VARIANT_RANKS and not any(
+                word.lower() == o.lower() for o in options
+            ):
                 options.append(word)
     return options
 
@@ -803,7 +810,7 @@ def pane_input_inspection(pane_id: str, *, vendor: str) -> Any:
         return ComposerInspection(ComposerState.READ_TIMEOUT)
     if proc.returncode != 0:
         return ComposerInspection(ComposerState.READ_FAILED)
-    return inspect_composer(tail_rows(proc.stdout, PANE_INSPECT_MAX_LINES), vendor=vendor)
+    return inspect_composer(tail_inspect_window(proc.stdout), vendor=vendor)
 
 
 def tail_rows(text: str, rows: int) -> str:
@@ -812,6 +819,24 @@ def tail_rows(text: str, rows: int) -> str:
     if len(lines) <= rows:
         return text
     return "\n".join(lines[-rows:])
+
+
+def tail_inspect_window(text: str) -> str:
+    """The tail of a pane dump handed to the composer, bounded by rows and bytes.
+
+    Trim whole rows from the head so the live box at the tail survives both caps
+    (issue 1002 F130).
+    """
+    window = tail_rows(text, PANE_INSPECT_MAX_LINES)
+    if len(window) <= PANE_INSPECT_MAX_CHARS:
+        return window
+    lines = window.split("\n")
+    while len(lines) > 1 and len("\n".join(lines)) > PANE_INSPECT_MAX_CHARS:
+        lines.pop(0)
+    trimmed = "\n".join(lines)
+    if len(trimmed) <= PANE_INSPECT_MAX_CHARS:
+        return trimmed
+    return trimmed[-PANE_INSPECT_MAX_CHARS:]
 
 
 def should_guard_pane_write(unit: Any, *, wrote_before: bool) -> bool:
@@ -842,6 +867,17 @@ def guard_pane_before_write(unit: Any, pane_id: str) -> None:
     """
     inspection = pane_input_inspection(pane_id, vendor=unit.vendor)
     receipt = unit.launch_receipt if isinstance(unit.launch_receipt, dict) else None
+    if inspection.state in (ComposerState.READ_FAILED, ComposerState.READ_TIMEOUT):
+        state = inspection.state.value
+        if receipt is not None:
+            receipt["input_box"] = state
+        note = f"input box {state}, refusing to prompt without an observation"
+        if note not in unit.note.split("; "):
+            append_unit_note(unit, note)
+        raise SystemExit(
+            f"{unit.name}: pane {pane_id} input box {state}; refusing to prompt so an "
+            "unobserved composer cannot be treated as empty"
+        )
     if inspection.state not in (ComposerState.EMPTY, ComposerState.STAGED):
         state = inspection.state.value
         inconclusive_note = f"input box {state}, prompted without a conclusive inspection"
@@ -855,6 +891,7 @@ def guard_pane_before_write(unit: Any, pane_id: str) -> None:
     if inspection.state is ComposerState.EMPTY:
         if receipt is not None:
             receipt["input_box"] = "empty"
+            receipt.pop("input_box_text_chars", None)
         return
     staged = inspection.text or ""
     if receipt is not None:
@@ -901,10 +938,17 @@ def confirm_opencode_variant_selected(unit: Any, pane_id: str, selected: str) ->
     rows = [row.strip() for row in clean.splitlines() if token.search(row)]
     if not rows:
         raise SystemExit(
-            f"{unit.name}: variant {selected!r} was sent to the picker but the session does not "
+            f"{unit.name}: the selected variant was sent to the picker but the session does not "
             "report it; refusing to submit the task at an unverified variant"
         )
-    if any(not OPENCODE_MENU_ROW_RE.match(row) for row in rows):
+    # The launcher's own echo of the typed token is a row whose stripped text is exactly that
+    # token (issue 1002 F115). Menu rows and that echo prove nothing about the session.
+    session_rows = [
+        row
+        for row in rows
+        if not OPENCODE_MENU_ROW_RE.match(row) and row.lower() != selected.strip().lower()
+    ]
+    if session_rows:
         return "session"
     return "picker_menu_only"
 
@@ -956,7 +1000,8 @@ def drive_opencode_variant_selection(
         unit.launch_receipt["variant_confirmed_from"] = seen_in
 
     unit.variant = selected
-    append_unit_note(unit, f"variant {selected} verified")
+    if seen_in == "session":
+        append_unit_note(unit, "variant verified")
     return selected, ready
 
 
@@ -1018,7 +1063,7 @@ def workspace_id_for_name(name: str | None) -> str | None:
     """
     if not name:
         return None
-    proc = run(["herdr", "workspace", "list"], check=False)
+    proc = run(["herdr", "workspace", "list"], check=False, timeout=20)
     try:
         workspaces = json.loads(proc.stdout)["result"]["workspaces"]
     except (ValueError, KeyError, TypeError):
@@ -1120,8 +1165,9 @@ def pane_account_label(pane_id: str | None) -> str | None:
     if proc.returncode != 0:
         return None
     text = strip_ansi(proc.stdout)
+    tail = "\n".join(text.splitlines()[-3:])
     last = None
-    for match in re.finditer(rf"\b{re.escape(user)}\s*(?:\[(\w+)\])?:", text):
+    for match in re.finditer(rf"\b{re.escape(user)}\s*(?:\[(\w+)\])?:", tail):
         last = match
     if last is None:
         return None
@@ -1561,10 +1607,10 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
 
     It inherits the resend loop's own precondition, too. A staged-input stop can be raised
     from inside that loop, after a first send already went out; if the session has since
-    left idle it may already hold the task, and the resend loop refuses exactly that resend.
-    So a row that is anything but idle -- working, blocked, or gone -- gets nothing: the unit
-    is recorded sent-but-unobserved, which closes the retry route and hands the tab to the
-    operator rather than risking a second delivery when the session next goes idle.
+    started -- working, blocked, gone, or done -- it may already hold the task, and the
+    resend loop refuses exactly that resend. So a row that is anything but idle or unknown
+    gets nothing: the unit is recorded sent-but-unobserved, which closes the retry route and
+    hands the tab to the operator rather than risking a second delivery.
     """
     pane_id = getattr(unit, "pane_id", None)
     if not pane_id:
@@ -1574,9 +1620,9 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
         )
     row = agent_row(unit)
     if session_has_started(row):
-        # The same vocabulary as took_the_task: only a session that visibly started is refused.
-        # A row that is idle, done, unknown or missing has not started; a missing row is then
-        # the preflight's named stop, not a silent close of the retry route (cycle 2, F48/F49).
+        # The same vocabulary as took_the_task: a session that visibly started -- including
+        # done -- is refused. idle, unknown, or a missing row has not started; a missing row
+        # is then the preflight's named stop, not a silent close of the retry route.
         status = row.get("agent_status") if row is not None else None
         append_unit_note(
             unit,
@@ -1624,7 +1670,12 @@ def pane_text(unit: Any, text: str) -> str:
     if len(text) <= PANE_TYPING_LIMIT:
         return text
     assert_safe_path_component(unit.name, "task name")
+    base = TASK_DIR.resolve()
     path = (TASK_DIR / f"{unit.name}.md").resolve()
+    if path != base and base not in path.parents:
+        raise SystemExit(
+            f"task file {unit.name!r} resolves outside {TASK_DIR}: {path}"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n")
     lead = text.split(" ", 1)[0] if re.match(r"^\s*[/$]", text) else ""
@@ -1638,15 +1689,13 @@ def pane_text(unit: Any, text: str) -> str:
 class PaneWriter:
     """The only door through which a line enters a session, and the owner of the inspection.
 
-    Both raw doors -- ``herdr agent prompt`` and ``herdr pane run`` -- exist only inside this
-    class, and ``write`` is the only method that opens either, so an unguarded pane write is
-    not something a caller can forget to prevent: there is no call that performs one. Before
-    each write, ``write`` asks ``should_guard_pane_write`` whether the composer must be
-    inspected first, using its own record of whether it has already written into this session
-    (``wrote``). That record is the writer's, scoped to one delivery, never a value threaded by
-    hand across callers -- four repair rounds on this file each satisfied a finding at one call
-    site and left the adjacent site's flag stale; the picker's two writes were the last such
-    site (issue 907 terminal review cycle 2, F39/F40/F41/F46).
+    Both raw doors -- ``herdr agent prompt`` and ``herdr pane run`` -- exist only as nested
+    functions inside ``write``. They are not methods, so a caller cannot open either without
+    going through the inspection ``write`` owns (issue 1002 F104). The structural test is a
+    net for the enumerated AST shapes, not a proof that every dynamic Python call is
+    impossible (issue 1002 F121). Before each write, ``write`` asks ``should_guard_pane_write``
+    whether the composer must be inspected first, using its own record of whether it has
+    already written into this session (``wrote``).
 
     ``wrote_before`` seeds the record: false for a fresh launch, whose first write into a tab
     this launcher created seconds earlier is the one write the rule exempts; true for a
@@ -1670,61 +1719,65 @@ class PaneWriter:
 
     def write(self, text: str, *, door: str = "prompt") -> None:
         """Inspect if the rule requires it, then put ``text`` into the session."""
-        if self.pane_id and should_guard_pane_write(self.unit, wrote_before=self.wrote):
-            guard_pane_before_write(self.unit, self.pane_id)
-        self._raw(text, door=door)
-        self.wrote = True
-
-    def _raw(self, text: str, *, door: str) -> None:
-        """The doors themselves. Private on purpose: only ``write`` may open them."""
         unit = self.unit
-        if door == "pane":
-            if not self.pane_id:
+        pane_id = self.pane_id
+
+        def type_into_pane(line: str) -> None:
+            if not pane_id:
                 raise SystemExit(f"{unit.name}: no pane to type into")
-            self._type(text)
-            return
-        if door != "prompt":
-            raise SystemExit(f"{unit.name}: unknown pane-write door {door!r}")
-        handle = unit.agent_name or unit.name
-        attempt = run(
-            ["herdr", "agent", "prompt", handle, text], check=False, timeout=PANE_WRITE_SECONDS
-        )
-        if isinstance(attempt, TimedOutProcess):
-            raise SystemExit(
-                f"{unit.name}: herdr agent prompt did not return within {PANE_WRITE_SECONDS}s; "
-                "the line may or may not have reached the session -- check the tab before "
-                "prompting it again"
+            typed = run(
+                ["herdr", "pane", "run", str(pane_id), line],
+                check=False,
+                timeout=PANE_WRITE_SECONDS,
             )
-        if attempt.returncode == 0:
-            return
-        if not self.pane_id:
-            raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
-        self._type(pane_text(unit, text))
-        fallback_note = (
-            "prompted through its pane; this agent does not report interactive readiness"
-        )
-        if fallback_note not in unit.note.split("; "):
-            append_unit_note(unit, fallback_note)
+            if isinstance(typed, TimedOutProcess):
+                raise SystemExit(
+                    f"{unit.name}: herdr pane run into {pane_id} did not return within "
+                    f"{PANE_WRITE_SECONDS}s; the line may or may not have reached the session -- "
+                    "check the tab before prompting it again"
+                )
+            if typed.returncode != 0:
+                err = (typed.stderr or typed.stdout or "").strip()
+                raise SystemExit(
+                    f"{unit.name}: command failed ({typed.returncode}) while typing into pane "
+                    f"{pane_id}\n{err}"
+                )
 
-    def _type(self, text: str) -> None:
-        unit = self.unit
-        typed = run(
-            ["herdr", "pane", "run", str(self.pane_id), text],
-            check=False,
-            timeout=PANE_WRITE_SECONDS,
-        )
-        if isinstance(typed, TimedOutProcess):
-            raise SystemExit(
-                f"{unit.name}: herdr pane run into {self.pane_id} did not return within "
-                f"{PANE_WRITE_SECONDS}s; the line may or may not have reached the session -- "
-                "check the tab before prompting it again"
+        def open_door(line: str, *, via: str) -> None:
+            if via == "pane":
+                type_into_pane(line)
+                return
+            if via != "prompt":
+                raise SystemExit(f"{unit.name}: unknown pane-write door {via!r}")
+            handle = unit.agent_name or unit.name
+            attempt = run(
+                ["herdr", "agent", "prompt", handle, line],
+                check=False,
+                timeout=PANE_WRITE_SECONDS,
             )
-        if typed.returncode != 0:
-            err = (typed.stderr or typed.stdout or "").strip()
-            raise SystemExit(
-                f"{unit.name}: command failed ({typed.returncode}) while typing into pane "
-                f"{self.pane_id}\n{err}"
+            if isinstance(attempt, TimedOutProcess):
+                raise SystemExit(
+                    f"{unit.name}: herdr agent prompt did not return within {PANE_WRITE_SECONDS}s; "
+                    "the line may or may not have reached the session -- check the tab before "
+                    "prompting it again"
+                )
+            if attempt.returncode == 0:
+                return
+            if not pane_id:
+                raise SystemExit(
+                    f"{unit.name}: agent prompt refused and no pane to fall back to"
+                )
+            type_into_pane(pane_text(unit, line))
+            fallback_note = (
+                "prompted through its pane; this agent does not report interactive readiness"
             )
+            if fallback_note not in unit.note.split("; "):
+                append_unit_note(unit, fallback_note)
+
+        if pane_id and should_guard_pane_write(unit, wrote_before=self.wrote):
+            guard_pane_before_write(unit, pane_id)
+        open_door(text, via=door)
+        self.wrote = True
 
 
 def send(
@@ -1894,9 +1947,19 @@ def _adopt_retry_receipt(unit: LaunchRequest, receipt: dict[str, Any]) -> None:
             "cannot redeliver: --prompt is empty; a retry with nothing to deliver cannot succeed"
         )
     recorded_name = receipt.get("unit_name")
-    if recorded_name and recorded_name != unit.name:
+    if not recorded_name:
+        raise RetryReceiptRefused(
+            "cannot redeliver: the receipt records no unit_name; clear the composer and launch "
+            "again under a new task name"
+        )
+    if recorded_name != unit.name:
         raise RetryReceiptRefused(
             f"cannot redeliver: receipt was written for task {recorded_name!r}, not {unit.name!r}"
+        )
+    if receipt.get("prompt_delivered") is True:
+        raise RetryReceiptRefused(
+            "cannot redeliver: the receipt records a prompt that was already delivered; "
+            "a prompt that was delivered must not be sent twice"
         )
     staged = receipt.get("input_box") == ComposerState.STAGED.value
     undelivered = receipt.get("prompt_delivered") is False
@@ -1915,9 +1978,26 @@ def _adopt_retry_receipt(unit: LaunchRequest, receipt: dict[str, Any]) -> None:
             "cannot redeliver: the receipt records no pane; clear the composer and launch "
             "again under a new task name"
         )
-    unit.tab_id = receipt.get("tab_id")
+    tab_id = receipt.get("tab_id")
+    if not tab_id:
+        raise RetryReceiptRefused(
+            "cannot redeliver: the receipt records no tab_id; clear the composer and launch "
+            "again under a new task name"
+        )
+    if "owned" not in receipt:
+        raise RetryReceiptRefused(
+            "cannot redeliver: the receipt records no owned key; clear the composer and launch "
+            "again under a new task name"
+        )
+    agent_name = receipt.get("agent_name")
+    if not agent_name:
+        raise RetryReceiptRefused(
+            "cannot redeliver: the receipt records no agent_name; clear the composer and launch "
+            "again under a new task name"
+        )
+    unit.tab_id = tab_id
     unit.pane_id = str(pane_id)
-    unit.agent_name = receipt.get("agent_name") or unit.name
+    unit.agent_name = str(agent_name)
     unit.reused = wrapper_reused(receipt.get("reused"))
     unit.owned = receipt.get("owned") is True
     unit.launch_receipt = receipt

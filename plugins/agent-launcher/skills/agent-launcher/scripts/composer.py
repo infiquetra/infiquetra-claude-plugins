@@ -155,6 +155,7 @@ class _ComposerBlock:
 
     lines: list[str]
     marker_column: int
+    start_row: int = 0
     ambiguous_empty: bool = False
     adjacent_to_previous: bool = False
 
@@ -242,7 +243,8 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
     current: _ComposerBlock | None = None
     unsettled_blank: _ComposerBlock | None = None
     separated = True
-    for line in ansi_text.splitlines():
+    rows = ansi_text.splitlines()
+    for row_index, line in enumerate(rows):
         marker_column = (
             current.marker_column
             if current is not None
@@ -258,6 +260,7 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
             current = _ComposerBlock(
                 lines=[line],
                 marker_column=column,
+                start_row=row_index,
                 adjacent_to_previous=bool(blocks and not separated),
             )
             blocks.append(current)
@@ -269,6 +272,21 @@ def _composer_blocks(ansi_text: str, *, glyph: str) -> list[_ComposerBlock]:
                 # draft rows, so that asymmetry is accepted and recorded.
                 current.lines.append(line)
                 separated = False
+            elif (
+                row_class is _RowClass.TERMINATOR
+                and not _visible_after_marker(current.lines, glyph)
+            ):
+                # Issue 1002 F102: a still-empty Claude/Codex box whose next row begins with
+                # another vendor's glyph (`> quoted draft`) is that draft, not an empty box
+                # that authorises a write. Stop absorbing once the block has visible text so
+                # menu rows under a filled box stay content (F13).
+                candidate, _ = _without_border(strip_ansi(line).replace("\xa0", " "))
+                if candidate[:1] in COMPOSER_MARKERS and not candidate.startswith(glyph):
+                    current.lines.append(line)
+                    separated = False
+                else:
+                    current = None
+                    separated = True
             else:
                 if row_class is _RowClass.BLANK and not _visible_after_marker(current.lines, glyph):
                     unsettled_blank = current
@@ -343,10 +361,12 @@ def _classify_block(block: _ComposerBlock, *, glyph: str) -> ComposerInspection:
 
 
 def inspect_composer(ansi_text: str, *, vendor: str) -> ComposerInspection:
-    """Inspect the last composer block positionally and let that block decide the outcome.
+    """Inspect the live composer block and let that block decide the outcome.
 
-    The last block is authoritative even when it cannot be classified.  An earlier scrollback echo
-    must never stand in for a lower live box merely because the lower block is styled.
+    The last block is the live box when a blank or content row sits above it, so a
+    submitted echo never stands in for a lower empty box. An immediately adjacent
+    empty marker under a staged draft is painted chrome, and the staged inspection
+    wins so the write stops (issue 1002 F110).
     """
     if vendor not in COMPOSER_GLYPH_BY_VENDOR:
         return ComposerInspection(ComposerState.UNSUPPORTED_VENDOR)
@@ -356,7 +376,22 @@ def inspect_composer(ansi_text: str, *, vendor: str) -> ComposerInspection:
     blocks = _composer_blocks(ansi_text, glyph=glyph)
     if not blocks:
         return ComposerInspection(ComposerState.NOT_FOUND)
-    return _classify_block(blocks[-1], glyph=glyph)
+    classified = [_classify_block(block, glyph=glyph) for block in blocks]
+    last = classified[-1]
+    # An immediately adjacent empty marker is painted chrome under a live draft, not a new
+    # empty box. A blank or content row between blocks keeps last-block-wins so a submitted
+    # echo above a live empty box still reads empty (CORR-05).
+    last_block = blocks[-1]
+    if (
+        last.state is ComposerState.UNCLASSIFIABLE
+        and last_block.adjacent_to_previous
+        and not _visible_after_marker(last_block.lines, glyph)
+    ):
+        for index in range(len(blocks) - 2, -1, -1):
+            if classified[index].state is ComposerState.STAGED:
+                return classified[index]
+            break
+    return last
 
 
 def composer_staged_text(ansi_text: str, *, vendor: str) -> str | None:

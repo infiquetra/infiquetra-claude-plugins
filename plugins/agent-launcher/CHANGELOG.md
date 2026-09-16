@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.0] - 2026-09-16
+
+### Changed
+
+- **Composer classification no longer treats a quoted Claude continuation as empty, and an adjacent painted empty marker cannot authorize a write (#1002).** A still-empty Claude box whose next row begins with another vendor glyph is that draft. An immediately adjacent empty marker under a staged block returns the staged inspection. A blank or content row between blocks still lets last-block-wins keep an empty live box empty.
+- **`done` is a started session. `redeliver` will not send into one (#1002).** `NEVER_STARTED_STATUSES` is `(None, "idle", "unknown")`. A receipt that already delivered, or that is missing `unit_name`, `pane`, `tab_id`, `owned`, or `agent_name`, is refused at exit 2.
+- **`PaneWriter.write` owns both Herdr doors as nested functions; `_raw` and `_type` are gone (#1002).** A failed or timed-out composer read refuses the write. The structural test is a net for enumerated AST shapes, not a proof of impossibility.
+- **OpenCode picker options are the effort ladder; the typed-token echo is not session confirmation (#1002).** Notes and stops no longer interpolate scraped tokens. `picker_menu_only` does not write a verified note.
+- **`herdr workspace list` is bounded, account labels are read from the visible tail, inspect windows have both a row cap and a 131072-byte cap, and task-file writes refuse symlink escape (#1002).** Empty-box receipts drop a stale `input_box_text_chars`.
+
 ## [1.4.0] - 2026-09-02
 
 ### Changed

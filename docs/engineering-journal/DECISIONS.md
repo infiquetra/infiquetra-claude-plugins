@@ -28,11 +28,11 @@
 
 ### Empty marker below a staged block is a decoy only without a content row between them  {#1002-decoy-empty-marker}
 
-**Decision.** `inspect_composer` returns the earlier `STAGED` block when the last block is `EMPTY` and every row between them is blank. A content row between an earlier staged block and a last empty marker keeps last-block-wins, so an echo above a live empty box still reads empty.
+**Decision.** `inspect_composer` returns the earlier `STAGED` block when the last block is an immediately adjacent empty marker (`adjacent_to_previous`). A blank or content row between blocks keeps last-block-wins, so an echo above a live empty box still reads empty (CORR-05).
 
-**Rationale.** Last-block-wins lets a painted glyph authorize a write over the real draft (#961). Preferring any earlier staged block would refuse a working launch whose scrollback still shows a submitted prompt.
+**Rationale.** Last-block-wins lets a painted adjacent glyph authorize a write over the real draft (#961). Treating a blank separator as a decoy would refuse a working launch whose scrollback still shows a submitted prompt.
 
-**Alternatives rejected.** Always last-block-wins (F110). Always prefer any earlier staged block (breaks `test_an_empty_live_box_below_an_echo_reads_empty`).
+**Alternatives rejected.** Always last-block-wins (F110). Treating blank-only separation as a decoy (breaks CORR-05).
 
 **Revisit when.** The composer parser has a cursor or focus signal from the vendor, not only painted rows.
 

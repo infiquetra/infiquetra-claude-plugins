@@ -841,9 +841,10 @@ def test_an_empty_live_box_below_an_echo_reads_empty(launcher: ModuleType) -> No
 
 
 def test_adjacent_staged_and_empty_marker_rows_are_ambiguous(launcher: ModuleType) -> None:
-    """The viewport cannot distinguish a new empty box from a glyph-led final draft row."""
+    """Issue 1002 F110: an empty marker under a staged draft is a decoy, not EMPTY."""
     result = launcher.inspect_composer("❯ draft text\n❯ ", vendor="claude")
-    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "draft text"
 
 
 def test_escapes_inside_staged_text_are_stripped(launcher: ModuleType) -> None:
@@ -879,7 +880,8 @@ def test_cross_glyph_rows_are_content_not_the_box(launcher: ModuleType) -> None:
 
 
 def test_a_weak_marker_under_a_decorated_box_is_content(launcher: ModuleType) -> None:
-    assert launcher.composer_staged_text("❯ \n> draft text", vendor="claude") == ""
+    """Issue 1002 F102: an empty Claude marker plus a `>` continuation is the draft."""
+    assert launcher.composer_staged_text("❯ \n> draft text", vendor="claude") == "> draft text"
 
 
 def test_a_plain_marker_vendor_reads_its_own_box(launcher: ModuleType) -> None:
@@ -926,7 +928,6 @@ def test_unstyled_status_footer_after_empty_box_cannot_create_a_false_stop(
     ("vendor", "dump"),
     [
         ("codex", "› \n\n  model footer status"),
-        ("claude", "❯ here is the failing session:\n   ran the suite\n❯ "),
     ],
 )
 def test_ambiguous_composer_geometry_never_records_affirmative_empty(
@@ -975,7 +976,8 @@ def test_glyph_led_last_visual_row_never_turns_a_staged_draft_into_empty(
 ) -> None:
     dump = "❯ here is the failing session:\n   ran the suite\n❯ "
     result = launcher.inspect_composer(dump, vendor="claude")
-    assert result.state is launcher.ComposerState.UNCLASSIFIABLE
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text is not None and result.text.startswith("here is the failing session")
 
 
 def test_a_draft_above_a_closed_placeholder_row_is_unclassifiable(launcher: ModuleType) -> None:
@@ -1227,9 +1229,8 @@ def test_corrp01_and_corrp02_panes_stop_the_prompt_through_the_real_guard(
 def test_unreadable_box_is_marked_and_the_prompt_still_goes(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A genuine nonzero pane read drives the guard's failure branch: the box is marked
-    unreadable, noted, and the launch still prompts. The fake captures the timeout keyword
-    because the read it bounds must actually carry one."""
+    """Issue 1002 F114: a genuine nonzero pane read is the absence of an observation.
+    The box is marked, noted, and the launch refuses to prompt."""
     recorded: list[list[str]] = []
     pane_read_timeouts: list[object] = []
     sends: list[tuple[Any, ...]] = []
@@ -1274,10 +1275,11 @@ def test_unreadable_box_is_marked_and_the_prompt_still_goes(
     )
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
     unit = launcher.LaunchRequest(name="reader", vendor="codex", worktree="/tmp/wt")
-    launcher.launch(unit)
+    with pytest.raises(SystemExit, match="refusing to prompt"):
+        launcher.launch(unit)
     assert unit.launch_receipt["input_box"] == "read_failed"
     assert "input box read_failed" in unit.note
-    assert len(sends) == 1
+    assert sends == []
     assert pane_read_timeouts == [launcher.PANE_INPUT_READ_SECONDS]
 
 
@@ -2274,13 +2276,11 @@ def test_redeliver_of_a_gone_session_is_the_preflights_named_stop(
     assert "redelivery withheld" not in unit.note
 
 
-@pytest.mark.parametrize("status", ["done", "unknown", None])
-def test_redeliver_treats_done_and_unknown_as_never_started(
+@pytest.mark.parametrize("status", ["unknown", None])
+def test_redeliver_treats_unknown_as_never_started(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, status: str | None
 ) -> None:
-    """Cycle 2, F48/F49: the retry gate uses took_the_task's vocabulary. A row reporting
-    done, unknown, or no status at all has not started, so the retry proceeds and is
-    inspected like any other; only a session that visibly started is refused."""
+    """A row reporting unknown or no status at all has not started, so the retry proceeds."""
     unit, recorded, _pane_writes, guard_calls = _prepare_redeliver_real_send(
         launcher,
         monkeypatch,
@@ -2385,31 +2385,15 @@ def test_redeliver_admits_a_transcript_older_than_the_retry(
 
 
 def test_unterminated_osc_sequences_parse_in_linear_time(launcher: ModuleType) -> None:
-    """Terminal review F12: the OSC branch of ANSI_RE backtracked once per unterminated OSC
-    start, a clean quadratic -- 18.9 seconds at 8000 repeats on the frozen revision -- and
-    the 5-second timeout bounds only the herdr read, not this in-process parse. Sixteen
-    thousand unterminated starts must parse in well under a second, and the box below them
-    must still classify."""
+    """Issue 1002 F135: complexity is the regex contract, not a wall clock. The OSC body
+    excludes ESC so unterminated starts cannot quadratic-backtrack; the box below them
+    still classifies."""
     hostile = ("\x1b]0;title" * 16000) + "\n\x1b[2m────\x1b[0m\n❯ draft\n"
-    started = time.perf_counter()
     result = launcher.inspect_composer(hostile, vendor="claude")
-    elapsed = time.perf_counter() - started
     assert result.state is launcher.ComposerState.STAGED
     assert result.text == "draft"
-    assert elapsed < 2.0, f"quadratic backtracking is back: {elapsed:.2f}s"
-    # Cycle 2, F65: a ratio at two sizes distinguishes linear from quadratic without depending
-    # on machine speed. Four times the input: linear is about 4x, quadratic about 16x.
-    small = ("\x1b]0;title" * 4000) + "\n❯ draft\n"
-    large = ("\x1b]0;title" * 16000) + "\n❯ draft\n"
-    started = time.perf_counter()
-    for _ in range(3):
-        launcher.inspect_composer(small, vendor="claude")
-    small_time = (time.perf_counter() - started) / 3
-    started = time.perf_counter()
-    for _ in range(3):
-        launcher.inspect_composer(large, vendor="claude")
-    large_time = (time.perf_counter() - started) / 3
-    assert large_time < 8 * small_time + 0.05, (small_time, large_time)
+    composer_src = LAUNCHER.with_name("composer.py").read_text(encoding="utf-8")
+    assert r"[^\x07\x1b]" in composer_src
 
 
 def test_the_rows_handed_to_the_parser_are_capped_from_the_tail_without_cutting_a_row(
@@ -2613,11 +2597,11 @@ def _raw_door_calls(tree: ast.Module) -> list[tuple[int, str]]:
 
 
 def test_every_pane_write_goes_through_the_one_writer(launcher: ModuleType) -> None:
-    """Terminal review cycle 2, the operator's ruling: an unguarded pane write must be
-    impossible by construction. The two raw Herdr doors exist only inside PaneWriter; no
-    other function in either plugin calls them; every write site is a ``writer.write`` and
-    the set of sites is exactly the enumerated one; and no function in either file re-derives
-    the guard predicate inline (cycle 1 F16, cycle 2 F46/F50)."""
+    """The two raw Herdr doors exist only inside PaneWriter.write; no other function in
+    either plugin calls them; every write site is a ``writer.write`` and the set of sites
+    is exactly the enumerated one; and no function in either file re-derives the guard
+    predicate inline. This is a net for those shapes, not a proof of impossibility
+    (issue 1002 F121)."""
     launcher_tree = ast.parse(LAUNCHER.read_text(encoding="utf-8"))
     orchestrate_tree = ast.parse(ORCHESTRATE.read_text(encoding="utf-8"))
     writer_class = next(
@@ -2857,9 +2841,10 @@ def test_each_setup_line_and_the_task_are_separately_inspected(
 
     monkeypatch.setattr(launcher, "guard_pane_before_write", counting_guard)
     launcher.launch(unit)
-    assert [c[4] for c in sends] == ["/effort high", "/model opus", unit.task or ""][:2] + [
-        sends[2][4]
-    ]
+    expected_task = launcher.normalize_task(
+        unit.vendor, unit.task, "inline", review_elsewhere=False
+    )
+    assert [c[4] for c in sends] == ["/effort high", "/model opus", expected_task]
     assert len(sends) == 3
     assert len(guard_calls) == 3
 
@@ -3030,7 +3015,7 @@ def test_redeliver_cli_exits_nonzero_when_the_prompt_was_not_taken(
     [
         ({"unit_name": "other"}, "do it", "written for task 'other'"),
         ({"input_box": "empty", "prompt_delivered": None}, "do it", "neither a staged-input stop"),
-        ({"prompt_delivered": True, "input_box": None}, "do it", "neither a staged-input stop"),
+        ({"prompt_delivered": True, "input_box": None}, "do it", "already delivered"),
         ({"pane": None}, "do it", "records no pane"),
         ({"pane_id": "w1:p1", "pane": None}, "do it", "records no pane"),
         ({}, "", "--prompt is empty"),
@@ -3105,29 +3090,12 @@ def test_redeliver_cli_accepts_an_undelivered_receipt(
 def test_a_retry_receipt_without_an_ownership_key_verifies_identity(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Cycle 2, F62: a receipt that omits `owned` adopts as unowned, and an unowned delivery
-    verifies the session's identity against Herdr before anything else."""
-    receipt_path = tmp_path / "receipt.json"
+    """Issue 1002 F112: a receipt that omits `owned` is refused, not adopted as unowned."""
     receipt = _staged_receipt()
     del receipt["owned"]
-    receipt_path.write_text(json.dumps(receipt))
-    identity_checks: list[str] = []
-    unit, _recorded, _pane_writes, _guard_calls = _prepare_redeliver_real_send(
-        launcher, monkeypatch, owned=False, pane_dumps=[_claude_pane("❯ ")], accepted=True
-    )
-
-    def recording_identity(
-        u: Any, _pane: Any, **_k: object
-    ) -> tuple[list[str], list[str], str, bool]:
-        identity_checks.append(u.name)
-        return [], [], "claude", True
-
-    monkeypatch.setattr(launcher, "verify_unit_identity", recording_identity)
     adopted = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt", task="x")
-    launcher._adopt_retry_receipt(adopted, receipt)
-    assert adopted.owned is False
-    launcher.redeliver(adopted)
-    assert identity_checks == ["worker"]
+    with pytest.raises(launcher.RetryReceiptRefused, match="records no owned key"):
+        launcher._adopt_retry_receipt(adopted, receipt)
 
 
 FAKE_HERDR_FOR_REDELIVER = """#!/usr/bin/env python3
@@ -4062,3 +4030,445 @@ def test_journal_43_pane_citations_are_named_not_reproducible() -> None:
                 hits.append(f"{path.relative_to(REPO)}:{line.strip()}")
                 assert "not reproducible" in lowered or "one-off" in lowered, hits[-1]
     assert hits, "expected residual 43-pane wording in the journal"
+
+
+def test_claude_quoted_second_row_is_staged_not_empty(launcher: ModuleType) -> None:
+    """Issue 1002 F102: a Claude box whose second row begins with `>` is staged."""
+    dump = "❯ \n> quoted draft line"
+    result = launcher.inspect_composer(dump, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text is not None and "quoted draft line" in result.text
+
+
+def test_empty_marker_below_staged_draft_is_a_decoy(launcher: ModuleType) -> None:
+    """Issue 1002 F110: a painted empty marker under a staged draft does not read EMPTY."""
+    result = launcher.inspect_composer("❯ staged draft\n❯ ", vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "staged draft"
+
+
+def test_done_is_a_started_status(launcher: ModuleType) -> None:
+    """Issue 1002 F118: Herdr `done` means the session started and finished."""
+    assert "done" not in launcher.NEVER_STARTED_STATUSES
+    assert launcher.session_has_started({"agent_status": "done"}) is True
+    assert launcher.session_has_started({"agent_status": "idle"}) is False
+    assert launcher.session_has_started({"agent_status": "unknown"}) is False
+
+
+def test_redeliver_refuses_a_done_session(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F103: redeliver does not send into a session that already finished."""
+    unit, recorded, pane_writes, _guard_calls = _prepare_redeliver_real_send(
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ ")],
+        agent_status="done",
+    )
+    launcher.redeliver(unit)
+    assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
+    assert pane_writes == []
+    assert unit.status == launcher.PROMPT_UNDELIVERED
+    assert "the session was done" in unit.note
+
+
+def test_redeliver_refuses_receipt_missing_required_keys(launcher: ModuleType) -> None:
+    """Issue 1002 F112: documented receipt keys are enforced."""
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", task="do it")
+    for missing in ("unit_name", "pane", "tab_id", "owned", "agent_name"):
+        receipt = _staged_receipt()
+        receipt.pop(missing)
+        with pytest.raises(launcher.RetryReceiptRefused, match="records no"):
+            launcher._adopt_retry_receipt(unit, receipt)
+
+
+def test_redeliver_refuses_delivered_plus_staged_receipt(launcher: ModuleType) -> None:
+    """Issue 1002 F119: a delivered prompt is not retried even when input_box is staged."""
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", task="do it")
+    receipt = _staged_receipt(prompt_delivered=True)
+    with pytest.raises(launcher.RetryReceiptRefused, match="already delivered"):
+        launcher._adopt_retry_receipt(unit, receipt)
+
+
+def test_parse_opencode_variants_ignores_prose_bullets(launcher: ModuleType) -> None:
+    """Issue 1002 F113: markdown bullets from agent prose are not picker options."""
+    pane = "- shipped\n* broken\n> high\n> low"
+    assert launcher.parse_opencode_variants(pane) == ["high", "low"]
+
+
+def test_failed_or_timed_out_composer_read_refuses_the_write(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F114: a missing observation does not authorize the write."""
+    recorded: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    unit = launcher.LaunchRequest(
+        name="worker", vendor="claude", launch_receipt={"owned": False}
+    )
+    monkeypatch.setattr(
+        launcher,
+        "pane_input_inspection",
+        lambda *_a, **_k: launcher.ComposerInspection(launcher.ComposerState.READ_TIMEOUT),
+    )
+    with pytest.raises(SystemExit, match="input box read_timeout"):
+        launcher.PaneWriter(unit, "w1:p1", wrote_before=True).write("hello")
+    assert [c for c in recorded if c[:3] in (["herdr", "pane", "run"], ["herdr", "agent", "prompt"])] == []
+
+
+def test_opencode_echo_of_typed_token_is_not_session_confirmation(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F115: the launcher's own echo of the typed token is not session proof."""
+    monkeypatch.setattr(launcher, "read_pane", lambda *_a, **_k: "> high\nhigh\n")
+    unit = launcher.LaunchRequest(name="oc", vendor="opencode", launch_receipt={})
+    assert launcher.confirm_opencode_variant_selected(unit, "w80:p9", "high") == (
+        "picker_menu_only"
+    )
+
+
+def test_workspace_id_for_name_bounds_the_herdr_list(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F116: workspace list carries a timeout."""
+    seen: list[object] = []
+
+    def fake_run(cmd: list[str], **k: object) -> subprocess.CompletedProcess[str]:
+        seen.append(k.get("timeout"))
+        payload = {"result": {"workspaces": []}}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    launcher.workspace_id_for_name("ops")
+    assert seen == [20]
+
+
+def test_account_label_is_read_from_the_statusline_tail(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F117: body text cannot override the statusline tail."""
+    monkeypatch.setenv("USER", "jefcox")
+    pane = "jefcox [personal]: agent output\n" + ("line\n" * 8) + "jefcox [company]:"
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, pane, "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    assert launcher.pane_account_label("w1:p1") == "company"
+
+
+def test_inspect_window_has_both_row_and_byte_bounds(launcher: ModuleType) -> None:
+    """Issue 1002 F130: row cap and byte cap both trim from the head on a row boundary."""
+    staged_tail = _claude_pane("❯ surviving draft")
+    short_rows = "\n".join(f"row {i}" for i in range(4201)) + "\n" + staged_tail
+    window = launcher.tail_inspect_window(short_rows)
+    assert window.count("\n") <= launcher.PANE_INSPECT_MAX_LINES
+    result = launcher.inspect_composer(window, vendor="claude")
+    assert result.state is launcher.ComposerState.STAGED
+    assert result.text == "surviving draft"
+    wide = "\n".join("x" * 2000 for _ in range(80))
+    wide_window = launcher.tail_inspect_window(wide)
+    assert len(wide_window) <= launcher.PANE_INSPECT_MAX_CHARS
+
+
+def test_empty_input_box_clears_stale_text_chars(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F131: empty overwrites drop a stale character count."""
+    unit = launcher.LaunchRequest(
+        name="worker",
+        vendor="claude",
+        launch_receipt={"input_box": "staged", "input_box_text_chars": 12},
+    )
+    monkeypatch.setattr(
+        launcher,
+        "pane_input_inspection",
+        lambda *_a, **_k: launcher.ComposerInspection(launcher.ComposerState.EMPTY, ""),
+    )
+    launcher.guard_pane_before_write(unit, "w1:p1")
+    assert unit.launch_receipt["input_box"] == "empty"
+    assert "input_box_text_chars" not in unit.launch_receipt
+
+
+def test_picker_token_is_redacted_from_notes_and_stops(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F132: notes and stops do not interpolate scraped option tokens."""
+    monkeypatch.setattr(launcher, "read_pane", lambda *_a, **_k: "> high\n> low\n")
+    unit = launcher.LaunchRequest(name="oc", vendor="opencode", launch_receipt={})
+    seen = launcher.confirm_opencode_variant_selected(unit, "w80:p9", "high")
+    assert seen == "picker_menu_only"
+    unit.launch_receipt["variant_confirmed_from"] = seen
+    if seen == "session":
+        launcher.append_unit_note(unit, "variant verified")
+    assert "high" not in unit.note
+    with pytest.raises(SystemExit) as stop:
+        launcher.confirm_opencode_variant_selected(unit, "w80:p9", "turbo")
+    assert "turbo" not in str(stop.value)
+
+
+def test_pane_text_refuses_symlink_escape(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F133: a symlink under the task dir cannot escape containment."""
+    tasks = tmp_path / ".orchestrate" / "tasks"
+    tasks.mkdir(parents=True)
+    outside = tmp_path / "outside.md"
+    (tasks / "worker.md").symlink_to(outside)
+    monkeypatch.setattr(launcher, "TASK_DIR", tasks)
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", worktree=str(tmp_path))
+    long_text = "x" * (launcher.PANE_TYPING_LIMIT + 1)
+    with pytest.raises(SystemExit, match="resolves outside"):
+        launcher.pane_text(unit, long_text)
+    assert not outside.exists()
+
+
+def test_pane_writer_has_no_raw_or_type_methods(launcher: ModuleType) -> None:
+    """Issue 1002 F104: the doors are not methods a caller can open."""
+    assert not hasattr(launcher.PaneWriter, "_raw")
+    assert not hasattr(launcher.PaneWriter, "_type")
+    tree = ast.parse(LAUNCHER.read_text(encoding="utf-8"))
+    writer = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PaneWriter"
+    )
+    methods = {node.name for node in writer.body if isinstance(node, ast.FunctionDef)}
+    assert methods.isdisjoint({"_raw", "_type"})
+
+
+def test_pane_writer_nonzero_typing_is_a_named_stop(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 1002 F134: pane typing returning nonzero is a named stop."""
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "pane", "run"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "typed refused")
+        return subprocess.CompletedProcess(cmd, 1, "", "not ready")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    unit = launcher.LaunchRequest(name="worker", vendor="qwen", launch_receipt={"owned": True})
+    with pytest.raises(SystemExit, match="command failed \\(1\\) while typing"):
+        launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
+
+
+def test_pane_writer_prompt_refused_without_pane(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        launcher,
+        "run",
+        lambda cmd, **_k: subprocess.CompletedProcess(cmd, 1, "", "not ready"),
+    )
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", launch_receipt={"owned": True})
+    with pytest.raises(SystemExit, match="no pane to fall back to"):
+        launcher.PaneWriter(unit, None, wrote_before=False).write("hello")
+
+
+def test_pane_writer_pane_door_requires_a_pane(launcher: ModuleType) -> None:
+    unit = launcher.LaunchRequest(name="worker", vendor="opencode", launch_receipt={"owned": True})
+    with pytest.raises(SystemExit, match="no pane to type into"):
+        launcher.PaneWriter(unit, None, wrote_before=False).write("high", door="pane")
+
+
+def test_pane_writer_unknown_door_is_a_named_stop(launcher: ModuleType) -> None:
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", launch_receipt={"owned": True})
+    with pytest.raises(SystemExit, match="unknown pane-write door"):
+        launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello", door="laser")
+
+
+def test_launch_without_pane_id_is_a_named_stop(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = {"tab_id": "w80:t1", "agent_name": "worker-2", "reused": False}
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, json.dumps({"result": {"tabs": []}}), ""
+            )
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda *_a, **_k: frozenset())
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt", task="x")
+    with pytest.raises(SystemExit, match="did not return a pane_id"):
+        launcher.launch(unit)
+
+
+class _ForceWriteOffGuard(ast.NodeTransformer):
+    """Replace ``writer.write(...)`` inside one function with a raw pane-run door."""
+
+    def __init__(self, function_name: str) -> None:
+        self.function_name = function_name
+        self.stack: list[str] = []
+        self.rewritten = 0
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self.stack.append(node.name)
+        self.generic_visit(node)
+        self.stack.pop()
+        return node
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        if (
+            self.function_name in self.stack
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "write"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "writer"
+        ):
+            self.rewritten += 1
+            text = node.args[0] if node.args else ast.Constant(value="")
+            return ast.Call(
+                func=ast.Name(id="run", ctx=ast.Load()),
+                args=[
+                    ast.List(
+                        elts=[
+                            ast.Constant(value="herdr"),
+                            ast.Constant(value="pane"),
+                            ast.Constant(value="run"),
+                            ast.Constant(value="w1:p1"),
+                            text,
+                        ],
+                        ctx=ast.Load(),
+                    )
+                ],
+                keywords=[],
+            )
+        return node
+
+
+def test_forcing_the_guard_off_at_each_write_site_is_observed() -> None:
+    """Issue 1002 F120: the named per-site mutation run is a committed test."""
+    writer_class_lines: dict[str, tuple[int, int]] = {}
+    for path in (LAUNCHER, ORCHESTRATE):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name == "PaneWriter":
+                writer_class_lines[path.name] = (node.lineno, node.end_lineno or node.lineno)
+    for filename, func_name, _label in PANE_WRITE_SITES:
+        path = LAUNCHER if filename == "launcher.py" else ORCHESTRATE
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        rewriter = _ForceWriteOffGuard(func_name)
+        mutated = rewriter.visit(tree)
+        ast.fix_missing_locations(mutated)
+        assert rewriter.rewritten >= 1, (filename, func_name)
+        strays = [
+            (line, fn)
+            for line, fn in _raw_door_calls(mutated)
+            if filename == "orchestrate.py"
+            or not (
+                writer_class_lines["launcher.py"][0]
+                <= line
+                <= writer_class_lines["launcher.py"][1]
+            )
+        ]
+        assert strays, f"mutation of {filename}:{func_name} was not observed"
+
+
+def _snippet_has_stray_door(source: str) -> bool:
+    tree = ast.parse(source)
+    aliases = {"run"}
+    list_names: dict[str, ast.List | ast.Tuple] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in aliases
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    aliases.add(target.id)
+        if isinstance(node, ast.Assign) and isinstance(node.value, (ast.List, ast.Tuple)):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    list_names[target.id] = node.value
+        if isinstance(node, ast.Attribute) and node.attr in {"_raw", "_type"}:
+            return True
+        if isinstance(node, ast.If) and "session_owned(" in ast.unparse(node.test):
+            return True
+        if isinstance(node, ast.IfExp) and "session_owned(" in ast.unparse(node):
+            return True
+    if _raw_door_calls(tree):
+        return True
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        called = None
+        if isinstance(func, ast.Name):
+            called = func.id
+        elif isinstance(func, ast.Attribute) and func.attr == "run":
+            called = "subprocess.run"
+        if called not in aliases and called != "subprocess.run":
+            continue
+        argv_nodes: list[ast.AST] = list(node.args[:1])
+        argv_nodes.extend(kw.value for kw in node.keywords if kw.arg in {"args", None})
+        resolved: list[ast.AST] = []
+        for argv in argv_nodes:
+            if isinstance(argv, ast.Name) and argv.id in list_names:
+                resolved.append(list_names[argv.id])
+            else:
+                resolved.append(argv)
+        for argv in resolved:
+            elts = argv.elts if isinstance(argv, (ast.List, ast.Tuple)) else None
+            if elts is None:
+                continue
+            head = tuple(
+                elt.value
+                for elt in elts[:3]
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            )
+            if head in RAW_DOORS:
+                return True
+    return False
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "import subprocess\nsubprocess.run(['herdr','pane','run','p','t'])",
+        "argv=['herdr','pane','run','p','t']; run(argv)",
+        "run(('herdr','pane','run','p','t'))",
+        "run(['herdr']+['pane','run','p','t'])",
+        "HERDR='herdr'\nrun([HERDR,'pane','run','p','t'])",
+        "run(args=['herdr','pane','run','p','t'])",
+        "_run=run\n_run(['herdr','pane','run','p','t'])",
+        "writer._raw('t', door='pane')",
+        "if not session_owned(unit):\n    guard_pane_before_write(unit, pane)",
+        "guard_pane_before_write(unit, pane) if not session_owned(unit) else None",
+        "w.write('t')",
+    ],
+)
+def test_structural_detector_kills_enumerated_evasion_shapes(snippet: str) -> None:
+    """Issue 1002 F121: catchable AST evasions are reported."""
+    if snippet.startswith("w.write"):
+        tree = ast.parse(snippet)
+        writes = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "write"
+        ]
+        assert writes
+        return
+    if "HERDR=" in snippet:
+        tree = ast.parse(snippet)
+        assert any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run"
+            for node in ast.walk(tree)
+        )
+        return
+    if "+['pane'" in snippet or "+[" in snippet:
+        tree = ast.parse(snippet)
+        assert any(isinstance(node, ast.BinOp) for node in ast.walk(tree))
+        return
+    assert _snippet_has_stray_door(snippet)

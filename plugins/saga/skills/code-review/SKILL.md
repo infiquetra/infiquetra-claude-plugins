@@ -395,7 +395,11 @@ independent gate results. Enforce `ReviewReadiness.can_proceed`: a failed indepe
 readiness even when numeric review acceptance passes. A gate result never changes a dimension score,
 derived overall, accepted flag, or failing-dimension list; do not rescore a lens from gate state.
 
-Then create `ReviewCycleState` with the selected roster identifiers and call `record_cycle` only after
+Then create `ReviewCycleState` with the selected roster identifiers, passing the
+child-lifecycle identifier the review is serving as `lifecycle=` when one exists
+(the Orchestrate controller's `lifecycle` when this review is a scoped unit;
+omit it for an unscoped review) so fix identifiers cannot collide across
+lifecycles, and call `record_cycle` only after
 the candidate revision was successfully integrated. The first cycle attempts every selected lens.
 Later cycles attempt exactly `state.next_lenses`; accepted lenses retain the revision they actually
 reviewed. `ReviewResult.outcome` remains the sole decision field inside the serialized result; carry

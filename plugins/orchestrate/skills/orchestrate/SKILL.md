@@ -146,11 +146,24 @@ same time**. A partially scoped set — one controller missing its `lifecycle`, 
 same one — is still the accidental panel, and still refused.
 
 An overlapping live Work worker is told to merge the current run branch, then receives the request in
-its existing session. Otherwise a replacement inherits the matching role's approved vendor and tier
-and launches through `go`. `human` and `release` requests are printed and retained as operator
-actions and never become Work units. `clean --merged` keeps every worker carrying an outstanding
-request; once all Work repairs land, `land` resubmits the landed revision through the same controller.
-Operator-owned requests prevent that resubmission.
+its existing session. A worker already `failed`, `orphaned`, `account_mismatch`, or `parked` is never
+that overlap, even if its pane is still live: routing mints a replacement instead of flipping it
+back to `running`. Otherwise a replacement inherits the matching role's approved vendor and tier
+and launches through `go`. A scoped replacement's name and workspace name the controller's
+lifecycle, not an unrelated template slice, and do not compound `-fix-` segments; the unit note
+records the template it was minted from. `human` and `release` requests are printed and retained as
+operator actions and never become Work units. `clean --merged` keeps every worker carrying an
+outstanding request; once all Work repairs land, `land` resubmits that lifecycle's landed revision
+through the same controller, never a controller already `running` on another frozen target, and
+never a controller whose lifecycle did not land in this invocation. A write failure on one
+controller does not skip the others. Operator-owned requests, a staged composer, or a failed
+prompt leave the owed resubmission unmade and `land` exits 4, which outranks a leftover landing
+path (exit 3). `status` prints `recorded-but-unrouted` when a result is stored and the outcome is
+still unset, and names a note that contradicts the typed outcome. `review-result` refuses a
+cycle-regressed artifact and any non-identical ingest into a terminal slot; a retry after a
+partial dispatch does not re-prompt a worker that already took its repair. Assigning a
+`lifecycle` after an unscoped review copies the four run-global fields into the named slot;
+a conflicting named slot is a stop, not an overwrite.
 
 ## State
 

@@ -627,3 +627,112 @@ def test_finding_routes_serialize_into_consolidated_fix_requests() -> None:
     assert payload["findings"][0]["owner"] == "review-fixer"
     assert payload["fix_requests"][0]["finding_ids"] == ["F-route"]
     assert payload["fix_requests"][0]["touched_paths"] == ["src/correctness.py"]
+
+
+def test_accepted_result_cannot_carry_active_findings() -> None:
+    """#894: accepted + empty failing + empty unresolved cannot serialize with status=active."""
+    leftover = _finding(
+        "correctness",
+        "F-active-p2",
+        severity="P2",
+        pre_existing=True,
+    )
+    assert leftover.status == "active"
+    state = CONSENSUS.ReviewCycleState(("correctness",))
+    result = state.record_cycle(
+        "revision-1",
+        {"correctness": _score("correctness", 9.4)},
+        findings=(leftover,),
+    )
+
+    assert result.outcome == "accepted"
+    assert result.failing_lenses == ()
+    assert result.unresolved_fix_ids == ()
+    assert result.findings
+    assert all(item.status != "active" for item in result.findings)
+
+    round_tripped = CONSENSUS.ReviewResult.from_json(result.to_json())
+    assert all(item.status != "active" for item in round_tripped.findings)
+
+    illegal = result.to_dict()
+    illegal["findings"] = [leftover.to_dict()]
+    for lens_result in illegal["lens_results"]:
+        lens_result["scoring_findings"] = [
+            {
+                "finding_id": leftover.finding_id,
+                "dimension_id": leftover.dimension_id,
+                "critical": False,
+                "resolved": False,
+                "priority": leftover.severity,
+                "confidence": leftover.confidence,
+            }
+        ]
+    with pytest.raises(
+        CONSENSUS.ReviewConsensusError,
+        match="accepted result cannot carry findings still marked active",
+    ):
+        CONSENSUS.ReviewResult.from_dict(illegal)
+
+
+def test_repairs_requested_may_carry_active_findings() -> None:
+    """#894: repairs_requested and cycle_cap_best_available may still list status=active."""
+    open_finding = _finding("correctness", "F-open", severity="P1")
+    repairs = CONSENSUS.ReviewCycleState(("correctness",)).record_cycle(
+        "revision-1",
+        {"correctness": _score("correctness", 8.9)},
+        findings=(open_finding,),
+    )
+    assert repairs.outcome == "repairs_requested"
+    assert any(item.status == "active" for item in repairs.findings)
+
+    capped_state = CONSENSUS.ReviewCycleState(("correctness",))
+    capped_state.record_cycle(
+        "revision-1",
+        {"correctness": _score("correctness", 8.9)},
+        findings=(open_finding,),
+    )
+    capped_state.record_cycle(
+        "revision-2",
+        {"correctness": _score("correctness", 8.8)},
+        findings=(open_finding,),
+    )
+    capped = capped_state.record_cycle(
+        "revision-3",
+        {"correctness": _score("correctness", 8.7)},
+        findings=(open_finding,),
+    )
+    assert capped.outcome == "cycle_cap_best_available"
+    assert any(item.status == "active" for item in capped.findings)
+
+
+def test_fix_identifiers_differ_across_lifecycles_and_are_stable_within_one() -> None:
+    """#899: lifecycle namespaces the identity; resume and re-derive keep the same id."""
+    finding = _finding("correctness", "F-shared")
+    scores = {"correctness": _score("correctness", 8.9)}
+
+    first = CONSENSUS.ReviewCycleState(("correctness",), lifecycle="c2")
+    first_result = first.record_cycle("revision-1", scores, findings=(finding,))
+    second = CONSENSUS.ReviewCycleState(("correctness",), lifecycle="c6")
+    second_result = second.record_cycle("revision-1", scores, findings=(finding,))
+    assert first_result.fix_requests[0].fix_id != second_result.fix_requests[0].fix_id
+
+    again = CONSENSUS.ReviewCycleState(("correctness",), lifecycle="c2")
+    again_result = again.record_cycle("revision-1", scores, findings=(finding,))
+    assert again_result.fix_requests[0].fix_id == first_result.fix_requests[0].fix_id
+
+    restored = CONSENSUS.ReviewCycleState.from_json(first.to_json())
+    restored_payload = json.loads(first.to_json())
+    assert restored_payload["lifecycle"] == "c2"
+    assert "lifecycle" not in json.loads(CONSENSUS.ReviewCycleState(("correctness",)).to_json())
+    restored_again = CONSENSUS.ReviewCycleState(("correctness",), lifecycle="c2")
+    restored_again_result = restored_again.record_cycle("revision-1", scores, findings=(finding,))
+    assert restored_again_result.fix_requests[0].fix_id == first_result.fix_requests[0].fix_id
+    assert json.loads(restored.to_json())["lifecycle"] == "c2"
+
+    unscoped = CONSENSUS.ReviewCycleState(("correctness",)).record_cycle(
+        "revision-1", scores, findings=(finding,)
+    )
+    assert (
+        unscoped.fix_requests[0].fix_id == CONSENSUS.consolidate_fix_requests((finding,))[0].fix_id
+    )
+    assert "lifecycle" not in unscoped.to_dict()

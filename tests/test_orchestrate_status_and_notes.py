@@ -220,6 +220,77 @@ def test_long_task_without_setup_keeps_both_pane_fallback_diagnostics(
     )
 
 
+def test_status_shows_recorded_but_unrouted_result(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#895: a stored result with unset outcome is visible as recorded-but-unrouted."""
+    controller = orchestrate.Unit(
+        name="code-review-controller",
+        vendor="grok",
+        task="/saga:code-review review",
+        role="review-controller",
+        merge=False,
+        status="done",
+    )
+    run = orchestrate.Run(
+        run_id="review-run",
+        source="test",
+        base="base",
+        units=[controller],
+    )
+    raw = json.dumps({"schema": "review_result.v1", "outcome": "accepted"}, sort_keys=True)
+    run.write_review_slot(controller, review_result=raw, review_outcome=None)
+    run.save(tmp_path / ".orchestrate" / "run.json")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        orchestrate, "unit_commit_statuses", lambda units, r: [("-", "-")] * len(units)
+    )
+    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    assert "recorded-but-unrouted" in capsys.readouterr().out
+
+
+def test_status_typed_outcome_outranks_a_contradictory_note(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#895: a note that says ACCEPTED does not displace cycle_cap_best_available."""
+    controller = orchestrate.Unit(
+        name="code-review-controller",
+        vendor="grok",
+        task="/saga:code-review review",
+        role="review-controller",
+        merge=False,
+        status="done",
+        note="cycle 4 ACCEPTED 0 fix requests, 0 failing lenses",
+    )
+    run = orchestrate.Run(
+        run_id="review-run",
+        source="test",
+        base="base",
+        units=[controller],
+    )
+    raw = json.dumps(
+        {"schema": "review_result.v1", "outcome": "cycle_cap_best_available"},
+        sort_keys=True,
+    )
+    run.write_review_slot(controller, review_result=raw, review_outcome="cycle_cap_best_available")
+    run.save(tmp_path / ".orchestrate" / "run.json")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        orchestrate, "unit_commit_statuses", lambda units, r: [("-", "-")] * len(units)
+    )
+    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    output = capsys.readouterr().out
+    assert "cycle_cap_best_available" in output
+    assert "note contradicts typed outcome" in output
+    assert "accepted" in output
+
+
 def test_status_uses_only_the_batched_commit_status_helper(orchestrate: ModuleType) -> None:
     assert hasattr(orchestrate, "unit_commit_statuses")
     assert not hasattr(orchestrate, "unit_commit_status")

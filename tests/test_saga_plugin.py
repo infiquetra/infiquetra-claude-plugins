@@ -46,7 +46,9 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.158.0"  # 0.158.0: shared Saga readiness owner with
+    assert plugin_json["version"] == "0.159.0"  # 0.159.0: accepted-result consistency and
+    # lifecycle-namespaced fix identifiers (issue #908 children #894, #899).
+    # Predecessor 0.158.0: shared Saga readiness owner with
     # Mission Control delegation (issue #942). Predecessor — issue #926 (unit P5, issue #918
     # Wave Two):
     # Plan's documentation corrections -- the derived-state sentence, the board-move trigger

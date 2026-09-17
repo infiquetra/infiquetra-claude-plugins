@@ -2,6 +2,48 @@
 
 ## 2026-09-16
 
+### A key flip without a copy orphans the only authority  {#908-slot-key-flip-orphans}
+
+**Context.** `review_slot` keys on the controller name once `lifecycle` is set, and backfills from run-level fields only for the unscoped `RUN_SLOT`. A controller that reviewed unscoped, then was assigned a lifecycle, opened an empty named slot.
+
+**Evidence.** Live unattended run: 61,717-byte accepted result still on the run-level field; named slot `review_result: null`. Issue #898.
+
+**Mechanism.** `setdefault(key, {})` on a new key does not see the old key. The four `setdefault(..., None)` lines then look like never-reviewed.
+
+**Fix.** On first scoped read of an empty named slot, copy the four fields. Refuse when the named slot already holds different bytes. After that, `run_global_linked` stops comparing so a later scoped write is not a false conflict.
+
+**Generalizable rule.** When an identifier that selects a store changes, copy or link the old row before the new key's defaults look like absence.
+
+**Refs.** Issue #898; `{#908-review-slot-migration}`.
+
+### Lens-consistent is not result-consistent  {#908-accepted-active-findings}
+
+**Context.** Saga enforced finding status against lens scores, then latched `accepted` on lens failure alone. An accepted result with nothing outstanding could still list `status: active`.
+
+**Evidence.** One slice's accepted terminal result had empty failing lenses, empty unresolved fix ids, and two P2 findings still `active`. Issue #894.
+
+**Mechanism.** `_score_with_typed_findings` only asks whether finding status matches the score's `resolved` flag. Result-level `accepted` did not ask whether any finding was still open.
+
+**Fix.** `ReviewResult.__post_init__` refuses that shape. `record_cycle` reconciles leftover active findings and their scoring evidence before constructing it.
+
+**Generalizable rule.** A per-part consistency check does not imply a whole-record invariant. If the verdict says nothing is outstanding, every nested status field has to agree, including after a serialize round trip.
+
+**Refs.** Issue #894.
+
+### Catch the subclass before the parent in a multi-target loop  {#908-staged-before-systemexit}
+
+**Context.** `StagedInputError` is a `SystemExit` subclass when the Agent Launcher is live. The multi-controller resubmit loop caught only `StagedInputError`, so any other `SystemExit` from `PaneWriter` aborted the loop.
+
+**Evidence.** Issue #956. A herdr prompt timeout on the first controller never attempted the second.
+
+**Mechanism.** `except StagedInputError` does not catch a bare `SystemExit`. `except SystemExit` first would classify a withhold as a hard failure.
+
+**Fix.** `except StagedInputError` then `except SystemExit`, record the skip, continue, then raise the combined failure so `land` still exits 4.
+
+**Generalizable rule.** In a fan-out that already special-cases a `SystemExit` subclass, the parent must be caught per item after the subclass, or one item's hard failure restores the deadlock the loop exists to prevent.
+
+**Refs.** Issue #956; `{#908-land-exit-4}`.
+
 ### Name presence is not companion usability  {#1003-name-presence-is-not-usability}
 
 **Context.** Orchestrate execs the Agent Launcher source into its own globals and then checks that `REQUIRED_LAUNCHER_NAMES` exist. Issue 907's terminal review found a 30-line stub whose names existed as `return None` still counted as a live companion, and a floor-satisfying tree missing `live_agents` killed read-only `status`.

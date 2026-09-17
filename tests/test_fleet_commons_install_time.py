@@ -72,7 +72,7 @@ def _build_fake_home(
         manifest = decoy / ".claude-plugin" / "plugin.json"
         manifest.write_text(json.dumps({"name": "fleet-core", "version": decoy_version}))
     if with_saga:
-        saga = _install_plugin(cache, "saga", "0.158.0", parts=(".claude-plugin", "scripts"))
+        saga = _install_plugin(cache, "saga", "0.159.0", parts=(".claude-plugin", "scripts"))
         registry[f"saga@{MARKETPLACE}"] = [{"installPath": str(saga)}]
 
     (fake_home / ".claude" / "plugins" / "installed_plugins.json").write_text(
@@ -170,7 +170,7 @@ def test_saga_readiness_owner_resolves_via_installed_registry(tmp_path: Path) ->
     owner_path = Path(line.removeprefix("SAGA_OWNER_PATH="))
     assert owner_path.name == "handoff_envelope.py"
     cache_saga = fake_home / ".claude" / "plugins" / "cache" / MARKETPLACE / "saga"
-    assert owner_path == cache_saga / "0.158.0" / "scripts" / "handoff_envelope.py"
+    assert owner_path == cache_saga / "0.159.0" / "scripts" / "handoff_envelope.py"
 
 
 def test_missing_saga_fails_the_owner_probe_loud(tmp_path: Path) -> None:

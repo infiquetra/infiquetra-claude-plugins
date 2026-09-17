@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.159.0] - 2026-09-16
+
+- **Accepted results cannot carry active findings (#894).** `ReviewResult` refuses `accepted` with empty failing lenses, empty unresolved fix ids, and any finding still `status=active`. `record_cycle` reconciles leftover active findings (and matching scoring evidence) before constructing that shape. `repairs_requested` and `cycle_cap_best_available` may still list `active`.
+- **Fix identifiers are namespaced by lifecycle (#899).** `ReviewCycleState(lifecycle=...)` includes the token in the identity hash so two reviews cannot mint the same id. The token round-trips on `review_cycle_state.v1`. `review_result.v1` is unchanged. Unscoped identity bytes stay today's.
+
 ## [0.158.0] - 2026-09-13
 
 - **Shared readiness owner on the handoff envelope (issue #942).** `scripts/handoff_envelope.py`

@@ -17,7 +17,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -910,7 +910,7 @@ def test_land_names_the_operator_request_holding_review_resubmission(
     run.save(repo / ".orchestrate" / "run.json")
     monkeypatch.chdir(repo)
 
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
     output = capsys.readouterr().out
 
     assert f"Code Review resubmission held by operator-owned fix request: {fix_id}" in output
@@ -1425,3 +1425,358 @@ def test_the_documented_land_exit_codes_are_the_ones_the_command_returns() -> No
                 if isinstance(constant, ast.Constant) and isinstance(constant.value, int):
                     returned.add(constant.value)
     assert documented == returned, (documented, returned)
+
+
+def test_replacement_name_and_workspace_identify_the_controller_lifecycle(
+    orchestrate: ModuleType,
+) -> None:
+    """#902: scoped mint names the lifecycle, not the template slice, and does not compound -fix-."""
+    controller = orchestrate.Unit(
+        name="codereview-providers",
+        vendor="grok",
+        task="/saga:code-review review the run branch",
+        role="review-controller",
+        merge=False,
+        lifecycle="providers",
+        status="done",
+    )
+    template = _worker(
+        orchestrate,
+        "work-shell-slice-shell-fix-old",
+        "review-fixer",
+        "src/shell",
+        live=False,
+    )
+    template.workspace = "shell-ws"
+    run = _run(orchestrate, template, controller)
+    routing = orchestrate.route_review_result(
+        run,
+        _result(
+            "repairs_requested",
+            _request("fix-providers", "review-fixer", "src/providers/a.py"),
+        ),
+        agents=[],
+        controller=controller,
+    )
+    replacement = routing.replacements[0]
+    assert replacement.name.startswith("providers-repair-")
+    assert "shell" not in replacement.name
+    assert "-fix-fix-" not in replacement.name
+    assert replacement.workspace == "providers-repair"
+    assert "minted from" in replacement.note
+    assert "work-shell-slice-shell-fix-old" in replacement.note
+
+
+def test_route_review_result_skips_terminal_units_and_mints_instead(
+    orchestrate: ModuleType,
+) -> None:
+    """#892: a failed live worker is not reused and is not flipped back to running."""
+    controller = _controller(orchestrate)
+    failed = _worker(orchestrate, "retired", "review-fixer", "src/api")
+    failed.status = orchestrate.FAILED
+    run = _run(orchestrate, failed, controller)
+    routing = orchestrate.route_review_result(
+        run,
+        _result(
+            "repairs_requested",
+            _request("fix-retired", "review-fixer", "src/api/x.py"),
+        ),
+        agents=_live(failed),
+        controller=controller,
+    )
+    assert routing.dispatches == []
+    assert len(routing.replacements) == 1
+    orchestrate.dispatch_review_routing(routing, sender=lambda _unit, _text: None)
+    assert failed.status == orchestrate.FAILED
+
+    live = _worker(orchestrate, "live-fixer", "review-fixer", "src/api")
+    failed2 = _worker(orchestrate, "still-failed", "review-fixer", "src/api")
+    failed2.status = orchestrate.FAILED
+    run2 = _run(orchestrate, live, failed2, controller)
+    routing2 = orchestrate.route_review_result(
+        run2,
+        _result(
+            "repairs_requested",
+            _request("fix-live", "review-fixer", "src/api/y.py"),
+        ),
+        agents=_live(live, failed2),
+        controller=controller,
+    )
+    assert [unit.name for unit, _req in routing2.dispatches] == ["live-fixer"]
+    assert routing2.replacements == []
+
+
+def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#893: a cycle-1 accepted artifact cannot overwrite a stored cycle-cap result."""
+    stored = json.dumps(
+        {
+            "schema": "review_result.v1",
+            "outcome": "cycle_cap_best_available",
+            "cycle_history": [{"cycle": 1}, {"cycle": 2}, {"cycle": 3}],
+            "fix_requests": [],
+        },
+        sort_keys=True,
+    )
+    incoming = json.dumps(
+        {
+            "schema": "review_result.v1",
+            "outcome": "accepted",
+            "cycle_history": [{"cycle": 1}],
+            "fix_requests": [],
+        },
+        sort_keys=True,
+    )
+    controller = _controller(orchestrate)
+    run = _run(orchestrate, controller)
+    run.write_review_slot(
+        controller, review_result=stored, review_outcome="cycle_cap_best_available"
+    )
+    result_path = tmp_path / "incoming.json"
+    result_path.write_text(incoming)
+    run.save(tmp_path / ".orchestrate" / "run.json")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="terminal review outcome"):
+        orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path)))
+    reloaded = orchestrate.Run.load()
+    assert reloaded.review_slot(controller)["review_outcome"] == "cycle_cap_best_available"
+    assert reloaded.review_slot(controller)["review_result"] == stored
+
+    result_path.write_text(stored)
+    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
+
+    shorter = json.dumps(
+        {
+            "schema": "review_result.v1",
+            "outcome": "repairs_requested",
+            "cycle_history": [{"cycle": 1}],
+            "fix_requests": [],
+        },
+        sort_keys=True,
+    )
+    longer = json.dumps(
+        {
+            "schema": "review_result.v1",
+            "outcome": "repairs_requested",
+            "cycle_history": [{"cycle": 1}, {"cycle": 2}],
+            "fix_requests": [],
+        },
+        sort_keys=True,
+    )
+    run2 = _run(orchestrate, _controller(orchestrate))
+    run2.write_review_slot(
+        run2.review_controller(), review_result=longer, review_outcome="repairs_requested"
+    )
+    run2.save(tmp_path / ".orchestrate" / "run.json")
+    result_path.write_text(shorter)
+    with pytest.raises(SystemExit, match="cycle-regressed"):
+        orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path)))
+
+
+def test_land_in_lifecycle_a_does_not_resubmit_a_running_controller_in_lifecycle_b(
+    orchestrate: ModuleType,
+) -> None:
+    """#884: landing A does not retarget B, and a running controller is not resubmitted."""
+    controller_a = orchestrate.Unit(
+        name="cr-a",
+        vendor="grok",
+        task="/saga:code-review a",
+        role="review-controller",
+        lifecycle="cA",
+        merge=False,
+        status="done",
+        pane_id="pane-a",
+        agent_name="agent-a",
+    )
+    controller_b = orchestrate.Unit(
+        name="cr-b",
+        vendor="grok",
+        task="/saga:code-review b",
+        role="review-controller",
+        lifecycle="cB",
+        merge=False,
+        status=orchestrate.RUNNING,
+        pane_id="pane-b",
+        agent_name="agent-b",
+    )
+    worker_a = orchestrate.Unit(
+        name="fix-a",
+        vendor="claude",
+        task="/saga:work a",
+        role="review-fixer",
+        lifecycle="cA",
+        status="done",
+    )
+    run = _run(orchestrate, worker_a, controller_a, controller_b)
+    run.write_review_slot(controller_a, review_resubmit_pending=True)
+    run.write_review_slot(controller_b, review_resubmit_pending=True)
+    sent: list[tuple[str, str]] = []
+
+    def capture(unit: Any, text: str) -> None:
+        sent.append((unit.name, text))
+
+    orchestrate.resubmit_review_if_ready(
+        run,
+        "HEAD-OF-B",
+        sender=capture,
+        landed_names=["fix-a"],
+        landed_revisions={"fix-a": "REV-A"},
+    )
+    assert [name for name, _text in sent] == ["cr-a"]
+    assert "REV-A" in sent[0][1]
+    assert "HEAD-OF-B" not in sent[0][1]
+    assert run.review_slot(controller_b)["review_resubmit_pending"] is True
+
+
+def test_a_non_staged_resubmit_write_failure_does_not_abort_later_controllers(
+    orchestrate: ModuleType,
+) -> None:
+    """#956: a SystemExit on the first controller still attempts the second."""
+    first = orchestrate.Unit(
+        name="review-a",
+        vendor="grok",
+        task="/saga:code-review a",
+        role="review-controller",
+        lifecycle="cA",
+        merge=False,
+        status="done",
+        pane_id="pane-a",
+        agent_name="agent-a",
+    )
+    second = orchestrate.Unit(
+        name="review-b",
+        vendor="grok",
+        task="/saga:code-review b",
+        role="review-controller",
+        lifecycle="cB",
+        merge=False,
+        status="done",
+        pane_id="pane-b",
+        agent_name="agent-b",
+    )
+    run = _run(orchestrate, first, second)
+    run.write_review_slot(first, review_resubmit_pending=True)
+    run.write_review_slot(second, review_resubmit_pending=True)
+    sent: list[str] = []
+
+    def flaky(unit: Any, _text: str) -> None:
+        if unit.name == "review-a":
+            raise SystemExit("pane run failed")
+        sent.append(unit.name)
+
+    with pytest.raises(SystemExit, match="pane run failed"):
+        orchestrate.resubmit_review_if_ready(run, "deadbeef", sender=flaky)
+    assert sent == ["review-b"]
+
+
+def test_land_exit_4_outranks_leftover_landing_path_exit_3(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#959: leftover landing-path cleanup does not hide an owed resubmission."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _commit(repo, "base.txt")
+    base = _git_out(repo, "rev-parse", "HEAD")
+    _git(repo, "branch", "orch/review-run")
+    controller = _controller(orchestrate)
+    run = orchestrate.Run(
+        run_id="review-run",
+        source="test",
+        base=base,
+        branch="orch/review-run",
+        units=[controller],
+        review_result=_result("repairs_requested"),
+        review_outcome="repairs_requested",
+        review_resubmit_pending=True,
+        operator_fix_requests=[_request("held", "human", "src/x.py")],
+    )
+    run.save(repo / ".orchestrate" / "run.json")
+    monkeypatch.chdir(repo)
+    land_path = repo / ".orchestrate" / f"land-{run.run_id}"
+    original_run = orchestrate.run
+
+    def fail_remove(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if cmd[:4] == ["git", "worktree", "remove", "--force"] and cmd[-1] == str(land_path):
+            return subprocess.CompletedProcess(cmd, 1, "", "simulated cleanup failure")
+        return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+    monkeypatch.setattr(orchestrate, "run", fail_remove)
+    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    output = capsys.readouterr().out
+    assert "LANDING CLEANUP FAILED" in output
+    assert "operator-owned fix" in output
+
+
+def test_land_exits_4_when_resubmission_is_held_by_operator_fix_requests(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#974: operator-hold is exit 4, not a green 0."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _commit(repo, "base.txt")
+    base = _git_out(repo, "rev-parse", "HEAD")
+    _git(repo, "branch", "orch/review-run")
+    run = orchestrate.Run(
+        run_id="review-run",
+        source="test",
+        base=base,
+        branch="orch/review-run",
+        units=[_controller(orchestrate)],
+        review_result=_result("repairs_requested"),
+        review_outcome="repairs_requested",
+        review_resubmit_pending=True,
+        operator_fix_requests=[_request("held-fix", "human", "src/op.py")],
+    )
+    run.save(repo / ".orchestrate" / "run.json")
+    monkeypatch.chdir(repo)
+    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    assert "operator-owned fix" in capsys.readouterr().out
+
+
+def test_retrying_review_result_does_not_reprompt_a_worker_that_already_took_its_repair(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#976: a partial dispatch retry must not prompt the worker that already took its repair."""
+    first = _worker(orchestrate, "first", "review-fixer", "src/a.py")
+    second = _worker(orchestrate, "second", "review-fixer", "src/b.py")
+    run = _run(orchestrate, first, second, _controller(orchestrate))
+    raw = _result(
+        "repairs_requested",
+        _request("fix-a", "review-fixer", "src/a.py"),
+        _request("fix-b", "review-fixer", "src/b.py"),
+    )
+    result_path = tmp_path / "result.json"
+    result_path.write_text(raw)
+    run.save(tmp_path / ".orchestrate" / "run.json")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(orchestrate, "live_agents", lambda: _live(first, second))
+    sent: list[str] = []
+
+    def sender(unit: Any, _text: str) -> None:
+        sent.append(unit.name)
+        if unit.name == "second":
+            raise orchestrate.StagedInputError("composer holds staged input")
+
+    monkeypatch.setattr(orchestrate, "_send_with_pane_guard", sender)
+    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
+    assert sent == ["first", "second"]
+    sent.clear()
+    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
+    assert sent == ["second"]

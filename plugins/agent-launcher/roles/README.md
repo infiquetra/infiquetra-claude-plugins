@@ -5,11 +5,21 @@ lifecycle's own vocabulary. A roster helper sends one of these files to a fresh 
 the session knows what it is, what it reads, what it returns, and when it stops — without anyone
 hand-writing a briefing.
 
-The source of truth is the sibling repository `infiquetra-sdlc`. This directory holds no policy of
-its own: no role it does not name, no contract it does not define, no scoring threshold. When this
-directory and that repository disagree, that repository is right and this directory is stale.
+The source of truth is the sibling repository `infiquetra-sdlc`. This directory decides no policy of
+its own: no role that repository does not name, no contract it does not define, no scoring
+threshold. When this directory and that repository disagree, that repository is right and this
+directory is stale.
 
 Read from `infiquetra-sdlc` revision `67845cdd`.
+
+**One thing here is copied rather than referenced, and it is worth naming.** Each prompt lists the
+required field names of the contract it posts. Those names are the lifecycle's, transcribed — a
+second copy that can drift. It is deliberate: a prompt is the whole briefing a fresh session gets,
+and a session that has to file a handoff cannot go and read a schema. The copy is made safe by a
+test rather than by discipline: `tests/test_roles_library.py` reads each contract's fields from the
+lifecycle's run model and fails when a prompt omits a required one. Everything else the lifecycle
+owns — the lens dimensions, the anchors, the strictness ladder, the staffing tiers — is referenced,
+never copied, because nothing consuming those is mid-task with no way to look them up.
 
 ## What is here, and what is not
 
@@ -30,7 +40,7 @@ Frontmatter keys, all four required:
 
 | Key | Meaning |
 |---|---|
-| `role` | The readable role name as the lifecycle's role catalogue spells it |
+| `role` | The readable role name, spelled as the role catalogue at `infiquetra-sdlc` `docs/roles/run-roles.md` spells it — Title Case. The lifecycle disagrees with itself here: its run model spells eight of the fifteen in sentence case (`Initial implementation worker`), its role catalogue in Title Case (`Initial Implementation Worker`). The catalogue is the page a person reads, so these files follow it, and the test compares the two without regard to case |
 | `role_id` | The lifecycle's stable identifier for the role |
 | `emits` | A YAML **list** of the handoff contract identifiers this role produces. Always a list, never a bare string — the Planner produces two and the Delivery Manager five. The list is empty for a role whose result is aggregated into another role's contract rather than posted as its own; the Lens Reviewer is the only such role, and its prompt says where its result goes |
 | `source` | Where the content came from, so a reader can check it |
@@ -41,7 +51,7 @@ Required sections, in this order and with these exact headings:
 |---|---|
 | `## Role` | What the role is, what it may decide, and what it must never do |
 | `## Inputs from the run record` | The named inputs the session is given, and where each comes from |
-| `## Output contract` | The handoff comment the role posts, in the lifecycle's shape |
+| `## Output contract` | The handoff comment the role posts, in the lifecycle's shape, naming each contract in `emits` by the name the lifecycle gives it and listing its required fields. One role posts nothing of its own — the Lens Reviewer, the only file with an empty `emits` — and its section says where its result goes instead |
 | `### Stop rule` | The condition on which this role stops working and hands off |
 
 `### Stop rule` is a level-three heading inside the output-contract section on purpose: the card that
@@ -55,7 +65,7 @@ heading here and the field there are the same idea under two names.
 ## The output contract, once
 
 Every role posts its result as a handoff comment on the issue record, in the shape
-`docs/process/run-contracts.md` fixes. The comment opens with a heading naming the contract:
+`infiquetra-sdlc` `docs/process/run-contracts.md` fixes, at revision `67845cdd`. The comment opens with a heading naming the contract:
 
 ```markdown
 ### Handoff: <contract name> (<contract-id>)
@@ -110,7 +120,7 @@ section for the lens it is staffing.
 Every prompt points at the house style rather than repeating it:
 `plugins/house-style/references/subagent-presentation-preamble.md`, the single canonical copy in
 this repository. The prompts that were migrated into this directory each opened with a
-byte-identical forty-line copy of that text, twenty-five copies in all, which is the drift this
+byte-identical forty-line copy of that text, one per agent prompt, which is the drift this
 library exists to undo.
 
 ## Where the retired prompts went

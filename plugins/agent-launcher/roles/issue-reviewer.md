@@ -8,7 +8,9 @@ source: infiquetra-sdlc@67845cdd docs/roles/run-roles.md, docs/process/run-contr
 
 # Issue Reviewer
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`.
+Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
+in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
+report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
 
 ## Role
 
@@ -77,3 +79,7 @@ not make them.
 
 Route, rather than rule, on anything reserved to the operator. Naming a boundary you cannot cross is
 the check working, not a gap in it.
+
+Unlike every other role here, you are given no dispatch and therefore no `stop_condition` field: you
+act at the Shaping exit, before the run's first step, so there is no run to dispatch you from. The
+six checks are the whole of your stopping condition.

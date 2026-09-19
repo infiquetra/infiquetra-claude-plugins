@@ -207,6 +207,24 @@ def _live_contract_senders(root: pathlib.Path) -> dict[str, str] | None:
     return {contract["id"]: contract["sender_role"] for contract in contracts}
 
 
+def _live_contract_names(root: pathlib.Path) -> dict[str, str] | None:
+    """Per contract, the display name the lifecycle gives it."""
+    model = json.loads((root / "config" / "run-model.json").read_text(encoding="utf-8"))
+    contracts = model.get("contracts")
+    if not contracts:
+        return None
+    return {contract["id"]: contract["name"] for contract in contracts}
+
+
+def _live_role_names(root: pathlib.Path) -> dict[str, str] | None:
+    """Per role id, the readable name the lifecycle gives it."""
+    model = json.loads((root / "config" / "run-model.json").read_text(encoding="utf-8"))
+    roles = model.get("roles")
+    if not roles:
+        return None
+    return {role["id"]: role["name"] for role in roles}
+
+
 def _live_contract_fields(root: pathlib.Path) -> dict[str, frozenset[str]] | None:
     """Per contract, the role-specific required field names.
 
@@ -242,9 +260,15 @@ def _sibling_head(root: pathlib.Path) -> str | None:
 
 
 def _resolve() -> tuple[
-    tuple[str, ...], dict[str, str], tuple[str, ...], dict[str, frozenset[str]] | None, bool
+    tuple[str, ...],
+    dict[str, str],
+    tuple[str, ...],
+    dict[str, frozenset[str]] | None,
+    dict[str, str] | None,
+    dict[str, str] | None,
+    bool,
 ]:
-    """Lens ids, contract senders, role ids, contract fields -- live where possible."""
+    """Lens ids, contract senders, role ids, fields, contract names, role names -- live if able."""
     root = _sdlc_root()
     if root is None:
         return (
@@ -252,15 +276,33 @@ def _resolve() -> tuple[
             FALLBACK_CONTRACT_SENDERS,
             FALLBACK_ROLE_IDS,
             None,
+            None,
+            None,
             False,
         )
     lenses = _live_lens_ids(root) or FALLBACK_LENS_IDS
     senders = _live_contract_senders(root) or FALLBACK_CONTRACT_SENDERS
     roles = _live_role_ids(root) or FALLBACK_ROLE_IDS
-    return lenses, senders, roles, _live_contract_fields(root), True
+    return (
+        lenses,
+        senders,
+        roles,
+        _live_contract_fields(root),
+        _live_contract_names(root),
+        _live_role_names(root),
+        True,
+    )
 
 
-LENS_IDS, CONTRACT_SENDERS, ROLE_IDS, CONTRACT_FIELDS, READ_LIVE = _resolve()
+(
+    LENS_IDS,
+    CONTRACT_SENDERS,
+    ROLE_IDS,
+    CONTRACT_FIELDS,
+    CONTRACT_NAMES,
+    ROLE_NAMES,
+    READ_LIVE,
+) = _resolve()
 CONTRACT_IDS = tuple(CONTRACT_SENDERS)
 
 #: Named in every assertion message, because a verdict that differs between a developer machine
@@ -706,6 +748,44 @@ def test_prompt_names_every_required_contract_field(path: pathlib.Path) -> None:
     named = set(re.findall(r"`([a-z][a-z0-9_]{3,})`", path.read_text(encoding="utf-8")))
     missing = sorted(required - named)
     assert not missing, f"{path.name} does not name required fields {missing}"
+
+
+@pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])
+def test_prompt_role_name_matches_the_lifecycle(path: pathlib.Path) -> None:
+    """The ``role`` value is the lifecycle's readable name, compared without regard to case.
+
+    Case is deliberately ignored because the lifecycle disagrees with itself: its run model spells
+    eight of the fifteen in sentence case, its role catalogue in Title Case. These files follow the
+    catalogue; the check is that the *words* match, not the capitalisation.
+    """
+    if ROLE_NAMES is None:
+        pytest.skip("no live lifecycle checkout; role names cannot be checked")
+    frontmatter = parse_frontmatter(path)
+    role, role_id = frontmatter["role"], frontmatter["role_id"]
+    assert isinstance(role, str) and isinstance(role_id, str)
+    assert role.lower() == ROLE_NAMES[role_id].lower(), (
+        f"{path.name}: role {role!r} is not the lifecycle's name for {role_id!r}"
+        f" ({ROLE_NAMES[role_id]!r})"
+    )
+
+
+@pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])
+def test_prompt_names_every_contract_it_emits(path: pathlib.Path) -> None:
+    """Each emitted contract gets a header line carrying the lifecycle's name for it.
+
+    A prompt that lists a contract's fields but never its name leaves a session unable to write a
+    valid header, which is a malformed handoff -- and the prompt is the whole of its briefing.
+    """
+    if CONTRACT_NAMES is None:
+        pytest.skip("no live lifecycle checkout; contract names cannot be checked")
+    emits = parse_frontmatter(path)["emits"]
+    assert isinstance(emits, list)
+    if not emits:
+        pytest.skip(f"{path.name} posts no handoff comment of its own")
+    text = path.read_text(encoding="utf-8")
+    for contract in emits:
+        expected = f"### Handoff: {CONTRACT_NAMES[contract]} ({contract})"
+        assert expected in text, f"{path.name} never writes the header line {expected!r}"
 
 
 @pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])

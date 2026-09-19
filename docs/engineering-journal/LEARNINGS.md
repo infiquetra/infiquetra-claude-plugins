@@ -2,6 +2,22 @@
 
 ## 2026-09-19
 
+### A worktree-isolated review agent lands on the base commit, so it reviews the wrong revision unless told otherwise  {#1022-isolated-worktree-base}
+
+**Context.** The code review for issue #1022 fanned out to seven lenses, each spawned with `isolation: "worktree"` as the sandbox contract requires for review-class work. The change under review was on branch `issue/1022`, several commits ahead of the base.
+
+**Evidence.** The security lens reported: "My worktree is pinned at the base commit `2044c363` and does not contain the change; the change lives in the sibling worktree, where worktree isolation blocked me from running `git diff`." It could read the changed files only by reaching into the driver's worktree by absolute path, and it could not diff at all. It said so, which is the only reason the gap was visible. A later lens, told explicitly to run `/usr/bin/git checkout --detach <sha>` as its first action, confirmed `HEAD` at the reviewed revision and produced a real review — five gating findings the earlier lenses had not reached.
+
+**Mechanism.** The isolated worktree is created from the repository's base state, not from the spawning session's `HEAD`. A lens that infers "the change" from its own working tree therefore sees the base and finds nothing wrong with it — and a review that examined the wrong revision is indistinguishable, in its output, from a review that examined the right one and found it clean. The failure is silent and biased toward false confidence, which is the worst direction for a gate.
+
+**Fix.** Name the exact revision in the lens prompt and make the lens's first action `/usr/bin/git checkout --detach <full sha>`, then `/usr/bin/git rev-parse HEAD` to confirm, and require the lens to state the reviewed `HEAD` as the first line of its report. Git objects are shared across worktrees of one repository, so the checkout and a `git diff <base> <head>` both work from any of them. Treat a report that cannot name the reviewed revision as not a review of the change, and rerun it.
+
+**Generalizable rule.** An isolated agent's working tree is not the state you are asking about — name the revision and have the agent check it out and echo it back, and make "which revision did you review" a required field of its report rather than an assumption.
+
+**Second observation, same run.** `subagent_type: saga:readonly-verifier` produced a 176-byte transcript over roughly thirty minutes before eventually completing, twice slower than any other spawn in the run; the documented fallback ladder (`Explore` plus worktree isolation, with the refute-first framing restated in the prompt) started producing transcript within seconds. The fallback exists for an unresolvable agent type, but it is also the remedy for one that resolves and then stalls. Judge the spawn by whether its transcript grows, not by whether it was accepted.
+
+**Refs.** Issue #1022; `docs/code-reviews/2026-09-19-issue-1022-roles-library-code-review.md`; `plugins/saga/references/sandbox-spawn-sites.md` ("Fallback when `saga:readonly-verifier` is unavailable").
+
 ### A contract document quoting its own rule defeats the unanchored grep that checks it  {#1022-anchored-stop-rule}
 
 **Context.** Issue #1022's acceptance criterion reads `grep -L "### Stop rule" plugins/agent-launcher/roles/*.md` prints nothing except the README — the README being the one file exempt from carrying a stop rule. The directory has fourteen role prompts plus that README.

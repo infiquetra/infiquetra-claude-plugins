@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.17.0] - 2026-09-19
+
+Bumped from 2.16.0, the version on `main` at the time this work branched (commit 866d3670).
+
+### Added
+
+- **Advisory triage suggestions on `issue prepare` (issue #1035).** A new opt-in `--suggest`
+  flag records a suggested issue type with its full probability distribution over all five
+  types, a suggested risk tier over the repository's own four-tier vocabulary, and — when
+  candidates are supplied with the repeatable `--objective-option` — a suggested Objective and
+  board Status, in the draft's sidecar JSON. `type_suggestion` and `risk_suggestion` are
+  mirrored at the top level of the sidecar beside the full `suggestions` block.
+
+  **Nothing is applied.** The author's own `--type`, `--risk` and `--status` flags remain the
+  decision; a suggestion that differs from one of them is recorded as an override in the
+  verdict log, linked to its verdict by hash. Suggestions never reach the compiled issue body,
+  so the card validator is untouched, and the risk suggestion never reaches the card's own Risk,
+  which the body still owns. Without the flag the command makes no model call, imports no
+  client, and writes a byte-identical draft.
+
+- **Advisory label union on `labels auto-label` (issue #1035).** The same `--suggest` flag turns
+  the command into a read-only advisory: it prints the union of the labels the existing
+  regular-expression rules matched and the labels a model judged applicable, each tagged `rule`,
+  `model` or `both`, and applies nothing. The union is widen-only — every rule-derived label
+  survives every possible model answer — and the threshold is the answer's yes-probability, not
+  its banding confidence, so a confident rejection cannot add a label. Without the flag the
+  command posts its regular-expression matches exactly as it always has.
+
+- **`plugins/mission-control/scripts/triage_suggest.py`**, a new module holding the question
+  set, the answer shaping and the pure `union_labels` function. Every judgment goes through the
+  fleet-core TypeSafe client (`plugins/fleet-core/scripts/fleet_commons/typesafe_client.py`,
+  shipped by issue #1032); this plugin adds no HTTP code and no second client. The key is read
+  only by that client, from `TYPESAFE_API_KEY` in the environment, and is never printed, logged
+  or written to a sidecar.
+
+### Notes
+
+- A client failure of any kind — error, timeout, malformed body, or an unexpected exception —
+  leaves the draft and the sidecar exactly as they would have been, plus one note recording the
+  failure. No readiness gap is added and the exit status is unchanged.
+- Every new test drives a fake client; none touches the network or the real verdict log.
+
 ## [2.16.0] - 2026-09-13
 
 ### Added

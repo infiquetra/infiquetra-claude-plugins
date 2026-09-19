@@ -158,7 +158,7 @@ def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
     assert "Create an issue from the brainstorm" in skill
     assert "handoff_maturity" in skill
     assert "If team or project is ambiguous, ask" in skill
-    assert "Never auto-move a prepared issue to `Ready`" in skill
+    assert "Never auto-move a prepared issue to `Ready for Planning`" in skill
     assert "from the brainstorm" in create_command
     assert "handoff the plan" in create_command
     assert "/loop <issue>" not in create_command

@@ -134,7 +134,7 @@ Cycle time starts when active ownership begins:
 > *name* of a single-select change — it records no field name or id, so it cannot
 > tell a `Stage` change from a `Status` change. `Active` is a live `Stage` option
 > on all three boards and is not a `Status` option at all, so the start boundary is
-> whichever field last carried an option named `Active`. That is close to the
+> whichever field first carried an option named `Active`. That is close to the
 > boundary this table declares, but it is matched by name rather than by field.
 > Making the field explicit is outside issue #1020, whose scope is the cached
 > census and the prose describing it.

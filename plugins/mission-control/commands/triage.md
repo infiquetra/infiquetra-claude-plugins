@@ -24,7 +24,8 @@ Triage an existing issue by analyzing its content, recommending appropriate labe
 5. Applies auto-label rules
 6. Adds to project board if not already there
 7. Sets project fields when the target board exposes them
-8. Recommends initial board status (Ready if context complete, Backlog or Shaping if missing context)
+8. Recommends initial board status (`Ready for Planning` if context complete, `Backlog` or
+   `Discovering` if missing context)
 
 ## Examples
 
@@ -48,7 +49,7 @@ python3 $SCRIPT board add --project asgard --repo athena-service --number 42
 # Set project fields directly when needed
 python3 $SCRIPT flow set-field --project asgard \
   --repo athena-service --number 42 \
-  --field Status --option Ready
+  --field Status --option "Ready for Planning"
 ```
 
 ## Instructions

@@ -408,8 +408,8 @@ gh issue edit <N> --repo infiquetra/<repo> \
 # 3. Add to project board if not already
 python3 "$SCRIPT" board add --repo <repo> --number <N>
 
-# 4. Move to Ready if context complete; else keep in Backlog or Shaping
-python3 "$SCRIPT" board move --repo <repo> --number <N> --status Ready
+# 4. Move to Ready for Planning if context complete; else keep in Backlog or Discovering
+python3 "$SCRIPT" board move --repo <repo> --number <N> --status "Ready for Planning"
 ```
 
 ## Key Configuration

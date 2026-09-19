@@ -228,15 +228,56 @@ def test_committed_census_matches_the_live_boards(capsys: pytest.CaptureFixture[
 # ---------------------------------------------------------------------------
 # Prose surfaces, not just the census (#1020).
 #
-# Two agent-facing files kept shipping `--status "Active"` through a whole
-# review cycle because the completeness sweep matched the retired ladder as an
-# arrow chain (`Idea -> Shaping -> ...`), which cannot find an isolated status
-# name on a command line. These files are instructions an agent executes, so an
-# invalid option here is a runtime failure, not a typo. Check the names.
+# These files are instructions an agent executes, so a Status the boards reject
+# is a runtime failure, not a typo -- and `LIVE_LEGACY_STATUS_ALIASES` carries
+# no entry for the retired names, so no migration hint fires either.
+#
+# This guard has already been wrong once, in a way worth keeping written down.
+# Its first version matched `--status "<quoted>"` and nothing else, so it missed
+# six live offenders that the plugin wrote three other ways: unquoted after the
+# flag, through `--field Status --option <value>`, and as a bare name in an
+# English sentence. That is the exact mistake the learning committed beside it
+# names -- match the NAME, not the syntax you last saw the name in -- so the
+# guard now works from the retired names outward and checks every syntax.
 # ---------------------------------------------------------------------------
 
 MISSION_CONTROL = REPO_ROOT / "plugins" / "mission-control"
-STATUS_FLAG = re.compile(r'--status\s+"([^"]+)"')
+
+# Every way this plugin's prose writes a Status value.
+STATUS_VALUE_PATTERNS = (
+    # --status "Ready for Planning" / --status 'Ready' / --status Ready
+    re.compile(r"--status\s+(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z][\w-]*))"),
+    # --field Status --option "Ready for Planning" / --option Ready
+    re.compile(
+        r"--field\s+Status\b.*?--option\s+(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z][\w-]*))",
+        re.DOTALL,
+    ),
+)
+
+# Bare mentions are caught by name rather than by syntax, because an agent reads
+# "move it to Ready" as an instruction just as readily as a flag. Only the
+# retired names are searched this way: a positive list would fire on ordinary
+# English ("the Active board"), so the check is scoped to words that used to be
+# Status values and no longer are. `\b` keeps `Ready` from matching inside
+# `Ready for Planning` or `Ready to merge`.
+BARE_RETIRED_NAME = re.compile(
+    r"\b(?:Idea|Todo|Committed|Parked)\b"
+    r"|\bReady\b(?!\s+(?:for\s+Active|for\s+Planning|to\s+close|to\s+merge))"
+)
+
+# Lines that legitimately discuss the retired vocabulary as history rather than
+# instructing anyone to use it. Each is a deliberate, reviewed exemption.
+HISTORY_MARKERS = (
+    "Mount Olympus",
+    "legacy",
+    "Legacy",
+    "retired",
+    "historical",
+    "LIVE_LEGACY_STATUS_ALIASES",
+    "campps_initiative",
+    "no longer",
+    "superseded",
+)
 
 
 def _prose_surfaces() -> list[Path]:
@@ -249,27 +290,90 @@ def _prose_surfaces() -> list[Path]:
     return paths
 
 
+# CHANGELOG.md is deliberately NOT swept. It is a historical record whose job
+# is to name what changed, so it must be free to say `Todo / In Progress /
+# Done` when describing what a release retired. Instruction surfaces are swept;
+# records of past instructions are not.
+
+
+EXPECTED_PROSE_SURFACE_COUNT = 21
+
+
 def test_the_prose_sweep_actually_scans_something() -> None:
-    """Same vacuity guard as above: an empty file list would pass silently."""
+    """Pin the count, not a floor.
+
+    The census guard above pins its board count exactly, and this one used to
+    settle for `>= 10` -- a weaker pin that would not notice a file-discovery
+    bug halving the coverage.
+    """
     surfaces = _prose_surfaces()
-    assert len(surfaces) >= 10, f"expected the plugin's prose surfaces, found {len(surfaces)}"
+    assert surfaces, "no prose surface found; the guard would pass by scanning nothing"
+    assert len(surfaces) == EXPECTED_PROSE_SURFACE_COUNT, (
+        f"expected {EXPECTED_PROSE_SURFACE_COUNT} prose surfaces, found {len(surfaces)}: "
+        f"{[str(p.relative_to(REPO_ROOT)) for p in surfaces]}. If a file was added or removed "
+        "on purpose, update EXPECTED_PROSE_SURFACE_COUNT in the same change."
+    )
 
 
-def test_no_prose_surface_names_a_status_the_boards_reject(stage_flow: dict[str, Any]) -> None:
+def _status_values_on(line: str) -> list[str]:
+    """Every Status value a line writes, in any of the three syntaxes."""
+    found: list[str] = []
+    for pattern in STATUS_VALUE_PATTERNS:
+        for groups in pattern.findall(line):
+            value = next((g for g in groups if g), "")
+            if value:
+                found.append(value)
+    return found
+
+
+def test_no_prose_surface_writes_a_status_the_boards_reject(stage_flow: dict[str, Any]) -> None:
+    """Command examples must name a Status that exists."""
     valid = set(stage_flow["statuses"])
     stages = set(stage_flow["stages"])
     offenders: list[str] = []
 
     for path in _prose_surfaces():
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            for value in STATUS_FLAG.findall(line):
+            for value in _status_values_on(line):
                 if value in valid:
                     continue
                 why = "a Stage, not a Status" if value in stages else "not in the schema"
-                offenders.append(
-                    f"{path.relative_to(REPO_ROOT)}:{number} --status {value!r} ({why})"
-                )
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{number} writes {value!r} ({why})")
 
     assert not offenders, (
         "prose instructs an agent to write a Status the boards reject:\n" + "\n".join(offenders)
+    )
+
+
+def test_no_prose_surface_tells_an_agent_to_use_a_retired_status_name(
+    stage_flow: dict[str, Any],
+) -> None:
+    """Bare names too, not only flag values.
+
+    A sentence like "move it to Ready if context complete" is as much an
+    instruction as a command line, and the first version of this guard could not
+    see it. Lines that discuss the retired vocabulary as history are exempt.
+    """
+    valid = set(stage_flow["statuses"])
+    offenders: list[str] = []
+
+    for path in _prose_surfaces():
+        heading = ""
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                heading = line
+            if any(marker in line for marker in HISTORY_MARKERS) or any(
+                marker in heading for marker in HISTORY_MARKERS
+            ):
+                continue
+            for match in BARE_RETIRED_NAME.finditer(line):
+                name = match.group(0)
+                if name in valid:
+                    continue
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT)}:{number} names {name!r}: {line.strip()[:90]}"
+                )
+
+    assert not offenders, (
+        "prose names a retired Status as though it were still usable:\n" + "\n".join(offenders)
     )

@@ -39,15 +39,23 @@
   detected: `_cycle_start_statuses` returns the literal option name `Active`, and the timeline query
   it feeds captures only the option *name* of a single-select change — it records no field name, so
   it cannot tell a `Stage` change from a `Status` change. `Active` is a live `Stage` option and not
-  a `Status` option, so the boundary is whichever field last carried an option of that name. Making
+  a `Status` option, so the boundary is whichever field first carried an option of that name. Making
   the field explicit is left to a separate card.
-- **No prose surface shows a command that cannot succeed.** Examples in `skills/board/SKILL.md`,
-  `README.md` and `commands/triage.md` passed `--status "Active"`, `--status "Shaping"` or
-  `--status "In Progress"` — Stage names or retired names, none of them a valid Status option — and
-  one sat under a heading naming the retired `intent_flow` workflow. An agent following them would
-  have emitted an option the board rejects. `tests/test_board_schema_drift.py` now checks every
-  `--status` value in every Markdown surface under `skills/`, `commands/` and `agents/` plus the
-  README against the schema's status list, so this cannot reopen quietly.
+- **No prose surface tells an agent to write a Status the boards reject.** Fourteen lines across six
+  files did: `skills/board/SKILL.md`, `README.md`, `commands/triage.md`,
+  `agents/sdlc-operator.md`, `skills/flow/SKILL.md` and `skills/issues/SKILL.md` variously wrote
+  `Active`, `Shaping`, `In Progress`, `Ready`, `Idea` or `Committed` — Stage names or retired
+  names, none of them a valid Status option — through three different syntaxes and in plain
+  English. `LIVE_LEGACY_STATUS_ALIASES` carries no entry for any of them, so an agent following one
+  got a rejected option with no migration hint.
+
+  `tests/test_board_schema_drift.py` now guards this from the names outward rather than from one
+  syntax: it reads every Status value written as `--status <value>` (quoted or bare) or as
+  `--field Status --option <value>`, and separately catches a retired name used bare in a sentence,
+  across all 21 Markdown instruction surfaces under `skills/`, `commands/` and `agents/` plus the
+  README. Lines inside a section marked as history are exempt, and `CHANGELOG.md` is not swept at
+  all — a record of what a release retired must be free to name it. The guard was confirmed red
+  against the unfixed tree before being trusted.
 
 ### Changed
 

@@ -81,17 +81,17 @@ sdlc_manager.py flow set-field \
 # single-board restriction, and --reason (optional) is recorded per board.
 sdlc_manager.py flow set-field \
   --project operations --repo infiquetra-sdlc --number 42 \
-  --field Status --option Active --reason "failed verify, returning to active"
+  --field Status --option Implementing --reason "failed verify, returning to active"
 
 # Set the same single-select field on multiple cards in one discovery pass
 sdlc_manager.py flow set-field \
   --project operations --repo infiquetra-claude-plugins --numbers 101,102,103 \
-  --field Status --option Idea
+  --field Status --option Capturing
 
 # Set multiple fields on multiple cards in one discovery pass
 sdlc_manager.py flow set-field \
   --project operations --repo infiquetra-claude-plugins --numbers 101,102,103 \
-  --field Status --option Idea \
+  --field Status --option Capturing \
   --field Objective --option defects-claude-plugins
 
 # List the options on a project field (live discovery — IDs rotate)
@@ -173,8 +173,8 @@ assignment. The blueprint-to-issue workflow calls into:
 
 `validate-card` is the pre-flight check before plan-review fires. If a card
 body doesn't pass `validate-card`, the orchestrator will reject it on the
-Ready → Planning transition; running this command before pushing the card
-to Ready saves a round-trip.
+`Ready for Planning` → `Designing` transition; running this command before
+pushing the card to `Ready for Planning` saves a round-trip.
 
 ## Authoritative source
 

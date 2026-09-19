@@ -38,6 +38,22 @@ it. A sweep whose pattern encodes a layout rather than a value is a sweep that w
 place the value is used. And prefer a test over a one-off grep: the grep proves today, the test
 keeps proving.
 
+**The first guard written from this rule broke it, which is the sharpest evidence for it.**
+That guard matched `--status\s+"([^"]+)"` -- one flag, quotes required. The plugin also writes
+Status unquoted, through `--field Status --option <value>`, and as a bare name in an English
+sentence, so ten offenders across four files survived a review cycle that believed the class was
+closed; the changelog said so in as many words. The rule above was committed in the same commit
+as the guard that violated it. Writing a rule down does not apply it: the guard now enumerates
+the retired NAMES and checks every syntax, and it was confirmed red against the unfixed tree
+before being trusted. When it was widened it immediately found four more offenders nobody had
+reported -- which is what a guard built on the rule finds and a guard built on a syntax cannot.
+
+**Corollary on exemptions.** A name-level sweep needs a history exemption or it drowns in false
+positives: a legacy ladder, a retirement note and a changelog all legitimately name retired
+values. Scope the exemption to a section marked as history, and leave the changelog out of the
+sweep entirely -- a record of what a release retired must be free to name it. An exemption that
+is per-line rather than per-section silently stops covering the line below it.
+
 **Refs.** Issue #1020 unit 4; `tests/test_board_schema_drift.py`;
 `plugins/mission-control/config/sdlc-schema.json` `workflows.stage_flow`.
 

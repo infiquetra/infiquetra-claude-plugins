@@ -64,6 +64,17 @@ REQUIRED_HEADINGS = (
 
 REQUIRED_FRONTMATTER_KEYS = ("role", "role_id", "emits", "source")
 
+#: The four fields every handoff contract carries. Prompts render these as bold labels inside the
+#: fenced handoff example, not as backticked identifiers, so the field-list check excludes them and
+#: a separate check asserts the labels are present.
+COMMON_HANDOFF_FIELDS = ("revision", "artifact_link", "assigned", "next_action")
+COMMON_HANDOFF_LABELS = ("**Revision.**", "**Artifact.**", "**Assigned.**", "**Next.**")
+
+#: Set to any non-empty value to allow the suite to run against the pinned identifier lists when no
+#: sibling lifecycle checkout is reachable. Without it, a run that cannot see the lifecycle fails
+#: rather than passing by comparing this repository's prompts to this repository's own copy.
+ALLOW_PINNED_ENV = "INFIQUETRA_ROLES_ALLOW_PINNED"
+
 #: Vocabulary the retired plugin invented, as discriminating tokens. "pass", "warn" and "blocked"
 #: are deliberately absent -- they are ordinary English and would produce false failures.
 FORBIDDEN_STATUS_WORDS = (
@@ -196,18 +207,60 @@ def _live_contract_senders(root: pathlib.Path) -> dict[str, str] | None:
     return {contract["id"]: contract["sender_role"] for contract in contracts}
 
 
-def _resolve() -> tuple[tuple[str, ...], dict[str, str], tuple[str, ...], bool]:
-    """Lens ids, contract senders, role ids -- live where possible, pinned otherwise."""
+def _live_contract_fields(root: pathlib.Path) -> dict[str, frozenset[str]] | None:
+    """Per contract, the role-specific required field names.
+
+    The four common fields are excluded: every contract carries them, and the prompts render them
+    as bold labels in the handoff example rather than as backticked identifiers.
+    """
+    model = json.loads((root / "config" / "run-model.json").read_text(encoding="utf-8"))
+    contracts = model.get("contracts")
+    if not contracts:
+        return None
+    return {
+        contract["id"]: frozenset(
+            field["name"]
+            for field in contract["fields"]
+            if field["status"] == "required" and field["name"] not in COMMON_HANDOFF_FIELDS
+        )
+        for contract in contracts
+    }
+
+
+def _sibling_head(root: pathlib.Path) -> str | None:
+    """The sibling checkout's current commit, read from its git metadata without running git."""
+    head_file = root / ".git" / "HEAD"
+    if not head_file.is_file():
+        return None
+    head = head_file.read_text(encoding="utf-8").strip()
+    if head.startswith("ref: "):
+        ref = root / ".git" / head[5:]
+        if not ref.is_file():
+            return None
+        return ref.read_text(encoding="utf-8").strip()
+    return head
+
+
+def _resolve() -> tuple[
+    tuple[str, ...], dict[str, str], tuple[str, ...], dict[str, frozenset[str]] | None, bool
+]:
+    """Lens ids, contract senders, role ids, contract fields -- live where possible."""
     root = _sdlc_root()
     if root is None:
-        return FALLBACK_LENS_IDS, FALLBACK_CONTRACT_SENDERS, FALLBACK_ROLE_IDS, False
+        return (
+            FALLBACK_LENS_IDS,
+            FALLBACK_CONTRACT_SENDERS,
+            FALLBACK_ROLE_IDS,
+            None,
+            False,
+        )
     lenses = _live_lens_ids(root) or FALLBACK_LENS_IDS
     senders = _live_contract_senders(root) or FALLBACK_CONTRACT_SENDERS
     roles = _live_role_ids(root) or FALLBACK_ROLE_IDS
-    return lenses, senders, roles, True
+    return lenses, senders, roles, _live_contract_fields(root), True
 
 
-LENS_IDS, CONTRACT_SENDERS, ROLE_IDS, READ_LIVE = _resolve()
+LENS_IDS, CONTRACT_SENDERS, ROLE_IDS, CONTRACT_FIELDS, READ_LIVE = _resolve()
 CONTRACT_IDS = tuple(CONTRACT_SENDERS)
 
 #: Named in every assertion message, because a verdict that differs between a developer machine
@@ -593,6 +646,88 @@ def test_prompt_declares_no_tier(path: pathlib.Path) -> None:
     assert frontmatter, f"{path.name}: no frontmatter block, so this check would be vacuous"
     assert "model" not in frontmatter, f"{path.name} declares a model"
     assert "effort" not in frontmatter, f"{path.name} declares an effort"
+
+
+def test_identifiers_were_read_live_not_pinned() -> None:
+    """A run that cannot see the lifecycle must say so, not pass on this repository's own copy.
+
+    In pinned mode every "does the prompt match the lifecycle" check compares this repository's
+    prompts against lists vendored in this repository -- tautologically green. Set
+    ``INFIQUETRA_ROLES_ALLOW_PINNED`` to opt out deliberately.
+    """
+    if os.environ.get(ALLOW_PINNED_ENV):
+        pytest.skip(f"{ALLOW_PINNED_ENV} is set; running against the pinned lists by request")
+    assert READ_LIVE, (
+        "no sibling infiquetra-sdlc checkout was reachable, so the lifecycle identifiers came from"
+        f" this repository's own pinned copy and prove nothing. Set {ALLOW_PINNED_ENV} to accept"
+        " that, or set INFIQUETRA_SDLC_ROOT to the checkout."
+    )
+
+
+def test_live_checkout_is_at_the_pinned_revision() -> None:
+    """The two halves of the gate must reference one revision of the lifecycle.
+
+    The prompts' ``source:`` is asserted against ``SDLC_PIN`` while the identifiers are read from
+    whatever the sibling has checked out. If those differ, the suite either fails on identifiers
+    the prompts were never meant to match, or passes while the pin names a revision nothing
+    checked.
+    """
+    root = _sdlc_root()
+    if root is None:
+        pytest.skip("no sibling checkout to compare")
+    head = _sibling_head(root)
+    if head is None:
+        pytest.skip(f"could not read the checkout's HEAD at {root}")
+    assert head.startswith(SDLC_PIN), (
+        f"the sibling checkout is at {head[:12]}, the prompts and pinned lists name {SDLC_PIN};"
+        " refresh the pin and the prompts together, or check the sibling out at the pin"
+    )
+
+
+@pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])
+def test_prompt_names_every_required_contract_field(path: pathlib.Path) -> None:
+    """The largest transcription from the lifecycle, and the one nothing used to check.
+
+    Each prompt restates its contract's required field names so a fresh session can produce a
+    complete handoff. That is a copy of lifecycle-owned data, and the README's promise that the
+    lifecycle wins where the two disagree is unenforceable unless something can tell they disagree.
+    """
+    if CONTRACT_FIELDS is None:
+        pytest.skip("no live lifecycle checkout; contract fields cannot be checked")
+    frontmatter = parse_frontmatter(path)
+    emits = frontmatter["emits"]
+    assert isinstance(emits, list)
+    if not emits:
+        pytest.skip(f"{path.name} emits no contract of its own")
+
+    required: set[str] = set()
+    for contract in emits:
+        required |= set(CONTRACT_FIELDS[contract])
+    named = set(re.findall(r"`([a-z][a-z0-9_]{3,})`", path.read_text(encoding="utf-8")))
+    missing = sorted(required - named)
+    assert not missing, f"{path.name} does not name required fields {missing}"
+
+
+@pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])
+def test_prompt_shows_the_handoff_comment_shape(path: pathlib.Path) -> None:
+    """The four common labels and the contract-naming header, in every emitting prompt.
+
+    Shared boilerplate copied fourteen times with nothing holding it together is the drift this
+    library exists to undo; the journal rejected copying the presentation preamble for exactly this
+    reason, so the same reasoning has to bind the handoff block.
+    """
+    frontmatter = parse_frontmatter(path)
+    emits = frontmatter["emits"]
+    assert isinstance(emits, list)
+    if not emits:
+        pytest.skip(f"{path.name} posts no handoff comment of its own")
+
+    text = path.read_text(encoding="utf-8")
+    assert re.search(r"^### Handoff: .+ \([a-z-]+\)$", text, re.MULTILINE), (
+        f"{path.name} has no '### Handoff: <name> (<contract-id>)' header line"
+    )
+    for label in COMMON_HANDOFF_LABELS:
+        assert label in text, f"{path.name} omits the common handoff field {label}"
 
 
 def test_lens_reviewer_covers_every_catalogue_lens() -> None:

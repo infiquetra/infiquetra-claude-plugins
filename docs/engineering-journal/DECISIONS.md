@@ -48,7 +48,19 @@
 
 **Revisit when.** The staffing component needs a per-role hint it cannot derive, and there is no better home for it.
 
-**Refs.** Issue #1022; plan KTD7; `tests/test_roles_library.py::test_no_prompt_declares_a_tier`.
+**Refs.** Issue #1022; plan KTD7; `tests/test_roles_library.py::test_prompt_declares_no_tier`.
+
+### The roles library lives in agent-launcher by co-location, and the placement is provisional  {#1022-roles-placement}
+
+**Decision.** `roles/` ships inside the `agent-launcher` plugin, whose manifest describes creating one verified coding-agent session. The plugin's README names the directory and states plainly that nothing in the plugin spawns or orders those roles today.
+
+**Rationale.** The library is content whose only consumers are elsewhere — the roster helper and the code review. `agent-launcher` is the plugin that already speaks to the session layer these prompts are sent through, so it is the least-wrong existing home, and a plugin of its own for fifteen Markdown files would be ceremony. The operator settled the location when the card was written.
+
+**Alternatives rejected.** A plugin of its own — correct by cohesion, disproportionate for content with no code. Putting it in the lifecycle plugin that consumes it — that plugin is being cut down in the same programme, and the library has more than one consumer.
+
+**Revisit when.** A second consumer appears that does not go through the session layer, or the plugin's manifest description has to stretch further than one sentence to cover both jobs. Either is the signal to move it.
+
+**Refs.** Issue #1022; a code-review finding that this was the one load-bearing placement choice with no journal entry.
 
 ## 2026-09-16
 

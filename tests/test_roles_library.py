@@ -749,10 +749,17 @@ def test_vendored_snapshot_is_stamped_with_the_pin() -> None:
         "an empty snapshot would make every check against it vacuous"
     )
 
-    # The snapshot is the sole source for every lifecycle check that runs on a runner, and the
-    # parity check that would catch a bad one skips there. Without this, a contributor could hand
-    # a bogus contract row into the snapshot, add a matching prompt, and get a green suite
-    # everywhere continuous integration runs.
+    # Bound to something upstream, so the snapshot is not a free-floating assertion about itself.
+    assert SNAPSHOT["source_repo"] == "https://github.com/infiquetra/infiquetra-sdlc"
+    index = json.loads((ROLES_DIR / INDEX_NAME).read_text(encoding="utf-8"))
+    assert index["sdlc_revision"] == SNAPSHOT["sdlc_revision"], (
+        "the roles index and the vendored snapshot name different lifecycle revisions"
+    )
+
+    # Tamper-evidence, not integrity: this catches an edit that forgets to update the digest, and
+    # it does not catch one that updates both -- the algorithm is right here. What makes the data
+    # trustworthy is the parity check below, run wherever the lifecycle is reachable; this only
+    # stops a careless edit from passing quietly in the places that check cannot run.
     payload = json.dumps(
         {k: SNAPSHOT[k] for k in ("roles", "contracts", "lenses")},
         sort_keys=True,

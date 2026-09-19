@@ -1,5 +1,6 @@
 {
   "schema": "lifecycle_snapshot.v1",
+  "source_repo": "https://github.com/infiquetra/infiquetra-sdlc",
   "sdlc_revision": "5efc869f",
   "note": "Vendored from infiquetra-sdlc at the revision above. This is the data the suite checks the prompts against when no sibling checkout is reachable, which is the normal case in continuous integration. When a checkout IS reachable, test_vendored_snapshot_matches_the_live_lifecycle compares every field here against it and fails on any drift. Regenerate deliberately when the pin moves; never hand-edit.",
   "roles": {

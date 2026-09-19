@@ -110,6 +110,30 @@ See auto-label rules in `references/labels-reference.md`. Current GitHub issue t
 legacy fallback behavior and may still add `needs-analysis` or `needs-triage`.
 Treat those as legacy fallback labels, not current template defaults.
 
+### Suggest Labels Without Applying Any
+
+`--suggest` turns the same command into a read-only advisory:
+
+```bash
+python3 sdlc_manager.py labels auto-label --repo infiquetra-core --number 42 --suggest
+```
+
+It prints the union of the labels the regular-expression rules matched and the labels a typed
+judgment considered applicable, each tagged with where it came from — `rule`, `model`, or `both`
+— and **applies nothing**. Without the flag the command posts its matches exactly as it always
+has; the flag is the only thing that changes, and it removes the write rather than adding one.
+
+Two properties worth knowing before you trust the output:
+
+- **The rules are a floor.** Every label the regular expressions matched appears in the union
+  whatever the model says. The model may widen the set; it can never narrow it.
+- **A rejection cannot add a label.** The threshold is the answer's probability that the label
+  applies, not its confidence. A confident "no" is a low probability and stays out.
+
+The judgment calls the TypeSafe endpoint and needs `TYPESAFE_API_KEY` in the environment. If the
+call fails for any reason, the command prints the rule-derived labels alone with a note naming
+the failure — it degrades to today's behavior, never to nothing.
+
 ### Create a New Field Option
 
 When a new initiative or objective is introduced, create the corresponding option on the

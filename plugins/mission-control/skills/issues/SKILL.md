@@ -165,6 +165,38 @@ The prepared workflow writes a markdown draft and JSON sidecar under
 plan, asks for confirmation, repairs missing labels/templates after confirmation, opens a mapping
 PR when needed, and only then creates the issue.
 
+### Advisory suggestions on a prepared draft
+
+`--suggest` records what a typed judgment thought about the draft, beside what you chose:
+
+```bash
+python3 sdlc_manager.py issue prepare \
+  --repo hermes-claude-code-router \
+  --type capability --team campps --project campps \
+  --title "Prepared issue workflow" \
+  --from docs/plans/example.md \
+  --suggest \
+  --objective-option improve-claude-plugins
+```
+
+The sidecar gains a suggested issue type with its full probability distribution over all five
+types, a suggested risk tier, and — when you pass candidates with the repeatable
+`--objective-option` — a suggested Objective, plus a suggested board Status. The distribution is
+shown rather than a single answer because the measured agreement against this repository's own
+labels is 19 of 30, and most of the misses are places where the label is the thing that is wrong.
+
+**Nothing is applied.** Your `--type`, `--risk` and `--status` remain the decision. A suggestion
+that differs from one of your flags is recorded as an override in the verdict log, which is what
+later makes it possible to ask whether the judgment is worth trusting. The suggestions never
+reach the issue body, and the risk suggestion never touches the card's Risk — the body still owns
+that.
+
+The flag is opt-in and off by default, so an ordinary prepare makes no model call at all. With
+the flag, the judgment calls the TypeSafe endpoint and needs `TYPESAFE_API_KEY` in the
+environment. If the call fails, the draft is written exactly as it would have been and the
+sidecar carries a note saying why there are no suggestions; a prepare never fails because a
+suggestion did.
+
 ### Ship-policy intent envelope on the issue (#380)
 
 When the operator's autonomy answers for the eventual run are already known at capture time,

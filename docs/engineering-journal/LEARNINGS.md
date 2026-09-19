@@ -2,6 +2,44 @@
 
 ## 2026-09-19
 
+### A shape change's blast radius is found by searching for the producer's callers, not the artifact's name  {#1020-blast-radius-search-the-producer}
+
+**Context.** Issue #1020 changed `board_census.py` to emit the board census `fields` as a mapping
+keyed by field name instead of a list. Planning had to establish who consumes that shape.
+
+**Evidence.** The plan searched the repository for `board-schema` and `board_schema` and reported a
+blast radius of two files: `plugins/mission-control/scripts/board_census.py` and
+`plugins/mission-control/tests/test_board_census.py`. That claim was wrong, and shipped in the plan
+document and a decision record before review caught it. Searching instead for callers of the
+producing function found
+`plugins/mission-control/config/generated/check_issue_contract_parity.py:121,129,152`, which imports
+`board_census.fetch_project_fields_census` and at line 158 did
+`next(f for f in census["fields"] if f["name"] == "Status")`. Under a mapping that iterates
+field-name strings, so `f["name"]` raises `TypeError`. Three fixtures in
+`plugins/mission-control/tests/test_issue_contract_parity.py` built the same list shape.
+
+**Mechanism.** The consumer never names the artifact. It receives the census by calling the
+function, and the file it writes to disk is irrelevant to it. A grep for the artifact's name is
+therefore structurally incapable of finding it — and returns a short, confident, wrong answer rather
+than nothing, which is what made it persuasive.
+
+**Why it nearly shipped green.** The broken path is live-gated: `check_issue_contract_parity.py`'s
+third leg needs a `project`-scoped token and raises `LiveParityUnavailableError` into a SKIP without
+one. The repository gate and continuous integration would both have skipped it, and the whole
+mission-control suite passed with the bug present, because the parity tests injected their own
+list-shaped fixture rather than the real producer's output.
+
+**Fix.** Index the mapping directly; update the three fixtures. Verified by running the live leg
+against the real boards: `check_issue_contract_parity.py --live` prints "live parity leg passed".
+
+**Generalizable rule.** When changing the shape of a value a function returns, enumerate callers of
+the *function*. Searching for the name of the file it serializes to finds only the consumers that
+happen to mention it. And when a test injects a fixture in place of the real producer, the fixture
+is now a second copy of the contract — change both, or the suite will agree with itself while
+production disagrees.
+
+**Refs.** Issue #1020; DECISIONS [[#1020-census-keyed-by-field-name]].
+
 ### A precedence ladder hides a stale shipped file from the only person who could notice  {#1020-vendored-rung-masked-by-local-checkout}
 
 **Context.** Issue #1020 regenerated mission-control's cached board census. While grounding the

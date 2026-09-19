@@ -40,6 +40,9 @@
   scanning a list. Keys are emitted sorted and `--write` still serializes with `sort_keys=True`,
   so the committed file diffs as stably as before. A duplicate field name now raises rather than
   silently overwriting, since a name-keyed mapping can lose a field that a list cannot.
+  `config/generated/check_issue_contract_parity.py` consumes the census by calling the producing
+  function rather than by reading the file, so its live parity leg moves to the mapping too; it was
+  verified against the real boards rather than only against its own fixtures.
 
 ### Added
 

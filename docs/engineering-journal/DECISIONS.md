@@ -11,12 +11,24 @@ raises `ValueError` rather than letting one field overwrite another.
 **Rationale.** The census exists to be read. A list forces every consumer to scan, and issue
 #1020's acceptance criteria — written as executable `jq` commands — index it as a mapping
 (`.boards.operations.fields.Status.options[].name`, `.boards.campps.fields | keys[]`). The
-automatic board moves planned in issue #1028 read this file too. The blast radius was checked
-before committing to it: a repository-wide search for `board-schema` and `board_schema` outside
-`docs/` finds only `board_census.py`, its own test file, and a changelog line — no runtime code
-resolves field or option identifiers from the census, so nothing downstream breaks. Diff stability,
-the property the sorted list was chosen for, is preserved: keys are emitted in sorted order and
-`cmd_write` already serializes with `sort_keys=True`.
+automatic board moves planned in issue #1028 read this file too. Diff stability, the property the
+sorted list was chosen for, is preserved: keys are emitted in sorted order and `cmd_write` already
+serializes with `sort_keys=True`.
+
+**The blast radius was larger than the first search said, and the way it was missed is the lesson.**
+Planning searched the repository for the strings `board-schema` and `board_schema` and concluded the
+only consumers were `board_census.py` and its own test. That search finds files that name the
+*artifact*. It does not find `plugins/mission-control/config/generated/check_issue_contract_parity.py`,
+which imports `board_census.fetch_project_fields_census` and consumed its result positionally at
+line 158 (`next(f for f in census["fields"] if f["name"] == "Status")`) — under a mapping that
+iterates field-name strings and raises `TypeError`. It was caught during code review by searching for
+callers of the *producing function* instead, and fixed along with three fixtures in
+`tests/test_issue_contract_parity.py`. The full consumer set is four files, and the fix is confirmed
+against real boards: `check_issue_contract_parity.py --live` passes.
+
+**Generalizable rule (also in LEARNINGS).** When changing the shape of a produced value, search for
+callers of the producer, not for mentions of the artifact's name. A consumer that calls the function
+and never names the file is invisible to the obvious search, and reads as a clean blast radius.
 
 **Rejected: keep the list and treat the card's `jq` checks as approximate.** They are executable
 criteria the operator wrote. Narrowing an acceptance check so the existing code passes it is

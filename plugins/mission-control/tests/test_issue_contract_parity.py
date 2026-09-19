@@ -279,8 +279,8 @@ def test_live_leg_flags_rename(tmp_path) -> None:
     def fake_fetch_fields_census(project_number):
         # Upstream renamed "Ready" -> "In Review"; "Idea"/"Shaping"/"Done" unchanged.
         return {
-            "fields": [
-                {
+            "fields": {
+                "Status": {
                     "name": "Status",
                     "options": [
                         {"id": "1", "name": "Idea"},
@@ -289,7 +289,7 @@ def test_live_leg_flags_rename(tmp_path) -> None:
                         {"id": "4", "name": "Done"},
                     ],
                 }
-            ]
+            }
         }
 
     schema_path = tmp_path / "sdlc-schema.json"
@@ -318,12 +318,12 @@ def test_live_leg_passes_when_all_options_resolve(tmp_path) -> None:
 
     def fake_fetch_fields_census(project_number):
         return {
-            "fields": [
-                {
+            "fields": {
+                "Status": {
                     "name": "Status",
                     "options": [{"id": "1", "name": "Idea"}, {"id": "2", "name": "Done"}],
                 }
-            ]
+            }
         }
 
     schema_path = tmp_path / "sdlc-schema.json"
@@ -341,7 +341,7 @@ def test_live_leg_raises_unavailable_when_schema_missing(tmp_path) -> None:
     with pytest.raises(mod.LiveParityUnavailableError):
         mod.live_status_option_errors(
             schema_path=tmp_path / "does-not-exist.json",
-            fetch_fields_census=lambda n: {"fields": []},
+            fetch_fields_census=lambda n: {"fields": {}},
             project_mappings={},
         )
 

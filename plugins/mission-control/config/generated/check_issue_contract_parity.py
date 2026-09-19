@@ -155,7 +155,9 @@ def live_status_option_errors(
                 f"could not fetch live fields for board '{board_key}': {exc}"
             ) from exc
 
-        status_field = next((f for f in census["fields"] if f["name"] == "Status"), None)
+        # `fields` is a mapping keyed by field name (#1020), so index it
+        # directly. Iterating it would yield field-name strings, not records.
+        status_field = census["fields"].get("Status")
         live_statuses = (
             {o["name"] for o in status_field.get("options", [])} if status_field else set()
         )

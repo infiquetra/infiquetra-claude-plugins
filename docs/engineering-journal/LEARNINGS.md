@@ -29,6 +29,25 @@ natural stopping point — it is just where attention ran out. Deleting a file a
 plugins means bumping every plugin whose files you then have to edit, and that cost is part of the
 deletion, not a reason to leave the pointers broken.
 
+### A test that reads a gitignored file is green on a fresh clone and red on a real machine  {#1021-gitignored-state-under-test}
+
+**Evidence.** Issue #1021, found by the testing review lens. `tests/test_staffing.py` called the
+resolver without a `root`, so it read `Path.cwd()/.saga/tier-defaults.json`. That path is
+gitignored and is exactly where saga writes an operator's confirmed tier overrides. Writing one
+turned 13 of 92 tests red — the work-shape defaults, all three command-line tests, both suggestion
+tests and every pinned-vendor case — for a reason nothing in the diff explains.
+
+**Mechanism.** Continuous integration starts from a fresh clone, which has no overlay, so the
+suite was green everywhere it ran automatically and red only on a machine that had actually used
+the feature. The author of the same change had already hit this class once and written a comment
+about it in a neighbouring test file, and still did not apply it to the new suite — knowing the
+rule is not the same as sweeping for it.
+
+**Generalizable rule.** A test that reads state from the working directory must select that
+directory itself, with an autouse `monkeypatch.chdir(tmp_path)` and a matching `cwd=` on any
+subprocess. Before trusting a green suite, write the ignored file the code under test reads and
+run it again: a fresh clone hiding the problem is the shape of the flake, not a defence against it.
+
 ### Comparing two absent values with `!=` is how a permission check fails open  {#1021-absent-equals-absent-fails-open}
 
 **Evidence.** Issue #1021, found by the security review lens. `qualify_lens` decides whether an

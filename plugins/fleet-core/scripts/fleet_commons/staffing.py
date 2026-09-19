@@ -324,10 +324,11 @@ def resolve_shape(
         resolution = _tier_resolver.resolve(None, work_shape, policy=registry)
         tier = {"model": resolution.model, "effort": resolution.effort}
         source = "policy"
+    model, effort = translate_for_vendor(vendor, tier["model"], tier["effort"])
     return StaffingDecision(
         vendor=vendor,
-        model=tier["model"],
-        effort=tier["effort"],
+        model=model,
+        effort=effort,
         source=source,
         work_shape=work_shape,
         suggestion=recorded,
@@ -466,7 +467,7 @@ def resolve_role(
     if vendor not in vendors():
         raise StaffingError(f"role {role!r} pins unknown vendor {vendor!r}")
     base = resolve_shape(work_shape, root=root, suggestion=suggestion, vendor=vendor)
-    model, effort = translate_for_vendor(vendor, base.model, base.effort)
+    model, effort = base.model, base.effort
 
     qualification: Qualification | None = None
     if lens is None:
@@ -600,11 +601,13 @@ def qualify_lens(
         )
 
     catalogue, version = lens_catalogue(checkout)
-    if not catalogue:
+    if len(catalogue) == 0:
+        # Explicitly the empty case, not a falsiness test: falling through from here reaches the
+        # unknown-lens raise below, on a path whose whole contract is that it never raises.
         return Qualification(
             DOCUMENTED_POLICY,
-            "the lens catalogue in the software-development-lifecycle checkout is absent or "
-            "unreadable",
+            "the lens catalogue in the software-development-lifecycle checkout is absent, "
+            "unreadable or holds no lenses",
             lens,
         )
     if lens not in catalogue:

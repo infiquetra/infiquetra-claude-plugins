@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   negative.
 - **An advisory suggestion above a model's effort ceiling is refused (#1021).** The overlay
   rejected that pair and the suggestion validator accepted it.
+- **`resolve_shape` renders its vendor too (#1021, testing review).** The sibling entry point took
+  a `vendor` argument and neither validated nor translated it, so it reproduced the defect the
+  role path had just been fixed for: `resolve_shape("judgment", vendor="codex")` answered
+  `opus`. Both entry points now translate through one path, and an unknown vendor or an
+  unsupported runtime is refused on both.
+- **An absent or malformed lens catalogue degrades instead of raising (#1021).** A falsiness test
+  let a missing catalogue fall through to the unknown-lens error, on the path whose whole contract
+  is that it never raises.
 
 - **The lens qualification decision fails closed (#1021, security review).** A ledger entry
   carrying only the four identity fields — lens, vendor, model, effort — and none of the evidence

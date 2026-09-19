@@ -26,12 +26,31 @@ from fleet_commons import staffing  # noqa: E402
 from fleet_commons.staffing import StaffingError  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolated_from_a_local_overlay(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> pathlib.Path:
+    """Run every test from a directory holding no per-repository overlay.
+
+    The resolver reads ``Path.cwd()/.saga/tier-defaults.json`` whenever a caller omits ``root``.
+    That path is gitignored and is where saga writes an operator's confirmed tier overrides, so
+    without this a developer who has ever confirmed one would see a third of this file go red for
+    a reason nothing in the diff explains. A fresh clone hiding the problem is the shape of the
+    flake, not a defence against it.
+    """
+    cwd = tmp_path_factory.mktemp("no-overlay")
+    monkeypatch.chdir(cwd)
+    return cwd
+
+
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
+    """Invoke the command line from the overlay-free directory the autouse fixture selected."""
     return subprocess.run(
         [sys.executable, str(STAFFING_SCRIPT), *args],
         capture_output=True,
         text=True,
         check=False,
+        cwd=pathlib.Path.cwd(),
     )
 
 
@@ -914,33 +933,29 @@ def test_a_pinned_vendor_resolves_to_a_model_that_vendor_actually_runs(
 
 
 def test_a_pinned_vendor_collapses_the_effort_it_cannot_represent(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
-    """agy accepts nothing above high, so an xhigh work shape must not answer xhigh."""
-    monkeypatch.setattr(
-        staffing,
-        "roles",
-        lambda registry=None: {
-            "pinned": {
-                "work_shape": "judgment",
-                "capability": "adversarial-review",
-                "vendor": "agy",
-            }
-        },
-    )
-    monkeypatch.setattr(
-        staffing,
-        "resolve_shape",
-        lambda shape, **kw: staffing.StaffingDecision(
-            vendor=kw.get("vendor", "claude"),
-            model="opus",
-            effort="xhigh",
-            source="policy",
-            work_shape=shape,
-        ),
-    )
-    decision = staffing.resolve_role("pinned", lens="security")
+    """agy accepts nothing above high, so an xhigh work shape must not answer xhigh.
+
+    Driven through the real path — an overlay pinning the role's work shape to opus/xhigh — rather
+    than by patching the resolver that does the translating, which would have tested nothing.
+    """
+    _write_overlay(tmp_path, {"judgment": {"model": "opus", "effort": "xhigh"}})
+    monkeypatch.setattr(staffing, "roles", lambda registry=None: _pinned("agy"))
+
+    claude_tier = staffing.resolve_shape("judgment", root=tmp_path)
+    assert claude_tier.effort == "xhigh", "the overlay must supply the effort under test"
+
+    decision = staffing.resolve_role("pinned", lens="security", root=tmp_path)
+    assert decision.vendor == "agy"
     assert decision.effort == "high"
+
+
+def test_translate_for_vendor_collapses_an_effort_the_vendor_cannot_represent() -> None:
+    assert staffing.translate_for_vendor("agy", "opus", "xhigh") == (
+        "gemini-3.6-flash-high",
+        "high",
+    )
 
 
 def test_claude_passes_through_the_translation_unchanged() -> None:
@@ -998,3 +1013,188 @@ def test_explain_json_carries_candidates_on_the_record_itself() -> None:
     payload = json.loads(result.stdout)
     assert payload["candidates"]
     assert payload["candidates"][0]["rating"] in staffing.RATINGS
+
+
+# ---------------------------------------------------------------------------
+# Repairs from the testing lens: surviving mutants and untested public surface.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_shape_refuses_an_unknown_vendor() -> None:
+    """The sibling entry point took a vendor and neither validated nor translated it."""
+    with pytest.raises(StaffingError, match="not-a-vendor"):
+        staffing.resolve_shape("judgment", vendor="not-a-vendor")
+
+
+def test_resolve_shape_refuses_an_unsupported_runtime() -> None:
+    with pytest.raises(StaffingError, match="not a supported runtime"):
+        staffing.resolve_shape("judgment", vendor="opencode")
+
+
+@pytest.mark.parametrize(
+    ("vendor", "expected_model"),
+    [
+        ("claude", "opus"),
+        ("codex", "gpt-5.6-terra"),
+        ("grok", "grok-4.5"),
+        ("muse", "muse-spark-1.2-contributor"),
+        ("qwen", "qwen3.7-plus"),
+        ("agy", "gemini-3.6-flash-high"),
+    ],
+)
+def test_resolve_shape_renders_the_tier_for_the_named_vendor(
+    vendor: str, expected_model: str
+) -> None:
+    """Literal expectations, not a membership test recomputed from the data the code reads.
+
+    A membership assertion passes even when the translation always answers the vendor's cheapest
+    model, which is what the lens proved by mutation.
+    """
+    decision = staffing.resolve_shape("judgment", vendor=vendor)
+    assert decision.model == expected_model
+
+
+@pytest.mark.parametrize(
+    ("vendor", "expected_model"),
+    [
+        ("codex", "gpt-5.6-terra"),
+        ("grok", "grok-4.5"),
+        ("muse", "muse-spark-1.2-contributor"),
+        ("qwen", "qwen3.7-plus"),
+        ("agy", "gemini-3.6-flash-high"),
+    ],
+)
+def test_a_pinned_vendor_resolves_to_the_expected_model_not_merely_a_known_one(
+    monkeypatch: pytest.MonkeyPatch, vendor: str, expected_model: str
+) -> None:
+    monkeypatch.setattr(staffing, "roles", lambda registry=None: _pinned(vendor))
+    assert staffing.resolve_role("pinned", lens="security").model == expected_model
+
+
+def test_an_absent_lens_catalogue_degrades_rather_than_raising(tmp_path: pathlib.Path) -> None:
+    """The branch that must not raise, on the path whose whole contract is that it never does."""
+    config = tmp_path / "config"
+    config.mkdir(parents=True)
+    (config / "executor-verifications.json").write_text(
+        json.dumps({"entries": []}), encoding="utf-8"
+    )
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=tmp_path
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_a_catalogue_whose_lenses_is_not_a_list_degrades(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(tmp_path)
+    (checkout / "config" / "lens-catalogue.json").write_text(
+        json.dumps({"version": CATALOGUE_VERSION, "lenses": "not-a-list"}), encoding="utf-8"
+    )
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_a_non_claude_executor_qualifies_against_its_own_ledger_entry(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every ledger fixture named claude/opus, so the lookup key itself was unpinned."""
+    entry = _qualified_entry(vendor="codex", model="gpt-5.6-terra", effort="high")
+    checkout = _fake_checkout(tmp_path, entries=[entry])
+    monkeypatch.setattr(staffing, "roles", lambda registry=None: _pinned("codex"))
+    decision = staffing.resolve_role("pinned", lens="security", checkout=checkout)
+    assert decision.qualification is not None
+    assert decision.qualification.status == staffing.QUALIFIED
+
+
+def test_a_claude_ledger_entry_does_not_qualify_a_codex_executor(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The negative twin: the vendor and model in the entry are part of the key, not decoration."""
+    checkout = _fake_checkout(tmp_path, entries=[_qualified_entry()])
+    monkeypatch.setattr(staffing, "roles", lambda registry=None: _pinned("codex"))
+    decision = staffing.resolve_role("pinned", lens="security", checkout=checkout)
+    assert decision.qualification is not None
+    assert decision.qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_an_explicit_checkout_that_is_not_a_directory_does_not_fall_through(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller naming a wrong path must not silently read the operator's real checkout."""
+    real = _fake_checkout(tmp_path / "real")
+    monkeypatch.setenv(staffing.SDLC_PATH_ENV, str(real))
+    assert staffing.sdlc_root(tmp_path / "nowhere") is None
+
+
+def test_the_cache_notices_a_same_size_rewrite(tmp_path: pathlib.Path) -> None:
+    """The modification-time half of the key: the earlier guard changed the size as well."""
+    copy = tmp_path / "staffing.json"
+    document = json.loads(staffing.STAFFING_PATH.read_text(encoding="utf-8"))
+    copy.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    assert staffing.load_staffing(copy)["work_shapes"]["judgment"]["default_model"] == "opus"
+
+    document["work_shapes"]["judgment"]["default_model"] = "opus"
+    document["work_shapes"]["judgment"]["default_effort"] = "high"
+    swapped = json.dumps(document, indent=2)
+    document["work_shapes"]["mechanical"]["default_effort"] = "medium"
+    assert len(json.dumps(document, indent=2)) == len(swapped)
+    copy.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    assert staffing.load_staffing(copy)["work_shapes"]["mechanical"]["default_effort"] == "medium"
+
+
+def test_an_unknown_rating_sorts_last_not_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    ratings = json.loads(json.dumps(staffing.capability_ratings()))
+    first = next(iter(ratings["engines"]))
+    ratings["engines"][first]["capability_profile"]["debug"] = {"rating": "EXCELLENT"}
+    monkeypatch.setattr(staffing, "capability_ratings", lambda registry=None: ratings)
+    rows = staffing.candidates_for("functional-tester")
+    assert rows[-1]["rating"] == "EXCELLENT", "an unrecognised rating must sort last, not first"
+
+
+def test_a_registry_that_is_not_an_object_raises(tmp_path: pathlib.Path) -> None:
+    broken = tmp_path / "staffing.json"
+    broken.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+    with pytest.raises(StaffingError, match="must be a JSON object"):
+        staffing.load_staffing(broken)
+
+
+def test_a_registry_missing_a_block_raises(tmp_path: pathlib.Path) -> None:
+    document = json.loads(staffing.STAFFING_PATH.read_text(encoding="utf-8"))
+    del document["roles"]
+    broken = tmp_path / "staffing.json"
+    broken.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(StaffingError, match="roles"):
+        staffing.roles(staffing.load_staffing(broken))
+
+
+def test_an_off_palette_effort_is_refused_on_both_validators(tmp_path: pathlib.Path) -> None:
+    """Only the model half was covered; the fallback was a bare ValueError without context."""
+    _write_overlay(tmp_path, {"judgment": {"model": "opus", "effort": "colossal"}})
+    with pytest.raises(StaffingError, match="colossal"):
+        staffing.load_overlay(root=tmp_path)
+    with pytest.raises(StaffingError, match="colossal"):
+        staffing.resolve_shape("judgment", suggestion={"model": "opus", "effort": "colossal"})
+
+
+def test_cli_suggest_flag_is_parsed_and_recorded() -> None:
+    result = _run("resolve", "--shape", "judgment", "--suggest", "sonnet/low", "--json")
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["suggestion"] == {"model": "sonnet", "effort": "low"}
+
+
+def test_cli_suggest_flag_rejects_a_malformed_value() -> None:
+    result = _run("resolve", "--shape", "judgment", "--suggest", "sonnet-low")
+    assert result.returncode == 2
+    assert "MODEL/EFFORT" in result.stderr
+
+
+def test_every_work_shape_resolves_to_a_pair_the_model_can_actually_run() -> None:
+    """The membership check the docstring claimed was a runnability check."""
+    from fleet_commons import tier_palette
+
+    for shape in staffing.work_shapes():
+        decision = staffing.resolve_shape(shape)
+        assert tier_palette.supports_effort(decision.model, decision.effort), (
+            f"{shape}: {decision.model}/{decision.effort} is above the model's ceiling"
+        )

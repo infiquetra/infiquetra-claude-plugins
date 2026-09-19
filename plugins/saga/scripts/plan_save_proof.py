@@ -2,6 +2,9 @@
 
 Read rendered commands, bind facts to engine behavior, and compare whole saved ticks.
 The renderer never supplies expected outcomes. Test mutations protect this oracle.
+
+This file is a library, not a runnable tool: plan_save_contract.py loads it and calls verify().
+Run it through that tool -- see --help, or the entrypoint at the foot of this file.
 """
 
 from __future__ import annotations
@@ -11,13 +14,17 @@ import dataclasses
 import inspect
 import re
 import shlex
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn
 
-import yaml
+# PyYAML is imported by SaveProbe.__call__ at first use, deliberately not here. A module-scope
+# import runs before any handler in this file exists, so it would break --help on an interpreter
+# without PyYAML -- the defect issue #997 fixed in plan_save_contract.py, which this file's new
+# entrypoint would otherwise reintroduce on a fresh surface (issue #998).
 
 PLAN_SKILL = Path("plugins/saga/skills/plan/SKILL.md")
 SCRIPT = Path("plugins/saga/scripts/plan_save_contract.py")
@@ -461,6 +468,8 @@ class SaveProbe:
         raise FileNotFoundError("documentation proof has no Git repository")
 
     def __call__(self, workspace: Path, flags: dict[str, str]) -> tuple[dict[str, Any], str]:
+        import yaml  # At first use, not module scope -- see the note under this module's imports.
+
         args = ["save"]
         for name, value in flags.items():
             args += ["--" + name.replace("_", "-"), value]
@@ -505,3 +514,45 @@ def verify(api: ModuleType, contract: Any, candidate: dict[Path, str]) -> None:
                         f"{destination}/{backend}: {exc}; correct the candidate, not the runtime",
                         code="verification",
                     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Describe this file and name the command that runs it; refuse to pretend to be that command.
+
+    verify() needs the contract module's globals, a loaded contract and a rendered candidate, none
+    of which exist for a standalone run. A --root runner here would duplicate
+    plan_save_contract.py validate and bypass its tool-revision check, which exists so the renderer
+    that writes is the one that was verified -- a second, weaker way to verify the documentation.
+
+    Standard output stays empty on a refusal: the contract tool's callers parse standard output as
+    JSON, and nothing here may be mistaken for that envelope.
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "The independent proof of Plan's documentation contract. This file is a library, not "
+            "a runnable tool: plan_save_contract.py loads it and calls verify() before it "
+            "validates or writes any Plan document."
+        ),
+        epilog=(
+            "To run the proof, run the tool that owns it:\n"
+            f"  python3 {SCRIPT} --root <checkout> validate\n"
+            f"Maintainer runbook: {Path('plugins/saga/references/plan-save-contract.md')}"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.parse_args(argv)
+    parser.print_usage(sys.stderr)
+    print(
+        f"{parser.prog}: this file is a library. Run the proof with: "
+        f"python3 {SCRIPT} --root <checkout> validate",
+        file=sys.stderr,
+    )
+    return 2
+
+
+# runpy.run_path names the module it loads `<run_path>`, never `__main__`, so plan_save_contract.py
+# loading this file cannot reach main(). The guard test is positive rather than negative for a
+# reason: if this ever did fire, issue #996's checkout_code() would convert the SystemExit into a
+# tidy refusal blaming the engine, hiding the misfire instead of surfacing it (issue #998).
+if __name__ == "__main__":
+    raise SystemExit(main())

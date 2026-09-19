@@ -3,7 +3,7 @@ date: 2026-09-19
 topic: qa-testing-strategies
 capability: brainstorm
 activity: brainstorm-qa-testing-strategies-20260919T171858Z
-maturity: pending-confirmation
+maturity: requirements-ready
 ---
 
 # `/qa` as prescribed testing strategies
@@ -145,60 +145,62 @@ Outside this thing's identity:
 
 - Fixing anything. `/qa` reports, verdicts, and routes.
 - Scoring. No health number returns, in any form.
-- Any paid external service — a device farm, a hosted browser grid, a commercial monitor. Local toolchains and open-source tools only, unless the operator decides otherwise (question Q5).
+- Any paid external service — a device farm, a hosted browser grid, a commercial monitor. Local toolchains and open-source tools only (decision Q5).
 
 ## Dependencies / Assumptions
 
 - D1. Issue 1023's run record must exist before the evidence envelopes have a home; issue 1028 gives `/qa` its environment identity and its place in the chain. The implementing card is blocked on both.
 - D2. Issue 1032's TypeSafe client, judgment logging, and evaluation harness must exist before J1 through J4 can be built. Without it the catalogue still works: the declared mapping alone is a complete selection procedure, and the judgment is a later widening. This is the degradation path the TypeSafe house rules require (fail open to the pre-judgment path).
-- D3. **Verified:** Auralis today is a macOS-only Flutter application. The `auralis` repository carries a `macos/` directory and the platform packages `auralis_audio_macos` and `auralis_notifications_macos`, and carries no `ios/` or `android/` directory. The operator's example of an iPhone simulator is therefore a target Auralis does not have yet. The catalogue should carry `ios-simulator` as a declared-but-unavailable target variant rather than as a first driver (question Q3).
+- D3. **Verified:** Auralis today is a macOS-only Flutter application. The `auralis` repository carries a `macos/` directory and the platform packages `auralis_audio_macos` and `auralis_notifications_macos`, and carries no `ios/` or `android/` directory. The operator's example of an iPhone simulator is therefore a target Auralis does not have yet. The catalogue should carry `ios-simulator` as a declared-but-unavailable target variant rather than as a first driver (decision Q3).
 - D4. **Verified:** the CAMPPS design this generalizes exists and is populated — seven driver families, a scenario schema with eighteen required fields, thirty scenario files, and a matching executor with cost preflight and redaction. Assumed but not verified: that it is currently green in use. The implementing card should read its last run before adopting its thresholds.
 - D5. Assumed: the strategies are the same for every repository and only the profile differs. If a repository family needs a strategy the catalogue does not carry, the catalogue grows a row; it does not fork.
 - D6. Assumed: `blocked` is preferable to a skip in every case. This is a deliberate strictness increase over today's `/qa`, which no-ops gracefully for repositories without a browser surface. Under the new rule a graceful no-op becomes an explicit out-of-boundary record, which is the same behavior with an audit trail.
 
 ## Questions for the operator
 
-Every question below was genuinely open after the card, the simplification review, the objective plan, and the TypeSafe research were read; none of those documents answers it. Each carries the working assumption the rest of this document was written under, marked as such. None of them blocks the specification stage; all of them change what the specification says.
+Every question below was genuinely open after the card, the simplification review, the objective plan, and the TypeSafe research were read; none of those documents answers it. Each was written with a recommendation, and the rest of this document was written under those recommendations.
+
+**Answered on 2026-09-19.** The operator confirmed every recommendation below as his own answer: "regarding /qa I agreed with all your recommendations, you can record those as my answers." Each item's recommendation is therefore recorded below as a decision, in its original wording. Nothing in this section remains open.
 
 **Q1. What is the verdict vocabulary?**
 Options: (a) keep today's `ship` / `ship-with-deferred` / `no-ship`; (b) `pass` / `pass-with-proof-debt` / `fail`.
-Recommendation and working assumption: (b). `/qa` now runs after the release deployment, so it no longer decides whether to ship; it decides whether the shipped thing works. Keeping ship-shaped words would describe a decision the step no longer makes.
+Decision (confirmed by the operator, 2026-09-19): (b). `/qa` now runs after the release deployment, so it no longer decides whether to ship; it decides whether the shipped thing works. Keeping ship-shaped words would describe a decision the step no longer makes.
 
 **Q2. Where does the catalogue live, and who owns the scenarios?**
 Options: (a) saga owns the strategy families and each repository owns its scenarios in a profile, with CAMPPS repositories delegating to `campps-e2e-canary`; (b) saga owns families and scenarios centrally; (c) `campps-e2e-canary` generalizes into the executor for every repository and saga only calls it.
-Recommendation and working assumption: (a). Option (b) duplicates a populated, working registry and would drift from it within a release. Option (c) moves the work into a CAMPPS service repository and makes every non-CAMPPS repository's functional test depend on a CAMPPS deployment, which is a coupling with no benefit.
+Decision (confirmed by the operator, 2026-09-19): (a). Option (b) duplicates a populated, working registry and would drift from it within a release. Option (c) moves the work into a CAMPPS service repository and makes every non-CAMPPS repository's functional test depend on a CAMPPS deployment, which is a coupling with no benefit.
 
 **Q3. Is a device simulator a strategy or a target?**
 Options: (a) `ios-simulator` is a target variant of the `app-ui` strategy, alongside `macos` and `web`; (b) it is a strategy of its own with its own evidence shape.
-Recommendation and working assumption: (a). The evidence shape is the same (repository, test path, target, result); only the launch mechanics differ. Carried with it: Auralis has no iOS surface today (D3), so the first release should declare the target and ship no driver for it. Worth your correction if an iOS surface is planned sooner than this reading suggests.
+Decision (confirmed by the operator, 2026-09-19): (a). The evidence shape is the same (repository, test path, target, result); only the launch mechanics differ. Carried with it: Auralis has no iOS surface today (D3), so the first release should declare the target and ship no driver for it. Worth your correction if an iOS surface is planned sooner than this reading suggests.
 
 **Q4. Does the build loop's scenario smoke use this same catalogue?**
 Options: (a) yes, the same command at a `branch-preview` boundary; (b) no, the build loop keeps its own lighter notion of smoke and the catalogue is post-deploy only.
-Recommendation and working assumption: (a). Two mechanisms for "run the scenario" would drift, and the boundary field already expresses the difference. This does mean issue 1027's build loop and this card share a component, which is a coordination cost worth naming.
+Decision (confirmed by the operator, 2026-09-19): (a). Two mechanisms for "run the scenario" would drift, and the boundary field already expresses the difference. This does mean issue 1027's build loop and this card share a component, which is a coordination cost worth naming.
 
 **Q5. May any strategy use a paid external service?**
 Options: (a) local toolchains and open-source tools only; (b) a named paid service (a device farm, a hosted browser grid) is allowed with a budget.
-Recommendation and working assumption: (a), and this is the one question where the recommendation is also a refusal to proceed without you: a paid service is an external commitment, and the specification will not name one unless you do.
+Decision (confirmed by the operator, 2026-09-19): (a), and this is the one question where the recommendation is also a refusal to proceed without you: a paid service is an external commitment, and the specification will not name one unless you do.
 
 **Q6. What happens when a required strategy is `blocked`?**
 Options: (a) the run fails and stops for you, because the causes are environment, credential, and permission; (b) the run fails and re-enters the build loop like any other failure; (c) the run records proof debt and passes.
-Recommendation and working assumption: (a). A build loop cannot fix a missing credential, and (c) is the silent-skip failure the CAMPPS families explicitly forbid.
+Decision (confirmed by the operator, 2026-09-19): (a). A build loop cannot fix a missing credential, and (c) is the silent-skip failure the CAMPPS families explicitly forbid.
 
 **Q7. Does the health score survive in any form?**
 Options: (a) removed entirely, per-strategy statuses are the whole report; (b) kept as a reported-but-not-gating signal, as today.
-Recommendation and working assumption: (a). Its inputs are language-model severity counts, the new model has no severity assignment to count, and a number that no longer has inputs is worse than no number.
+Decision (confirmed by the operator, 2026-09-19): (a). Its inputs are language-model severity counts, the new model has no severity assignment to count, and a number that no longer has inputs is worse than no number.
 
 **Q8. Who writes a new scenario, and when?**
 Options: (a) the Planner writes it into the repository profile during planning, so the functional test's scenarios are settled before implementation; (b) the Functional Tester writes it at test time when the declared set does not cover the change.
-Recommendation and working assumption: (a). It matches the lens-declaration pattern the review adopts for code review — decide what proof is needed before the code exists, not after — and it keeps the Functional Tester mechanical.
+Decision (confirmed by the operator, 2026-09-19): (a). It matches the lens-declaration pattern the review adopts for code review — decide what proof is needed before the code exists, not after — and it keeps the Functional Tester mechanical.
 
 **Q9. Which judgments ship in the first release?**
 Options: (a) J1 (strategy widening) only, with J2 through J4 following after the harness has recorded agreement; (b) all four at once; (c) none in the first release, the declaration alone.
-Recommendation and working assumption: (a). J1 is the one whose absence actually costs something (an under-selected mixed change), and the TypeSafe house rules require suggest-mode and a recorded harness run per decision before any of them becomes automatic. J4 is the cheapest second candidate.
+Decision (confirmed by the operator, 2026-09-19): (a). J1 is the one whose absence actually costs something (an under-selected mixed change), and the TypeSafe house rules require suggest-mode and a recorded harness run per decision before any of them becomes automatic. J4 is the cheapest second candidate.
 
 **Q10. What is the cost and duration budget for one functional test?**
 Options: (a) inherit the CAMPPS canary's declared per-scenario cost estimates and its aggregate refusal; (b) set a per-run wall-clock and dollar ceiling in the repository profile; (c) no budget in the first release.
-Recommendation and working assumption: (b) with (a)'s mechanism — the preflight and refusal come from the canary's design, the numbers come from each repository's profile. The canary's numbers are CAMPPS-specific and would not mean anything for a plugin repository.
+Decision (confirmed by the operator, 2026-09-19): (b) with (a)'s mechanism — the preflight and refusal come from the canary's design, the numbers come from each repository's profile. The canary's numbers are CAMPPS-specific and would not mean anything for a plugin repository.
 
 ## Success Criteria
 

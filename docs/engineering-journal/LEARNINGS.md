@@ -316,6 +316,58 @@ property, and prove the new guard red before you accept it green.
 
 **Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
 [[#1020-census-keyed-by-field-name]].
+### A plugin version bump breaks three tests that restate the version as a literal  {#fleet-core-version-pins-1032}
+
+**Evidence.** Issue #1032, pull request #1045. Bumping fleet-core 0.25.3 to 0.26.0 turned the
+continuous-integration test job red on `tests/test_liveness_events.py:730` and
+`tests/test_team_execution_liveness.py:158` and `:483`, each asserting
+`result["fleet_core_version"] == "0.25.3"`. The repository's own rule already says any
+version or metadata drift guard moves in the same change as the bump; I moved the three release
+surfaces and missed the three assertions.
+
+**Mechanism.** The six test files this card added all passed locally, which is exactly why the
+failure reached continuous integration: the breakage was in files the card never touched, reachable
+only by running the whole suite. A per-file inner loop cannot see a cross-file version coupling, and
+the coupling is invisible from the changed diff because the literal lives somewhere else entirely.
+
+Worth noting against the pin guard this same card shipped: `tests/test_typesafe_sdk_pin.py` reads
+the declared specifier out of `pyproject.toml` at test time precisely so that editing the
+declaration moves the guard with it. These three liveness assertions do the opposite -- they restate
+a value that lives in `plugin.json` -- so every fleet-core release will keep breaking them until
+they read it instead.
+
+**Generalizable rule.** After bumping a plugin version, grep the whole repository for the old
+version string before pushing, and run the full test suite rather than the files the change touched.
+A guard that restates a value instead of reading it is a guard that fails on every legitimate
+change, which is the opposite of what a guard is for.
+### A file with no entrypoint answers every invocation with success, and the mistyped one is the dangerous case  {#998-no-entrypoint-means-silent-success}
+
+**Context.** `plugins/saga/scripts/plan_save_proof.py` is the independent proof `plan_save_contract.py` runs before it validates or writes any Plan document. Issue #926 turned it from a pytest test into a plain Python file invoked by path, which is what made the missing entrypoint visible.
+
+**Evidence.** Reproduced at `30c36bb5`: `--help`, a bare invocation, and `validate --root .` each printed nothing and exited 0. Issue #998, finding `agentusab06` from the issue #926 review, named only `--help`.
+
+**Mechanism.** A Python file with no `if __name__ == "__main__":` block runs its module body and exits 0. Nothing rejects the arguments because nothing reads them, so the third row above is the sharp one: a guessed subcommand is indistinguishable from a passing run. The card framed this as discoverability — an agent cannot learn what the file does — but silent success on a wrong invocation is the larger hazard, and the same repair closes both.
+
+**Two things the repair had to avoid.** Making the proof runnable standalone would duplicate `plan_save_contract.py validate` and bypass its tool-revision check at `plan_save_contract.py:496`, which exists so the renderer that writes is the one that was verified. And a `--help` added over the module-scope `import yaml` would have been born with the defect `{#997-import-outside-every-handler}` had just fixed next door, so the import moved to `SaveProbe.__call__` in the same change. Reverting either half alone fails the guard; both were run.
+
+**Generalizable rule.** When a module stops being imported and starts being invoked by path, it needs an entrypoint even if it is not runnable — one that names what it is and what to run instead, and refuses at a non-zero code. Silence at exit 0 is a worse answer than a refusal.
+
+**Refs.** Issue #998; parent grouping #1005; `plugins/saga/scripts/plan_save_proof.py`; `tests/test_saga_plan_contract_boundaries.py::test_proof_cli_describes_itself_and_stays_inert_under_the_loader`; canary `plan-save-contract-proof-cli`; DECISIONS `{#998-describe-and-refuse-not-a-second-runner}`.
+
+### A canary mutation must make the guard fail, not make the test runner crash  {#998-canary-mutation-must-fail-cleanly}
+
+**Context.** `tools/canary_registry.json` requires a behavioral mutation for every guard in the Plan contract test files, and `tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth` executes each one and asserts `result == "caught"`.
+
+**Evidence.** The first mutation for `plan-save-contract-proof-cli` replaced `if __name__ == "__main__":` with `if True:`, on the reasoning that the entrypoint would then fire under `runpy` and turn a clean `validate` into a refusal. The canary reported `result: error`, not `caught`, with `mainloop: caught unexpected SystemExit!` and `no tests ran`.
+
+**Mechanism.** The test session imports `plan_save_proof.py` into the pytest process, so an unconditional entrypoint runs during collection, sees pytest's own argv, and exits the interpreter. The guard never ran at all. `error` and `caught` are different verdicts for a reason: `caught` means the guard noticed the broken invariant, `error` means nobody got to look. A mutation that kills the runner proves nothing about the guard.
+
+**Fix.** The registered mutation replaces `parser.print_usage(sys.stderr)` with `return 0`, so a direct invocation returns the success code — the reported defect itself — and the guard fails cleanly on its exit-code assertion. The rejected mutation and the reason are recorded in the entry's `mutation_description` so the next maintainer does not retry it.
+
+**Generalizable rule.** Pick the mutation that breaks the invariant the guard asserts, not the one that breaks the most. Verify the canary reports `caught`; treat `error` as an unproven guard, never as a pass.
+
+**Refs.** Issue #998; `tools/canary_registry.json` entry `plan-save-contract-proof-cli`; `tests/test_wiring_canary.py:40`.
+
 ### A module-scope import is outside every handler the file owns, and subclassing the dependency kills the sentinel repair  {#997-import-outside-every-handler}
 
 **Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. Issue #996 had just finished making that promise hold against the foreign code the tool executes. The tool still imported PyYAML at module scope.
@@ -347,6 +399,118 @@ property, and prove the new guard red before you accept it green.
 **Generalizable rule.** When a handler's job is to be a boundary around code you do not control, it must name `BaseException` — and the boundary belongs at every place that code executes, which is usually more places than the bug report names. A deliberately narrow handler elsewhere in the same file is a fact to preserve, not an oversight to tidy up.
 
 **Refs.** Issue #996; parent grouping #1005; `plugins/saga/scripts/plan_save_contract.py`; `tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_baseexception_from_checkout_code`; DECISIONS `{#996-envelope-seam-not-top-handler}`.
+### A "no path skips this" guarantee needs an unforgeable token and a check at the exit  {#unforgeable-prepared-token-1032}
+
+**Evidence.** Issue #1032, adversarial code review of the implementation. The module claimed in its
+docstring, in `plugins/fleet-core/references/typesafe.md`, and in plan decision KTD5 that redaction
+was on the only path to a transport. The reviewer falsified it three ways in one sitting.
+
+**Mechanism.** Three separate holes, each individually plausible. (1) The marker was a string with a
+default value on a dataclass field, so `PreparedRequest(state=<raw secret>)` constructed by hand
+passed the check -- a default is not a guarantee, it is a convenience. (2) The check lived in
+`build_body`, but a transport takes a plain dictionary and the public `ask` is not the only way to
+reach one, so the guard sat one call away from the exit. (3) Only state was redacted; the question
+text, which the command-line tool takes verbatim from operator flags, went to the vendor untouched.
+The repair was a private module-level sentinel object whose identity cannot be reproduced from
+outside the module, the same check re-run inside both transports at the last point before bytes
+leave, and redaction applied to questions as well as state.
+
+**Generalizable rule.** Put the check at the exit, not one frame above it, and make the token
+something an outsider cannot construct. Then ask what else crosses the same boundary: a guarantee
+about "state" said nothing about the questions travelling in the same request.
+
+### A test named for a safety property proved nothing, because it called the wrong function  {#vacuous-guard-test-1032}
+
+**Evidence.** Issue #1032. `test_a_transport_refuses_unprepared_state` called `build_body`, not a
+transport, with a hand-made object whose marker was a wrong string. It passed throughout, and would
+have passed unchanged while both transports accepted arbitrary raw bodies -- which they did.
+
+**Mechanism.** The test asserted the thing the code already did rather than the thing its name
+claimed. Several others in the same suite had the same defect: a transport-equivalence test that
+compared two fakes the test itself built from one dict literal, an offline guarantee that diffed
+`sys.modules` after an earlier test file had already imported the module in question, and a verb
+round-trip whose expected answers were derived from the stub's own input.
+
+**Generalizable rule.** For any test guarding a safety property, ask: if the dangerous thing
+happened, would this fail? If the assertion is reachable without exercising the boundary the name
+refers to, it is documentation, not a guard. Write it to call the function that would actually be
+bypassed.
+
+### Removing a word-boundary anchor from a credential pattern turned redaction quadratic  {#regex-backtracking-in-redaction-1032}
+
+**Evidence.** Issue #1032, during repair of the review's findings. Widening the named-assignment
+pattern to catch JSON-quoted secrets meant dropping its leading `\b`, leaving an unanchored
+`[A-Z0-9_-]*` prefix. The full client test file stopped completing: a 500 kB state ran for minutes
+where the whole file had taken 1.3 seconds.
+
+**Mechanism.** With `(?i)` the prefix class matches ordinary lowercase text, so at every one of half
+a million positions the engine matched greedily to the end, failed to find the keyword, and
+backtracked all the way -- a quadratic scan. This is a denial of service in a redaction path, which
+is the worst place for one, because the alternative to waiting is sending unredacted content.
+
+**Generalizable rule.** An unbounded repeat in front of a literal is a backtracking trap, and
+`(?i)` makes a character class far wider than it reads. Anchor the prefix and bound its repeat, and
+keep a test that fails on the blow-up rather than on the output -- the symptom is a hang, which no
+assertion about correctness will ever catch.
+
+### A yes/no answer from Jev carries no confidence field, and the docs do not say so  {#jev-noul-has-no-confidence-1032}
+
+**Evidence.** Issue #1032; one live request to `https://api.typesafe.ai/v1/systemone` on
+2026-09-19 returned `{"type": "noul", "noul": 0.97}` for a yes/no question, while the choice
+question in the same response returned `choice`, `confidence` and `probabilities`. The vendor
+documentation describes confidence generally and does not name the asymmetry.
+
+**Mechanism.** The plan's verdict record assumed a confidence on every answer, because that is
+what the documentation implies. A yes/no answer instead carries only its probability, so a record
+built from the documentation would have stored `None` silently and the harness would have banded
+every yes/no verdict into nothing. The repair is to record `confidence` as null for that type and
+band it by the probability's distance from one half, doubled, in one shared helper
+(`typesafe_client.answer_confidence`) rather than in each caller.
+
+**Generalizable rule.** When a plan's data contract is derived from a vendor's prose, send one
+real request before writing the contract down. The same request also showed that no rate-limit
+headers are returned on success, which means the client cannot pace itself and must react to a
+429 — a second thing the documentation did not say.
+
+### Redaction that lands one unit after a working client has a window where it does not exist  {#redaction-ordering-window-1032}
+
+**Evidence.** Issue #1032, adversarial plan review, finding P1-5. The plan ordered a complete
+two-transport client in unit U2 and the redaction step in U3.
+
+**Mechanism.** On that ordering there is a revision of the module that sends raw repository
+content to a third-party vendor, and the unit's own secret-containment test could not have caught
+it: that test inspects results, logs and exception text, none of which is the outbound request
+body. The gap is invisible to exactly the test written to close it. The repair was to make the
+transports refuse any state lacking the marker `prepare_state()` stamps, from the first unit
+onward — in U2 the preparer is a pass-through, and U3 fills it in, so no revision can reach a
+transport unredacted.
+
+**Generalizable rule.** When a safety step and the thing it protects ship in different units,
+the protection must be enforced structurally from the first unit, not scheduled for the second.
+Ask of any containment test: would this fail if the dangerous thing happened? If it inspects a
+different surface than the one the data crosses, it would not.
+
+### The research inputs folder held no recorded answers, so an acceptance criterion could not pass  {#eval-cache-was-never-seeded-1032}
+
+**Evidence.** Issue #1032. The card's third acceptance criterion asked
+`jev eval --cached docs/analysis/2026-09-18-typesafe-jev-research-inputs/` to reproduce the tier
+probe's 10 of 10. That folder holds five research briefs, five probe scripts, the candidate ideas
+and a rendered ranking table — and zero API responses. The ten tasks and their expected tiers
+exist only as literals inside `tier_probe.py.txt`.
+
+**Mechanism.** The probe printed its answers and never saved them, so "replay the cached answers"
+had nothing to replay. An implementer following the criterion literally had three options and all
+three were wrong: fabricate a fixture and assert 10 of 10 against it (a test that passes while
+proving nothing), parse Python source out of a text file, or make the offline harness call the
+network. The repair was to re-run the ten tasks once through the shipped client and commit the
+responses as `tier_probe_answers.json`. The reseeded run reproduced 10 of 10 on model tier and
+7 of 10 on effort — matching the original figures exactly, which is a reproducibility result
+worth having rather than an assumption.
+
+**Generalizable rule.** An acceptance criterion that says "reproduce X from cached data" is only
+satisfiable if the cached data is committed. Before accepting such a criterion, open the directory
+it names and confirm the data is there; a criterion that cannot fail honestly will be made to pass
+dishonestly.
 
 ## 2026-09-16
 

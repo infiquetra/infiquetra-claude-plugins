@@ -101,6 +101,18 @@ in `sdlc-schema.json` first and in the reference only as a transcription of it.
 
 **Refs.** Issue #1020 unit 4; `sdlc-schema.json` migration note `2026-09-07.1` decision E6;
 `sdlc_manager.py:1227-1228`, `:1409`.
+### The proof's entrypoint describes and refuses; it does not become a second way to run the proof  {#998-describe-and-refuse-not-a-second-runner}
+
+**Decision.** `plugins/saga/scripts/plan_save_proof.py` gains a command-line entrypoint that names the proof and the command that runs it, serves that text at exit 0 for `--help`, and refuses every other direct invocation at exit 2 with usage on standard error and standard output left empty. It does not gain a way to run the proof standalone.
+
+**Rationale.** `verify(api, contract, candidate)` needs the contract module's globals, a loaded contract and a rendered candidate, none of which exist for a standalone run — producing them means doing what `plan_save_contract.py main()` already does. A `--root` runner here would therefore duplicate an existing command, add a dependency edge from the proof back to the contract tool that reverses the one-way direction the two files have today, and bypass the tool-revision check at `plan_save_contract.py:496` that exists so the renderer that writes is the one that was verified. A second, weaker way to verify the documentation is a liability. Exit 2 matches argparse's usage-error code and the sibling tool's refusal code, so a caller reading exit codes across the pair sees one vocabulary; the empty standard output is the load-bearing half, because the contract tool's callers parse standard output as JSON and nothing here may be mistaken for that envelope.
+
+**Alternatives rejected.** A standalone `--root` runner (above). Leaving the file alone because 27 other scripts under `plugins/saga/scripts/` also have no entrypoint (true, but they are imported by name rather than invoked by path, and this card is tracked work with a named acceptance). Exit 0 with guidance (that is the reported defect with prose added). Exit 1 (the contract tool reserves 1 for drift).
+
+**Revisit when.** A caller genuinely needs to run the proof against a checkout without the contract tool — at which point the right move is to give `plan_save_contract.py` the mode, not to grow a second runner here.
+
+**Refs.** Issue #998 (finding `agentusab06`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-998-plan-save-proof-cli-entrypoint-plan.md` KTD1, KTD2, KTD3, KTD4, KTD5; LEARNINGS `{#998-no-entrypoint-means-silent-success}`.
+
 ### PyYAML is imported at first use, and the missing-dependency refusal reuses the closed error-code set  {#997-defer-the-import-keep-the-code-set-closed}
 
 **Decision.** `plugins/saga/scripts/plan_save_contract.py` imports PyYAML inside `yaml_module()`, called from the parsing path, and builds its duplicate-key loader in `unique_loader()` against the module that call returns. Neither name exists at module scope. A missing PyYAML is reported through the existing refusal vocabulary — exit 2, `code: engine`, `entry: python dependency`, `file` naming this script, and an `error` naming PyYAML and the repair — and no new documented error code is introduced.
@@ -124,6 +136,64 @@ in `sdlc-schema.json` first and in the reference only as a transcription of it.
 **Revisit when.** `plan_save_contract.py` gains a third place where checkout code executes, or the tool stops promising JSON for every invocation but `--help`.
 
 **Refs.** Issue #996 (finding `adv09`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-996-plan-save-contract-baseexception-plan.md` KTD1, KTD2, KTD3.
+### The TypeSafe client ships two transports behind one interface, and the SDK is the default  {#typesafe-two-transports-1032}
+
+**Context.** `docs/plans/2026-09-19-typesafe-client-jev-tool-plan.md` (issue #1032). The research
+that preceded this card recommended a standard-library client and no vendor package. The operator
+then recorded a steer on the card: TypeSafe now ships official SDKs, evaluate the Python one first,
+and keep the dependency-free pattern only where a hook or script must run outside the project
+environment.
+
+- **KTD1 — both transports exist behind one `ask()`, the SDK by default where importable,
+  `urllib` otherwise.** The steer requires both, so neither extreme was available. The SDK is the
+  vendor's own contract, MIT licensed, free, and ships typed responses and a retry policy we would
+  otherwise hand-write. Against relying on it alone: `typesafe-sdk` was at 0.7.0 published
+  2026-09-18, the fourth release in ten days, with breaking changes in two of the last three, and
+  it pulls in `httpx2`. The out-of-project case is real, not hypothetical — a hook cannot assume
+  the package is importable, and `urllib` is always there. Proven equivalent by driving both
+  against the live endpoint from one input: byte-identical answers, model and usage.
+  *Rejected:* SDK only (leaves every out-of-project caller with no path); `urllib` only (the
+  original research position, superseded by the steer, and means hand-writing what the vendor
+  ships). *Revisit when:* `typesafe-sdk` reaches 1.0 and goes ninety days without a breaking
+  release, at which point `urllib` can become a hook-only fallback rather than a co-equal
+  implementation.
+- **KTD2 — the dependency is pinned to `>=0.7,<0.8` and guarded by a test that reads the
+  declaration.** A pin alone is weaker than it looks because `uv.lock` can be regenerated without
+  anyone reading the diff. `tests/test_typesafe_sdk_pin.py` parses the specifier out of
+  `pyproject.toml` at test time, so editing the range and the installed version together stays
+  green while either drifting alone reds. *Rejected:* an unbounded dependency — the next breaking
+  minor would land silently on a lock refresh. *Revisit when:* the vendor publishes a stability
+  policy or reaches 1.0.
+- **KTD3 — the declared `pydantic` floor rises to `>=2.12`.** The package requires it; the lock
+  already resolved 2.13.3, so nothing broke. Leaving the declaration at `>=2.5` would have left
+  the real constraint visible only as a transitive requirement, which a future resolution could
+  quietly violate. *Rejected:* relying on the lock to happen to satisfy it.
+- **KTD4 — the tool ships as `scripts/jev.py`, not `jev.py.txt`.** The card's body and three of
+  its four acceptance criteria named a `.py.txt` path, carried over from the research folder where
+  probe scripts are stored as text so linting skips them. There are zero `*.py.txt` files anywhere
+  under `plugins/`, and over a hundred shipped scripts use a plain `.py`. The suffix would make
+  the tool invisible to the repository-wide `ruff check .` and break the import-and-call-`main`
+  pattern its own tests need. The coordinator, who authored the card, confirmed the correction.
+- **KTD5 — redaction runs before truncation, on the only path to a transport.** `prepare_state()`
+  redacts, truncates, and stamps a marker; `build_body()` refuses state without it. Redacting
+  after truncation would let a secret survive in a kept segment, and redacting in the caller would
+  make the data rule a convention rather than a mechanism. *Rejected:* trusting callers to redact.
+- **KTD6 — the answer cache keys on the requested model alias, not the resolved version.** The
+  resolved version is only known from the response while a lookup happens before the call, so
+  keying on it would mean a cache that can never hit; keying on the alias alone would replay a
+  stale answer after the alias moved. A pin file records what each alias last resolved to and the
+  bucket is invalidated when that changes. *Revisit when:* the vendor offers a way to resolve an
+  alias without spending a request.
+- **KTD7 — the verdict log lives at `~/.claude/typesafe/`, outside the repository.** Agents here
+  run in worktrees under `.claude/`, so a repository-rooted log is per-worktree and dies with it,
+  taking the accumulated evidence the harness needs. Matches `audit_store.py`'s default.
+- **The data rule (R4).** Issue bodies, plan text, and diffs may be sent after redaction — this
+  fleet already sends comparable content to other model vendors through the external-engine HTTP
+  bridge. Credentials, raw transcripts, and customer content never may. Recorded in full in
+  `plugins/fleet-core/references/typesafe.md` and bound to the code by a drift guard.
+
+**Release surfaces** (same PR): `plugins/fleet-core` 0.25.3 -> 0.26.0, `.claude-plugin/marketplace.json`
+mirrored, `plugins/fleet-core/CHANGELOG.md`, and `tests/test_release_triad.py` green.
 
 ## 2026-09-16
 

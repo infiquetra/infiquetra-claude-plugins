@@ -27,6 +27,21 @@ and the Architect is the author of its technical context, so the reviewer is alw
 
 ## Inputs from the run record
 
+**Where these come from.** Your dispatch names the issue this run belongs to. The run's record is
+that issue: the handoff comments on it, posted in the shape below, are how every role hands work to
+the next, and the durable inputs they name are repository paths at a stated revision rather than
+copies of the content. Read the issue's comments to find the handoffs addressed to you, and read the
+paths they name at the revisions they name.
+
+**When something you need is not there, stop and say which field is missing.** Do not reconstruct it
+by inference and do not proceed on a guess: an input you invented is indistinguishable, downstream,
+from one you were given.
+
+**Re-dispatched into work that already started?** Roles are single-shot by default. Before doing
+anything, look for a handoff of your own already on the issue and for a branch already carrying your
+commits; if you find either, verify what is there and report, rather than redoing it.
+
+
 **The shaped issue at its `technical-context` body revision** — the Architect's technical context
 together with the product content the operator and Product co-authored. Review that revision, and
 name it in your verdict.

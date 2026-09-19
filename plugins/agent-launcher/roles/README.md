@@ -81,8 +81,25 @@ else follows:
 **Next.** <the action they take>
 ```
 
-Each role prompt then names its own contract's required fields. Nothing parses this convention
-today; the shape is a reading habit, held to so that one habit covers every handoff.
+Each role prompt then names its own contract's required fields, one per line, in the same bolded
+form — the field's identifier, capitalised and spaced, then a full stop:
+
+```markdown
+**Work unit.** <the unit this result covers>
+**Branch and revision.** <branch@commit>
+**Mechanical check results.** <each check and its outcome>
+```
+
+So `work_unit` is written `**Work unit.**`, and `unexplained_behaviour` is
+`**Unexplained behaviour.**`. The rule is worth stating because without it three sessions produce
+three spellings of the same field, and the first thing that tries to read these comments has to
+accept all three or reject two.
+
+Nothing parses this convention today. That is a real gap and not a small one: a session can post a
+handoff missing a required field and no step notices, because the only check in this repository
+reads the *prompts* and asserts they mention each field — it says nothing about what a session
+actually emitted. A validator over the posted comment belongs with whatever first consumes these
+handoffs.
 
 ## Role to file map
 
@@ -112,8 +129,26 @@ orchestrator.
 | Investigator | `investigator` | `investigator.md` |
 
 The Lens Reviewer is one file carrying a shared reviewer half and one section per lens, keyed
-`#### <lens-id>` to the lifecycle's lens catalogue. A consumer sends the shared half plus the one
-section for the lens it is staffing.
+`#### <lens-id>` to the lifecycle's lens catalogue.
+
+### Slicing the Lens Reviewer
+
+A consumer sends two pieces, joined by a blank line:
+
+1. **The shared half** — everything from the start of the file up to, but not including, the line
+   `# The lenses`.
+2. **One lens section** — from the line `#### <lens-id>` up to, but not including, the next line
+   matching `^#{1,4} `. That terminator matters: the next line after a section is sometimes another
+   `####`, sometimes a `##` grouping heading, and for the last section it is the end of the file.
+   Slicing "to the next `####`" pulls in a grouping heading that means nothing to the session.
+
+Everything a session needs is in those two pieces. The `## Always on` and `## Conditional` headings
+organise the file for a person and are deliberately not sent; nothing load-bearing lives under them
+rather than inside a lens section, which is why the always-on-versus-conditional rule and the
+permission to report without scoring sit in the shared half instead.
+
+`index.json` carries the machine-readable form of all of this, so a helper does not have to parse
+this table or find these headings by hand.
 
 ## How a prompt reports
 

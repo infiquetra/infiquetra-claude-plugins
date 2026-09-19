@@ -49,6 +49,14 @@ README_NAME = "README.md"
 #: Controller's contract rather than posted as its own.
 AGGREGATED_PROMPT = "lens-reviewer.md"
 
+#: The machine-readable map, so a consumer never parses the README's Markdown table to select a
+#: prompt or slice a lens section.
+INDEX_NAME = "index.json"
+
+#: Where the Lens Reviewer's shared half ends. Everything above this line is sent to every lens
+#: session; exactly one ``#### <lens-id>`` section is appended.
+LENS_SHARED_HALF_ENDS_BEFORE = "# The lenses"
+
 #: The two roles the lifecycle licenses to reuse another role's contract. The
 #: ``implementation-result`` contract's own ``sender_note`` says a repair implementer produces the
 #: same contract for the batch it finishes.
@@ -90,6 +98,10 @@ FORBIDDEN_STATUS_WORDS = (
 
 #: The lifecycle roles that get a prompt: all of them except the Human Operator, who is a person.
 NON_STAFFABLE_ROLE = "operator"
+
+#: The four lenses the roster always selects. The other eleven are conditional and, until the
+#: lifecycle ships scoring fixtures for them, report findings without scoring.
+ALWAYS_ON_LENSES = ("architecture-maintainability", "correctness", "security", "testing")
 
 #: A strictness value from the catalogue's ladder, in any spelling. The catalogue owns the ladder;
 #: a copy in a prompt would be a second source.
@@ -569,8 +581,36 @@ def test_roles_directory_holds_nothing_unexpected() -> None:
     """R7's second clause: no prompt hidden in a subdirectory or under another extension."""
     unexpected = sorted(str(p.relative_to(ROLES_DIR)) for p in EVERY_FILE if p.parent != ROLES_DIR)
     assert not unexpected, f"files nested below the roles directory: {unexpected}"
-    wrong_extension = sorted(p.name for p in EVERY_FILE if p.suffix != ".md")
-    assert not wrong_extension, f"non-Markdown files in the roles directory: {wrong_extension}"
+    wrong_extension = sorted(
+        p.name for p in EVERY_FILE if p.suffix != ".md" and p.name != INDEX_NAME
+    )
+    assert not wrong_extension, f"unexpected files in the roles directory: {wrong_extension}"
+
+
+def test_index_agrees_with_the_files_and_the_readme() -> None:
+    """The machine-readable map is the same map, so a helper never parses Markdown to select.
+
+    A consumer that had to parse the README's table would be rewriting, in its own language, the
+    bespoke pipe-splitter this test already needed. The index exists so it does not have to; this
+    check is what stops the two drifting.
+    """
+    index = json.loads((ROLES_DIR / INDEX_NAME).read_text(encoding="utf-8"))
+    assert index["schema"] == "roles_index.v1"
+    assert index["sdlc_revision"] == SDLC_PIN
+
+    by_file = {row["file"]: row for row in index["roles"]}
+    assert set(by_file) == {p.name for p in PROMPT_FILES}, "index files disagree with the directory"
+    assert set(by_file) == set(ROLE_MAP), "index files disagree with the README's map"
+    for name, row in by_file.items():
+        assert (row["role"], row["role_id"]) == ROLE_MAP[name], (
+            f"index row for {name} disagrees with the README's map"
+        )
+        frontmatter = parse_frontmatter(ROLES_DIR / name)
+        assert row["role_id"] == frontmatter["role_id"]
+        assert row["emits"] == frontmatter["emits"]
+
+    lens = index["lens_reviewer"]
+    assert lens["lens_ids"] == list(LENS_IDS), "index lens ids disagree with the catalogue"
 
 
 def test_release_surfaces_agree_and_advanced() -> None:
@@ -745,9 +785,19 @@ def test_prompt_names_every_required_contract_field(path: pathlib.Path) -> None:
     required: set[str] = set()
     for contract in emits:
         required |= set(CONTRACT_FIELDS[contract])
-    named = set(re.findall(r"`([a-z][a-z0-9_]{3,})`", path.read_text(encoding="utf-8")))
+
+    # Scoped to the output-contract section, not the whole file. Over the whole file any backticked
+    # snake_case token satisfied the check -- including one appearing only in a prohibition or a
+    # rationale, and including the `stop_condition` every prompt mentions in its stop rule.
+    text = path.read_text(encoding="utf-8")
+    start = text.index("## Output contract")
+    end = text.index("### Stop rule", start)
+    named = set(re.findall(r"`([a-z][a-z0-9_]{3,})`", text[start:end]))
+
     missing = sorted(required - named)
-    assert not missing, f"{path.name} does not name required fields {missing}"
+    assert not missing, (
+        f"{path.name} does not name required fields {missing} in its output-contract section"
+    )
 
 
 @pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])
@@ -815,6 +865,65 @@ def test_lens_reviewer_covers_every_catalogue_lens() -> None:
     assert LENS_IDS, "the lens id list is empty, which would make this check vacuous"
     missing = missing_lens_sections(text, LENS_IDS)
     assert not missing, f"{AGGREGATED_PROMPT} has no section for: {missing}"
+
+
+def lens_slice(lens_id: str) -> str:
+    """Rebuild what a consumer actually sends for one lens: shared half plus one section.
+
+    This is the artifact that matters. Checking the file as a whole hid a real defect: the block
+    between ``# The lenses`` and the first grouping heading was in neither piece, so the permission
+    for a conditional lens to report without scoring was dropped at the cut, leaving eleven of
+    fifteen sessions with a stop rule demanding a score and no way to satisfy it.
+    """
+    text = (ROLES_DIR / AGGREGATED_PROMPT).read_text(encoding="utf-8")
+    shared = text[: text.index(LENS_SHARED_HALF_ENDS_BEFORE)]
+
+    lines = text.splitlines()
+    heading = f"#### {lens_id}"
+    start = next((i for i, line in enumerate(lines) if line.strip() == heading), None)
+    assert start is not None, f"no section for {lens_id}"
+
+    end = len(lines)
+    for offset in range(start + 1, len(lines)):
+        if re.match(r"^#{1,4} ", lines[offset]):
+            end = offset
+            break
+
+    section = "\n".join(lines[start:end])
+    return f"{shared}\n{section}\n"
+
+
+@pytest.mark.parametrize("lens_id", LENS_IDS)
+def test_lens_slice_is_a_complete_prompt(lens_id: str) -> None:
+    """Every lens a consumer can staff must receive a prompt that satisfies the whole contract."""
+    sliced = lens_slice(lens_id)
+
+    problems = missing_headings(sliced)
+    assert not problems, f"the {lens_id} slice has heading problems: {problems}"
+    assert has_stop_rule_heading(sliced), f"the {lens_id} slice has no stop-rule heading"
+    assert not retired_vocabulary(sliced), f"the {lens_id} slice carries retired vocabulary"
+
+    assert f"#### {lens_id}" in sliced, f"the {lens_id} slice does not carry its own section"
+    others = [other for other in LENS_IDS if other != lens_id and f"#### {other}" in sliced]
+    assert not others, f"the {lens_id} slice leaked other lens sections: {others}"
+
+    for grouping in ("## Always on", "## Conditional"):
+        assert grouping not in sliced, (
+            f"the {lens_id} slice carries the grouping heading {grouping}"
+        )
+
+
+@pytest.mark.parametrize("lens_id", [lens for lens in LENS_IDS if lens not in ALWAYS_ON_LENSES])
+def test_conditional_lens_slice_permits_reporting_without_a_score(lens_id: str) -> None:
+    """A conditional lens with no fixture must be told it may report findings and not score.
+
+    Without it the slice's stop rule demands a score for every applicable dimension, and a session
+    staffing one of the eleven either fabricates one or never terminates.
+    """
+    sliced = lens_slice(lens_id)
+    assert "without scores" in sliced, (
+        f"the {lens_id} slice never says a conditional lens may report without scoring"
+    )
 
 
 def test_lens_reviewer_states_no_thresholds() -> None:

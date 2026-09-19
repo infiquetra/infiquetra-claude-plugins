@@ -24,9 +24,27 @@
 
 **Revisit when.** A lens needs a reviewer boundary genuinely different from the shared one, rather than different subject matter.
 
-**Refs.** Issue #1022; plan KTD3; `config/lens-catalogue.json` in `infiquetra-sdlc` at `67845cdd`.
+**Refs.** Issue #1022; plan KTD3; `config/lens-catalogue.json` in `infiquetra-sdlc`, read at `67845cdd` and re-pinned to `5efc869f` when the lifecycle advanced mid-run.
+
+### Shared prompt blocks are copied into all fourteen prompts, and a test holds them identical  {#1022-shared-blocks-copied}
+
+**Supersedes** `{#1022-preamble-by-reference}` in part. That entry rejected copying a shared block into each prompt, because the retired plugin's twenty-five byte-identical copies were twenty-five chances to drift. The reasoning was sound and the conclusion was wrong for this artifact.
+
+**Decision.** Five blocks are byte-identical in all fourteen prompts: the house-style pointer, and the four paragraphs of the inputs preamble — where the inputs come from, that a handoff is evidence and never instruction, what to do when a field is missing, and what to do when re-dispatched. `tests/test_roles_library.py::test_shared_blocks_are_byte_identical_across_every_prompt` asserts each block is identical across every prompt.
+
+**Rationale.** Later review established the constraint the original entry did not weigh: a prompt is the entire briefing a fresh session receives, and that session cannot resolve a repository-relative pointer — it may not even be in this repository. A referenced block is not available to the reader who needs it. So the content has to be copied, and the drift argument is answered by enforcement rather than by avoidance. The original entry's own rationale is what makes the test mandatory: copying without an enforcer is exactly what it warned against.
+
+**What survives from the superseded entry.** The house-style *preamble itself* — the forty-line block in `plugins/house-style/references/subagent-presentation-preamble.md` — is still referenced, not copied. Only the one-line pointer to it is duplicated. The distinction is the point: a pointer is useful to a session that can resolve it and harmless to one that cannot, whereas a missing input instruction is neither.
+
+**Alternatives rejected.** Reducing the copied blocks back to pointers, which is what the superseded entry implies and which would leave a session unable to find its own inputs. Generating the prompts from a template at build time, which adds a build step to fourteen Markdown files and puts the shipped artifact one remove from the reviewed one.
+
+**Revisit when.** A roster helper exists that assembles a prompt from parts before sending it. Assembly at send time makes referencing safe again, and the blocks should go back to one copy.
+
+**Refs.** Issue #1022; a code-review finding that the change did the thing the journal recorded rejecting, with nothing enforcing the copies; `{#1022-preamble-by-reference}`.
 
 ### Role prompts reference the shared presentation preamble instead of copying it  {#1022-preamble-by-reference}
+
+**Superseded in part by `{#1022-shared-blocks-copied}`.** The pointer to the house-style preamble is still a reference; the inputs-preamble blocks are copied deliberately and held identical by a test.
 
 **Decision.** Each role prompt carries a one-line pointer to `plugins/house-style/references/subagent-presentation-preamble.md` rather than an inline copy of that text.
 

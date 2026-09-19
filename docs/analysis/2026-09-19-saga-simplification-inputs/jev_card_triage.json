@@ -1,0 +1,859 @@
+{
+ "model": "jev-1.13.0",
+ "direction": "The operator is simplifying the saga plugin family for Claude Code. Decisions already made: (1) keep the lifecycle concepts and slash commands (plan, plan review, work, code review, QA, handoff, retro) but have them kick in automatically as guidance for the model rather than as gates, refusals, and protections; (2) code review gets clear, mechanical mechanisms, with the review lenses specified up front from the shape of the change; (3) implement, deploy, and test run as a loop until working software exists, and only then does code review run; (4) the team-execution plugin's structure (spawning Claude team agents, ordering, gating, result aggregation) is removed, while its roles (reviewers, scanners, testers, validators, monitors) survive as prompts for separate herdr terminal sessions; (5) race-condition, lease, launch-reservation, and double-dispatch protections are replaced by one git worktree per unit of work, one branch per worktree, and ordinary git merge.",
+ "questions": {
+  "bucket": {
+   "type": "choice",
+   "instructions": "Read `direction` (the operator's simplification decisions) and `issue` (an open GitHub issue against the plugins). Decide how the issue should be handled once the simplification is carried out.",
+   "criteria": {
+    "KEEP": "The defect or need stays valid and its prescribed fix still applies unchanged under the simplified design.",
+    "REWRITE": "The underlying concern stays valid, but the prescribed fix targets machinery the simplification changes, so the issue must be rewritten against the simplified design.",
+    "SUPERSEDE": "The issue only fixes or extends machinery the simplification removes (lease, race, launch-reservation, double-dispatch protection, or team-execution structure), so it should be closed as superseded.",
+    "UNRELATED": "The issue does not concern the lifecycle plugins or the direction at all."
+   }
+  },
+  "race": {
+   "type": "noul",
+   "instructions": "Is the issue in `issue` primarily about protecting against races, double launches, stale run state, leases, or collisions between concurrent sessions?"
+  },
+  "review": {
+   "type": "noul",
+   "instructions": "Is the issue in `issue` primarily about code review or document review mechanics: lenses, verdicts, evidence ledgers, review result schemas, repair cycles, or publication of review results?"
+  },
+  "survives": {
+   "type": "noul",
+   "instructions": "Would the problem described in `issue` still exist if each role ran in its own herdr terminal session with its own git worktree and branch, merged by ordinary git merge, with no team-execution or lease machinery?"
+  }
+ },
+ "rows": [
+  {
+   "number": 874,
+   "title": "Orchestrate protected-reference denylist misses whitespace and case variants of refs/heads/ spellings",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "KEEP",
+   "bucket_conf": 0.16,
+   "bucket_probs": {
+    "REWRITE": 0.35,
+    "KEEP": 0.36,
+    "SUPERSEDE": 0.1,
+    "UNRELATED": 0.19
+   },
+   "race": 0.04,
+   "review": 0.04,
+   "survives": 0.61,
+   "ms": 336,
+   "input_tokens": 2369
+  },
+  {
+   "number": 875,
+   "title": "Orchestrate collect can silently regress main on a run that integrates by per-unit pull request",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.24,
+   "bucket_probs": {
+    "UNRELATED": 0.17,
+    "SUPERSEDE": 0.02,
+    "REWRITE": 0.44,
+    "KEEP": 0.37
+   },
+   "race": 0.25,
+   "review": 0.04,
+   "survives": 0.62,
+   "ms": 373,
+   "input_tokens": 2575
+  },
+  {
+   "number": 876,
+   "title": "Orchestrate clean leaves empty lane workspaces behind and cannot release a worktree at merge time",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.65,
+   "bucket_probs": {
+    "SUPERSEDE": 0.2,
+    "REWRITE": 0.74,
+    "UNRELATED": 0.02,
+    "KEEP": 0.04
+   },
+   "race": 0.14,
+   "review": 0.02,
+   "survives": 0.7,
+   "ms": 432,
+   "input_tokens": 2153
+  },
+  {
+   "number": 878,
+   "title": "Orchestrate keeps one run record at a fixed path so a stale run blocks the next and two runs cannot coexist",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.12,
+   "bucket_probs": {
+    "SUPERSEDE": 0.02,
+    "KEEP": 0.31,
+    "REWRITE": 0.34,
+    "UNRELATED": 0.33
+   },
+   "race": 0.69,
+   "review": 0.04,
+   "survives": 0.78,
+   "ms": 367,
+   "input_tokens": 1894
+  },
+  {
+   "number": 879,
+   "title": "Orchestrate has no non-mutating plan validator so a bad plan is only discovered by starting a run",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.63,
+   "bucket_probs": {
+    "KEEP": 0.22,
+    "REWRITE": 0.72,
+    "UNRELATED": 0.03,
+    "SUPERSEDE": 0.03
+   },
+   "race": 0.06,
+   "review": 0.04,
+   "survives": 0.77,
+   "ms": 359,
+   "input_tokens": 2118
+  },
+  {
+   "number": 885,
+   "title": "Saga Code Review: no representable closure path after cycle_cap_best_available; controller emits a disguised cycle-1 result that reads as valid acceptance",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.92,
+   "bucket_probs": {
+    "UNRELATED": 0.0,
+    "KEEP": 0.02,
+    "REWRITE": 0.94,
+    "SUPERSEDE": 0.04
+   },
+   "race": 0.05,
+   "review": 0.96,
+   "survives": 0.73,
+   "ms": 359,
+   "input_tokens": 2604
+  },
+  {
+   "number": 886,
+   "title": "Orchestrate: relaunching a unit reuses stale worktree, strands undelivered prompts, and accumulates duplicate live controllers",
+   "labels": [],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.8,
+   "bucket_probs": {
+    "UNRELATED": 0.01,
+    "REWRITE": 0.86,
+    "SUPERSEDE": 0.11,
+    "KEEP": 0.02
+   },
+   "race": 0.89,
+   "review": 0.16,
+   "survives": 0.54,
+   "ms": 361,
+   "input_tokens": 2723
+  },
+  {
+   "number": 891,
+   "title": "Orchestrate has no bounded multi-unit settlement watch, so an unattended run needs a hand-rolled sentinel",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.62,
+   "bucket_probs": {
+    "REWRITE": 0.72,
+    "SUPERSEDE": 0.1,
+    "UNRELATED": 0.07,
+    "KEEP": 0.11
+   },
+   "race": 0.26,
+   "review": 0.05,
+   "survives": 0.71,
+   "ms": 329,
+   "input_tokens": 3168
+  },
+  {
+   "number": 900,
+   "title": "Orchestrate go has no launch reservation, so a repeated call during the readiness window launches one unit twice into a shared worktree",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.32,
+   "bucket_probs": {
+    "UNRELATED": 0.0,
+    "KEEP": 0.07,
+    "SUPERSEDE": 0.44,
+    "REWRITE": 0.49
+   },
+   "race": 0.96,
+   "review": 0.03,
+   "survives": 0.55,
+   "ms": 330,
+   "input_tokens": 3361
+  },
+  {
+   "number": 901,
+   "title": "Orchestrate go --limit is a per-invocation slice, not a concurrency cap, and work units have no total cap",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.62,
+   "bucket_probs": {
+    "SUPERSEDE": 0.07,
+    "REWRITE": 0.71,
+    "UNRELATED": 0.07,
+    "KEEP": 0.15
+   },
+   "race": 0.15,
+   "review": 0.03,
+   "survives": 0.74,
+   "ms": 291,
+   "input_tokens": 2960
+  },
+  {
+   "number": 909,
+   "title": "Launch reservation and bounded unattended control: four control-surface defects as one bounded run",
+   "labels": [
+    "needs-plan",
+    "capability"
+   ],
+   "truncated": false,
+   "bucket": "SUPERSEDE",
+   "bucket_conf": 0.53,
+   "bucket_probs": {
+    "SUPERSEDE": 0.65,
+    "UNRELATED": 0.0,
+    "KEEP": 0.0,
+    "REWRITE": 0.35
+   },
+   "race": 0.88,
+   "review": 0.04,
+   "survives": 0.53,
+   "ms": 374,
+   "input_tokens": 4151
+  },
+  {
+   "number": 910,
+   "title": "Run record, integration, and cleanup safety: four defects as one bounded run",
+   "labels": [
+    "needs-plan",
+    "capability"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.82,
+   "bucket_probs": {
+    "SUPERSEDE": 0.08,
+    "REWRITE": 0.87,
+    "UNRELATED": 0.0,
+    "KEEP": 0.05
+   },
+   "race": 0.37,
+   "review": 0.04,
+   "survives": 0.8,
+   "ms": 425,
+   "input_tokens": 4055
+  },
+  {
+   "number": 920,
+   "title": "Saga Document Review improvement: finish the #776 transport migration, rubric reliability, bounded repair, and maintenance as one bounded run",
+   "labels": [
+    "needs-plan",
+    "capability"
+   ],
+   "truncated": true,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.64,
+   "bucket_probs": {
+    "REWRITE": 0.72,
+    "KEEP": 0.26,
+    "SUPERSEDE": 0.01,
+    "UNRELATED": 0.01
+   },
+   "race": 0.09,
+   "review": 0.86,
+   "survives": 0.81,
+   "ms": 395,
+   "input_tokens": 4757
+  },
+  {
+   "number": 921,
+   "title": "Saga Code Review improvement: publication-lane integrity, canonical evidence, review inputs, and the legacy second-opinion removal as one bounded run",
+   "labels": [
+    "needs-plan",
+    "capability"
+   ],
+   "truncated": true,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.93,
+   "bucket_probs": {
+    "KEEP": 0.03,
+    "UNRELATED": 0.0,
+    "SUPERSEDE": 0.02,
+    "REWRITE": 0.95
+   },
+   "race": 0.15,
+   "review": 0.96,
+   "survives": 0.7,
+   "ms": 437,
+   "input_tokens": 4750
+  },
+  {
+   "number": 931,
+   "title": "Saga Document Review: finish issue #776 migration \u2014 the operator-is-the-transport clause, the general prohibition, and the dangling cross-reference",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.8,
+   "bucket_probs": {
+    "SUPERSEDE": 0.01,
+    "REWRITE": 0.85,
+    "UNRELATED": 0.0,
+    "KEEP": 0.14
+   },
+   "race": 0.04,
+   "review": 0.25,
+   "survives": 0.88,
+   "ms": 305,
+   "input_tokens": 3025
+  },
+  {
+   "number": 932,
+   "title": "Saga Document Review: stop the rubric command degrading silently \u2014 root-relative path, condition-before-selection ordering, and the missing --doc-review-fixes flag",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.57,
+   "bucket_probs": {
+    "SUPERSEDE": 0.0,
+    "UNRELATED": 0.01,
+    "REWRITE": 0.68,
+    "KEEP": 0.31
+   },
+   "race": 0.03,
+   "review": 0.75,
+   "survives": 0.82,
+   "ms": 300,
+   "input_tokens": 2942
+  },
+  {
+   "number": 933,
+   "title": "Saga Document Review: bounded repair with targeted verification, and an explicit submission always gets the readiness pass",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.72,
+   "bucket_probs": {
+    "KEEP": 0.19,
+    "REWRITE": 0.79,
+    "UNRELATED": 0.01,
+    "SUPERSEDE": 0.01
+   },
+   "race": 0.04,
+   "review": 0.92,
+   "survives": 0.77,
+   "ms": 348,
+   "input_tokens": 3114
+  },
+  {
+   "number": 934,
+   "title": "Saga Document Review maintenance: the never-written review phase, artifact-matching conventions, the default-mode wording, and the rubric-engine docstring",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.9,
+   "bucket_probs": {
+    "UNRELATED": 0.0,
+    "KEEP": 0.06,
+    "REWRITE": 0.93,
+    "SUPERSEDE": 0.01
+   },
+   "race": 0.04,
+   "review": 0.34,
+   "survives": 0.85,
+   "ms": 283,
+   "input_tokens": 3401
+  },
+  {
+   "number": 935,
+   "title": "Saga Code Review: make the publication lane safe \u2014 bind the reviewed revision, gate publication on consent, and never submit an approving review",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.86,
+   "bucket_probs": {
+    "SUPERSEDE": 0.01,
+    "UNRELATED": 0.0,
+    "REWRITE": 0.89,
+    "KEEP": 0.1
+   },
+   "race": 0.1,
+   "review": 0.94,
+   "survives": 0.65,
+   "ms": 340,
+   "input_tokens": 3827
+  },
+  {
+   "number": 936,
+   "title": "Saga Code Review: make the evidence ledger canonical, preserve review_paths as history, and teach the closure gate and status card the typed vocabulary",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.88,
+   "bucket_probs": {
+    "SUPERSEDE": 0.01,
+    "UNRELATED": 0.0,
+    "REWRITE": 0.91,
+    "KEEP": 0.08
+   },
+   "race": 0.05,
+   "review": 0.96,
+   "survives": 0.8,
+   "ms": 337,
+   "input_tokens": 3367
+  },
+  {
+   "number": 937,
+   "title": "Saga Code Review: pin review depth to an explicit tier and bind conditional-lens approval to the exact commit",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.82,
+   "bucket_probs": {
+    "UNRELATED": 0.0,
+    "REWRITE": 0.86,
+    "KEEP": 0.13,
+    "SUPERSEDE": 0.01
+   },
+   "race": 0.07,
+   "review": 0.91,
+   "survives": 0.76,
+   "ms": 490,
+   "input_tokens": 3542
+  },
+  {
+   "number": 938,
+   "title": "Remove Work legacy in-process external-engine second-opinion offer and its feature-private machinery",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.73,
+   "bucket_probs": {
+    "REWRITE": 0.79,
+    "UNRELATED": 0.01,
+    "KEEP": 0.12,
+    "SUPERSEDE": 0.08
+   },
+   "race": 0.06,
+   "review": 0.43,
+   "survives": 0.61,
+   "ms": 319,
+   "input_tokens": 2525
+  },
+  {
+   "number": 939,
+   "title": "Saga Code Review maintenance: the Priority 0 sentence, three stale citations, the controller naming collision, and finding-fingerprint dedup",
+   "labels": [
+    "enhancement",
+    "needs-plan"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.84,
+   "bucket_probs": {
+    "REWRITE": 0.88,
+    "SUPERSEDE": 0.01,
+    "UNRELATED": 0.01,
+    "KEEP": 0.1
+   },
+   "race": 0.05,
+   "review": 0.63,
+   "survives": 0.85,
+   "ms": 378,
+   "input_tokens": 2834
+  },
+  {
+   "number": 944,
+   "title": "Orchestrate erases the launcher's close-failure record and reports a live session as closed",
+   "labels": [
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.46,
+   "bucket_probs": {
+    "REWRITE": 0.59,
+    "SUPERSEDE": 0.05,
+    "KEEP": 0.19,
+    "UNRELATED": 0.17
+   },
+   "race": 0.34,
+   "review": 0.06,
+   "survives": 0.68,
+   "ms": 312,
+   "input_tokens": 1439
+  },
+  {
+   "number": 946,
+   "title": "Saga Code Review: preserve cycle lineage and comparable scoring across revisions",
+   "labels": [
+    "needs-plan",
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.93,
+   "bucket_probs": {
+    "REWRITE": 0.94,
+    "SUPERSEDE": 0.03,
+    "UNRELATED": 0.0,
+    "KEEP": 0.03
+   },
+   "race": 0.09,
+   "review": 0.96,
+   "survives": 0.73,
+   "ms": 308,
+   "input_tokens": 2404
+  },
+  {
+   "number": 960,
+   "title": "F109: land --clean skips reaping entirely when a landing path could not be\u2026",
+   "labels": [
+    "defect",
+    "high-priority"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.76,
+   "bucket_probs": {
+    "UNRELATED": 0.01,
+    "REWRITE": 0.82,
+    "KEEP": 0.07,
+    "SUPERSEDE": 0.1
+   },
+   "race": 0.11,
+   "review": 0.09,
+   "survives": 0.55,
+   "ms": 337,
+   "input_tokens": 1310
+  },
+  {
+   "number": 975,
+   "title": "F124: An unknown run-file contract surfaces as a Python traceback, not the\u2026",
+   "labels": [
+    "medium-priority"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.43,
+   "bucket_probs": {
+    "REWRITE": 0.58,
+    "UNRELATED": 0.04,
+    "KEEP": 0.35,
+    "SUPERSEDE": 0.03
+   },
+   "race": 0.06,
+   "review": 0.15,
+   "survives": 0.77,
+   "ms": 368,
+   "input_tokens": 1304
+  },
+  {
+   "number": 979,
+   "title": "F128: A landing worktree whose removal fails while an exception is unwinding\u2026",
+   "labels": [
+    "defect",
+    "medium-priority"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.55,
+   "bucket_probs": {
+    "UNRELATED": 0.0,
+    "SUPERSEDE": 0.07,
+    "KEEP": 0.26,
+    "REWRITE": 0.67
+   },
+   "race": 0.54,
+   "review": 0.09,
+   "survives": 0.55,
+   "ms": 332,
+   "input_tokens": 1329
+  },
+  {
+   "number": 988,
+   "title": "F137: redrive, a new 4.3.0 recovery command, has no dedicated explanation in\u2026",
+   "labels": [
+    "documentation",
+    "low-priority"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.5,
+   "bucket_probs": {
+    "UNRELATED": 0.02,
+    "SUPERSEDE": 0.01,
+    "KEEP": 0.35,
+    "REWRITE": 0.62
+   },
+   "race": 0.03,
+   "review": 0.14,
+   "survives": 0.88,
+   "ms": 310,
+   "input_tokens": 1290
+  },
+  {
+   "number": 989,
+   "title": "F138: An unknown TOP-LEVEL run-file key is dropped silently and destroyed on\u2026",
+   "labels": [
+    "low-priority"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.3,
+   "bucket_probs": {
+    "UNRELATED": 0.08,
+    "REWRITE": 0.48,
+    "KEEP": 0.42,
+    "SUPERSEDE": 0.02
+   },
+   "race": 0.05,
+   "review": 0.16,
+   "survives": 0.86,
+   "ms": 289,
+   "input_tokens": 1413
+  },
+  {
+   "number": 990,
+   "title": "F139: go does not persist the wrapper identity between the session create and\u2026",
+   "labels": [
+    "defect",
+    "low-priority"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.66,
+   "bucket_probs": {
+    "SUPERSEDE": 0.17,
+    "REWRITE": 0.74,
+    "KEEP": 0.08,
+    "UNRELATED": 0.01
+   },
+   "race": 0.77,
+   "review": 0.07,
+   "survives": 0.43,
+   "ms": 303,
+   "input_tokens": 1307
+  },
+  {
+   "number": 991,
+   "title": "F140: The landing-cleanup-failure test proves a different code path on each\u2026",
+   "labels": [
+    "low-priority",
+    "testing"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.44,
+   "bucket_probs": {
+    "UNRELATED": 0.02,
+    "KEEP": 0.35,
+    "REWRITE": 0.58,
+    "SUPERSEDE": 0.05
+   },
+   "race": 0.09,
+   "review": 0.13,
+   "survives": 0.72,
+   "ms": 282,
+   "input_tokens": 1260
+  },
+  {
+   "number": 992,
+   "title": "F141: redrive's own staged-input failure demotes the unit out of\u2026",
+   "labels": [
+    "defect",
+    "low-priority"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.53,
+   "bucket_probs": {
+    "UNRELATED": 0.11,
+    "REWRITE": 0.65,
+    "KEEP": 0.13,
+    "SUPERSEDE": 0.11
+   },
+   "race": 0.08,
+   "review": 0.12,
+   "survives": 0.73,
+   "ms": 279,
+   "input_tokens": 1328
+  },
+  {
+   "number": 996,
+   "title": "adv09: BaseException from runpy-loaded checkout code escapes the plan_save_contract JSON envelope",
+   "labels": [
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "KEEP",
+   "bucket_conf": 0.34,
+   "bucket_probs": {
+    "SUPERSEDE": 0.01,
+    "REWRITE": 0.48,
+    "KEEP": 0.5,
+    "UNRELATED": 0.01
+   },
+   "race": 0.04,
+   "review": 0.09,
+   "survives": 0.73,
+   "ms": 446,
+   "input_tokens": 1454
+  },
+  {
+   "number": 997,
+   "title": "adv10: a missing PyYAML crashes plan_save_contract outside its JSON envelope and reports drift",
+   "labels": [
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "KEEP",
+   "bucket_conf": 0.49,
+   "bucket_probs": {
+    "KEEP": 0.61,
+    "REWRITE": 0.36,
+    "UNRELATED": 0.02,
+    "SUPERSEDE": 0.01
+   },
+   "race": 0.03,
+   "review": 0.11,
+   "survives": 0.86,
+   "ms": 297,
+   "input_tokens": 1368
+  },
+  {
+   "number": 998,
+   "title": "agentusab06: plan_save_proof.py has no CLI entrypoint, so --help exits 0 with empty output",
+   "labels": [
+    "defect"
+   ],
+   "truncated": false,
+   "bucket": "KEEP",
+   "bucket_conf": 0.72,
+   "bucket_probs": {
+    "SUPERSEDE": 0.0,
+    "REWRITE": 0.17,
+    "UNRELATED": 0.04,
+    "KEEP": 0.79
+   },
+   "race": 0.03,
+   "review": 0.11,
+   "survives": 0.89,
+   "ms": 363,
+   "input_tokens": 1387
+  },
+  {
+   "number": 1001,
+   "title": "Saga code review consumes the generated review roster from infiquetra-sdlc's lens catalogue and emits review_result.v2 (infiquetra-sdlc decisions C1a to C1g, C4, E10)",
+   "labels": [
+    "needs-plan",
+    "capability"
+   ],
+   "truncated": false,
+   "bucket": "REWRITE",
+   "bucket_conf": 0.68,
+   "bucket_probs": {
+    "UNRELATED": 0.0,
+    "KEEP": 0.23,
+    "REWRITE": 0.76,
+    "SUPERSEDE": 0.01
+   },
+   "race": 0.04,
+   "review": 0.97,
+   "survives": 0.85,
+   "ms": 388,
+   "input_tokens": 3088
+  },
+  {
+   "number": 1005,
+   "title": "Saga Plan save-contract residuals carried from the issue #926 review",
+   "labels": [
+    "needs-plan",
+    "capability"
+   ],
+   "truncated": false,
+   "bucket": "KEEP",
+   "bucket_conf": 0.55,
+   "bucket_probs": {
+    "REWRITE": 0.26,
+    "UNRELATED": 0.07,
+    "KEEP": 0.66,
+    "SUPERSEDE": 0.01
+   },
+   "race": 0.04,
+   "review": 0.13,
+   "survives": 0.79,
+   "ms": 313,
+   "input_tokens": 1785
+  }
+ ],
+ "total_input_tokens": 95681,
+ "total_ms": 13195
+}

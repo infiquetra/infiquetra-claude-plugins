@@ -46,7 +46,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.159.1"  # 0.159.1: a BaseException raised by the
+    assert plugin_json["version"] == "0.159.2"  # 0.159.2: plan_save_contract.py imports
+    # PyYAML at first use instead of at module scope, so an interpreter without it gets the
+    # documented refusal rather than a traceback at the drift exit code, and --help still
+    # works (issue #997). Predecessor 0.159.1: a BaseException raised by the
     # checkout that plan_save_contract.py executes stays inside the JSON envelope, at both
     # seams where that code runs (issue #996). Predecessor 0.159.0: accepted-result consistency
     # and lifecycle-namespaced fix identifiers (issue #908 children #894, #899).

@@ -175,6 +175,22 @@ property, and prove the new guard red before you accept it green.
 
 **Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
 [[#1020-census-keyed-by-field-name]].
+### A module-scope import is outside every handler the file owns, and subclassing the dependency kills the sentinel repair  {#997-import-outside-every-handler}
+
+**Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. Issue #996 had just finished making that promise hold against the foreign code the tool executes. The tool still imported PyYAML at module scope.
+
+**Evidence.** Reproduced at `9f1bae8a`: on an interpreter without PyYAML, `validate`, `render --check` and `--help` each gave a raw traceback, empty stdout and exit 1. Issue #997, finding `adv10` from the issue #926 review, named only `validate`.
+
+**Mechanism.** Every handler a file owns lives inside a function. A module-scope import runs before any of them exist, so no handler can convert its failure however well written they are — issue #996 had just hardened two seams in this same file, and neither could see this one. Exit 1 is the code this tool documents for *drift*, so a broken interpreter was indistinguishable from a real documentation failure. `--help` broke too, and `--help` is the one invocation the docstring exempts, which means the defect reached further than the card said.
+
+**The trap.** The obvious repair — wrap the import in `except ImportError` and set `yaml = None` — does not work here, and fails three lines later rather than at the import. The module does not merely call PyYAML, it *subclasses* it: `class UniqueLoader(yaml.SafeLoader)` needs the real base class object at class-creation time, which is module-import time. The sentinel just moves the crash.
+
+**Fix.** Defer the import to first use inside the parsing path, and build the loader class there too, against the module the deferred import returned. `ImportError` is an ordinary `Exception`, so `main()`'s existing narrow handler converts it with no change — and argparse serves `--help` before any YAML is touched, so that facet closes for free.
+
+**Generalizable rule.** For a command-line tool that promises a machine-readable envelope, a third-party import at module scope is an uncovered failure path by construction; move it to first use. Before reaching for a `None` sentinel, check whether the module *subclasses* the dependency — a subclass needs the real object at class-creation time, which is exactly when the sentinel is not one.
+
+**Refs.** Issue #997; parent grouping #1005; `plugins/saga/scripts/plan_save_contract.py`; `tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_a_missing_pyyaml`; canary `plan-save-contract-missing-pyyaml`; DECISIONS `{#997-defer-the-import-keep-the-code-set-closed}`.
+
 ### `except Exception` is not a boundary; a tool that runs someone else's code needs `BaseException`  {#996-envelope-needs-baseexception}
 
 **Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. It keeps that promise through two `except Exception` handlers. It also executes the repository checkout named by `--root` in-process through `runpy`, which makes that checkout's code an input the tool does not control.

@@ -53,10 +53,14 @@ class FakeResult:
         answers: dict[str, Any] | None = None,
         status: str = "ok",
         usage: dict[str, int] | None = None,
+        transport: str = "",
     ) -> None:
         self.answers = answers or {}
         self.status = status
         self.usage = usage or {}
+        # The real result carries this; the harness reads it to tell a cached answer from
+        # one that cost a request, so the fake must carry it too.
+        self.transport = transport
 
     @property
     def ok(self) -> bool:
@@ -112,7 +116,8 @@ def _wide(command: str, gate: float = 0.9) -> FakeResult:
 
 @pytest.fixture
 def questions() -> dict[str, Any]:
-    return harness.load_questions()
+    loaded: dict[str, Any] = harness.load_questions()
+    return loaded
 
 
 @pytest.fixture
@@ -323,7 +328,9 @@ def test_the_ready_marker_has_one_definition_shared_by_writer_and_reader() -> No
     daemon_module = _load(DAEMON_PATH, "prompt_suggestion_daemon_test")
     assert daemon_module.READY_PREFIX is harness.READY_PREFIX
     source = DAEMON_PATH.read_text(encoding="utf-8")
-    assert 'READY_PREFIX = "' not in source, "the daemon restates the marker instead of importing it"
+    assert 'READY_PREFIX = "' not in source, (
+        "the daemon restates the marker instead of importing it"
+    )
 
 
 def test_a_cold_hook_reports_the_status_of_every_request_it_made(
@@ -340,9 +347,7 @@ def test_a_cold_hook_reports_the_status_of_every_request_it_made(
     served.status = "error"
     monkeypatch.setattr(harness, "_load_client", lambda: FakeClient())
     monkeypatch.setattr(harness, "load_roster", lambda _dir: {"plan": "make a plan"})
-    monkeypatch.setattr(
-        FakeClient, "ask", staticmethod(lambda *a, **k: served), raising=False
-    )
+    monkeypatch.setattr(FakeClient, "ask", staticmethod(lambda *a, **k: served), raising=False)
 
     args = _argparse.Namespace(
         shape="s0", prompt="x", socket="", transport="", commands_dir=str(SAGA_COMMANDS)

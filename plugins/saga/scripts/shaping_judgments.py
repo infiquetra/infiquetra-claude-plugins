@@ -132,7 +132,14 @@ RUBRIC_DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("overlap", "how far the idea is already covered by a stronger idea"),
 )
 
-RUBRIC_LEVELS = ("low", "medium", "high")
+# The ordered levels every score question uses.  Deliberately NOT
+# "low"/"medium"/"high": those are a strict subset of the fleet's effort ladder
+# in tier_palette.py, and a bare tuple of them in a saga script is
+# indistinguishable from a truncated re-declaration of it --
+# tests/test_tier_vocab_single_source.py flags exactly that, correctly.  These
+# words also stand on their own better as rubric positions, which is what the
+# vendor asks score levels to do.
+RUBRIC_LEVELS = ("weak", "moderate", "strong")
 
 GROUNDING_FIT_OUTCOMES = {
     "proceed": (

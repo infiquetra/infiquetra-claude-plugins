@@ -449,6 +449,19 @@ def test_question_ordering_scores_consequence_and_uncertainty_separately() -> No
     assert set(result["answers"]) == {"consequence", "uncertainty"}
 
 
+def test_the_score_levels_do_not_re_declare_the_fleet_effort_vocabulary() -> None:
+    """A bare subset of the effort ladder in a saga script reads as a re-declaration.
+
+    tests/test_tier_vocab_single_source.py owns that rule fleet-wide; this
+    keeps the reason visible at the constant it applies to, so a future edit
+    back to low/medium/high is caught here with an explanation rather than
+    only by a guard three directories away.
+    """
+    efforts = {"low", "medium", "high", "xhigh", "max"}
+    assert not set(sj.RUBRIC_LEVELS) <= efforts
+    assert len(sj.RUBRIC_LEVELS) >= 2
+
+
 # --------------------------------------------------------------------------
 # U4 — the office-hours routing choice
 

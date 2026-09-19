@@ -90,7 +90,7 @@ def test_existing_models_and_efforts_readers_are_unaffected() -> None:
     assert efforts_by_rung == tier_palette.EFFORTS
 
 
-def test_existing_resolve_call_sites_are_unaffected_by_the_sibling() -> None:
+def test_existing_resolve_call_sites_are_unaffected_by_the_sibling(tmp_path: pathlib.Path) -> None:
     """``resolve()`` keeps its signature, return type, and positional call shape."""
     signature = inspect.signature(resolve)
     assert list(signature.parameters) == [
@@ -131,9 +131,11 @@ def test_existing_resolve_call_sites_are_unaffected_by_the_sibling() -> None:
     defaults_mod = importlib.util.module_from_spec(defaults_spec)
     sys.modules["u1_tier_defaults_consumer"] = defaults_mod
     defaults_spec.loader.exec_module(defaults_mod)
-    # The private _registry_default helper became a delegating shim in issue #1021; the public
-    # function it folded into resolves the same work shape through the same registry.
-    assert defaults_mod.resolve_tier_with_overlay("judgment") == {
+    # Issue #1021 removed the private _registry_default helper and folded its work into
+    # resolve_tier_with_overlay. Pass an empty root: the public function consults the
+    # per-repository overlay, which the deleted helper bypassed, and .gitignore ignores .saga/ —
+    # so without this a local overlay would red a test about the execution-class sibling.
+    assert defaults_mod.resolve_tier_with_overlay("judgment", root=tmp_path) == {
         "model": "opus",
         "effort": "high",
     }

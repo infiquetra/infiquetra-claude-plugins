@@ -368,12 +368,15 @@ def resolve_role(
 
     The tier comes from the role's work shape, so the per-repository overlay still wins where it
     names that shape. A role may pin a vendor; the pin is reported in ``vendor_pinned_by_role``
-    and does not change ``source``, which names only where the tier came from. A lens only
-    ever narrows the
-    answer: it attaches the qualification status read from the ledger, which can downgrade a
-    scoring executor to the documented-policy outcome but never promote one.
+    and does not change ``source``, which names only where the tier came from.
+
+    A lens only ever narrows the answer: it attaches the qualification status read from the
+    ledger, which can downgrade a scoring executor to the documented-policy outcome but never
+    promote one.
     """
     row = _role_row(role)
+    if "work_shape" not in row:
+        raise StaffingError(f"role {role!r} is missing a work_shape")
     work_shape = str(row["work_shape"])
     vendor = str(row.get("vendor", DEFAULT_VENDOR))
     if vendor not in vendors():
@@ -406,7 +409,10 @@ def resolve_role(
 
 def _is_reviewing_role(role: str) -> bool:
     """A role reviews when its capability is the registry's adversarial-review one."""
-    return str(_role_row(role)["capability"]) == "adversarial-review"
+    row = _role_row(role)
+    if "capability" not in row:
+        raise StaffingError(f"role {role!r} is missing a capability")
+    return str(row["capability"]) == "adversarial-review"
 
 
 # --------------------------------------------------------------------------- lens

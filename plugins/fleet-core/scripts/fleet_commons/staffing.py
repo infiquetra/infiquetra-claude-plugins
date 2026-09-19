@@ -320,6 +320,8 @@ def candidates_for(role: str) -> tuple[dict[str, Any], ...]:
     variants that rate the requested capability equally.
     """
     row = _role_row(role)
+    if "capability" not in row:
+        raise StaffingError(f"role {role!r} is missing a capability")
     capability = str(row["capability"])
     ratings = capability_ratings()
     found: list[dict[str, Any]] = []
@@ -365,8 +367,9 @@ def resolve_role(
     """Resolve a role to a vendor, model and effort, and for a reviewing role its lens status.
 
     The tier comes from the role's work shape, so the per-repository overlay still wins where it
-    names that shape. A role may pin a vendor, in which case the decision record says the answer
-    came from the role rather than from the overlay or the policy. A lens only ever narrows the
+    names that shape. A role may pin a vendor; the pin is reported in ``vendor_pinned_by_role``
+    and does not change ``source``, which names only where the tier came from. A lens only
+    ever narrows the
     answer: it attaches the qualification status read from the ledger, which can downgrade a
     scoring executor to the documented-policy outcome but never promote one.
     """

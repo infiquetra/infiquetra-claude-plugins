@@ -22,6 +22,31 @@ document's *name* across the repository rather than reading the plan's file list
 just for links to it. A path held in a constant, asserted by a test fixture, or embedded in a
 generated block is code, and it moves in the same commit as the deletion — never after it.
 
+**And grep the whole repository, not the plugin you are working in.** This entry's own first sweep
+stopped at the saga plugin boundary and left two team-execution reference documents routing readers
+to the deleted `tier_policy.json`; a review lens found them two cycles later. The boundary is not a
+natural stopping point — it is just where attention ran out. Deleting a file across a repository of
+plugins means bumping every plugin whose files you then have to edit, and that cost is part of the
+deletion, not a reason to leave the pointers broken.
+
+### A version bump breaks every test that pinned the old version as a literal  {#1021-version-literals-in-tests}
+
+**Evidence.** Issue #1021. Bumping fleet-core from 0.25.3 to 0.26.0 failed three tests that had the
+old string hardcoded — `tests/test_liveness_events.py`, and two in `tests/test_team_execution_liveness.py`
+— none of which imports anything this change touched. Bumping saga from 0.159.0 to 0.160.0 then
+failed a fourth, `tests/test_saga_plugin.py:49`, which is the repository's own release-surface drift
+guard.
+
+**Mechanism.** Neither release-surface check catches this. `scripts/check_release_surface_parity.py`
+verifies the three-way version lock between manifest, marketplace entry and changelog;
+`tools/release_surface_diff_guard.py` verifies that a changed plugin bumped those three. A test
+asserting a version literal is a fourth surface neither one knows about, and the repository's own
+workflow rule already says so — "any version/metadata drift guard tests" move in the same change.
+
+**Generalizable rule.** After bumping a plugin version, `grep -rn` the old version string across
+`tests/`, and prefer reading the expected value from the manifest over pinning it, so the next bump
+cannot re-break the test. Both release-surface checks passing is not evidence the suite is green.
+
 ### Every declared capability in the engine registry is rated, so a test asserting otherwise passes by accident  {#1021-unrated-capability-assertion}
 
 **Evidence.** Issue #1021, U4. A first version of

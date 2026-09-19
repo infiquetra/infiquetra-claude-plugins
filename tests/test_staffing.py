@@ -675,3 +675,40 @@ def test_cli_rejects_a_lens_on_a_work_shape() -> None:
     result = _run("resolve", "--shape", "judgment", "--lens", "security")
     assert result.returncode == 2
     assert "reviewing role" in result.stderr
+
+
+def test_a_vendor_pinned_role_reports_the_pin_without_changing_tier_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vendor is not a tier, so pinning one must not overwrite where the tier came from.
+
+    No shipped role pins a vendor, so the branch is unreachable against the real data and is
+    exercised by construction instead — the same pattern the unrated-capability guard uses.
+    """
+    monkeypatch.setattr(
+        staffing,
+        "roles",
+        lambda registry=None: {
+            "pinned": {
+                "work_shape": "judgment",
+                "capability": "adversarial-review",
+                "vendor": "codex",
+            }
+        },
+    )
+    decision = staffing.resolve_role("pinned")
+    assert decision.vendor == "codex"
+    assert decision.vendor_pinned_by_role is True
+    assert decision.source == "policy"
+    assert decision.as_dict()["vendor_pinned_by_role"] is True
+
+
+def test_a_role_row_missing_its_capability_raises_the_modules_own_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed registry must fail with StaffingError, not a bare KeyError."""
+    monkeypatch.setattr(
+        staffing, "roles", lambda registry=None: {"broken": {"work_shape": "judgment"}}
+    )
+    with pytest.raises(StaffingError, match="missing a capability"):
+        staffing.candidates_for("broken")

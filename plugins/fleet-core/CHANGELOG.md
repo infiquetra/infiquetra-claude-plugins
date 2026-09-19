@@ -5,7 +5,7 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.27.0] - 2026-09-19
+## [0.28.0] - 2026-09-19
 
 ### Added
 
@@ -106,6 +106,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The capability ratings are copied, not moved.** `plugins/saga/references/engine-registry.yaml`
   stays on disk and a parity test in `tests/test_staffing.py` holds the copy to it while both
   exist; issue 1030 deletes both.
+
+## [0.27.0] - 2026-09-19
+
+### Added
+
+- **`fleet_commons/jev_widen.py` — the widen-only union (issue #1036).** House rule 3 says a
+  hand-written pattern is a floor the model may raise and never lower. This is the one place that
+  implements it: `widen(state, verb, floors, ...)` asks a verb's yes/no questions in one request
+  and returns, per key, the floor, the probability, the union (`floor or probability >= threshold`)
+  and which side produced it. There is no path in which a floor of `True` returns a union of
+  `False`, and a mutation of that one expression reds `tests/test_jev_widen.py`.
+  - **Failure is always the floor.** An error, a timeout, a malformed body, a missing key, a
+    missing answer or a non-numeric probability all return the caller's floors unchanged with a
+    reason in `note` and write no verdict. A caller that ignores `note` behaves exactly as it did
+    before it asked anything.
+  - **One injectable call path.** `ask` defaults to `typesafe_client.ask` and is a parameter, so
+    every test drives a recorded answer map and none can reach the network by accident.
+  - Each answered question writes a verdict through `jev_log.record_verdict` with the resolved
+    model version and the threshold in force; logging failures are swallowed, because a full disk
+    must not turn an advisory judgment into a caller-visible error.
+- **Two verbs in the registry: `issue-flags` and `journal-nudge`.** Both are available from the
+  command line as `jev issue-flags` and `jev journal-nudge` with no further work, because the tool
+  builds its subcommands from the registry. `issue-flags` carries the five saga keyword flags plus
+  the seven approval boundaries quoted from the sdlc chapter `docs/process/operator-escalations.md`
+  as policy text, at a confidence floor of 0.70; `journal-nudge` carries one question at 0.60, with
+  this repository's own journal rule as policy. Both floors are provisional, chosen by which
+  mistake is cheaper rather than by measurement, and stay that way until the evaluation harness
+  has about thirty verdicts per decision.
+- `references/typesafe.md` gains section 5, "The widen-only union": the primitive, the two verbs,
+  the provisional thresholds, which side each caller fails open on, and why the seven approval
+  boundaries report rather than approve. The transport section moves to 6.
+
+Released with saga 0.160.0, which carries the two callers. This bump is from `origin/main` at
+`866d3670`, where fleet-core was 0.26.0.
 
 ## [0.26.0] - 2026-09-19
 

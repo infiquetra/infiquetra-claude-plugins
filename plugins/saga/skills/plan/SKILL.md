@@ -72,7 +72,9 @@ requirements doc, the issue, or describe the work." Do not proceed without one.
 
 ### 0.2 Issue handoff routing
 
-If the input is a GitHub issue, run `scripts/parse_issue.py` and inspect the `handoff` object.
+If the input is a GitHub issue, run `scripts/parse_issue.py` and inspect the `handoff` object. Pass
+`--flags` to widen the keyword flags with a model judgment (widen-only: a keyword flag stays set
+whatever the model answers).
 
 - For `idea-ready` or `requirements-ready` handoff issues, create or update a durable plan from the
   issue and its `Source context` / linked source. These are the maturities `/plan` consumes.

@@ -46,10 +46,24 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.160.0"  # 0.160.0: the per-repository tier overlay
+    assert plugin_json["version"] == "0.161.0"  # 0.161.0: the per-repository tier overlay
     # reads through one implementation in fleet-core (issue #1021).
-    # Predecessor 0.159.0: accepted-result consistency and
-    # lifecycle-namespaced fix identifiers (issue #908 children #894, #899).
+    # Predecessor 0.160.0: parse_issue.py gains --flags and
+    # --issue, which widen the five keyword flags with a model judgment (widen-only: a keyword
+    # flag stays set whatever the model answers) and report the seven approval boundaries
+    # advisorily; the journal-nudge hook asks the same way when the feat/fix prefix did not
+    # already nudge, stays silent on any failure, and never blocks (issue #1036).
+    # Predecessor 0.159.3: plan_save_proof.py carries a
+    # command-line entrypoint that names the proof and the command that runs it, serves it at
+    # exit 0 for --help, and refuses every other direct invocation at exit 2 with an empty
+    # stdout; PyYAML moved to its point of use so that --help works without it (issue #998).
+    # Predecessor 0.159.2: plan_save_contract.py imports
+    # PyYAML at first use instead of at module scope, so an interpreter without it gets the
+    # documented refusal rather than a traceback at the drift exit code, and --help still
+    # works (issue #997). Predecessor 0.159.1: a BaseException raised by the
+    # checkout that plan_save_contract.py executes stays inside the JSON envelope, at both
+    # seams where that code runs (issue #996). Predecessor 0.159.0: accepted-result consistency
+    # and lifecycle-namespaced fix identifiers (issue #908 children #894, #899).
     # Predecessor 0.158.0: shared Saga readiness owner with
     # Mission Control delegation (issue #942). Predecessor — issue #926 (unit P5, issue #918
     # Wave Two):

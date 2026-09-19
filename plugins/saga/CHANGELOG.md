@@ -1,9 +1,9 @@
 # Changelog
 
-## [0.160.0] - 2026-09-19
+## [0.161.0] - 2026-09-19
 
-**Requires fleet-core 0.27.0 or later.** `scripts/tier_defaults.py` loads
-`fleet_commons.staffing`, which fleet-core gained in the release that became 0.27.0, at import time. Installing this saga
+**Requires fleet-core 0.28.0 or later.** `scripts/tier_defaults.py` loads
+`fleet_commons.staffing`, which fleet-core gained in the release that became 0.28.0, at import time. Installing this saga
 without that fleet-core makes the module fail to import with a message naming both the required and
 the resolved version. This repository has two installed plugin roots and a release has updated one
 and not the other six times, so check both.
@@ -24,6 +24,11 @@ and not the other six times, so check both.
   documents that named the deleted `tier_policy.json` — `references/sandbox-spawn-sites.md`,
   `skills/work/references/execution-strategy.md`, `skills/work/SKILL.md` and
   `skills/plan/SKILL.md` — together with two comments in `scripts/lifecycle_state.py`.
+
+## [0.160.0] - 2026-09-19
+
+- **The keyword flags and the journal nudge gain a model judgment they can only be widened by (#1036).** Two places decided something with a hand-written regular expression and decided it too narrowly. The evidence is this card's own body: it is about credentials by name, and `parse_issue.py` reported `has_security: false` for it, because the pattern matches `credential` and the prose says `credentials`. `parse_issue.py` now takes `--flags`, which asks a yes/no model question per category and unions each answer with the keyword result — widen-only, so a flag the pattern set stays set whatever the model answers, and the five key names the mandatory test gate reads are unchanged. It also takes `--issue <N>`, which reads the body with `gh`. Without `--flags` the script is byte-for-byte what it was: pure regular expressions, no fleet-core import, no network. The seven approval boundaries from the sdlc chapter `docs/process/operator-escalations.md` are reported alongside, advisory only — no pattern floor, no consumer, and nothing that grants or withholds an approval. The journal-nudge hook asks the same way when the `feat`/`fix` prefix did *not* already nudge, so a `refactor` or `perf` commit carrying a non-obvious mechanism can now be caught; it reads HEAD's real commit message rather than re-parsing the shell command (which only ever handled `-m`), sends nothing but that message and the changed file list, asks at most once with a two-second request timeout and a three-second deadline, stays silent on every failure, and still exits 0 in every case. `INFIQUETRA_TYPESAFE_JOURNAL_NUDGE=off` skips the call entirely. Both thresholds — 0.70 for the flags, 0.60 for the nudge — are provisional and recorded in every verdict until the evaluation harness measures them. Released with fleet-core 0.27.0, which carries the union primitive and the two verbs; this bump is from `origin/main` at `866d3670`, where saga was 0.159.3.
+
 ## [0.159.3] - 2026-09-19
 
 - **`plan_save_proof.py` says what it is and how it is run (#998).** The file had no command-line entrypoint at all, so every direct invocation exited 0 and printed nothing -- `--help` included, and a guessed subcommand too, which made a mistyped invocation indistinguishable from a passing run. It now carries an entrypoint that names the proof and the command that actually runs it (`plan_save_contract.py --root <checkout> validate`), serves that text at exit 0 for `--help`, and refuses every other direct invocation at exit 2 with usage on standard error and standard output left empty, so nothing it prints can be mistaken for the contract tool's JSON envelope. It deliberately does not make the proof runnable on its own: `verify()` needs the contract module's globals, a loaded contract and a rendered candidate, and a standalone runner would duplicate `validate` while bypassing its tool-revision check. PyYAML moved to its point of use in the same change, so the new `--help` works on an interpreter without PyYAML rather than being born with the defect #997 had just fixed next door. `runpy.run_path` names the module it loads `<run_path>`, so the contract tool's loader never reaches the entrypoint; a guard pins that positively, because #996's envelope would otherwise convert a misfire into a tidy refusal blaming the engine.

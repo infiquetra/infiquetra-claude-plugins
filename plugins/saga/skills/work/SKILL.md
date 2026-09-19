@@ -160,7 +160,8 @@ If the input is a GitHub issue, run `scripts/parse_issue.py` and inspect the `ha
 
 Use the issue's `Handoff maturity`, `Source context`, and the parsed flags (`has_security`, `has_infra`,
 `has_api`) as authoritative input — they feed the backend recommendation (Phase 1) and the hard test
-gate (Phase 3).
+gate (Phase 3). Pass `--flags` to widen those flags with a model judgment (widen-only: a keyword flag
+stays set whatever the model answers, and a client failure returns the keyword result unchanged).
 
 ### 0.3 Saga scan — offer resume before minting
 

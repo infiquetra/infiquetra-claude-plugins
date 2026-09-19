@@ -150,8 +150,8 @@ document is checked against this list.**
 
 ## 2. What we measured here (2026-09-18, jev-1.13.0, from this machine)
 
-All scripts are in the session scratchpad (`jev.py`, `tier_probe.py`, `probes2.py`, `probe3.py`,
-`rank.py`, `ideas.json`). Latencies are wall-clock from Python `urllib`, including TLS.
+All scripts are in the session scratchpad (`jev.py.txt`, `tier_probe.py.txt`, `probes2.py.txt`, `probe3.py.txt`,
+`rank.py.txt`, `ideas.json`). Latencies are wall-clock from Python `urllib`, including TLS.
 
 | Probe | Setup | Result | Read |
 |---|---|---|---|

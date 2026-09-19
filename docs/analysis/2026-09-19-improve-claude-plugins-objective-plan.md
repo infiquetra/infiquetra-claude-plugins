@@ -1136,7 +1136,7 @@ Type: capability. Labels: capability, needs-plan. Risk: low.
 
 ### Intent
 
-The foundation every other TypeSafe card depends on (TR R1 to R4). Yesterday's probes used a 30-line client (`docs/analysis/2026-09-18-typesafe-jev-research-inputs/jev.py`); the vendor SDKs are days old with breaking changes, so the plugin owns its client.
+The foundation every other TypeSafe card depends on (TR R1 to R4). Yesterday's probes used a 30-line client (`docs/analysis/2026-09-18-typesafe-jev-research-inputs/jev.py.txt`); the vendor SDKs are days old with breaking changes, so the plugin owns its client.
 
 ### Out-of-scope / non-goals
 
@@ -1145,7 +1145,7 @@ The foundation every other TypeSafe card depends on (TR R1 to R4). Yesterday's p
 
 ### Files expected to change
 
-- `plugins/fleet-core/scripts/fleet_commons/typesafe_client.py` (new), `plugins/fleet-core/scripts/jev.py` (new), `plugins/fleet-core/scripts/fleet_commons/jev_eval.py` (new), `plugins/fleet-core/references/typesafe.md` (new: the data rule and the verdict log format)
+- `plugins/fleet-core/scripts/fleet_commons/typesafe_client.py` (new), `plugins/fleet-core/scripts/jev.py.txt` (new), `plugins/fleet-core/scripts/fleet_commons/jev_eval.py` (new), `plugins/fleet-core/references/typesafe.md` (new: the data rule and the verdict log format)
 - release surfaces
 
 ### Tests to add or update
@@ -1162,15 +1162,15 @@ General references:
 
 ### Acceptance criteria
 
-- [ ] `TYPESAFE_API_KEY=x uv run python plugins/fleet-core/scripts/jev.py ask --state '{"x":"hello"}' --noul 'Is `x` a greeting?' --dry-run` prints the request body and no key.
-- [ ] `uv run python plugins/fleet-core/scripts/jev.py ask --state '{"x":"hello"}' --noul 'Is `x` a greeting?'` returns a probability in under 2 seconds with the live key from the environment.
-- [ ] `uv run python plugins/fleet-core/scripts/jev.py eval --cached docs/analysis/2026-09-18-typesafe-jev-research-inputs/` reproduces the tier probe's 10 of 10.
+- [ ] `TYPESAFE_API_KEY=x uv run python plugins/fleet-core/scripts/jev.py.txt ask --state '{"x":"hello"}' --noul 'Is `x` a greeting?' --dry-run` prints the request body and no key.
+- [ ] `uv run python plugins/fleet-core/scripts/jev.py.txt ask --state '{"x":"hello"}' --noul 'Is `x` a greeting?'` returns a probability in under 2 seconds with the live key from the environment.
+- [ ] `uv run python plugins/fleet-core/scripts/jev.py.txt eval --cached docs/analysis/2026-09-18-typesafe-jev-research-inputs/` reproduces the tier probe's 10 of 10.
 - [ ] `uv run pytest tests/test_typesafe_client.py tests/test_jev_cli.py -q` passes.
 
 ### Verification
 
 ```bash
-uv run python plugins/fleet-core/scripts/jev.py ask --state '{"x":"hello"}' --noul 'Is `x` a greeting?'
+uv run python plugins/fleet-core/scripts/jev.py.txt ask --state '{"x":"hello"}' --noul 'Is `x` a greeting?'
 uv run pytest tests/test_typesafe_client.py tests/test_jev_cli.py -q
 ```
 

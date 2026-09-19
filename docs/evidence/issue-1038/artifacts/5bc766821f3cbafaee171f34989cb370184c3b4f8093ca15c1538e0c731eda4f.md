@@ -1,0 +1,87 @@
+---
+title: Code review — issue 1038, prompt-suggestion latency harness
+reviewed_revision: e35e5c4001fdab8b4b1038bd27038d2b893ff739
+date: 2026-09-19
+outcome: accepted
+---
+
+# Code review — issue 1038, prompt-suggestion latency harness
+
+**Outcome: accepted, at cycle 3.** Cycle 1 raised nine findings against `3b2609b9`, three of them blocking; they were repaired in `734a7bf2`, each guarded by a test confirmed to fail without it. Cycle 2 ran the repository-wide type check at the continuous-integration scope and found three errors the per-file loop had not surfaced, repaired in `e35e5c40`. Cycle 3 is clean and no blocking finding remains.
+
+| Field | Value |
+|---|---|
+| Target | branch `issue/1038` against base `866d3670` |
+| Reviewed revision | `e35e5c4001fdab8b4b1038bd27038d2b893ff739` (cycle 3). Cycle 1 reviewed `3b2609b9aaec8cc6cdc4ca9c6adc1ac222cd728d`; cycle 2 reviewed `734a7bf2e98234416c6856ea9bedbae8408ab8a1` |
+| Diff | 13 files, 3,374 insertions, 0 deletions at cycle 1 |
+| Issue | infiquetra/infiquetra-claude-plugins#1038, child of #1019 |
+| Plan | `docs/plans/2026-09-19-issue-1038-prompt-suggestion-latency-plan.md` |
+| Backend | `inline` |
+| Scope check | **CLEAN** |
+| Independent gates | built-vs-planned PASS; lint PASS; format PASS; types PASS; tests PASS (59); release-surface parity PASS; diff guard PASS; journal order PASS; marketplace sync PASS |
+
+## Transport deviation, recorded
+
+The lens fan-out normally spawns one read-only verifier agent per lens in a disposable worktree. The coordinator directing this run prohibited spawning subagents, so every lens was run sequentially in the reviewing thread against the same diff, one lens at a time. Lens selection was `accept-recommended`, supplied by the caller, which is approval — no operator question was asked. This is the same deviation the sibling card drivers in this run recorded. It changes who executes the lens, not the acceptance policy, which remains this review's.
+
+## Lenses run
+
+Always-on four: `architecture-maintainability`, `correctness`, `security`, `testing`.
+
+Conditionals, with the reason each was selected:
+
+- `privacy` — the diff sends text to a third-party vendor and handles a credential boundary.
+- `reliability` — a resident process, a socket, timeouts, background threads and subprocess lifecycle.
+- `performance` — the change *is* a latency measurement, so measurement method is in this lens's domain.
+- `documentation-clarity` — the primary deliverable is a prose analysis document.
+- `adversarial` — the deliverable makes empirical claims that could flatter themselves.
+
+Not selected: `deployment-infrastructure` (nothing deploys), `api-contract` (no public schema moves), `accessibility-human-usability` (no interface), `previous-comments` (no prior review), `agent-usability` (no agent-facing contract changes).
+
+## Built versus planned
+
+Every implementation unit is **DONE**, verified from the diff.
+
+| Unit | State | Evidence |
+|---|---|---|
+| U1 corpus and question set | DONE | `corpus.json` 20 prompts / 5 negative; `questions.json` carries both thresholds |
+| U2 harness core | DONE | `rotation_order`, `run_interleaved`, `percentile`, `summarize`, `time_process` |
+| U3 cold shapes and floor | DONE | `cmd_hook` cold branch; `floor` returns before any client load |
+| U4 resident process and warm shapes | DONE | `prompt_suggestion_daemon.py`; `start_daemon`/`stop_daemon` with `finally` |
+| U5 survival and resolution probes | DONE | `survival_probe`, `resolution_probe`; both reported in the results |
+| U6 live run and deliverable | DONE | `docs/analysis/2026-09-19-prompt-suggestion-latency.md` and two results files |
+
+Requirement R13 (no release surface moves) verified: the diff touches no path under `plugins/`.
+
+## Findings
+
+| # | P | File | Issue | Route | Status |
+|---|---|---|---|---|---|
+| 1 | P1 | `tools/prompt_suggestion_latency.py` `cmd_hook` | A cold hook printed no request status, so a failed request and an empty answer were the same bytes — a cold failure would score as a fast silent success, the same mistake the warm timeout made | manual | **repaired** in `734a7bf2` |
+| 2 | P1 | `tools/prompt_suggestion_latency.py` `cmd_measure` | The trial ok/not-ok rule lived in a closure and had no test, although that exact rule had already produced a corrupted run | manual | **repaired** — extracted to `classify_trial`, seven tests |
+| 3 | P1 | `docs/analysis/2026-09-19-prompt-suggestion-latency.md` | The 343 ms saving compares a cold figure from run 1 with a warm figure from run 2, presented as though controlled | manual | **repaired** — the comparison is labelled, with the floor matching across runs (46.5 / 46.9 ms) given as the control |
+| 4 | P2 | `tools/prompt_suggestion_latency.py` `read_wide` | The shortlist holds one candidate while `SHORTLIST_SIZE` is 3 and the document claimed the cookbook's three-candidate pass | manual | **repaired as disclosure** — see below |
+| 5 | P2 | `tools/prompt_suggestion_latency.py` `start_daemon` | A blocking `readline` could not be interrupted by the 30-second deadline, so a silent process would hang the harness forever | manual | **repaired** — selects on the descriptor |
+| 6 | P2 | `docs/analysis/…-latency.md` | The cold figures cannot prove no request failed, because statuses were not recorded when they were taken | manual | **repaired** — stated, with the distributional evidence that they were real calls |
+| 7 | P3 | `tests/test_prompt_suggestion_latency.py` | `ForbiddenAsk` was defined and never used | safe_auto | **repaired** — removed |
+| 8 | P3 | `tools/prompt_suggestion_daemon.py` | The ready marker was restated rather than shared with its reader | safe_auto | **repaired** — imported, and the test reads the daemon's source |
+| 9 | P3 | `tools/prompt_suggestion_daemon.py` | `harness._load_client()` reaches across a module boundary for a private name | advisory | **accepted as-is** — a prototype the plan says is not shipped |
+| 10 | P2 | `tests/test_prompt_suggestion_latency.py` | The fake result lacked the `transport` attribute two tests set on it, and the questions fixture returned `Any` — three type errors visible only at the repository-wide check | manual | **repaired** in `e35e5c40` |
+
+### On finding 4, which was not repaired the obvious way
+
+The tempting fix is to build a real three-candidate shortlist from the choice answer's `probabilities` map. That would have made the shipped harness differ from the harness that produced the reported numbers, with no budget left to re-measure — which is a worse failure than the one it fixes. The deviation is instead documented at `SHORTLIST_SIZE`, in `read_wide`'s docstring, and in the deliverable, with what it does and does not affect: the call count is identical, so no latency figure moves, and only the two-request shapes' accuracy could differ. It is on the deliverable's follow-up list.
+
+## Verification of the repairs
+
+Each repair was mutation-checked: the fix was reverted, the covering test confirmed to fail, and the file restored. Five for five died. Two of the mutations initially "survived" and both turned out to be defects in the mutation rather than the test — one changed a value both sides share, the other named the wrong test — which is itself evidence the technique was applied rather than assumed.
+
+An earlier mutation pass on the original tests found a genuine weakness: the owner-only *directory* refusal was passing via the *socket* guard, because both refusals contained the phrase "owner-only". The two messages are now distinguishable and each is asserted specifically.
+
+## Coverage and residual risk
+
+59 tests, all passing, no network. The measurement command `cmd_measure` has no end-to-end test — it needs a live daemon and a vendor — and its decision logic has been extracted to `classify_trial` precisely so the untestable part is only orchestration.
+
+Residual, and named in the deliverable rather than hidden: accuracy comes from a corpus written by the same agent that wrote the question set, so it flatters the suggester; the 95th percentiles rest on twenty trials; and the stale shape's accuracy is unmeasurable on a corpus of unrelated prompts.
+
+The one thing no code change can settle: whether a live operator prompt may be sent to the vendor at all. It is the operator's decision and it blocks implementation, not this exploration.

@@ -175,6 +175,34 @@ property, and prove the new guard red before you accept it green.
 
 **Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
 [[#1020-census-keyed-by-field-name]].
+### A file with no entrypoint answers every invocation with success, and the mistyped one is the dangerous case  {#998-no-entrypoint-means-silent-success}
+
+**Context.** `plugins/saga/scripts/plan_save_proof.py` is the independent proof `plan_save_contract.py` runs before it validates or writes any Plan document. Issue #926 turned it from a pytest test into a plain Python file invoked by path, which is what made the missing entrypoint visible.
+
+**Evidence.** Reproduced at `30c36bb5`: `--help`, a bare invocation, and `validate --root .` each printed nothing and exited 0. Issue #998, finding `agentusab06` from the issue #926 review, named only `--help`.
+
+**Mechanism.** A Python file with no `if __name__ == "__main__":` block runs its module body and exits 0. Nothing rejects the arguments because nothing reads them, so the third row above is the sharp one: a guessed subcommand is indistinguishable from a passing run. The card framed this as discoverability — an agent cannot learn what the file does — but silent success on a wrong invocation is the larger hazard, and the same repair closes both.
+
+**Two things the repair had to avoid.** Making the proof runnable standalone would duplicate `plan_save_contract.py validate` and bypass its tool-revision check at `plan_save_contract.py:496`, which exists so the renderer that writes is the one that was verified. And a `--help` added over the module-scope `import yaml` would have been born with the defect `{#997-import-outside-every-handler}` had just fixed next door, so the import moved to `SaveProbe.__call__` in the same change. Reverting either half alone fails the guard; both were run.
+
+**Generalizable rule.** When a module stops being imported and starts being invoked by path, it needs an entrypoint even if it is not runnable — one that names what it is and what to run instead, and refuses at a non-zero code. Silence at exit 0 is a worse answer than a refusal.
+
+**Refs.** Issue #998; parent grouping #1005; `plugins/saga/scripts/plan_save_proof.py`; `tests/test_saga_plan_contract_boundaries.py::test_proof_cli_describes_itself_and_stays_inert_under_the_loader`; canary `plan-save-contract-proof-cli`; DECISIONS `{#998-describe-and-refuse-not-a-second-runner}`.
+
+### A canary mutation must make the guard fail, not make the test runner crash  {#998-canary-mutation-must-fail-cleanly}
+
+**Context.** `tools/canary_registry.json` requires a behavioral mutation for every guard in the Plan contract test files, and `tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth` executes each one and asserts `result == "caught"`.
+
+**Evidence.** The first mutation for `plan-save-contract-proof-cli` replaced `if __name__ == "__main__":` with `if True:`, on the reasoning that the entrypoint would then fire under `runpy` and turn a clean `validate` into a refusal. The canary reported `result: error`, not `caught`, with `mainloop: caught unexpected SystemExit!` and `no tests ran`.
+
+**Mechanism.** The test session imports `plan_save_proof.py` into the pytest process, so an unconditional entrypoint runs during collection, sees pytest's own argv, and exits the interpreter. The guard never ran at all. `error` and `caught` are different verdicts for a reason: `caught` means the guard noticed the broken invariant, `error` means nobody got to look. A mutation that kills the runner proves nothing about the guard.
+
+**Fix.** The registered mutation replaces `parser.print_usage(sys.stderr)` with `return 0`, so a direct invocation returns the success code — the reported defect itself — and the guard fails cleanly on its exit-code assertion. The rejected mutation and the reason are recorded in the entry's `mutation_description` so the next maintainer does not retry it.
+
+**Generalizable rule.** Pick the mutation that breaks the invariant the guard asserts, not the one that breaks the most. Verify the canary reports `caught`; treat `error` as an unproven guard, never as a pass.
+
+**Refs.** Issue #998; `tools/canary_registry.json` entry `plan-save-contract-proof-cli`; `tests/test_wiring_canary.py:40`.
+
 ### A module-scope import is outside every handler the file owns, and subclassing the dependency kills the sentinel repair  {#997-import-outside-every-handler}
 
 **Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. Issue #996 had just finished making that promise hold against the foreign code the tool executes. The tool still imported PyYAML at module scope.

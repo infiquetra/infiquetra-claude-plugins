@@ -97,7 +97,36 @@ here as the skill requires.
 | Front-loaded draft pull request offer | Declined, per the no-pull-request instruction |
 | Hard test gate | Not triggered by the derived change kinds |
 
+## Review rounds, and why a second one was opened
+
+**Round one** ran all seven approved lenses across five repair cycles, reviewing a moving head:
+`b67701c1`, then `71f967c4`, `9680b8a1`, `8b565638` and `a3832a26`. Eighteen gating findings — one
+P0 and seventeen P1 — every one repaired. Two further repairs followed from checks rather than
+lenses: the version drift guard that still said `1.5.2`, and a re-pin after the lifecycle moved from
+`67845cdd` to `5efc869f` mid-run.
+
+That round ended at `cycle_cap_best_available`, not an acceptance: its three-cycle repair allowance
+was spent, so the final head had never been through a lens.
+
+**The decision taken, and by whom.** The coordinator directed a fresh round on the final head rather
+than an override, and that is the right call on the merits: every finding was repaired, but repairs
+made after the last lens ran are exactly the code nothing has looked at, and three of round one's
+eighteen findings were defects introduced by earlier repairs in the same run. An override would have
+accepted the least-reviewed version of the change. No operator override was given or implied.
+
+**Round two** reviews `1cee1bde` with the same seven-lens roster, a fresh allowance, each lens told
+the head and made to check it out before reading. Its state is recorded in
+`docs/code-reviews/2026-09-19-issue-1022-roles-library-code-review.md`.
+
+## Gate
+
+Drivers no longer run `scripts/gate.sh`; the coordinator runs the full gate on the integration
+branch after each merge. The fast inner loop stands in for it here, and all six checks pass at
+`1cee1bde`: `ruff check .`, `ruff format --check .`, `mypy plugins/ scripts/ tests/`, the two
+affected test files, `check_release_surface_parity.py`, and
+`release_surface_diff_guard.py --base-ref 2044c363`.
+
 ## Next step
 
-Run `/code-review` against this branch's diff from `2044c363`, repair any finding at priority P0 or
-P1, and return to the coordinator for the merge turn.
+Finish round two, repair anything gating within its allowance, and return to the coordinator for the
+merge turn onto the integration branch.

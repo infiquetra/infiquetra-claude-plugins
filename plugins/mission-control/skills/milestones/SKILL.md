@@ -142,7 +142,7 @@ For Objectives spanning multiple repositories:
 
 An Objective is complete when:
 
-- Linked work items are in a terminal workflow status (`Done`, `Closed`, or equivalent).
+- Linked work items have reached the terminal Status `Ready to close`, or their GitHub issue is closed.
 - Success criteria in the Outcome Scorecard are validated.
 - No critical/high defects remain open against the Objective.
 - The GitHub Milestone is closed if one was created.

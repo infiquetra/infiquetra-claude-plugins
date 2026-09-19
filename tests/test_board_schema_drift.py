@@ -244,14 +244,18 @@ def test_committed_census_matches_the_live_boards(capsys: pytest.CaptureFixture[
 MISSION_CONTROL = REPO_ROOT / "plugins" / "mission-control"
 
 # Every way this plugin's prose writes a Status value.
-STATUS_VALUE_PATTERNS = (
-    # --status "Ready for Planning" / --status 'Ready' / --status Ready
-    re.compile(r"--status\s+(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z][\w-]*))"),
-    # --field Status --option "Ready for Planning" / --option Ready
-    re.compile(
-        r"--field\s+Status\b.*?--option\s+(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z][\w-]*))",
-        re.DOTALL,
-    ),
+# Matched per line.
+STATUS_FLAG_PATTERN = re.compile(r"--status\s+(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z][\w-]*))")
+
+# Matched over the WHOLE file, because this plugin really does wrap the form
+# across lines with a trailing backslash:
+#     --field Status \\
+#     --option Implementing
+# A per-line scan cannot see that, which is the blind spot a `re.DOTALL` flag
+# on a per-line scan only pretended to cover.
+STATUS_OPTION_PATTERN = re.compile(
+    r"--field\s+Status\b[\s\\]*?--option\s+(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z][\w-]*))",
+    re.DOTALL,
 )
 
 # Bare mentions are caught by name rather than by syntax, because an agent reads
@@ -260,8 +264,14 @@ STATUS_VALUE_PATTERNS = (
 # English ("the Active board"), so the check is scoped to words that used to be
 # Status values and no longer are. `\b` keeps `Ready` from matching inside
 # `Ready for Planning` or `Ready to merge`.
+# `Active` is deliberately absent: it is a live Stage option, so a bare
+# mention is usually legitimate ("the Active stage"). It is still caught as a
+# Status VALUE by the flag patterns above. `Done` has no such excuse -- it is
+# not a Stage, not a Status, and not a field name -- so a bare mention of it
+# is always either an instruction to write a dead value or a historical note,
+# and the history exemption below separates those two.
 BARE_RETIRED_NAME = re.compile(
-    r"\b(?:Idea|Todo|Committed|Parked)\b"
+    r"\b(?:Idea|Todo|Committed|Parked|Done)\b"
     r"|\bReady\b(?!\s+(?:for\s+Active|for\s+Planning|to\s+close|to\s+merge))"
 )
 
@@ -315,30 +325,89 @@ def test_the_prose_sweep_actually_scans_something() -> None:
     )
 
 
-def _status_values_on(line: str) -> list[str]:
-    """Every Status value a line writes, in any of the three syntaxes."""
-    found: list[str] = []
-    for pattern in STATUS_VALUE_PATTERNS:
-        for groups in pattern.findall(line):
+def _status_values(text: str) -> list[tuple[int, str]]:
+    """Every Status value the text writes, as (line number, value).
+
+    The flag form is matched per line; the `--field Status … --option` form is
+    matched over the whole text, because it wraps across lines here.
+    """
+    found: list[tuple[int, str]] = []
+
+    for number, line in enumerate(text.splitlines(), 1):
+        for groups in STATUS_FLAG_PATTERN.findall(line):
             value = next((g for g in groups if g), "")
             if value:
-                found.append(value)
+                found.append((number, value))
+
+    for match in STATUS_OPTION_PATTERN.finditer(text):
+        value = next((g for g in match.groups() if g), "")
+        if value:
+            # Derive the line from the match offset, since the match may span lines.
+            found.append((text.count("\n", 0, match.start()) + 1, value))
+
     return found
 
 
+def _history_exempt_lines(text: str) -> set[int]:
+    """Line numbers a history marker excuses.
+
+    Scoped to the enclosing PARAGRAPH, not the single line. A marker such as
+    "retired" often lands on the first line of a wrapped paragraph while the
+    retired name lands on the second, and a line-scoped exemption silently stops
+    covering the line below it -- which is a false negative in a guard, the worst
+    kind. Headings extend the exemption to their whole section.
+
+    Only a real ATX heading counts: `#` followed by a space, outside a fenced
+    code block. A shell comment inside a fence starts with `#` too, and treating
+    one as a heading would excuse every line until the next comment.
+    """
+    lines = text.splitlines()
+    exempt: set[int] = set()
+
+    # Paragraph scope: blank-line-separated runs.
+    start = 0
+    for index in range(len(lines) + 1):
+        if index == len(lines) or not lines[index].strip():
+            if index > start:
+                block = "\n".join(lines[start:index])
+                if any(marker in block for marker in HISTORY_MARKERS):
+                    exempt.update(range(start + 1, index + 1))
+            start = index + 1
+
+    # Section scope: from a marked heading to the next heading of any level.
+    in_fence = False
+    heading_is_history = False
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if not in_fence and re.match(r"#{1,6}\s", stripped):
+            heading_is_history = any(marker in line for marker in HISTORY_MARKERS)
+        if heading_is_history:
+            exempt.add(number)
+
+    return exempt
+
+
 def test_no_prose_surface_writes_a_status_the_boards_reject(stage_flow: dict[str, Any]) -> None:
-    """Command examples must name a Status that exists."""
+    """Command examples must name a Status that exists.
+
+    No history exemption here: a command example is an instruction whatever
+    section it sits in, and a historical note has no reason to carry a runnable
+    flag.
+    """
     valid = set(stage_flow["statuses"])
     stages = set(stage_flow["stages"])
     offenders: list[str] = []
 
     for path in _prose_surfaces():
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            for value in _status_values_on(line):
-                if value in valid:
-                    continue
-                why = "a Stage, not a Status" if value in stages else "not in the schema"
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{number} writes {value!r} ({why})")
+        text = path.read_text(encoding="utf-8")
+        for number, value in _status_values(text):
+            if value in valid:
+                continue
+            why = "a Stage, not a Status" if value in stages else "not in the schema"
+            offenders.append(f"{path.relative_to(REPO_ROOT)}:{number} writes {value!r} ({why})")
 
     assert not offenders, (
         "prose instructs an agent to write a Status the boards reject:\n" + "\n".join(offenders)
@@ -352,19 +421,17 @@ def test_no_prose_surface_tells_an_agent_to_use_a_retired_status_name(
 
     A sentence like "move it to Ready if context complete" is as much an
     instruction as a command line, and the first version of this guard could not
-    see it. Lines that discuss the retired vocabulary as history are exempt.
+    see it. Paragraphs and sections that discuss the retired vocabulary as
+    history are exempt.
     """
     valid = set(stage_flow["statuses"])
     offenders: list[str] = []
 
     for path in _prose_surfaces():
-        heading = ""
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if line.lstrip().startswith("#"):
-                heading = line
-            if any(marker in line for marker in HISTORY_MARKERS) or any(
-                marker in heading for marker in HISTORY_MARKERS
-            ):
+        text = path.read_text(encoding="utf-8")
+        exempt = _history_exempt_lines(text)
+        for number, line in enumerate(text.splitlines(), 1):
+            if number in exempt:
                 continue
             for match in BARE_RETIRED_NAME.finditer(line):
                 name = match.group(0)

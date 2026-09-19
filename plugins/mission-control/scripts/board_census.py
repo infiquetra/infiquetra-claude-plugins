@@ -188,15 +188,20 @@ def cmd_check() -> int:
         # A board carries two fields with one name, so the census cannot
         # represent it. A real defect on the board, not an access failure:
         # report it in this script's own FAIL convention rather than letting
-        # it surface as a traceback. Caught by its own type so a
-        # `json.JSONDecodeError` from a failing live call -- also a
-        # `ValueError` -- still reaches the SKIP branch below.
+        # it surface as a traceback. Caught by its own type, never as a bare
+        # `ValueError`, so a `json.JSONDecodeError` from a failing live call
+        # is not misreported as a malformed board.
         print(f"FAIL board census is not representable: {exc}")
         return 1
-    except (GhApiError, RuntimeError, OSError) as exc:
+    except (GhApiError, RuntimeError, OSError, json.JSONDecodeError) as exc:
         # Live GitHub Projects access is unavailable (no auth/network in this
         # environment, e.g. a CI runner with no Projects-scoped token) — a
-        # SKIP, printed explicitly, never a silent pass. Mirrors the
+        # SKIP, printed explicitly, never a silent pass. `json.JSONDecodeError`
+        # is named explicitly: `_graphql` parses `gh` stdout after a zero exit,
+        # so a truncated or non-JSON body lands here, and it subclasses
+        # `ValueError` rather than `RuntimeError`, so the tuple above would
+        # otherwise miss it and the failure would surface as a traceback.
+        # Mirrors the
         # `--live`-gated skip posture of check_issue_contract_parity.py's
         # third leg for the same reason (#424 T14-F5-3).
         print(f"SKIPPED board-schema.json --check: live derivation unavailable ({exc})")

@@ -14,7 +14,7 @@ when_to_use: |
 
   Throughput analysis:
   - "how many capabilities did we complete last week", "weekly delivery rate"
-  - "throughput this month", "how many items reached Done"
+  - "throughput this month", "how many items reached Ready to close"
 
   WIP age and aging work:
   - "how old are our active items", "what's stale", "aging work items"

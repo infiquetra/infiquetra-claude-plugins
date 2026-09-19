@@ -1,0 +1,152 @@
+# Roles library
+
+One reusable prompt per role that the software development lifecycle names, written in the
+lifecycle's own vocabulary. A roster helper sends one of these files to a fresh agent session so
+the session knows what it is, what it reads, what it returns, and when it stops — without anyone
+hand-writing a briefing.
+
+The source of truth is the sibling repository `infiquetra-sdlc`. This directory holds no policy of
+its own: no role it does not name, no contract it does not define, no scoring threshold. When this
+directory and that repository disagree, that repository is right and this directory is stale.
+
+Read from `infiquetra-sdlc` revision `67845cdd`.
+
+## What is here, and what is not
+
+These files are prompts. Nothing here spawns a session, orders roles, enforces a gate, or combines
+results — that is the roster helper's job and the run chain's job.
+
+They are not Claude Code agent definitions. They carry no `model:` or `effort:` field, because
+choosing a role's vendor, model and effort is the staffing component's decision, and a tier written
+here would be a second place to change it.
+
+## The contract every prompt follows
+
+Each role prompt is a Markdown file with YAML frontmatter and four required sections. It has to be
+self-contained: the whole file is the entire briefing a session that has never seen this run will
+get.
+
+Frontmatter keys, all four required:
+
+| Key | Meaning |
+|---|---|
+| `role` | The readable role name as the lifecycle's role catalogue spells it |
+| `role_id` | The lifecycle's stable identifier for the role |
+| `emits` | A YAML **list** of the handoff contract identifiers this role produces. Always a list, never a bare string — the Planner produces two and the Delivery Manager five. The list is empty for a role whose result is aggregated into another role's contract rather than posted as its own; the Lens Reviewer is the only such role, and its prompt says where its result goes |
+| `source` | Where the content came from, so a reader can check it |
+
+Required sections, in this order and with these exact headings:
+
+| Heading | Holds |
+|---|---|
+| `## Role` | What the role is, what it may decide, and what it must never do |
+| `## Inputs from the run record` | The named inputs the session is given, and where each comes from |
+| `## Output contract` | The handoff comment the role posts, in the lifecycle's shape |
+| `### Stop rule` | The condition on which this role stops working and hands off |
+
+`### Stop rule` is a level-three heading inside the output-contract section on purpose: the card that
+commissioned this directory checks for that exact string, and a structural test enforces it. Do not
+promote it to `## Stop rule`.
+
+The lifecycle's own name for this concept is the field `stop_condition`, a required field of the
+`dispatch` contract, meaning the deadline or the condition on which a dispatched role stops. The
+heading here and the field there are the same idea under two names.
+
+## The output contract, once
+
+Every role posts its result as a handoff comment on the issue record, in the shape
+`docs/process/run-contracts.md` fixes. The comment opens with a heading naming the contract:
+
+```markdown
+### Handoff: <contract name> (<contract-id>)
+```
+
+and then carries one bolded field label per line. Four fields come first on every contract, whatever
+else follows:
+
+```markdown
+**Revision.** <the commit the work is bound to>
+**Artifact.** <path@revision, or a link>
+**Assigned.** <the role or person who acts next>
+**Next.** <the action they take>
+```
+
+Each role prompt then names its own contract's required fields. Nothing parses this convention
+today; the shape is a reading habit, held to so that one habit covers every handoff.
+
+## Role to file map
+
+Fourteen roles, one file each. The lifecycle names fifteen; the Human Operator is a person, not a
+session, and gets no prompt.
+
+Two identifiers are historical and deliberately do not match their readable name — the Architect's
+identifier is `orchestrator` and the Delivery Manager's is `controller`, both kept for tooling
+stability. The files are named for the readable role so nobody opens `orchestrator.md` expecting an
+orchestrator.
+
+| Role | `role_id` | File |
+|---|---|---|
+| Product | `product` | `product.md` |
+| Issue Reviewer | `issue_reviewer` | `issue-reviewer.md` |
+| Planner | `planner` | `planner.md` |
+| Architect | `orchestrator` | `architect.md` |
+| Delivery Manager | `controller` | `delivery-manager.md` |
+| Initial Implementation Worker | `implementer` | `implementer.md` |
+| Plan Reviewer | `plan_reviewer` | `plan-reviewer.md` |
+| Review Controller | `review_controller` | `review-controller.md` |
+| Lens Reviewer | `lens_reviewer` | `lens-reviewer.md` |
+| Standard Repair Implementer | `standard_repair_implementer` | `standard-repair-implementer.md` |
+| Expert Repair Implementer | `expert_repair_implementer` | `expert-repair-implementer.md` |
+| Release Worker | `release_worker` | `release-worker.md` |
+| Functional Tester | `functional_tester` | `functional-tester.md` |
+| Investigator | `investigator` | `investigator.md` |
+
+The Lens Reviewer is one file carrying a shared reviewer half and one section per lens, keyed
+`#### <lens-id>` to the lifecycle's lens catalogue. A consumer sends the shared half plus the one
+section for the lens it is staffing.
+
+## How a prompt reports
+
+Every prompt points at the house style rather than repeating it:
+`plugins/house-style/references/subagent-presentation-preamble.md`, the single canonical copy in
+this repository. The prompts that were migrated into this directory each opened with a
+byte-identical forty-line copy of that text, twenty-five copies in all, which is the drift this
+library exists to undo.
+
+## Where the retired prompts went
+
+The `team-execution` plugin's 25 agent prompts and its two criteria documents were the source
+material. This is the one file in this directory allowed to name them, because the accounting has to
+live somewhere; the role prompts themselves never mention that plugin.
+
+| Group | Count | Destination |
+|---|---|---|
+| Reviewers — security, architecture, devil's advocate, code quality, testing, API, infrastructure, privacy, clarity, AI usefulness | 10 | Lens sections of `lens-reviewer.md` |
+| Testers — scenario, smoke, API contract, UI regression, performance, concurrency, event flow, SDK regression | 8 | Named strategies in `functional-tester.md` |
+| Scanners — security, dependency, API compatibility, infrastructure cost | 4 | Not roles. They become mechanical baseline checks in the build loop, tracked separately |
+| Monitors — GitHub Actions, runtime — and the deploy watcher | 3 | Wait steps in `release-worker.md` |
+
+The two criteria documents follow the same rule. The review criteria already delegated every
+dimension, anchor and acceptance rule to a roster file and asserted no policy of its own, so its
+substance is now the Lens Reviewer's instruction to read dimensions and anchors from the lifecycle's
+catalogue. The validator criteria's gate-status vocabulary was that plugin's own invention and is
+deliberately not carried; roles record pass-or-fail evidence in their handoff comment instead.
+
+The `team-execution` files themselves still exist. Removing them is a separate piece of work.
+
+## Adding a role later
+
+Add the row to the map above, add the file, and the structural test picks it up — it reads the
+expected set from this file's `## Role to file map` table rather than from a list in the test. A row
+without a file fails, and a file without a row fails, so neither half can drift alone.
+
+## Exemptions this file claims
+
+This README is the one file in the directory that carries no stop-rule heading, and the one file
+allowed to name the retired plugin. The structural test states both exemptions once, by filename.
+
+The first exemption needs its check anchored to the start of a line. This file has to quote the
+heading it mandates — the table above does, twice — so a plain substring search for the heading
+matches this file too, and a search for files *lacking* it comes back empty rather than naming this
+one. Anchored to a line start, the search says what it means: every role prompt has the heading, and
+this file does not.

@@ -175,6 +175,21 @@ property, and prove the new guard red before you accept it green.
 
 **Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
 [[#1020-census-keyed-by-field-name]].
+### `except Exception` is not a boundary; a tool that runs someone else's code needs `BaseException`  {#996-envelope-needs-baseexception}
+
+**Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. It keeps that promise through two `except Exception` handlers. It also executes the repository checkout named by `--root` in-process through `runpy`, which makes that checkout's code an input the tool does not control.
+
+**Evidence.** Reproduced at `2044c363` against a temporary checkout: a module-level `sys.exit(7)` in `plan_save_proof.py` gave empty stdout and exit 7; a module-level `raise KeyboardInterrupt` gave a raw traceback and exit 130; and a `sys.exit(9)` as the first statement of `verify()` gave empty stdout and exit 9. Unmutated, the same command returned `{"outcome": "valid"}` at exit 0. Issue #996, finding `adv09` from the issue #926 review.
+
+**Mechanism.** `SystemExit` and `KeyboardInterrupt` derive from `BaseException`, not `Exception`, so neither handler saw them. Two seams could raise, not one: the finding named only the `runpy` load, but `verify_saved_examples` loads the proof and then *calls* it outside the loader's `try`, so guarding the load alone would have left the second escape open and looked fixed.
+
+**The trap.** The obvious repair — widening the top-level handler in `main()` — is wrong, and wrong in a way tests would have caught only if someone thought to test `--help`. Argparse raises `SystemExit(0)` for `--help` from inside that same `try`, so the narrow handler is the sole reason `--help` prints usage and exits 0. Widening it turns the one documented exemption into a JSON refusal at exit 2.
+
+**Fix.** Guard where the foreign code runs, not at the top: widen the loader's handler to `BaseException` and wrap the `verify()` call in a shared conversion that re-raises `ContractError` untouched (so a real verification diagnosis is not relabelled an engine fault). `main()` keeps `except Exception` with a comment saying why.
+
+**Generalizable rule.** When a handler's job is to be a boundary around code you do not control, it must name `BaseException` — and the boundary belongs at every place that code executes, which is usually more places than the bug report names. A deliberately narrow handler elsewhere in the same file is a fact to preserve, not an oversight to tidy up.
+
+**Refs.** Issue #996; parent grouping #1005; `plugins/saga/scripts/plan_save_contract.py`; `tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_baseexception_from_checkout_code`; DECISIONS `{#996-envelope-seam-not-top-handler}`.
 
 ## 2026-09-16
 

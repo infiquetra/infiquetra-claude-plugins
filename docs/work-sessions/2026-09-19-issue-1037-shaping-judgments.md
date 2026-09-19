@@ -36,6 +36,14 @@ Two behavioral mutations were then applied to the finished module and the suite 
 
 The card's first acceptance criterion ran against a real requirements document — the issue 1031 brainstorm, taken from the integration branch `parent/1018` — and printed one probability per readiness criterion at exit 0. Seven criteria, seven probabilities. Two are worth naming because they read as correct rather than as noise: acceptance examples came back at 0.11, and that document indeed has no acceptance-examples section, while "could a planner proceed cold" came back at 0.55 with a confidence of 0.10, which is the model correctly reporting that it cannot tell. `TYPESAFE_API_KEY` was confirmed present by testing the variable's length; it was never printed and appears in no file this card creates.
 
+## What the full suite caught that nothing else did
+
+The inner loop was green while the branch was broken. The full suite across both pytest roots failed `tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module` — a fleet-wide guard in a file this card never touches, and therefore invisible to every check scoped to the diff.
+
+It flagged `RUBRIC_LEVELS = ("low", "medium", "high")` in the new module, and it was right to: those three words are a strict subset of the effort ladder in `tier_palette.py`, so a bare tuple of them assigned in a saga script cannot be told apart from a truncated re-declaration of the fleet vocabulary. The levels are now `weak` / `moderate` / `strong`, which are rubric positions rather than efforts and read better as score levels anyway. The guard was not weakened, and a companion assertion keeps the reason visible at the constant itself.
+
+This is the concrete case for running the whole suite before a push on a card that bumps a version, rather than trusting a diff-scoped loop.
+
 ## Checks run
 
 Inner loop, all green: `ruff check`, `ruff format --check`, `mypy plugins/ scripts/ tests/`, the touched tests plus the two brainstorm guard files (146 passed), `check_release_surface_parity.py`, `release_surface_diff_guard.py --base-ref origin/main`, `sync_marketplace.py --check`, `marketplace/validator/validate.py` (15 plugins, 0 errors), and `lint_journal_order.py`. The full suite across both pytest roots ran before the push.

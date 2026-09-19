@@ -8,10 +8,10 @@
 |---|---|
 | Target | branch `issue/1037` |
 | Base | `866d3670` (`origin/main`) |
-| Reviewed revision | `09265526` — the head after the repairs below |
-| Pre-repair revision | `9ca3e767` — where the findings were raised |
+| Reviewed revision | `4c0a2ac7` at cycle 2; `09265526` at cycle 1 |
+| Pre-repair revision | `9ca3e767` — where the cycle-1 findings were raised |
 | Mode | interactive |
-| Cycle | 1 of 3 |
+| Cycle | 2 of 3 |
 | Backend | inline |
 | Outcome | `accepted` |
 | Blocking findings remaining | none |
@@ -78,6 +78,20 @@ The four skill-wiring guards were written before the skills were edited and run:
 Two behavioral mutations were applied to the finished module. Returning only the first member of each dedupe group killed `test_grouping_never_removes_a_candidate` and `test_matched_candidates_share_one_group`. Restoring `axis_spread` to the per-idea rubric killed `test_the_rubric_excludes_axis_spread`.
 
 F1's guard was confirmed by measurement on both sides: the same script reported 190 requests for 20 candidates before the fix and 2 after.
+
+## Cycle 2 — the post-cycle-1 delta
+
+Reviewed source changed after cycle 1, so the cycle-1 verdict stopped covering the branch head and a second cycle was owed rather than assumed. The delta is one commit, `4c0a2ac7`, and this is its review.
+
+**What changed and why.** The full suite across both pytest roots failed one test that cycle 1 had no reason to look at: `tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module`, a fleet-wide guard in a file this card never touched. It flagged `RUBRIC_LEVELS = ("low", "medium", "high")` in the new module. The guard is correct — those three words are a strict subset of the effort ladder in `tier_palette.py`, and a bare tuple of them assigned in a saga script cannot be distinguished from a truncated re-declaration of the fleet vocabulary, which is the drift that guard exists to stop. The levels became `weak` / `moderate` / `strong`.
+
+**Cycle-2 findings: none.** The correctness question the change raises is whether anything consumed the old level strings. Nothing does: `RUBRIC_LEVELS` has exactly one consumer, the default argument of `_score`, and no code anywhere compares against a level name. A score answer returns a numeric position that `typesafe_client.answer_value` reads, so the level words reach the model and never reach control flow. Renaming them changes what is asked, which is the intent, and cannot change a threshold or a branch.
+
+The always-on four re-ran over the delta. Architecture, security and privacy have no surface in a constant rename. Testing gained one assertion, `test_the_score_levels_do_not_re_declare_the_fleet_effort_vocabulary`, which was watched failing on the reverted fix alongside the fleet guard itself — both died, so neither is a decoration.
+
+**Cycle-2 outcome: `accepted`** at `4c0a2ac7`. No finding from cycle 1 was reopened.
+
+**Worth recording beyond this card.** The inner loop was green while this was broken. A guard living in a file the change never touches is invisible to any check scoped to the diff, which is exactly why the full suite runs before a push on a card that bumps a version. It earned its sixteen minutes here.
 
 ## Residual risk
 

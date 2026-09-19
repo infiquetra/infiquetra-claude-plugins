@@ -46,7 +46,12 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.159.3"  # 0.159.3: plan_save_proof.py carries a
+    assert plugin_json["version"] == "0.160.0"  # 0.160.0: parse_issue.py gains --flags and
+    # --issue, which widen the five keyword flags with a model judgment (widen-only: a keyword
+    # flag stays set whatever the model answers) and report the seven approval boundaries
+    # advisorily; the journal-nudge hook asks the same way when the feat/fix prefix did not
+    # already nudge, stays silent on any failure, and never blocks (issue #1036).
+    # Predecessor 0.159.3: plan_save_proof.py carries a
     # command-line entrypoint that names the proof and the command that runs it, serves it at
     # exit 0 for --help, and refuses every other direct invocation at exit 2 with an empty
     # stdout; PyYAML moved to its point of use so that --help works without it (issue #998).

@@ -114,7 +114,35 @@ The harness reads either a list of records carrying `id`, `state`, `questions`, 
 
 ---
 
-## 5. Which transport runs
+## 5. The widen-only union
+
+House rule 3 says a pattern is a floor the model may raise and never lower. `jev_widen.py` is the one place that implements it, so no caller writes the rule twice.
+
+```python
+jev_widen = fleet_commons_shim.load("jev_widen")
+result = jev_widen.widen(state, "issue-flags", floors, decision_prefix="issue-flags")
+```
+
+`floors` maps a question key to the pattern's verdict. Every key comes back carrying the floor, the probability, the union (`floor or probability >= threshold`) and which side produced it. There is no path in which a floor of `True` returns a union of `False`.
+
+**Failure is always the floor.** An error, a timeout, a malformed body, a missing key, a missing answer or a non-numeric probability all return the caller's floors unchanged with a reason in `note`, and write no verdict. A caller that ignores `note` behaves exactly as it did before it asked anything.
+
+**The question sets live in the verb registry**, not in the callers, so `jev issue-flags` and `jev journal-nudge` work from the command line for free.
+
+| Verb | Keys | Threshold | Who asks |
+|---|---|---|---|
+| `issue-flags` | the five keyword flags plus the seven approval boundaries | 0.70 | `plugins/saga/scripts/parse_issue.py --flags` |
+| `journal-nudge` | `earns_entry` | 0.60 | `plugins/saga/hooks/journal_nudge_hook.py` |
+
+Both thresholds are **provisional**: they come from which mistake is cheaper, not from measurement. A false flag costs an extra review lens; a false nudge costs one line on standard error, which is why the nudge can afford to be readier. Every verdict records the threshold in force, and §4 is how they get settled.
+
+**Which side each caller fails open on.** `parse_issue.py` returns the keyword result and still exits 0, because four saga skills read its JSON and a missing key would break them. The hook stays silent, asks at most once with a two-second request timeout and a three-second deadline, and never blocks a commit; `INFIQUETRA_TYPESAFE_JOURNAL_NUDGE=off` skips the call entirely.
+
+**The seven approval boundaries report; they do not approve.** `issue-flags` also answers the seven categories from the sdlc chapter `docs/process/operator-escalations.md`. They have no pattern floor, nothing in this repository reads them, and no code grants or withholds an approval on them. They exist so a human sees the category named.
+
+---
+
+## 6. Which transport runs
 
 The official `typesafe-sdk` package where it can be imported; a dependency-free `urllib` transport everywhere else, which is what lets a hook or a script run outside this project's environment. `INFIQUETRA_TYPESAFE_TRANSPORT` forces one or the other. An unrecognized value, or a request for the SDK where it is not installed, fails loudly — the two transports differ in how the key is handled, so a silent substitution would be a behavior change nobody could see.
 

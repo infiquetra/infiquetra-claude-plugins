@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.160.0",
+      "version": "0.161.0",
       "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
       "author": {
         "name": "Infiquetra",
@@ -200,7 +200,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.26.0",
+      "version": "0.27.0",
       "description": "Fleet-commons library: shared primitives, liveness decisions, execution-class routing, bridge receipts, attestations, the delegation audit store, and the TypeSafe client with its jev tool.",
       "author": {
         "name": "Infiquetra",

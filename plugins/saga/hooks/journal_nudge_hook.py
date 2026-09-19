@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
 """
-PostToolUse hook: nudge when a feat/fix commit omits a journal entry.
+PostToolUse hook: nudge when a commit that earned a journal entry omits one.
 
-Fires after a Bash tool call that issues a `git commit`.  When the commit
-message starts with `feat` or `fix` and the committed diff touches code files
-but includes NO `docs/engineering-journal/` path, prints a one-line nudge to
-stderr.
+Fires after a Bash tool call that issues a `git commit`.  When the committed
+diff touches code files, includes NO `docs/engineering-journal/` path, and
+either the message starts with `feat`/`fix` or a model judges the commit to
+have earned an entry, prints a one-line nudge to stderr.
+
+The `feat`/`fix` prefix is a FLOOR, never a ceiling (issue 1036): the model is
+asked only when the prefix did not already nudge, and it can only add a nudge,
+never suppress one.  A `refactor` or `perf` commit carrying a non-obvious
+mechanism is exactly the commit whose learning is worth writing down, and the
+prefix rule passed every one of them in silence.
 
 Properties (all by design):
   - NON-blocking: always exits 0.
   - NON-writing: never creates or edits journal files.
   - Cross-repo-safe: degrades quietly when the journal dir is absent or git
     is unavailable.
+  - Silent on any model failure: a missing key, an error, a timeout or a slow
+    vendor produces no output at all and costs at most `_JUDGMENT_DEADLINE`
+    seconds.  `INFIQUETRA_TYPESAFE_JOURNAL_NUDGE=off` skips the call entirely.
+  - Sends the commit's own message and file list, never a session transcript,
+    a diff, or customer content.
 
 Exit codes:
   0 — always (nudge or not, pass or error).
@@ -20,10 +31,12 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 # Commit message prefixes that warrant a journal nudge.
 _FEAT_FIX_RE = re.compile(r"^(feat|fix)\b", re.IGNORECASE)
@@ -56,6 +69,18 @@ _CODE_EXTENSIONS = frozenset(
 
 # Prefix that marks a journal entry in the committed diff.
 _JOURNAL_PREFIX = "docs/engineering-journal/"
+
+# The switch that turns the model judgment off entirely.  Default is on; any of
+# these values turns it off.
+_JUDGMENT_ENV = "INFIQUETRA_TYPESAFE_JOURNAL_NUDGE"
+_OFF_VALUES = frozenset({"off", "0", "false", "no"})
+
+# One attempt, two seconds, three seconds of total wall clock.  A hook runs
+# after every commit, so an unreachable vendor must cost a noticeable pause at
+# most -- never a retry ladder, and never a blocked terminal.
+_JUDGMENT_TIMEOUT = 2.0
+_JUDGMENT_ATTEMPTS = 1
+_JUDGMENT_DEADLINE = 3.0
 
 
 def _is_git_commit_command(command: str) -> bool:
@@ -142,6 +167,83 @@ def _has_journal_entry(files: list[str]) -> bool:
     return any(f.startswith(_JOURNAL_PREFIX) for f in files)
 
 
+def _commit_message(cwd: str | None) -> str:
+    """Return HEAD's own commit message, or '' on any error.
+
+    `_extract_commit_message` reads the message out of the shell command and
+    only handles the `-m` forms, so a here-document or `-F` commit yields an
+    empty string.  The model is asked about the real message; the `feat`/`fix`
+    floor keeps reading the parsed one, so nothing about today's behaviour
+    depends on this.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", "-s", "--format=%B", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _judgment_enabled(getenv: Any = None) -> bool:
+    """Return False when the operator switched the model judgment off."""
+    read = getenv if getenv is not None else os.environ.get
+    value = (read(_JUDGMENT_ENV) or "").strip().lower()
+    return value not in _OFF_VALUES
+
+
+def _earned_a_journal_entry(message: str, files: list[str], widen: Any = None) -> bool:
+    """Ask the model whether this commit earned an entry.  False on any failure.
+
+    The floor is `False` here, so this function can only ever ADD a nudge.  The
+    state is the commit's own message and its file list -- the data rule in
+    `plugins/fleet-core/references/typesafe.md` forbids sending a transcript.
+    """
+    try:
+        if widen is None:
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+            import fleet_commons_shim  # noqa: PLC0415
+
+            widen = fleet_commons_shim.load("jev_widen").widen
+
+        result = widen(
+            {"message": message, "files": files},
+            "journal-nudge",
+            {"earns_entry": False},
+            decision_prefix="journal-nudge",
+            timeout=_JUDGMENT_TIMEOUT,
+            max_attempts=_JUDGMENT_ATTEMPTS,
+            total_deadline=_JUDGMENT_DEADLINE,
+        )
+        return bool(result.judgments["earns_entry"].union)
+    except Exception:
+        # Fleet-core absent, the module moved, the vendor unreachable: the quiet
+        # side is the safe side, and the hook has no way to report anyway.
+        return False
+
+
+def _nudge(from_model: bool) -> None:
+    """Print the advisory line.  stderr only, never blocking."""
+    because = (
+        "this commit looks like it recorded a non-obvious mechanism or a pattern decision"
+        if from_model
+        else "this feat/fix commit touches code"
+    )
+    print(
+        f"[saga/journal-nudge] Heads up: {because} but "
+        "includes no docs/engineering-journal/ entry. "
+        "Add a LEARNINGS.md or DECISIONS.md entry if the change earned one "
+        "(non-obvious fix, pattern decision, tooling choice).",
+        file=sys.stderr,
+    )
+
+
 def main() -> None:
     try:
         raw = sys.stdin.read()
@@ -161,11 +263,10 @@ def main() -> None:
     if not _is_git_commit_command(command):
         sys.exit(0)
 
-    # Extract the commit message type.
+    # The floor: the commit-message prefix, read from the shell command exactly
+    # as it always was.
     msg = _extract_commit_message(command)
-    if not _FEAT_FIX_RE.match(msg):
-        # docs-only, chore, refactor, etc. — stay silent.
-        sys.exit(0)
+    matches_prefix = bool(_FEAT_FIX_RE.match(msg))
 
     # Determine the working directory from `git -C <path>` if present.
     cwd: str | None = _parse_git_dash_c(command)
@@ -181,21 +282,30 @@ def main() -> None:
         sys.exit(0)
 
     if not _has_code_files(files):
-        # Docs-only or non-code commit — no nudge.
+        # Docs-only or non-code commit — no nudge.  This precondition is
+        # deliberately NOT widened: the model widens which MESSAGE earns an
+        # entry, not which kind of file does.
         sys.exit(0)
 
     if _has_journal_entry(files):
         # Journal entry present — all good, no nudge.
         sys.exit(0)
 
-    # Nudge: non-blocking, stderr only.
-    print(
-        "[saga/journal-nudge] Heads up: this feat/fix commit touches code but "
-        "includes no docs/engineering-journal/ entry. "
-        "Add a LEARNINGS.md or DECISIONS.md entry if the change earned one "
-        "(non-obvious fix, pattern decision, tooling choice).",
-        file=sys.stderr,
-    )
+    if matches_prefix:
+        # The floor fired: nudge without asking anything.  Asking here could
+        # only ever agree, and it would cost a request on every feat/fix commit.
+        _nudge(from_model=False)
+        sys.exit(0)
+
+    if not _judgment_enabled():
+        sys.exit(0)
+
+    message = _commit_message(cwd) or msg
+    if not message:
+        sys.exit(0)
+
+    if _earned_a_journal_entry(message, files):
+        _nudge(from_model=True)
 
     # Always exit 0 — never block.
     sys.exit(0)

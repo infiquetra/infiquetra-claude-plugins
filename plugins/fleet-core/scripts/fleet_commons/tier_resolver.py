@@ -72,13 +72,30 @@ ROLE_TIER_ALIASES: dict[str, str] = {
 }
 
 MODELS_JSON_PATH = STAFFING_PATH
-SUPPORTED_RUNTIMES: tuple[str, ...] = (
-    "claude",
-    "codex",
-    "grok",
-    "muse",
-    "qwen",
-    "agy",
+
+
+def _vendor_palette() -> dict[str, Any]:
+    """Read the per-vendor palette from ``staffing.json`` (issue #1021).
+
+    The palette used to be five module-level literals here. It is data now because the card
+    asks for one data file and because a second table naming a vendor's models is exactly the
+    drift ``tests/test_tier_vocab_single_source.py`` exists to prevent. The reading interface —
+    the functions below — is unchanged.
+    """
+    document: Any = json.loads(STAFFING_PATH.read_text(encoding="utf-8"))
+    block = document.get("vendors")
+    if not isinstance(block, dict) or not block:
+        raise TierResolverError("staffing.json is missing a non-empty vendors object")
+    return block
+
+
+_VENDORS: dict[str, Any] = _vendor_palette()
+
+# Only the vendors whose launch arguments have been verified on a live host are runtimes this
+# resolver will translate for. ``opencode`` is in the palette with ``runtime_supported`` false
+# and its reason recorded in the data, so it is visible without being silently launchable.
+SUPPORTED_RUNTIMES: tuple[str, ...] = tuple(
+    name for name, row in _VENDORS.items() if row.get("runtime_supported")
 )
 STRONGEST_SUPPORTED = "strongest-supported"
 
@@ -87,56 +104,24 @@ STRONGEST_SUPPORTED = "strongest-supported"
 # Verified on this host 2026-08-13 from each CLI's own catalog/config, not inferred
 # across vendors. Two-rung catalogs share the weaker id for terra and 5.5.
 _RUNTIME_MODELS: dict[str, dict[str, str]] = {
-    "codex": {
-        "gpt-5.6-sol": "gpt-5.6-sol",
-        "gpt-5.6-terra": "gpt-5.6-terra",
-        "gpt-5.5": "gpt-5.5",
-    },
-    "claude": {
-        "gpt-5.6-sol": "fable",
-        "gpt-5.6-terra": "opus",
-        "gpt-5.5": "sonnet",
-    },
-    "grok": {
-        "gpt-5.6-sol": "grok-4.6",
-        "gpt-5.6-terra": "grok-4.5",
-        "gpt-5.5": "grok-4.5",
-    },
-    "muse": {
-        "gpt-5.6-sol": "muse-spark-1.2-contributor",
-        "gpt-5.6-terra": "muse-spark-1.2-contributor",
-        "gpt-5.5": "muse-spark-1.2-contributor",
-    },
-    "qwen": {
-        "gpt-5.6-sol": "qwen3.8-max-preview",
-        "gpt-5.6-terra": "qwen3.7-plus",
-        "gpt-5.5": "qwen3.6-plus",
-    },
-    "agy": {
-        "gpt-5.6-sol": "gemini-3.1-pro-high",
-        "gpt-5.6-terra": "gemini-3.6-flash-high",
-        "gpt-5.5": "gemini-3.5-flash-high",
-    },
+    name: dict(row["models"]) for name, row in _VENDORS.items() if row.get("runtime_supported")
 }
 
 # Per-vendor accepted effort rungs, verified on this host 2026-08-13.
 # These are the values collapse may emit. See DECISIONS {#effort-collapse-max}.
 _RUNTIME_ACCEPTED_EFFORTS: dict[str, tuple[str, ...]] = {
-    "claude": ("low", "medium", "high", "xhigh", "max"),
-    "codex": ("low", "medium", "high", "xhigh", "max"),
-    "grok": ("low", "medium", "high", "xhigh"),
-    "muse": ("low", "medium", "high", "xhigh"),
-    "qwen": ("low", "medium", "high", "xhigh", "max"),
-    "agy": ("low", "medium", "high"),
+    name: tuple(row["accepted_efforts"])
+    for name, row in _VENDORS.items()
+    if row.get("runtime_supported")
 }
 
 # Explicit effort-collapse policy. A vendor with no row passes the scalar through.
 # Muse accepts `ultra` on the CLI; it is never emitted (not a leaf scalar).
 # See DECISIONS {#effort-collapse-max}.
 _EFFORT_COLLAPSE: dict[str, dict[str, str]] = {
-    "grok": {"max": "xhigh"},
-    "muse": {"max": "xhigh"},
-    "agy": {"max": "high", "xhigh": "high"},
+    name: dict(row["effort_collapse"])
+    for name, row in _VENDORS.items()
+    if row.get("runtime_supported") and row.get("effort_collapse")
 }
 
 # How the collapsed effort is applied. Verified 2026-08-13 from each runtime's
@@ -147,12 +132,9 @@ _EFFORT_COLLAPSE: dict[str, dict[str, str]] = {
 # took is U4 (session lifecycle, pane.output_matched), not this unit.
 # See DECISIONS {#effort-collapse-max}.
 _EFFORT_APPLICATION_MODE: dict[str, str] = {
-    "claude": "argv",
-    "codex": "argv",
-    "grok": "argv",
-    "muse": "argv",
-    "agy": "argv",
-    "qwen": "in_session",
+    name: str(row["effort_application"])
+    for name, row in _VENDORS.items()
+    if row.get("runtime_supported")
 }
 
 

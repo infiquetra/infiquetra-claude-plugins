@@ -197,3 +197,109 @@ def test_staffing_registry_is_the_one_data_file() -> None:
     registry = staffing.load_staffing()
     for block in ("models", "efforts", "scalar_efforts", "work_shapes", "execution_classes"):
         assert block in registry, f"staffing.json is missing the {block!r} block"
+
+
+# ---------------------------------------------------------------------------
+# The vendor palette (R9, R10, KTD5, KTD11).
+# ---------------------------------------------------------------------------
+
+LAUNCHER = (
+    REPO_ROOT
+    / "plugins"
+    / "agent-launcher"
+    / "skills"
+    / "agent-launcher"
+    / "scripts"
+    / "launcher.py"
+)
+
+
+def _launcher_vendor_flags() -> dict[str, dict[str, str]]:
+    """The launcher's own vendor table, read from source without importing the launcher."""
+    import ast
+
+    tree = ast.parse(LAUNCHER.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == "VENDOR_FLAGS":
+            return ast.literal_eval(node.value)  # type: ignore[arg-type]
+    raise AssertionError("VENDOR_FLAGS not found in the agent-launcher launcher module")
+
+
+def test_palette_vendor_keys_equal_the_launcher_kind_list() -> None:
+    """A set comparison, so adding a kind to the launcher reds this rather than passing silently.
+
+    This is the forcing function for the hermes exclusion too: asserting that hermes is *absent*
+    would keep passing after hermes was added, which is why the pin is equality against the
+    launcher's own table (KTD5).
+    """
+    assert set(staffing.vendors()) == set(_launcher_vendor_flags())
+    assert "hermes" not in staffing.vendors()
+
+
+def test_every_vendor_names_at_least_one_model_or_records_why_not() -> None:
+    """Every entry is described; only a supported runtime must carry an effort list.
+
+    The effort half is scoped to supported runtimes on purpose: KTD11 refuses to invent an
+    accepted-effort list for a vendor whose launch arguments nobody has verified.
+    """
+    for name, row in staffing.vendors().items():
+        if row["runtime_supported"]:
+            assert row["models"], f"{name}: a supported runtime must name its models"
+            assert row["accepted_efforts"], f"{name}: a supported runtime must name its efforts"
+        else:
+            assert row["unsupported_reason"], f"{name}: an unsupported vendor must record why"
+
+
+def test_opencode_is_in_the_palette_but_not_a_supported_runtime() -> None:
+    """KTD11: visible in the data, absent from the resolver, and unchanged at the call site."""
+    from fleet_commons import tier_resolver
+
+    palette = staffing.vendors()
+    assert palette["opencode"]["runtime_supported"] is False
+    assert "opencode" not in tier_resolver.SUPPORTED_RUNTIMES
+    with pytest.raises(tier_resolver.TierResolverError):
+        tier_resolver.collapse_effort_for_runtime("opencode", "high")
+
+
+def test_supported_runtimes_derive_from_the_palette() -> None:
+    from fleet_commons import tier_resolver
+
+    expected = tuple(name for name, row in staffing.vendors().items() if row["runtime_supported"])
+    assert expected == tier_resolver.SUPPORTED_RUNTIMES
+
+
+@pytest.mark.parametrize(
+    ("runtime", "requested", "expected"),
+    [
+        ("claude", "max", "max"),
+        ("codex", "max", "max"),
+        ("qwen", "max", "max"),
+        ("grok", "max", "xhigh"),
+        ("muse", "max", "xhigh"),
+        ("agy", "max", "high"),
+        ("agy", "xhigh", "high"),
+        ("grok", "high", "high"),
+    ],
+)
+def test_effort_collapse_is_unchanged_by_the_move_into_data(
+    runtime: str, requested: str, expected: str
+) -> None:
+    """The values recorded in DECISIONS {#effort-collapse-max}, held against the data file."""
+    from fleet_commons import tier_resolver
+
+    assert tier_resolver.collapse_effort_for_runtime(runtime, requested) == expected
+
+
+def test_effort_application_mode_is_unchanged_by_the_move_into_data() -> None:
+    """Qwen alone applies effort in session, because it has no launch flag."""
+    palette = staffing.vendors()
+    assert palette["qwen"]["effort_application"] == "in_session"
+    for name in ("claude", "codex", "grok", "muse", "agy"):
+        assert palette[name]["effort_application"] == "argv"
+
+
+def test_an_unknown_vendor_raises_rather_than_clamping() -> None:
+    from fleet_commons import tier_resolver
+
+    with pytest.raises(tier_resolver.TierResolverError, match="not-a-vendor"):
+        tier_resolver.collapse_effort_for_runtime("not-a-vendor", "high")

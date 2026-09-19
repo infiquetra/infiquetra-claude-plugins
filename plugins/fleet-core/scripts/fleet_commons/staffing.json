@@ -92,6 +92,123 @@
       "rationale": "External-engine delegation, intent=divergence \u2014 agreement and disagreement are both explicit adversarial-review outcomes; use the high-tier chaperone posture."
     }
   },
+  "_vendors_comment": "hermes is the eighth agent kind the agent-launcher skill names in prose, and it is deliberately absent from this palette: the topology table describes it as reconciling a profile workspace and owning its own routing, so there is no model or effort for this component to choose. The vendor keys here are compared as a set against the launcher's VENDOR_FLAGS table, so adding a kind there reds tests/test_staffing.py rather than passing silently.",
+  "vendors": {
+    "claude": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "fable",
+        "gpt-5.6-terra": "opus",
+        "gpt-5.5": "sonnet"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effort_collapse": {},
+      "effort_application": "argv"
+    },
+    "codex": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "gpt-5.6-sol",
+        "gpt-5.6-terra": "gpt-5.6-terra",
+        "gpt-5.5": "gpt-5.5"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effort_collapse": {},
+      "effort_application": "argv"
+    },
+    "grok": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "grok-4.6",
+        "gpt-5.6-terra": "grok-4.5",
+        "gpt-5.5": "grok-4.5"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "effort_collapse": {
+        "max": "xhigh"
+      },
+      "effort_application": "argv"
+    },
+    "muse": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "muse-spark-1.2-contributor",
+        "gpt-5.6-terra": "muse-spark-1.2-contributor",
+        "gpt-5.5": "muse-spark-1.2-contributor"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "effort_collapse": {
+        "max": "xhigh"
+      },
+      "effort_application": "argv"
+    },
+    "qwen": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "qwen3.8-max-preview",
+        "gpt-5.6-terra": "qwen3.7-plus",
+        "gpt-5.5": "qwen3.6-plus"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effort_collapse": {},
+      "effort_application": "in_session",
+      "effort_command": "/effort {effort}"
+    },
+    "agy": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "gemini-3.1-pro-high",
+        "gpt-5.6-terra": "gemini-3.6-flash-high",
+        "gpt-5.5": "gemini-3.5-flash-high"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effort_collapse": {
+        "max": "high",
+        "xhigh": "high"
+      },
+      "effort_application": "argv"
+    },
+    "opencode": {
+      "runtime_supported": false,
+      "unsupported_reason": "The launcher can start opencode, but nobody has verified its launch-time effort and model arguments, and its model identifier must be in provider/model form, which no other vendor requires. Promoting it means verifying those arguments on a live host first, then flipping runtime_supported and filling accepted_efforts.",
+      "models": {},
+      "accepted_efforts": [],
+      "effort_collapse": {},
+      "effort_application": "unverified"
+    }
+  },
   "execution_classes": {
     "review-max": {
       "order": 0,

@@ -48,6 +48,15 @@ the retired NAMES and checks every syntax, and it was confirmed red against the 
 before being trusted. When it was widened it immediately found four more offenders nobody had
 reported -- which is what a guard built on the rule finds and a guard built on a syntax cannot.
 
+**State a guard's boundary, or the next reader assumes it has none.** This guard covers the
+names the board-stage migration renamed, plus `Done`, written in the syntaxes the plugin's
+Markdown actually uses. It does NOT cover the older Mount Olympus vocabulary (`Assigned`,
+`In Review`, `Needs Question`), argparse help strings in the Python sources, or exotic flag
+spellings such as `--status=X` and `--field=Status --option=X`. A later review found live
+instances of the first two classes. An earlier draft of this entry claimed the guard "checks
+every syntax", which was the same overclaim this entry exists to warn about, made about the
+remedy instead of the defect.
+
 **Corollary on exemptions.** A name-level sweep needs a history exemption or it drowns in false
 positives: a legacy ladder, a retirement note and a changelog all legitimately name retired
 values. Scope the exemption to a section marked as history, and leave the changelog out of the

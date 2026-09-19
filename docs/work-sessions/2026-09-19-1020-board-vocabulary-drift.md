@@ -70,7 +70,7 @@ passes. Six of them were defects a previous repair had introduced. The counter-m
 was mechanical, not attentional: prove a guard red before trusting it green, and mutation-test a
 test by reverting the fix it covers. Every guard in `tests/test_board_schema_drift.py` has now been
 watched to fail against a tree that should trip it, and the newest two were confirmed to die when
-their fix is reverted. The test count rose from 526 to 541, and thirteen of the additions exercise
+their fix is reverted. The test count rose from 526 to 541, and fifteen of the additions exercise
 the guard's own logic with synthetic input rather than against prose that happens to be clean.
 
 ## Answers applied, and where each came from

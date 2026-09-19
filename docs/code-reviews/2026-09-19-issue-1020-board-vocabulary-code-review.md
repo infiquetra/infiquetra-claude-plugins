@@ -1,15 +1,16 @@
 # Code Review — board vocabulary drift, issue 1020
 
-**Two rounds ran. Neither reached the 9.0 acceptance bar.** Round one finished at 7.6 with an open
-P1. Round two, a fresh run on the repaired tree with the same seven-lens roster, finished at 8.5
-with every dimension at or above the 7.0 floor and two P2 findings, both of which are now repaired
-in commits the round did not re-review. A third round is the operator's call, not the driver's, so
-this review stops here.
+**Three rounds ran. None reached the 9.0 acceptance bar; the last came closest at 8.6 with nothing
+gating open.** Round one finished at 7.6 with an open P1. Round two, a fresh run on the repaired
+tree, finished at 8.5 with two P2s, both then repaired. Round three was a scoring pass on the final
+head, ordered because the last two commits had never been reviewed: it found no P0 and no P1 in any
+of the seven lenses, every dimension at or above the 7.0 floor, and an overall of 8.6.
 
-The honest summary of the two rounds: every finding raised was real, every one was verified against
-repository source before being accepted, and a meaningful share of them were defects the driver had
-introduced while repairing earlier ones. That pattern — a repair creating the next finding — is the
-most useful thing this review recorded, and it is set out under "What the rounds cost" below.
+Whether to accept at 8.6 with two P2 findings recorded is the operator's call, not the driver's.
+
+The honest summary across all three rounds: every finding raised was real, every one was verified
+against repository source before being accepted, and six of them were defects the driver had
+introduced while repairing earlier ones. That pattern is set out under "What the rounds cost".
 
 ## Review-result contract
 
@@ -87,9 +88,12 @@ author had in mind.
 changelog sentence to what the test actually proves. The bare-name case resists guarding without
 false positives against ordinary prose such as "Active board".
 
-## Also open
+## Also open at the end of round one (since closed)
 
-**P3 — the cycle-time note inverts first for last, in four places.** It says the start boundary is
+**P3 — the cycle-time note inverted first for last, in four places.** Closed in `9ab008b3`;
+all four copies now read "first carried".
+
+*Original finding, for the record:* the note said the start boundary is It says the start boundary is
 "whichever field **last** carried an option named `Active`". `metrics_cycle_time` pins `dev_start` on
 the earliest matching transition, not the latest. The four copies are
 `skills/metrics/SKILL.md:47`, `skills/metrics/references/metrics-targets.md:18`,
@@ -193,13 +197,101 @@ confirmed to die when their fix is reverted.
 
 Nothing gating that a lens has named. The reviewer recorded four further value-syntax evasions
 (`--field "Status"`, `--field=Status --option=Done`, reversed flag order, and a backslash-wrapped
-`--status`) as P3: three are backstopped by the bare-name scan, and none appears in the plugin's
-prose today. The one genuine gap is that `Active` is deliberately absent from the bare-name pattern
-on the stated grounds that the flag patterns catch it, which is true for the forms in use and not
-true for those four.
+`--status`) as P3. None appears in the plugin's prose today. An earlier version of this section
+said three of the four were "backstopped by the bare-name scan"; round three corrected that --
+the bare-name scan catches a value only when it is itself a retired name, so a live Stage name
+such as `Active` written as a Status escapes all four forms with no backstop at all.
 
 Two findings were deliberately declined and the reviewer ruled on both. The 2.17.0 minor bump for a
 change labelled BREAKING is defensible under the repository's own recorded test — whether a caller
 can observe the change — with the caveat that the "no external consumer" premise was verified only
 within this repository. The reviewer withdrew the test-file-location finding outright: the card
 names that path in an executable criterion and the repository instruction agrees.
+
+---
+
+# Round three — scoring pass on the final head
+
+Ordered by the run coordinator because nothing gating was open and the only gap was that the last
+two commits had never been reviewed. A scoring pass, not a repair pass: P0 and P1 would trigger one
+repair, and P2 and P3 are recorded rather than acted on. Same seven-lens roster,
+`accept-recommended`, backend inline, opus/high, one reviewer in flight, each lens instructed to
+`/usr/bin/git checkout --detach 87f9316b` and to confirm the revision in its first line. Both groups
+confirmed `87f9316b261619dd425312fff0bacc8c86e8a1bf`.
+
+## Roster
+
+| Lens | Revision reviewed | Score | Gating findings | Resolution |
+|---|---|---|---|---|
+| correctness | `87f9316b` | 9.0 | None | — |
+| security | `87f9316b` | 10.0 | None | — |
+| architecture-maintainability | `87f9316b` | 8.5 | None | — |
+| testing | `87f9316b` | 9.0 | None | — |
+| api-contract | `87f9316b` | 9.0 | None | — |
+| documentation-clarity | `87f9316b` | 7.5 | None | — |
+| agent-usability | `87f9316b` | 7.5 | None | — |
+
+**Round overall: 8.6.** No P0 and no P1 anywhere in the roster. Every dimension is at or above the
+7.0 floor. The bar is 9.0, so the round does not accept, and because nothing gating was raised no
+repair was permitted in it.
+
+## What this round added that the earlier ones could not
+
+Two independent verifications that had previously rested on the driver's own word:
+
+- **The census really does match the live boards.** A lens with a project-scoped token ran the
+  opt-in leg (`BOARD_SCHEMA_LIVE=1`), which calls `board_census.cmd_check()` against the three real
+  GitHub project boards. It passed. Until this round that claim rested on the driver's regeneration
+  run.
+- **The prose guard really was red before the fix.** A lens ran `_status_values` and
+  `_history_exempt_lines` over `git show 2044c363:` copies of all 21 surfaces and counted 12
+  flag-form offenders and 46 bare-name offenders, substantiating the "confirmed red" claim rather
+  than accepting it. The same lens mutation-tested twelve changes to the guard's logic; eleven
+  killed a test, and the one survivor was a vacuity pin rather than logic.
+
+## The two P2 findings, recorded and not repaired
+
+**P2-A — retired Mount Olympus vocabulary still reads as current in three files this change edited.**
+`skills/milestones/SKILL.md:122` names `Assigned` and `In Review` as states to watch; `:123`,
+`skills/metrics/SKILL.md:145` and `skills/metrics/references/metrics-targets.md:96` present
+`Needs Question` as a live state; and `metrics-targets.md:111` instructs an agent to *write* it.
+None is a Status on any live board, and `LIVE_LEGACY_STATUS_ALIASES` has no key for any of them, so
+no migration hint fires. This is the same defect class the card exists to close, inside the scope the
+card edited, and the guard cannot see it: `BARE_RETIRED_NAME` covers the six names the board-stage
+migration renamed plus `Done`, not the older Mount Olympus set.
+
+**P2-B — the `--status` help string offers three values no board accepts.**
+`scripts/sdlc_manager.py:7313` reads `help="Target status (e.g. 'Assigned', 'In Review', 'Active')"`,
+which argparse prints on a parse error — so an agent whose Status was rejected is handed three more
+rejected ones. It is pre-existing and untouched here, but the guard sweeps `*.md` only, and the
+changelog's bolded claim reads broader than the body's own scoping to the 21 Markdown surfaces.
+`sdlc_manager.py:7320` similarly still registers `board wip` as "Show WIP counts and limits" while
+the function's own docstring and the rewritten reference both say limits are retired.
+
+Together these say something the earlier rounds did not: the guard's boundary is `*.md` instruction
+surfaces and the W13-renamed names. Argparse help strings and the Mount Olympus vocabulary both sit
+outside it, and the prose describing the guard should say so rather than implying it covers the
+class.
+
+## P3 findings, recorded
+
+- The guard misses four alternate spellings — `--status=Active`, `--field=Status --option=Active`,
+  reversed flag order, and `--field "Status"`. None appears in the plugin today. Two documents
+  overstate this: the learning says the guard "checks every syntax" and the round-two section says
+  three of the four are "backstopped by the bare-name scan", which holds only when the value is a
+  retired name, not a live Stage name used as a Status.
+- The work-session write-up says thirteen synthetic helper tests; there are fifteen at this head.
+- A latent false positive: a `--field Status` with no `--option` and no later `--field` lets the
+  whole-file scan run to end-of-file and read an unrelated `--option` as a Status. It can only fail
+  a build wrongly, never pass a real offender.
+- The `except ImportError` fallback in `check_issue_contract_parity.py` and the two new `cmd_check`
+  branches in `board_census.py` have no direct tests, where their parity-script equivalents do.
+- The "Also open" heading in the round-one section is stale: the first-versus-last inversion it
+  describes was closed in `9ab008b3`. The heading does not say which revision it belonged to.
+- **A toolchain caveat on the inner-loop claim.** A lens reported `ruff check .` and
+  `ruff format --check .` failing in its worktree. Re-verified at this head with the project's
+  synced environment (ruff 0.15.12): both pass, exit 0. The lens resolved ruff 0.16.5, which flags
+  pre-existing issues in `plugins/home-lab-ops` and some `docs/analysis` code blocks — files outside
+  this diff. `pyproject.toml` pins only `ruff>=0.4`, so both observations are true and the
+  difference is version drift. That loose pin is worth a card of its own: continuous integration can
+  start failing on files nobody touched.

@@ -186,11 +186,12 @@ Two data files sit beside the prompts, and both are generated rather than hand-w
 `index.json` is what a consumer reads instead of parsing this README: the role-to-file map, each
 role's `emits`, the lens identifiers, and the rule for slicing the Lens Reviewer.
 
-`lifecycle-snapshot.json` is the lifecycle's roles, contracts and lenses at the pinned revision,
-vendored here. It states which roles and contracts exist, so it is the library's own declaration of
-what it is built against — which is why it lives here rather than under `tests/`. The suite checks
-the prompts against it everywhere, including where no lifecycle checkout is reachable, and a
-separate parity check compares it to the live lifecycle wherever one is.
+`lifecycle-snapshot.json` is the lifecycle's roles, contracts — each required field with the
+lifecycle's one-line definition of it — and lenses at the pinned revision, vendored here. It states
+which roles and contracts exist, so it is the library's own declaration of what it is built against
+— which is why it lives here rather than under `tests/`. The suite checks the prompts against it
+everywhere, including where no lifecycle checkout is reachable, and a separate parity check
+compares it to the live lifecycle wherever one is.
 
 Neither file is edited by hand. `lifecycle-snapshot.json` carries a hash of its own contents that
 the suite recomputes, so a hand edit is caught.

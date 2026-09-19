@@ -142,6 +142,11 @@ VENDORED_CONTRACT_NAMES: dict[str, str] = {
 VENDORED_CONTRACT_FIELDS: dict[str, frozenset[str]] = {
     cid: frozenset(row["required_fields"]) for cid, row in SNAPSHOT["contracts"].items()
 }
+#: Per contract, the lifecycle's own one-line definition of each required field. A prompt that
+#: enumerates a field's contents is checked against this rather than against a third hand copy.
+VENDORED_FIELD_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    cid: dict(row["field_descriptions"]) for cid, row in SNAPSHOT["contracts"].items()
+}
 
 
 class FrontmatterError(ValueError):
@@ -237,6 +242,22 @@ def _live_contract_fields(root: pathlib.Path) -> dict[str, frozenset[str]] | Non
     }
 
 
+def _live_field_descriptions(root: pathlib.Path) -> dict[str, dict[str, str]] | None:
+    """Per contract, the lifecycle's description of each role-specific required field."""
+    model = json.loads((root / "config" / "run-model.json").read_text(encoding="utf-8"))
+    contracts = model.get("contracts")
+    if not contracts:
+        return None
+    return {
+        contract["id"]: {
+            field["name"]: field["description"]
+            for field in contract["fields"]
+            if field["status"] == "required" and field["name"] not in COMMON_HANDOFF_FIELDS
+        }
+        for contract in contracts
+    }
+
+
 def _sibling_head(root: pathlib.Path) -> str | None:
     """The sibling checkout's current commit.
 
@@ -274,10 +295,11 @@ def _live_snapshot(root: pathlib.Path) -> dict | None:
     fields = _live_contract_fields(root)
     names = _live_contract_names(root)
     role_names = _live_role_names(root)
-    if any(x is None for x in (lenses, senders, roles, fields, names, role_names)):
+    descriptions = _live_field_descriptions(root)
+    if any(x is None for x in (lenses, senders, roles, fields, names, role_names, descriptions)):
         return None
     assert senders is not None and fields is not None
-    assert names is not None and role_names is not None
+    assert names is not None and role_names is not None and descriptions is not None
     catalogue = json.loads((root / "config" / "lens-catalogue.json").read_text(encoding="utf-8"))
     return {
         "roles": dict(role_names),
@@ -286,6 +308,7 @@ def _live_snapshot(root: pathlib.Path) -> dict | None:
                 "name": names[cid],
                 "sender_role": senders[cid],
                 "required_fields": sorted(fields[cid]),
+                "field_descriptions": dict(sorted(descriptions[cid].items())),
             }
             for cid in senders
         },
@@ -723,10 +746,9 @@ def test_every_revision_written_in_the_directory_is_the_pin() -> None:
     """No prose mention of a lifecycle revision may drift from the pin.
 
     The pin is written in twenty places. The frontmatter, the index and the snapshot were each
-    gated; four prose mentions were not, and the worst of them is an operational precondition the
-    Lens Reviewer is told to enforce -- `rev-parse HEAD` must start with the pin. On the next bump
-    the mechanical copies move and a stale instruction stays behind, telling a session to reject
-    the very checkout it should be using.
+    gated; four prose mentions were not, and the worst of them is the revision every prompt's
+    ladder tells a session to read at -- `git show <pin>:<path>`. On the next bump the mechanical
+    copies move and a stale instruction stays behind, telling a session to read the wrong revision.
     """
     pattern = re.compile(r"\b[0-9a-f]{8}\b")
     stale: dict[str, set[str]] = {}
@@ -1073,6 +1095,178 @@ def test_every_prompt_can_reach_the_lifecycle(path: pathlib.Path) -> None:
     )
 
 
+def ladder_defects(text: str) -> list[str]:
+    """Why a prompt's lifecycle ladder would stop a session that could have read the pin.
+
+    The first form required the resolved checkout's ``HEAD`` to start with the pin and ordered a
+    stop otherwise. A clone -- including the ladder's own last rung -- lands on the default branch,
+    not on a detached pin, so the rule held only while the lifecycle's ``main`` happened to sit at
+    the pin, and the first merge there would have stopped all fourteen prompts. The repaired ladder
+    reads at the pin with ``git show <pin>:<path>``, which works from any ``HEAD`` and fails only
+    when the object is absent; the stop is reserved for that case.
+    """
+    block = shared_block(text, "**Reaching the lifecycle.**")
+    defects: list[str] = []
+    if f"show {SDLC_PIN}:" not in block:
+        defects.append(f"does not read at the pin with `git show {SDLC_PIN}:<path>`")
+    if "fetch origin" not in block:
+        defects.append("does not fetch once before declaring the pin unreachable")
+    for phrase in ("must start with", "rev-parse HEAD"):
+        if phrase in text:
+            defects.append(f"still requires HEAD to be at the pin ({phrase!r})")
+    return defects
+
+
+@pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])
+def test_the_ladder_reads_at_the_pin_rather_than_requiring_head_there(path: pathlib.Path) -> None:
+    defects = ladder_defects(path.read_text(encoding="utf-8"))
+    assert not defects, f"{path.name}'s lifecycle ladder: " + "; ".join(defects)
+
+
+def test_seeded_head_pinned_ladder_fires() -> None:
+    seeded = (
+        "**Reaching the lifecycle.** Find that checkout in this order: `INFIQUETRA_SDLC_ROOT`;"
+        " the immediate parent. Whatever rung resolves, verify the revision before reading"
+        f" anything from it: its `HEAD` must start with `{SDLC_PIN}`. A checkout at another"
+        " revision is unusable -- treat it as unreachable and stop.\n"
+    )
+    defects = ladder_defects(seeded)
+    assert any("must start with" in d for d in defects)
+    assert any("show" in d for d in defects)
+    repaired = (
+        f"**Reaching the lifecycle.** Read each document at the pin: `git -C <checkout> show"
+        f" {SDLC_PIN}:<path>`. If that fails, run `git -C <checkout> fetch origin` once and try"
+        " again; stop only if it still fails.\n"
+    )
+    assert ladder_defects(repaired) == []
+
+
+def test_implementer_does_not_invent_a_source_for_the_preview_declaration() -> None:
+    """The lifecycle says a preview criterion applies where a repository declares one, and stops.
+
+    It does not say where a repository declares it, nor which field of the implementation result
+    carries the preview results. An earlier repair filled both gaps with plausible sentences --
+    a dispatch field the contract does not have, and a result field the lifecycle defines as
+    something else -- which is the exact class of invention every prompt forbids its session.
+    """
+    text = (ROLES_DIR / "implementer.md").read_text(encoding="utf-8")
+    assert "Your dispatch names whether" not in text, "the dispatch contract has no such field"
+    assert "ride in `unit_and_child_check_results`" not in text, (
+        "the lifecycle defines that field as the unit's own and child-scoped checks"
+    )
+    stop_rule = text.split("### Stop rule", 1)[1]
+    assert "no declared source" in stop_rule, (
+        "the preview paragraph must say the lifecycle names no source, not supply one"
+    )
+
+
+def test_functional_tester_names_one_set_of_terminal_states() -> None:
+    """Two sections, one field, one instruction.
+
+    The output contract once told the session to record a scenario it could not run as "not run"
+    while the stop rule said that is not a state it may hand back. The lifecycle's three terminal
+    states are passed, failed, and blocked with a cause; both sections name exactly those.
+    """
+    text = strip_fenced_blocks((ROLES_DIR / "functional-tester.md").read_text(encoding="utf-8"))
+    contract = text.split("## Output contract", 1)[1].split("### Stop rule", 1)[0]
+    stop_rule = text.split("### Stop rule", 1)[1]
+    for state in ("`passed`", "`failed`", "`blocked`"):
+        assert state in contract, f"output contract does not name {state}"
+        assert state in stop_rule, f"stop rule does not name {state}"
+    # The state forms only: the prose may still say a scenario "could not run" when explaining why
+    # it is `blocked`, which is the instruction, not the defect.
+    for state_form in ('"Not run"', '"not run"', "as not run", "`not run`", "`not-run`"):
+        assert state_form not in contract, (
+            f"the output contract hands back {state_form}, a state the stop rule forbids"
+        )
+
+
+def test_plan_reviewer_points_at_the_document_that_holds_the_questions() -> None:
+    """The checklist and the run-model questions live in `docs/reviewers/plan-review.md`.
+
+    The two documents the prompt used to name both disclaim holding them: one says in terms that it
+    states one layer and not the whole checklist, the other lists four questions where the contract
+    requires three and defers to the reviewers page for the assembled list.
+    """
+    text = (ROLES_DIR / "plan-reviewer.md").read_text(encoding="utf-8")
+    contract = text.split("## Output contract", 1)[1].split("### Stop rule", 1)[0]
+    assert "docs/reviewers/plan-review.md" in contract
+    for heading in ('"What to check"', '"What the run model adds"'):
+        assert heading in contract, f"the pointer does not quote the heading {heading}"
+    assert (
+        "in `docs/process/planning-readiness.md` and `docs/lifecycle/run-model.md`" not in contract
+    ), "the prompt still sends the reader to the two documents that disclaim the content"
+
+
+#: Prompts that enumerate what a required field carries, and the field they enumerate. Each is
+#: checked item by item against the lifecycle's own definition of that field, vendored in the
+#: snapshot and held to the live lifecycle by the parity test.
+ENUMERATED_FIELDS = (
+    ("planner.md", "planner-to-orchestrator", "preflight_results"),
+    ("review-controller.md", "code-review-result", "per_lens_results"),
+)
+
+
+def enumerated_items(description: str) -> list[str]:
+    """The items a lifecycle field description lists after its colon, one per entry.
+
+    ``"For each X: a, b, and c. More."`` gives ``["a", "b", "c"]``. The first sentence after the
+    colon is the enumeration; a trailing sentence is commentary and is not an item.
+    """
+    _, _, rest = description.partition(": ")
+    first_sentence = rest.split(". ", 1)[0].rstrip(".")
+    items = [item.strip() for item in first_sentence.split(", ")]
+    return [item[4:] if item.startswith("and ") else item for item in items if item]
+
+
+@pytest.mark.parametrize(("filename", "contract", "field"), ENUMERATED_FIELDS)
+def test_enumerated_field_items_match_the_lifecycle(
+    filename: str, contract: str, field: str
+) -> None:
+    """A wrong enumeration is worse than none: it is a confidently malformed contract."""
+    description = VENDORED_FIELD_DESCRIPTIONS[contract][field]
+    items = enumerated_items(description)
+    assert len(items) >= 4, f"{contract}.{field} does not read as an enumeration: {description!r}"
+    text = strip_fenced_blocks((ROLES_DIR / filename).read_text(encoding="utf-8"))
+    # Whitespace-normalised: the prose wraps at a hundred columns, and an item may break across a line.
+    section = " ".join(text.split("## Output contract", 1)[1].split("### Stop rule", 1)[0].split())
+    missing = [item for item in items if item not in section]
+    assert not missing, (
+        f"{filename} enumerates `{field}` without {missing}; the lifecycle lists {items}"
+    )
+
+
+def test_seeded_enumeration_splitter() -> None:
+    assert enumerated_items("One row per check: the check, the time, and the outcome. Extra.") == [
+        "the check",
+        "the time",
+        "the outcome",
+    ]
+    assert enumerated_items("No colon here") == []
+
+
+def test_changelog_names_the_pin() -> None:
+    """The release note says which lifecycle revision the prompts were written against."""
+    changelog = (REPO_ROOT / "plugins" / "agent-launcher" / "CHANGELOG.md").read_text(
+        encoding="utf-8"
+    )
+    manifest = json.loads(
+        (REPO_ROOT / "plugins" / "agent-launcher" / ".claude-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    entry = changelog.split(f"## [{manifest['version']}]", 1)[1].split("\n## [", 1)[0]
+    assert SDLC_PIN in entry, f"the {manifest['version']} entry does not name the pin {SDLC_PIN}"
+    stale = {
+        tok
+        for tok in re.findall(r"\b[0-9a-f]{8}\b", entry)
+        if tok != SDLC_PIN and not tok.isdigit()
+    }
+    assert not stale, (
+        f"the {manifest['version']} entry names a revision other than the pin: {stale}"
+    )
+
+
 def test_the_dispatchless_prompt_says_why_it_differs() -> None:
     """The one allowed variant has to explain itself, or it reads as drift."""
     text = (ROLES_DIR / DISPATCHLESS_PROMPT).read_text(encoding="utf-8")
@@ -1313,6 +1507,8 @@ def test_only_the_parity_test_needs_a_sibling_checkout() -> None:
         assert CONTRACT_SENDERS[cid] == row["sender_role"]
         assert CONTRACT_NAMES[cid] == row["name"]
         assert CONTRACT_FIELDS[cid] == frozenset(row["required_fields"])
+        assert VENDORED_FIELD_DESCRIPTIONS[cid] == row["field_descriptions"]
+        assert set(row["field_descriptions"]) == set(row["required_fields"])
 
 
 def test_parity_test_skips_rather_than_fails_without_a_checkout(

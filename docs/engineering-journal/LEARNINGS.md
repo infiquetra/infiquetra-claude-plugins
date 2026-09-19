@@ -16,7 +16,7 @@
 
 **Generalizable rule.** Before adding an assertion that depends on the environment, ask which environments can satisfy it and what each one does when it cannot. If the answer differs between a developer machine and the gate, prefer vendored data checked everywhere plus one explicit parity check, and never let the gate be the environment that verifies least.
 
-**Refs.** Issue #1022; `tests/data/lifecycle-snapshot.json`; `.github/workflows/ci.yml` ("Issue-contract vendored parity"); `docs/code-reviews/2026-09-19-issue-1022-roles-library-code-review.md`.
+**Refs.** Issue #1022; `plugins/agent-launcher/roles/lifecycle-snapshot.json` (written first under `tests/data/`, moved when the dependency direction was corrected); `.github/workflows/ci.yml` ("Issue-contract vendored parity"); `docs/code-reviews/2026-09-19-issue-1022-roles-library-code-review.md`.
 
 ### A worktree-isolated review agent lands on the base commit, so it reviews the wrong revision unless told otherwise  {#1022-isolated-worktree-base}
 

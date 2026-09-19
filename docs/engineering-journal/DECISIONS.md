@@ -2,6 +2,18 @@
 
 ## 2026-09-19
 
+### PyYAML is imported at first use, and the missing-dependency refusal reuses the closed error-code set  {#997-defer-the-import-keep-the-code-set-closed}
+
+**Decision.** `plugins/saga/scripts/plan_save_contract.py` imports PyYAML inside `yaml_module()`, called from the parsing path, and builds its duplicate-key loader in `unique_loader()` against the module that call returns. Neither name exists at module scope. A missing PyYAML is reported through the existing refusal vocabulary — exit 2, `code: engine`, `entry: python dependency`, `file` naming this script, and an `error` naming PyYAML and the repair — and no new documented error code is introduced.
+
+**Rationale.** A module-scope import runs before any handler in the file exists, so no handler can convert it; the failure escaped as a traceback at exit 1, the code this tool documents for drift, and it also broke `--help`. Deferring the import makes the failure an ordinary `ImportError` inside `main()`'s existing narrow handler, and lets argparse serve `--help` before any YAML is touched, which closes both facets with one change and leaves the `{#996-envelope-seam-not-top-handler}` decision untouched. The loader class has to move with the import because `class UniqueLoader(yaml.SafeLoader)` needs the real base class at class-creation time. Reusing `engine` keeps the published code table closed: its documented repair already reads "Restore the named engine file and its dependencies", and `entry` plus `file` give a caller the discrimination it needs without every consumer learning a new branch.
+
+**Alternatives rejected.** A module-scope `except ImportError` setting `yaml = None` (the class statement three lines later still needs the real `yaml.SafeLoader`, so the crash moves rather than goes). A new `dependency` error code (widens a published contract — the runbook table, the closed-set guard in `tests/test_saga_spec_consumer_row.py` and every code-branching consumer — for a failure the operator repairs with one `uv sync`). Letting the top-level handler's default conversion report it as `syntax` (blames the YAML carrier for an interpreter fault). Widening `main()` to `except BaseException` (already rejected for issue #996, and unnecessary: `ImportError` is an ordinary `Exception`).
+
+**Revisit when.** This tool gains a second third-party import, or the documented error-code set is opened for another reason and a distinct `dependency` code becomes free.
+
+**Refs.** Issue #997 (finding `adv10`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-997-plan-save-contract-missing-pyyaml-plan.md` KTD1, KTD2, KTD3, KTD4; LEARNINGS `{#997-import-outside-every-handler}`.
+
 ### The JSON envelope is repaired at the checkout-execution seam, not at the top-level handler  {#996-envelope-seam-not-top-handler}
 
 **Decision.** `plugins/saga/scripts/plan_save_contract.py` converts a `BaseException` raised by the repository checkout it executes through `runpy` into its documented refusal envelope at the two places that checkout code actually runs — the `module()` loader and the `proof.verify(...)` call in `verify_saved_examples()` — through one shared conversion that re-raises `ContractError` unchanged. The top-level handler in `main()` stays `except Exception`. An interrupt arriving inside that window is converted rather than re-raised.

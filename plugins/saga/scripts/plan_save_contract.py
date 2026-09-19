@@ -23,9 +23,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn
 
-import yaml
+# PyYAML is imported by yaml_module() at first use, deliberately not here -- see its docstring.
 
 ROOT = Path(__file__).resolve().parents[3]
+TOOL = Path("plugins/saga/scripts/plan_save_contract.py")
 CONTRACT = Path("plugins/saga/references/plan-save-contract.yaml")
 SKILL = Path("plugins/saga/skills/plan/SKILL.md")
 SPEC = Path("plugins/saga/references/saga-spec.md")
@@ -125,18 +126,54 @@ def module(root: Path, path: str, *members: str) -> Any:
         )
 
 
-class UniqueLoader(yaml.SafeLoader):
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
-        result = {}
-        for key_node, value_node in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if not isinstance(key, str) or key in result:
-                fail(
-                    f"line {key_node.start_mark.line + 1} key {key!r}",
-                    "mapping keys must be unique strings; remove the duplicate/invalid entry",
-                )
-            result[key] = self.construct_object(value_node, deep=deep)
-        return result
+def yaml_module() -> Any:
+    """Import PyYAML at first use, so a machine without it gets the documented refusal.
+
+    Deliberately not a module-level `import yaml`. A module-scope import sits outside every
+    handler this tool owns, so a missing PyYAML killed the process with a raw traceback, empty
+    stdout and exit 1 -- the code the docstring reserves for drift, which made a broken
+    interpreter indistinguishable from a real documentation failure -- and it took `--help` down
+    with it, the one invocation the docstring exempts (issue #997).
+
+    Called from the parsing path, the failure is an ordinary ImportError inside main()'s existing
+    `try`, which already knows how to answer, and argparse has served `--help` long before this
+    runs. Do not hoist this back to the preamble.
+    """
+    try:
+        import yaml
+    except ImportError as exc:
+        fail(
+            "python dependency",
+            f"{exc}; install PyYAML (pyyaml>=6.0) into the interpreter running this tool",
+            source=TOOL,
+            code="engine",
+        )
+    return yaml
+
+
+def unique_loader(yaml: Any) -> Any:
+    """Build the duplicate-key-rejecting loader against an already-imported PyYAML.
+
+    Built here rather than at module scope because the class statement needs the real
+    yaml.SafeLoader object at class-creation time. That is why yaml_module() defers the import
+    instead of leaving a `yaml = None` sentinel at module scope: a sentinel would simply move the
+    crash from the import down into this class statement (issue #997).
+    """
+
+    class UniqueLoader(yaml.SafeLoader):  # type: ignore[misc]
+        def construct_mapping(self, node: Any, deep: bool = False) -> dict[Any, Any]:
+            result = {}
+            for key_node, value_node in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                if not isinstance(key, str) or key in result:
+                    fail(
+                        f"line {key_node.start_mark.line + 1} key {key!r}",
+                        "mapping keys must be unique strings; remove the duplicate/invalid entry",
+                    )
+                result[key] = self.construct_object(value_node, deep=deep)
+            return result
+
+    return UniqueLoader
 
 
 @dataclass
@@ -147,6 +184,7 @@ class Contract:
 
 def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
     """Read structure; the mandatory CLI proof binds values to engine and output."""
+    yaml = yaml_module()
     raw = (root / CONTRACT).read_text() if text is None else text
     # Aliases earn nothing in this small carrier. Reject before constructing any graph.
     for token in yaml.scan(raw):
@@ -155,7 +193,7 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
                 f"line {token.start_mark.line + 1} alias {token.value}",
                 "aliases are unsupported; spell out this entry",
             )
-    data = yaml.load(raw, Loader=UniqueLoader)  # nosec B506: subclass of SafeLoader; no object constructors
+    data = yaml.load(raw, Loader=unique_loader(yaml))  # nosec B506: subclass of SafeLoader; no object constructors
     schema = data.get("schema") if isinstance(data, dict) else None
     if schema != SCHEMA:
         fail(
@@ -455,15 +493,14 @@ class Parser(argparse.ArgumentParser):
 
 def verify_saved_examples(contract: Contract, candidate: dict[Path, str]) -> None:
     """Verify this candidate with the checkout's plain Python proof before any write."""
-    tool = Path("plugins/saga/scripts/plan_save_contract.py")
-    if (contract.root / tool).read_bytes() != Path(__file__).read_bytes():
+    if (contract.root / TOOL).read_bytes() != Path(__file__).read_bytes():
         fail(
             "tool revision",
             "run the tool from the target checkout so its verified renderer is the one that writes",
-            source=tool,
+            source=TOOL,
             code="verification",
         )
-    # Not `tool` above: that is this script; this is the checkout's proof, a different file.
+    # Not TOOL above: that is this script; this is the checkout's proof, a different file.
     proof_path = "plugins/saga/scripts/plan_save_proof.py"
     proof = module(contract.root, proof_path, "verify")
     # Loading the proof is guarded by module(); RUNNING it is the second seam. A BaseException

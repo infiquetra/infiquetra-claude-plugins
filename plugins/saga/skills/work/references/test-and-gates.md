@@ -73,6 +73,10 @@ requires_hard_test_gate(change_kinds)  # True if any kind in
 Derive `change_kinds` from the plan's unit types and the `parse_issue.py` flags (`has_security`,
 `has_infra`, `has_api`). When in doubt, treat it as risky.
 
+Pass `--flags` to `parse_issue.py` to widen those keyword flags with a model judgment before deriving
+`change_kinds`: the union can only add a flag, never remove one, and a client failure returns the
+keyword result unchanged. The keys and their meaning are identical either way.
+
 ## Review-readiness gate (the hard PR gate)
 
 Before PR-ready, run `/code-review` programmatically (SKILL Phase 5.1), deserialize its

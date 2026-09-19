@@ -34,6 +34,18 @@ HOOK_SCRIPT = ROOT / "plugins" / "saga" / "hooks" / "journal_nudge_hook.py"
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _judgment_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default the model judgment OFF for every test in this file.
+
+    Since issue 1036 the hook asks a model whenever the `feat`/`fix` floor did
+    NOT fire, so a test that calls `main()` on a chore commit touching code
+    would otherwise make a live request.  The widen-path tests below turn it
+    back on and inject a fake; everything else is testing the floor.
+    """
+    monkeypatch.setenv("INFIQUETRA_TYPESAFE_JOURNAL_NUDGE", "off")
+
+
 def _run_hook(payload: dict) -> subprocess.CompletedProcess:
     """Run the hook script with the given JSON payload on stdin."""
     result = subprocess.run(
@@ -454,3 +466,200 @@ def test_hook_exits_0_on_empty_input() -> None:
         text=True,
     )
     assert result.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# The widen-only union (issue 1036)
+# ---------------------------------------------------------------------------
+
+
+def _widen_returning(union: bool, calls: list | None = None):
+    """A fake `widen` that runs no request and returns a fixed union."""
+
+    class _Judgment:
+        def __init__(self, value: bool) -> None:
+            self.union = value
+            self.regex = False
+            self.probability = 0.9 if value else 0.1
+            self.source = "model" if value else "none"
+
+    def _widen(state, verb, floors, **kwargs):
+        if calls is not None:
+            calls.append({"state": state, "verb": verb, "floors": floors, "options": kwargs})
+        return type("_Result", (), {"judgments": {"earns_entry": _Judgment(union)}})()
+
+    return _widen
+
+
+def _must_not_run(*_args, **_kwargs):
+    raise AssertionError("the model must not be asked here")
+
+
+def test_a_refactor_commit_the_model_judges_worthy_now_nudges(monkeypatch) -> None:
+    """The widen: a message the feat/fix floor passed in silence can now nudge."""
+    monkeypatch.delenv("INFIQUETRA_TYPESAFE_JOURNAL_NUDGE", raising=False)
+    mod = _load_hook_module()
+    payload = _bash_payload('git commit -m "refactor: collapse the retry ladder"')
+
+    with (
+        patch.object(mod, "_commit_message", return_value="refactor: collapse the retry ladder"),
+        patch.object(mod, "_earned_a_journal_entry", return_value=True),
+    ):
+        exit_code, stderr = _run_main_patched(mod, payload, files=["main.py"], journal_exists=True)
+
+    assert exit_code == 0
+    assert "journal-nudge" in stderr
+    assert "non-obvious mechanism" in stderr
+
+
+def test_a_refactor_commit_the_model_judges_ordinary_stays_silent(monkeypatch) -> None:
+    monkeypatch.delenv("INFIQUETRA_TYPESAFE_JOURNAL_NUDGE", raising=False)
+    mod = _load_hook_module()
+    payload = _bash_payload('git commit -m "refactor: rename a variable"')
+
+    with (
+        patch.object(mod, "_commit_message", return_value="refactor: rename a variable"),
+        patch.object(mod, "_earned_a_journal_entry", return_value=False),
+    ):
+        exit_code, stderr = _run_main_patched(mod, payload, files=["main.py"], journal_exists=True)
+
+    assert exit_code == 0
+    assert stderr == ""
+
+
+def test_a_feat_commit_never_asks_the_model(monkeypatch) -> None:
+    """The floor already nudges, so asking could only agree and cost a request."""
+    monkeypatch.delenv("INFIQUETRA_TYPESAFE_JOURNAL_NUDGE", raising=False)
+    mod = _load_hook_module()
+    payload = _bash_payload('git commit -m "feat: add the thing"')
+
+    with patch.object(mod, "_earned_a_journal_entry", _must_not_run):
+        exit_code, stderr = _run_main_patched(mod, payload, files=["main.py"], journal_exists=True)
+
+    assert exit_code == 0
+    assert "journal-nudge" in stderr
+    assert "feat/fix commit touches code" in stderr
+
+
+def test_the_off_switch_makes_no_call_at_all() -> None:
+    """The autouse fixture sets the switch off; assert nothing is asked."""
+    mod = _load_hook_module()
+    payload = _bash_payload('git commit -m "refactor: collapse the retry ladder"')
+
+    with patch.object(mod, "_earned_a_journal_entry", _must_not_run):
+        exit_code, stderr = _run_main_patched(mod, payload, files=["main.py"], journal_exists=True)
+
+    assert exit_code == 0
+    assert stderr == ""
+
+
+@pytest.mark.parametrize("value", ["off", "OFF", "0", "false", "no"])
+def test_every_documented_off_value_disables_the_judgment(value: str) -> None:
+    mod = _load_hook_module()
+    assert mod._judgment_enabled(getenv=lambda _name: value) is False
+
+
+@pytest.mark.parametrize("value", [None, "", "on", "1", "anything else"])
+def test_anything_else_leaves_the_judgment_on(value: str | None) -> None:
+    mod = _load_hook_module()
+    assert mod._judgment_enabled(getenv=lambda _name: value) is True
+
+
+def test_a_docs_only_commit_still_never_asks(monkeypatch) -> None:
+    """The code-file precondition is deliberately not widened."""
+    monkeypatch.delenv("INFIQUETRA_TYPESAFE_JOURNAL_NUDGE", raising=False)
+    mod = _load_hook_module()
+    payload = _bash_payload('git commit -m "docs: rewrite the README"')
+
+    with patch.object(mod, "_earned_a_journal_entry", _must_not_run):
+        exit_code, stderr = _run_main_patched(
+            mod, payload, files=["README.md"], journal_exists=True
+        )
+
+    assert exit_code == 0
+    assert stderr == ""
+
+
+def test_a_commit_carrying_a_journal_entry_never_asks(monkeypatch) -> None:
+    monkeypatch.delenv("INFIQUETRA_TYPESAFE_JOURNAL_NUDGE", raising=False)
+    mod = _load_hook_module()
+    payload = _bash_payload('git commit -m "refactor: collapse the retry ladder"')
+
+    with patch.object(mod, "_earned_a_journal_entry", _must_not_run):
+        exit_code, stderr = _run_main_patched(
+            mod,
+            payload,
+            files=["main.py", "docs/engineering-journal/LEARNINGS.md"],
+            journal_exists=True,
+        )
+
+    assert exit_code == 0
+    assert stderr == ""
+
+
+def test_the_judgment_sends_only_the_message_and_the_file_list() -> None:
+    """The data rule: a commit message and paths, never a transcript or a diff."""
+    mod = _load_hook_module()
+    calls: list = []
+
+    assert (
+        mod._earned_a_journal_entry(
+            "refactor: collapse the retry ladder",
+            ["plugins/saga/scripts/retry.py"],
+            widen=_widen_returning(True, calls),
+        )
+        is True
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["state"] == {
+        "message": "refactor: collapse the retry ladder",
+        "files": ["plugins/saga/scripts/retry.py"],
+    }
+    assert calls[0]["verb"] == "journal-nudge"
+    assert calls[0]["floors"] == {"earns_entry": False}
+
+
+def test_the_judgment_is_bounded_to_one_short_attempt() -> None:
+    mod = _load_hook_module()
+    calls: list = []
+
+    mod._earned_a_journal_entry("refactor: x", ["a.py"], widen=_widen_returning(False, calls))
+
+    options = calls[0]["options"]
+    assert options["max_attempts"] == 1
+    assert options["timeout"] == mod._JUDGMENT_TIMEOUT
+    assert options["total_deadline"] == mod._JUDGMENT_DEADLINE
+    assert mod._JUDGMENT_DEADLINE <= 3.0
+
+
+def test_a_raising_client_is_silent_and_judges_nothing() -> None:
+    mod = _load_hook_module()
+
+    def _raises(*_args, **_kwargs):
+        raise RuntimeError("the vendor is unreachable")
+
+    assert mod._earned_a_journal_entry("refactor: x", ["a.py"], widen=_raises) is False
+
+
+def test_the_model_reads_the_real_commit_message_not_the_parsed_one(monkeypatch) -> None:
+    """A here-document commit parses to an empty message; HEAD still has one."""
+    monkeypatch.delenv("INFIQUETRA_TYPESAFE_JOURNAL_NUDGE", raising=False)
+    mod = _load_hook_module()
+    seen: list = []
+
+    def _record(message, files, **kwargs):
+        seen.append(message)
+        return False
+
+    payload = _bash_payload("git commit -F - <<EOF\nperf: cache the lookup\nEOF")
+    assert mod._extract_commit_message(payload["tool_input"]["command"]) == ""
+
+    with (
+        patch.object(mod, "_commit_message", return_value="perf: cache the lookup"),
+        patch.object(mod, "_earned_a_journal_entry", _record),
+    ):
+        exit_code, _stderr = _run_main_patched(mod, payload, files=["main.py"], journal_exists=True)
+
+    assert exit_code == 0
+    assert seen == ["perf: cache the lookup"]

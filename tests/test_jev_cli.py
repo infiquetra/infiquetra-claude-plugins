@@ -187,6 +187,57 @@ def test_a_verb_carries_its_policy_text_in_one_place() -> None:
     assert tier["model"]["instructions"]["policy"] == jev_verbs.TIER_POLICY
 
 
+def test_issue_flags_covers_the_five_flags_and_the_seven_approval_boundaries() -> None:
+    """The widen-only union (issue 1036) reads these keys by name, so pin the set."""
+    questions = jev_verbs.VERBS["issue-flags"].question_set()
+
+    assert set(questions) == {
+        "has_security",
+        "has_api",
+        "has_infra",
+        "has_privacy",
+        "has_refactor",
+        "production",
+        "destructive",
+        "credentials",
+        "permissions",
+        "billing",
+        "external_commitments",
+        "process_authority",
+    }
+    assert all(question["type"] == "noul" for question in questions.values())
+
+
+def test_the_seven_approval_boundaries_carry_the_sdlc_policy_text() -> None:
+    questions = jev_verbs.VERBS["issue-flags"].question_set()
+    boundaries = (
+        "production",
+        "destructive",
+        "credentials",
+        "permissions",
+        "billing",
+        "external_commitments",
+        "process_authority",
+    )
+
+    for key in boundaries:
+        assert questions[key]["instructions"]["policy"] == jev_verbs.APPROVAL_BOUNDARY_POLICY
+
+
+def test_journal_nudge_asks_exactly_one_question_with_the_repo_rule() -> None:
+    questions = jev_verbs.VERBS["journal-nudge"].question_set()
+
+    assert set(questions) == {"earns_entry"}
+    assert questions["earns_entry"]["type"] == "noul"
+    assert questions["earns_entry"]["instructions"]["policy"] == jev_verbs.JOURNAL_POLICY
+
+
+def test_the_two_widen_verbs_carry_their_own_confidence_floors() -> None:
+    """The floors differ on purpose: a false flag costs a lens, a false nudge one line."""
+    assert jev_verbs.VERBS["issue-flags"].confidence_floor == pytest.approx(0.70)
+    assert jev_verbs.VERBS["journal-nudge"].confidence_floor == pytest.approx(0.60)
+
+
 # --------------------------------------------------------------------------- #
 # Failure paths
 # --------------------------------------------------------------------------- #

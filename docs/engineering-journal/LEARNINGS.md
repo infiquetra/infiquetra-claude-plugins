@@ -2,6 +2,26 @@
 
 ## 2026-09-19
 
+### The flag that gates security review missed its own card because the prose said "credentials"  {#1036-plural-of-credential}
+
+**Evidence.** Issue #1036. Its body is about credentials, production and destructive operations by name, and `uv run python plugins/saga/scripts/parse_issue.py` reported `has_security: false` for it. The pattern at `plugins/saga/scripts/parse_issue.py:19` alternates on `credential`, bounded by `\b` on both sides, and the body says `credentials` — the trailing `s` is a word character, so the closing boundary never matches.
+
+**Mechanism.** A word-list regular expression is a set of exact tokens, and English is not. Every unlisted inflection, compound and synonym is a silent negative. That is tolerable for a hint and expensive for a floor, and these five flags feed saga's mandatory test gate, so the miss removed a review lens rather than a suggestion. The same pattern is over-eager in the other direction: `handler` sets `has_api` on a sentence about an authentication handler, which is how a test I wrote for this card failed on its own expectation.
+
+**Generalizable rule.** When a keyword pattern gates something, treat it as a floor and name what raises it — then measure both directions before trusting either, because a word list is simultaneously too narrow for the words it lacks and too broad for the ones it has.
+
+**Refs.** Issue #1036; DECISIONS `{#1036-widen-only-union-one-primitive}`; `tests/test_parse_issue_flags.py::test_the_keyword_floor_misses_the_plural_of_credential`.
+
+### Giving a hook a model call turns its existing tests into live network calls  {#1036-hook-tests-reach-the-network}
+
+**Evidence.** Issue #1036. Adding the widen path to `plugins/saga/hooks/journal_nudge_hook.py` reddened `tests/test_journal_nudge_hook.py::test_ae6_chore_commit_is_silent` on the first run. The test calls `main()` with a chore commit touching code — a path that previously exited early and now falls through to the model. With `TYPESAFE_API_KEY` in the environment it made a real request; in continuous integration, with no key, it would instead have paid the timeout on every such test.
+
+**Mechanism.** The existing tests were written against a function whose every branch was local. Widening a decision moves the early exit *later*, so inputs that used to stop at the top of the function now reach the new code — and a test that never mentioned the network suddenly depends on it. The absence of a key does not make this safe; it converts a wrong answer into a slow one.
+
+**Generalizable rule.** When a function gains an outbound call behind a branch that used to return early, default the new path OFF for the whole existing test file — an autouse fixture setting the switch — and turn it back on only in the tests that inject a fake. Then the old tests keep testing what they were written for, and the new behaviour is exercised deliberately rather than by fall-through.
+
+**Refs.** Issue #1036; `tests/test_journal_nudge_hook.py::_judgment_off`.
+
 ### A plugin version bump breaks three tests that restate the version as a literal  {#fleet-core-version-pins-1032}
 
 **Evidence.** Issue #1032, pull request #1045. Bumping fleet-core 0.25.3 to 0.26.0 turned the

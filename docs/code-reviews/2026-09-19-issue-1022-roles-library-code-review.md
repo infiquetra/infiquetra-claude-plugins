@@ -1,9 +1,51 @@
 ---
 title: Code review — issue 1022, roles library
-reviewed_revision: afa5dad7
-status: round-three-stopped-at-re-review
+reviewed_revision: afa5dad7001c2393417e621b2aef758541b6a4a3
+status: per-card-review-closed-by-operator-decision
 date: 2026-09-19
 ---
+
+# Per-card review closed by operator decision on 2026-09-19; the parent pull request (issue 1030) carries the review
+
+The operator decided on 2026-09-19 that this run reviews once, at the parent's pull request, rather
+than once per card. This card's review therefore ends here without a further lens pass: no cycle A,
+no cycle B, no roster verdict for the repaired head. The last revision any lens read is the one the
+frontmatter names, `afa5dad7`; the head this closure was recorded at is
+`75632fc711d710f62e9e12ee6ab745c682f3ef41`, one commit later, and no lens has read it. The parent's
+review is where that commit gets read.
+
+**How the decision was reached.** After round three stopped, the run coordinator put the review
+state to TypeSafe Jev (decision file `scratchpad/decide_1022.json`): it placed the change below the
+operator's 8-of-10 bar (0.24 on a four-level ladder), chose "one more repair, then a single
+re-review" at 0.92, and marked D1 to D5 as must-fix (0.86 to 0.91) with AM-2 as a follow-up card
+(0.44). The repair was made by an escalated driver; the re-review was then cancelled by the operator's
+decision above before any lens session was spawned.
+
+**Repaired at `75632fc7`, each against the lifecycle at the pin `5efc869f` rather than by
+invention** (the commit message cites every file and line):
+
+| Finding | Priority | Repair |
+|---|---|---|
+| D5 | P1 | The lifecycle ladder in all fourteen prompts reads each document at the pin with `git show 5efc869f:<path>`, fetches once if the object is absent, and stops only when it is still absent; the Lens Reviewer's second, older copy of the ladder is gone. Verified with scratch clones at a matching HEAD, a non-matching HEAD, and a history that lacks the pin |
+| D1 | P1 | The Initial Implementation Worker no longer says its dispatch names the preview declaration (the dispatch contract has no such field) nor routes the preview results into `unit_and_child_check_results`; both are stated as having no declared source |
+| D2 | P1 | The Functional Tester's output contract and stop rule name the same three terminal states; `unrun` is a ledger state, not an outcome |
+| D3 | P1 | The Plan Reviewer is sent to `docs/reviewers/plan-review.md`, with its two headings quoted, and told where the other two documents disclaim the content; the three-versus-six count of run-model questions is stated with the field's definition |
+| D4 | P1 | `preflight_results` and `per_lens_results` enumerate every item the lifecycle's field rows name; the vendored snapshot now carries each required field's definition and a guard checks the enumerations against it |
+| AM-3 | P2 | Already recorded at `bac820e3` as `{#1022-vendored-lifecycle-snapshot}` and `{#1022-slicing-rule-in-index}`; one stale path reference corrected |
+
+Each repair has a guard in `tests/test_roles_library.py` that was watched failing before the repair
+and dies again when the repair is reverted. The 1.6.0 changelog entry, which still named the revision
+the pin moved away from, now names the pin.
+
+**Left open.** AM-2 (P2, the "adding a role" checklist and the dependency direction the snapshot's
+move already corrected in part) goes to a follow-up card the coordinator files. AM-6 and AM-7 (P3)
+stand as recorded in round two. Nothing at P0 or P1 is open.
+
+**What the lenses were not sent.** The seven-lens roster of the earlier rounds — the always-on four
+plus documentation-clarity, agent-usability and adversarial — was to review `75632fc7` as separate
+sessions at that revision. That did not happen, by the decision above, and this artifact does not
+claim otherwise.
+
 
 # Round three — stopped
 

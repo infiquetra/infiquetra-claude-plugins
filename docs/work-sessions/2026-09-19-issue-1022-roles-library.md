@@ -126,7 +126,23 @@ branch after each merge. The fast inner loop stands in for it here, and all six 
 affected test files, `check_release_surface_parity.py`, and
 `release_surface_diff_guard.py --base-ref 2044c363`.
 
+## Rounds two and three, the escalation, and the closure
+
+Round two ran four of seven lenses against a moving head and found one P0 and three P1s, all
+repaired. Round three's documentation-clarity lens read all fourteen prompts, raised nine P1s, and on
+re-run found five of the repairs wrong or incomplete (D1 to D5); the review stopped there. The run
+coordinator asked TypeSafe Jev, which marked D1 to D5 and AM-3 must-fix and AM-2 a follow-up card, and
+an escalated driver made the repairs at `75632fc7`, each traced to the lifecycle at the pin rather
+than invented, with a guard per repair watched failing first.
+
+On 2026-09-19 the operator decided that this run reviews once, at the parent's pull request, not per
+card. The two planned review cycles were cancelled before any lens session was spawned, and the
+artifact records the closure. The full suite across both pytest roots ran at `75632fc7`: 8,136
+passed, 10 skipped, 1 expected failure, and one pre-existing failure — the review artifact's
+`reviewed_revision:` was an eight-character abbreviation where the publication-lane test requires a
+full SHA — repaired in the artifact commit.
+
 ## Next step
 
-Finish round two, repair anything gating within its allowance, and return to the coordinator for the
-merge turn onto the integration branch.
+The coordinator merges `issue/1022` onto `parent/1018` from the integration worktree; the parent's
+pull request carries the code review.

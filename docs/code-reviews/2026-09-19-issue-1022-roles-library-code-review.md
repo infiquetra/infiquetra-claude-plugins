@@ -1,19 +1,19 @@
 ---
 title: Code review — issue 1022, roles library
-reviewed_revision: a3832a26
-status: incomplete
+reviewed_revision: 67172d53
+status: cycle-cap
 date: 2026-09-19
 ---
 
 # Code review — issue 1022, roles library
 
-**Outcome: `review_incomplete`.** Six of the seven approved lenses returned. Between them they
-raised twelve gating findings, including one P0, and every one is repaired across four cycles. The
-seventh lens — `adversarial` — was launched against the current head and has not returned. Under the
-rule that an outcome computed over a partial roster reads exactly like a real one, that is not an
-acceptance, and it blocks. Only the operator can override.
+**Outcome: `cycle_cap_best_available`.** All seven approved lenses ran and returned. Between them
+they raised eighteen gating findings — one P0 and seventeen P1 — and every one is repaired. What has
+not happened is a re-review of the final head: the repair allowance of three further cycles was
+spent on cycles 3, 4 and 5, so the last repairs stand unreviewed by a lens. That is not `accepted`,
+and saying so is the point of this line.
 
-Base `2044c363`. Head at the time of writing `a3832a26`.
+Base `2044c363`. Final head `67172d53`.
 
 ## Lens roster
 
@@ -25,7 +25,7 @@ Base `2044c363`. Head at the time of writing `a3832a26`.
 | `architecture-maintainability` | always-on | `71f967c4` | 3 × P1 | all repaired, cycle 2 |
 | `documentation-clarity` | conditional | `9680b8a1` | 5 × P1 | all repaired, cycle 3 |
 | `agent-usability` | conditional | `8b565638` | 1 × P0, 6 × P1 | all repaired, cycle 4 |
-| `adversarial` | conditional | `a3832a26` | — | **did not return** |
+| `adversarial` | conditional | `a3832a26` | 6 × P1 | all repaired, cycle 5 |
 
 The eight conditional lenses not selected have no applicable dimension against a change that is
 prose plus one test module: `deployment-infrastructure`, `reliability`, `performance`,
@@ -90,14 +90,40 @@ no threshold override. No secret, no egress instruction, no directive to obey un
 `agent-usability` confirmed prompt sizing is appropriate, stop rules are self-checkable, and the
 refusal to copy dimensions, anchors and thresholds holds with no violation.
 
+**Cycle 5, from `adversarial`.** Six more silent-green routes, including a third instance of the
+pattern that produced the first two. `index.json` published a slicing algorithm the tests did not
+use — a consumer would cut by the index, the tests by their own copy, agreeing only by coincidence.
+The resolver reported a live lifecycle source while falling back per reader, so a renamed key would
+have reverted every check to this repository's own vendored lists. The revision gate skipped, which
+is green, whenever the sibling checkout was itself a worktree. The transcription check would have
+gone vacuous on a status-vocabulary change. The handoff shape was checked per file, so one good
+example covered five contracts — and fixing it immediately caught four incomplete examples in the
+Delivery Manager. The output-contract window was found by unanchored search, which can only widen
+and so can only make the check greener.
+
+## Two things the checks caught after the lenses finished
+
+**The version drift guard.** The gate went red on one step for one test: a packaging test that
+states the expected plugin version independently and still said `1.5.2`. The release-surface test
+added in cycle 2 did not catch it, because agreement among the manifest, the registry and the
+changelog says nothing about a fourth place that states the version on its own.
+
+**The lifecycle moved mid-run.** The repaired revision gate fired on its first real evaluation: the
+sibling checkout had advanced from `67845cdd` to `5efc869f` while this work was in progress, as
+another card landed the branch-preview exit criterion. Before re-pinning, the two revisions were
+compared over exactly what this library depends on — role identifiers and names, contract
+identifiers, senders, display names and required-field sets, lens identifiers and floors — and found
+identical. The re-pin is therefore mechanical, and `index.json` now derives the revision from the
+prompts rather than holding a fourth hand-maintained copy.
+
 ## Why this is not an acceptance
 
-One approved lens has not reported. `adversarial` is the lens most likely to find what the other six
-missed, because its dimensions are exactly the class of defect this review kept turning up:
-load-bearing assumptions and silent green. Two such defects were already found and fixed — a search
-for files lacking a heading that returned empty because the contract document quotes the heading,
-and a slice that dropped an instruction because the test examined the file rather than the artifact.
-A third is plausible and unlooked-for.
+The roster is complete and every gating finding is repaired, but the repairs of cycle 5 and the two
+above have not themselves been through a lens. The repair allowance was three further cycles and it
+is spent. A seventh pass would most usefully be `adversarial` again, since each of its findings was
+a route to green over a broken library, and its own report names what it did not examine: the prose
+of twelve of the fourteen prompts, and the prompt-injection surface of the instructions those
+prompts give to sessions.
 
 ## Residual risk
 

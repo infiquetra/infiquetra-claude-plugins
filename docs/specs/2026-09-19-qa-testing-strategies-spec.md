@@ -16,6 +16,8 @@ The operator's direction on 2026-09-19 is that the strategies are prescribed, ch
 
 Who is affected: the Functional Tester session that runs this step, the worker whose build loop a failure re-enters, and the operator, who today cannot tell from a `/qa` report which checks ran and which were quietly skipped.
 
+The outcome, stated so that shipping can be judged rather than merely completed: after this lands, every functional-test run reports, per strategy, whether it ran and what it proved, and no run can report `pass` while a required strategy produced no evidence. The observable condition is a run record in which the count of required strategies equals the count of `passed` envelopes for every `pass` verdict, and a non-zero count of `blocked` envelopes across the first month of real runs — zero blocked would mean the status is not being used and the silent skip has returned in a new form.
+
 ## Current State
 
 Verified by reading the shipped surfaces in this repository at commit `2044c363`.
@@ -59,7 +61,9 @@ Each catalogue row is data carrying: the identifier, the file patterns that requ
 
 ### The repository profile
 
-Each repository carries one profile declaring which strategies apply to it, the file patterns that require each, the environments and secret handles each needs, the target variants available, its scenario identifiers, and its cost and duration ceiling. The field set is taken from the CAMPPS scenario schema's proven blocks — `automation` (repository, runner, entrypoint, required environment), `cost_estimate` (runner class, estimated duration, estimated direct cost, frequency, default enabled), `test_data_profile`, and `evidence_policy` (classification, artifact policy, screenshots allowed, retention, privacy prohibitions) — because those blocks already survived thirty real scenarios.
+Each repository carries one profile declaring which strategies apply to it, the file patterns that require each, the environments and secret handles each needs, the target variants available, its scenario identifiers, and its cost and duration ceiling.
+
+A profile must mark at least one strategy required. A profile whose strategies are all optional would let a run report `pass` having proved nothing, which is the failure this design exists to remove, so such a profile is rejected at load and the run is `blocked` with a message naming the profile path. A repository with no profile at all is likewise `blocked`, never an empty selection that passes. The field set is taken from the CAMPPS scenario schema's proven blocks — `automation` (repository, runner, entrypoint, required environment), `cost_estimate` (runner class, estimated duration, estimated direct cost, frequency, default enabled), `test_data_profile`, and `evidence_policy` (classification, artifact policy, screenshots allowed, retention, privacy prohibitions) — because those blocks already survived thirty real scenarios.
 
 ### Evidence in the run record, and the threshold that turns it into a pass
 
@@ -92,6 +96,8 @@ This answers the card's third key question. Four judgments, all advisory, all lo
 
 Five things the judgment must never do here, each traceable to a documented weakness of the model: compare deployment timestamps or freshness windows (dates are read as text, not ordered quantities); count findings, failures, or coverage (weak arithmetic); decide whether a threshold is met (code's job by construction); screen evidence text for adversarial content (not adversarially robust, and driver output is untrusted); and read live external state (it sees only the state passed to it).
 
+The act band is not invented by the implementer. J1 ships in suggest mode with a provisional band recorded as data in the catalogue file alongside the strategy rows, every call logged with its probability and any override; the evaluation harness of issue 1032 sets the operating band from roughly thirty recorded real uses, per the house rule that thresholds come from the harness and never from a cookbook. Until the harness has run, the provisional band is a declared number in one place that the operator can change without touching code.
+
 J1 ships first. J2, J3, and J4 ship only after the evaluation harness has recorded agreement for J1 at the chosen band, per the suggest-first house rule. With no judgment at all, the declared mapping remains a complete selection procedure — that is the documented degradation path.
 
 ### How the Functional Tester invokes a strategy
@@ -111,7 +117,7 @@ The build loop invokes the identical command at the `branch-preview` boundary (i
 
 1. The catalogue file lists exactly the ten strategy identifiers named above, and each row carries a non-empty tool invocation, file-pattern list, required-evidence field list, proof boundary, and threshold rule.
 2. Selecting strategies for a change whose file list matches two profile patterns returns those two strategies with no judgment call made, and the printed selection names the matching pattern for each.
-3. With the judgment returning a probability above the act band for a third strategy, the selection returns three strategies; with the judgment returning a probability below the band for a declared strategy, that strategy is still selected. Both outcomes are asserted by a test with a stubbed judgment client.
+3. With the judgment returning a probability above the act band for a third strategy, the selection returns three strategies; with the judgment returning a probability below the band for a declared strategy, that strategy is still selected. Both outcomes are asserted by a test with a stubbed judgment client, and the band the test reads is the declared value in the catalogue file, not a literal in the test.
 4. With the judgment client absent or erroring, selection returns the declared set and the run continues; no run fails because the judgment was unavailable.
 5. A driver whose required environment variable is unset returns `blocked` with a reason naming the variable, and never `passed`.
 6. The verdict function returns `pass` for all-required-passed, `pass-with-proof-debt` for all-required-passed with an optional `blocked`, and `fail` for every other combination, asserted over the full status matrix.
@@ -119,10 +125,12 @@ The build loop invokes the identical command at the `branch-preview` boundary (i
 8. Every evidence envelope written to the run record validates against the envelope schema, and a driver given a bearer token in its output writes an envelope containing no token, asserted against the redaction patterns.
 9. Running at boundary `branch-preview` omits every strategy whose proof boundary is `non-production`, records them as out-of-boundary, and never records them as proof debt.
 10. A selection whose estimated cost exceeds the profile ceiling refuses the whole selection and runs zero drivers.
-11. `test ! -f plugins/saga/scripts/qa_health_score.py` and `test ! -f tests/test_qa_health_score.py`; no file under `plugins/saga/` contains the string `health score`.
+11. `test ! -f plugins/saga/scripts/qa_health_score.py` and `test ! -f tests/test_qa_health_score.py`; no file under `plugins/saga/skills/qa/` or `plugins/saga/scripts/` contains the string `health score`. The changelog entry that records the removal is expected to name it and is outside this check.
 12. No file under `plugins/saga/skills/qa/` references `evidence_ledger.py`.
 13. For a CAMPPS repository profile, the `api-workflow` strategy invokes the `campps-e2e-canary` entrypoint declared in the profile and ingests its envelope rather than issuing its own requests, asserted with a recorded invocation.
-14. `uv run pytest tests/test_qa_strategies.py` passes, and the repository gate (`scripts/gate.sh`) exits zero.
+14. A profile in which every strategy is optional, and a repository with no profile, each produce a `blocked` run naming the profile path, never a `pass`.
+15. One end-to-end run against this repository's own profile, at the `non-production` boundary, produces a `pass` verdict with at least two strategies reporting `passed`, one published comment carrying the per-strategy statuses, and the verdict written to the run record. A specification satisfied only by `blocked` runs has proved nothing, so this criterion is the one that makes the others mean something.
+16. `uv run pytest tests/test_qa_strategies.py` passes, and the repository gate (`scripts/gate.sh`) exits zero.
 
 ## Scope Boundaries
 
@@ -166,7 +174,7 @@ The build loop invokes the identical command at the `branch-preview` boundary (i
 | `plugins/saga/scripts/qa_strategies.py` | New: the catalogue loader, the selection procedure, the preflight, the driver dispatch, and the verdict function |
 | `plugins/saga/references/qa-catalogue.yaml` | New: the ten catalogue rows as data |
 | `plugins/saga/references/qa-profile.schema.json` | New: the repository profile shape |
-| `tests/test_qa_strategies.py` | New: the fourteen acceptance criteria as tests |
+| `tests/test_qa_strategies.py` | New: the sixteen acceptance criteria as tests |
 | `plugins/saga/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `plugins/saga/CHANGELOG.md` | The release surfaces, bumped in the same pull request per this repository's rule |
 
 Cross-repository references, read but not changed: `campps-context-library/platform-specs/05-technical-specifications/testing/e2e-scenario-registry/driver-families.md`, `scenario.schema.json`, `evidence-envelope.schema.json`; `campps-e2e-canary/src/e2e_canary/drivers/models.py` and `selection.py`.
@@ -191,7 +199,7 @@ Total: 9 sessions with one genuine unknown (the Flutter toolchain) and one exter
 - Issue 1031 — the exploration card that produced both documents.
 - Issue 1018 — the saga simplification parent.
 - Issue 1023 — the run record. Depends on it: the evidence envelopes have no home until it exists.
-- Issue 1028 — integrate, release, functional test, and close. Depends on it: the environment identity and this step's position in the chain come from it, and it deletes the evidence ledger this rewrite stops calling.
+- Issue 1028 — integrate, release, functional test, and close. Depends on it: the environment identity and this step's position in the chain come from it, and it deletes the evidence ledger this rewrite stops calling. It is the critical path: of the three upstream dependencies it is the one that both positions this step and removes the surface the current skill calls, so this card cannot start before it lands, whatever the others do.
 - Issue 1032 — the TypeSafe client, the `jev` tool, and the evaluation harness. Depends on it for the judgment parts only; the declared mapping works without it.
 - Issue 1027 — the build loop. Not a dependency, but the shared strategy-runner component: whichever card ships second inherits the runner rather than writing a second one.
 - Issue 1039 — the implementing capability card filed from this specification, "/qa as a prescribed strategy catalogue with declared evidence and a computed verdict" (https://github.com/infiquetra/infiquetra-claude-plugins/issues/1039), a sub-issue of 1018 on the Operations board at Stage Planning with Objective improve-claude-plugins.

@@ -2,6 +2,50 @@
 
 ## 2026-09-19
 
+### A measurement card fixes its pass/fail bars before it measures anything  {#measurement-bars-precede-the-numbers-1038}
+
+**Context.** Issue #1038 asked whether a `UserPromptSubmit` hook can suggest a saga command inside 400
+milliseconds, and to recommend keep, defer or drop. Plan
+`docs/plans/2026-09-19-issue-1038-prompt-suggestion-latency-plan.md` (KTD5); deliverable
+`docs/analysis/2026-09-19-prompt-suggestion-latency.md`.
+
+- **KTD1 — the keep/defer/drop rule and both accuracy bars are written into the plan before the
+  harness runs.** The card set a latency target and no accuracy bar, so the plan fixed two (70% on
+  prompts warranting a command, 80% silence on prompts warranting none) with the evidence for each
+  stated. A recommendation composed after the numbers are known is a rationalization of the numbers,
+  and a threshold chosen afterwards is the same failure wearing a different hat. *Rejected:* deciding
+  the bars at write-up time, which is what "beats the baseline by a margin the document states" —
+  the plan's own first draft — actually meant. The doc review caught it.
+  *Revisit when:* a follow-up measures a shape this corpus could not.
+- **KTD2 — the exploration measures shapes with no blocking call, not only the vendor's shape.** The
+  cookbook's two-request pattern was near-certain to miss the target given a round trip of about 350
+  ms. Measuring only it would have answered "is the cookbook shape too slow" rather than the card's
+  actual question, which is which client shape makes the target reachable. *Rejected:* a faithful
+  two-shape measurement.
+- **KTD3 — the resident prototype listens on an owner-only Unix domain socket, not a localhost
+  port.** The card said "bound to localhost"; a Unix socket is the stricter reading — no port, no
+  network stack, filesystem permissions. Those permissions are load-bearing rather than decorative:
+  the process holds a live API credential and answers whatever connects, so it creates the socket and
+  its directory owner-only and refuses to start otherwise. *Rejected:* a localhost TCP port, which
+  has no equivalent control without inventing an authentication scheme.
+- **KTD4 — a cached answer is not counted against the live-call budget, and the resident process
+  reports its own spend.** The client reports `cache` as its transport when it serves from disk. An
+  outside-only tally also misses every primed and backgrounded call, because those never appear in
+  any timed hook's output — so the resident process counts its own and the harness adds the two.
+  *Rejected:* counting calls from the hook payloads alone, which under-reported the spend.
+- **The exploration does not decide whether a live operator prompt may be sent to the vendor.** The
+  data rule permits issue bodies, plans and diffs after redaction and forbids raw session transcripts.
+  One live prompt is not a transcript but is uncontrolled unvetted text, which is the stated reason
+  transcripts are excluded. That is a data-governance decision the operator owns; the measurement ran
+  on synthetic prompts and the deliverable carries the question forward as a precondition on any
+  implementation.
+
+**Release surfaces:** none. The harness lives under `tools/` and the deliverable under `docs/`, so no
+file under `plugins/` changed and no version, marketplace entry or changelog moved.
+
+**Refs.** Issue #1038, child of #1019; the client it measures is #1032 (fleet-core 0.26.0); the hook
+registration #1029 has not shipped, so the harness is standalone.
+
 ### The proof's entrypoint describes and refuses; it does not become a second way to run the proof  {#998-describe-and-refuse-not-a-second-runner}
 
 **Decision.** `plugins/saga/scripts/plan_save_proof.py` gains a command-line entrypoint that names the proof and the command that runs it, serves that text at exit 0 for `--help`, and refuses every other direct invocation at exit 2 with usage on standard error and standard output left empty. It does not gain a way to run the proof standalone.

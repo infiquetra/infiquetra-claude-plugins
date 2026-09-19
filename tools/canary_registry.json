@@ -281,5 +281,17 @@
       "replace": "        result = SimpleNamespace(**runpy.run_path(str(target)))"
     },
     "mutation_description": "Let fleet-core resolution fall through to the operator's installed plugins."
+  },
+  {
+    "id": "plan-save-contract-baseexception",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_baseexception_from_checkout_code",
+    "invariant": "the JSON envelope boundary around checkout code is independently exercised.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    except BaseException as exc:\n        fail(entry, f\"{exc}; {reason}\", source=path, code=\"engine\")",
+      "replace": "    except Exception as exc:\n        fail(entry, f\"{exc}; {reason}\", source=path, code=\"engine\")"
+    },
+    "mutation_description": "Narrow the checkout-code boundary back to Exception, so a SystemExit raised while the loaded proof runs escapes the JSON envelope again."
   }
 ]

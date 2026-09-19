@@ -46,8 +46,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.159.0"  # 0.159.0: accepted-result consistency and
-    # lifecycle-namespaced fix identifiers (issue #908 children #894, #899).
+    assert plugin_json["version"] == "0.159.1"  # 0.159.1: a BaseException raised by the
+    # checkout that plan_save_contract.py executes stays inside the JSON envelope, at both
+    # seams where that code runs (issue #996). Predecessor 0.159.0: accepted-result consistency
+    # and lifecycle-namespaced fix identifiers (issue #908 children #894, #899).
     # Predecessor 0.158.0: shared Saga readiness owner with
     # Mission Control delegation (issue #942). Predecessor — issue #926 (unit P5, issue #918
     # Wave Two):
@@ -190,6 +192,7 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
         "test_contract_values_are_shell_data",
         "test_contract_rejects_corrupting_structure",
         "test_contract_cli_reports_operation_and_checkout",
+        "test_contract_cli_envelopes_baseexception_from_checkout_code",
     ):
         matches = [node for node in functions if node.name == name]
         assert len(matches) == 1, f"{guard.relative_to(ROOT)}: expected exactly one {name}"

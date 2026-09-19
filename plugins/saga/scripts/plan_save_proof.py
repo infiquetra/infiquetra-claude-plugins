@@ -28,6 +28,7 @@ from typing import Any, NoReturn
 
 PLAN_SKILL = Path("plugins/saga/skills/plan/SKILL.md")
 SCRIPT = Path("plugins/saga/scripts/plan_save_contract.py")
+RUNBOOK = Path("plugins/saga/references/plan-save-contract.md")
 
 
 class ProofError(AssertionError):
@@ -536,7 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         epilog=(
             "To run the proof, run the tool that owns it:\n"
             f"  python3 {SCRIPT} --root <checkout> validate\n"
-            f"Maintainer runbook: {Path('plugins/saga/references/plan-save-contract.md')}"
+            f"Maintainer runbook: {RUNBOOK}"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -550,9 +551,12 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-# runpy.run_path names the module it loads `<run_path>`, never `__main__`, so plan_save_contract.py
-# loading this file cannot reach main(). The guard test is positive rather than negative for a
-# reason: if this ever did fire, issue #996's checkout_code() would convert the SystemExit into a
-# tidy refusal blaming the engine, hiding the misfire instead of surfacing it (issue #998).
+# Two callers load this file with runpy.run_path -- plan_save_contract.py at validate/render time,
+# and tests/saga_plan_contract.py at test-collection time -- and run_path names the module it loads
+# `<run_path>`, never `__main__`, so neither can reach main(). Both matter. Under the contract tool
+# a firing entrypoint would be converted by issue #996's checkout_code() into a tidy refusal blaming
+# the engine, hiding the misfire; under the test shim it exits the pytest interpreter outright,
+# which is how the first attempt at this file's canary mutation was caught. The guard test is
+# positive for that reason: it proves a clean checkout still validates (issue #998).
 if __name__ == "__main__":
     raise SystemExit(main())

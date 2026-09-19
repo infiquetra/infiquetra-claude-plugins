@@ -97,8 +97,9 @@ class Qualification:
 class StaffingDecision:
     """One staffing answer, with the inputs and the layer that supplied it.
 
-    ``source`` names where the tier came from: ``overlay`` for the per-repository file,
-    ``policy`` for the shared work-shape registry, ``role`` for a vendor pinned on the role.
+    ``source`` names where the *tier* came from: ``overlay`` for the per-repository file, or
+    ``policy`` for the shared work-shape registry. A vendor pinned on a role is not a tier, so it
+    is reported separately in ``vendor_pinned_by_role`` rather than overwriting that provenance.
     ``suggestion`` is the advisory tier the caller passed in, recorded whether or not it agrees
     with the chosen tier and never able to change it.
     """
@@ -109,6 +110,7 @@ class StaffingDecision:
     source: str
     work_shape: str
     role: str | None = None
+    vendor_pinned_by_role: bool = False
     qualification: Qualification | None = None
     suggestion: dict[str, str] | None = None
     candidates: tuple[dict[str, Any], ...] = field(default_factory=tuple)
@@ -129,6 +131,7 @@ class StaffingDecision:
         }
         if self.role is not None:
             record["role"] = self.role
+            record["vendor_pinned_by_role"] = self.vendor_pinned_by_role
         if self.qualification is not None:
             record["qualification"] = self.qualification.as_dict()
         if self.suggestion is not None:
@@ -177,7 +180,12 @@ def capability_ratings(registry: dict[str, Any] | None = None) -> dict[str, Any]
 # --------------------------------------------------------------------------- overlay
 
 
-def _overlay_path(root: Path | None = None) -> Path:
+def overlay_path(root: Path | None = None) -> Path:
+    """Where the per-repository overlay lives, relative to ``root`` or the working directory.
+
+    Public because saga's ``tier_defaults`` writes the file this module reads; a second copy of
+    the path would let the writer and the reader drift onto different files silently.
+    """
     return (root or Path.cwd()) / OVERLAY_PATH
 
 
@@ -188,7 +196,7 @@ def load_overlay(root: Path | None = None) -> dict[str, dict[str, str]]:
     an off-palette model or effort, and a model-effort pair above the model's ceiling are each a
     loud failure rather than a silent fall-through to the policy default.
     """
-    path = _overlay_path(root)
+    path = overlay_path(root)
     if not path.exists():
         return {}
     try:
@@ -315,25 +323,31 @@ def candidates_for(role: str) -> tuple[dict[str, Any], ...]:
     capability = str(row["capability"])
     ratings = capability_ratings()
     found: list[dict[str, Any]] = []
-    for key, engine in ratings["engines"].items():
+    engines = ratings.get("engines")
+    if not isinstance(engines, dict):
+        raise StaffingError("staffing registry's capability_ratings is missing an engines object")
+    for key, engine in engines.items():
         profile = engine.get("capability_profile") or {}
         rated = profile.get(capability)
         if not rated:
             continue
-        found.append(
-            {
-                "executor": key,
-                "engine_id": engine["engine_id"],
-                "variant": engine["variant"],
-                "model_identity": engine["model_identity"],
-                "capability": capability,
-                "rating": rated["rating"],
-                "note": rated.get("note", ""),
-                "trust_tier": engine["trust_tier"],
-                "cost_speed_rank": engine["cost_speed_rank"],
-                "last_validated": engine["last_validated"],
-            }
-        )
+        try:
+            found.append(
+                {
+                    "executor": key,
+                    "engine_id": engine["engine_id"],
+                    "variant": engine["variant"],
+                    "model_identity": engine["model_identity"],
+                    "capability": capability,
+                    "rating": rated["rating"],
+                    "note": rated.get("note", ""),
+                    "trust_tier": engine["trust_tier"],
+                    "cost_speed_rank": engine["cost_speed_rank"],
+                    "last_validated": engine["last_validated"],
+                }
+            )
+        except (KeyError, TypeError) as exc:
+            raise StaffingError(f"capability_ratings row {key!r} is malformed: {exc}") from exc
     found.sort(
         key=lambda candidate: (_rating_strength(candidate["rating"]), candidate["cost_speed_rank"])
     )
@@ -362,7 +376,6 @@ def resolve_role(
     if vendor not in vendors():
         raise StaffingError(f"role {role!r} pins unknown vendor {vendor!r}")
     base = resolve_shape(work_shape, root=root, suggestion=suggestion, vendor=vendor)
-    source = "role" if "vendor" in row else base.source
 
     qualification: Qualification | None = None
     if lens is not None:
@@ -379,9 +392,10 @@ def resolve_role(
         vendor=vendor,
         model=base.model,
         effort=base.effort,
-        source=source,
+        source=base.source,
         work_shape=work_shape,
         role=role,
+        vendor_pinned_by_role="vendor" in row,
         qualification=qualification,
         suggestion=base.suggestion,
     )
@@ -398,10 +412,15 @@ def _is_reviewing_role(role: str) -> bool:
 def sdlc_root(explicit: Path | None = None) -> Path | None:
     """Resolve the software-development-lifecycle checkout, or report its absence.
 
-    The ladder is the one ``plugins/mission-control/scripts/sdlc_manager.py`` already uses: an
+    The resolution order is the one ``plugins/mission-control/scripts/sdlc_manager.py`` uses: an
     explicit path, then the ``INFIQUETRA_SDLC_PATH`` environment variable, then the default
-    checkout. ``None`` means no checkout is there — which is a documented-policy outcome for a
-    lens, never an error, because a missing sibling repository must not break every spawn.
+    checkout. It deliberately does **not** fall through: an explicit path or a configured variable
+    that is not a directory returns ``None`` rather than quietly resolving somewhere the caller
+    did not name. (Mission Control's own helper returns the configured path unchecked; this one
+    checks, because its ``None`` is a meaningful answer rather than an error.)
+
+    ``None`` means no checkout is there — a documented-policy outcome for a lens, never an error,
+    because a missing sibling repository must not break every spawn.
     """
     if explicit is not None:
         return explicit if explicit.is_dir() else None

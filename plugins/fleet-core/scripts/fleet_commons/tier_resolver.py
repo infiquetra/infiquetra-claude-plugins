@@ -74,6 +74,10 @@ ROLE_TIER_ALIASES: dict[str, str] = {
 MODELS_JSON_PATH = STAFFING_PATH
 
 
+class TierResolverError(ValueError):
+    """Raised for an unresolvable work_shape/role_kind or an invalid override/ceiling."""
+
+
 def _vendor_palette() -> dict[str, Any]:
     """Read the per-vendor palette from ``staffing.json`` (issue #1021).
 
@@ -136,10 +140,6 @@ _EFFORT_APPLICATION_MODE: dict[str, str] = {
     for name, row in _VENDORS.items()
     if row.get("runtime_supported")
 }
-
-
-class TierResolverError(ValueError):
-    """Raised for an unresolvable work_shape/role_kind or an invalid override/ceiling."""
 
 
 @dataclass(frozen=True)
@@ -337,7 +337,10 @@ def _effort_application(runtime: str, effort: str) -> dict[str, str]:
             f"unknown runtime {runtime!r}; expected one of {list(SUPPORTED_RUNTIMES)}"
         )
     if mode == "in_session":
-        return {"mode": "in_session", "command": f"/effort {effort}"}
+        # The command template lives in the data beside the mode (#1021). Reading it rather than
+        # hardcoding the string is what stops a future edit to staffing.json doing nothing.
+        template = str(_VENDORS[runtime].get("effort_command", "/effort {effort}"))
+        return {"mode": "in_session", "command": template.format(effort=effort)}
     return {"mode": "argv"}
 
 

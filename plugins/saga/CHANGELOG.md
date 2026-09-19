@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.160.0] - 2026-09-19
+
+- **The per-repository tier overlay reads through one implementation (#1021).**
+  `scripts/tier_defaults.py` keeps its five public functions and their behaviour but is now a thin
+  shim over `fleet_commons.staffing`: the overlay read, its validation and the registry lookup live
+  once, in fleet-core. `write_tier_default` validates through the same public check the read uses,
+  so a write can no longer accept a tier the read would refuse. `parse_tier_band` stays here,
+  because it parses a GitHub issue body. `TierDefaultsError` still reaches every caller that
+  catches it.
+- **The generated tier table and the effort-convention pointer follow the merged data file
+  (#1021).** `skills/plan/SKILL.md`'s generated tier-table block is re-rendered from
+  `staffing.json`, and `scripts/plan_save_contract.py`'s `EFFORT_REFERENCE` constant — which is
+  checked for existence at contract-load time, not merely linked — now names
+  `plugins/fleet-core/references/staffing.md`. `scripts/plan_save_proof.py` and the two reference
+  documents that named the deleted `tier_policy.json` follow.
+
 ## [0.159.0] - 2026-09-16
 
 - **Accepted results cannot carry active findings (#894).** `ReviewResult` refuses `accepted` with empty failing lenses, empty unresolved fix ids, and any finding still `status=active`. `record_cycle` reconciles leftover active findings (and matching scoring evidence) before constructing that shape. `repairs_requested` and `cycle_cap_best_available` may still list `active`.

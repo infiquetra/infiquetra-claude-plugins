@@ -38,7 +38,12 @@ EFFORTS: tuple[str, ...] = _tier_palette.EFFORTS
 
 # Per-repository, beside the repo's .github/ and distinct from the .claude/saga cache. Whether
 # this path is tracked is the repository's choice; this module only reads it.
-DEFAULTS_PATH = Path(".saga/tier-defaults.json")
+#
+# Bound to fleet-core's constant rather than re-declared (#1021): the read goes through
+# staffing.load_overlay and the write goes through _defaults_path below, so two independently
+# edited copies of this path would silently point the writer and the reader at different files —
+# the exact duplicate-source class this component exists to remove.
+DEFAULTS_PATH: Path = _staffing.OVERLAY_PATH
 
 # The issue-carried band section mission-control stamps at issue-create time (#368 AC5).
 # Format contract with sdlc_manager._append_tier_band: an H3 header followed by "model/effort".
@@ -52,7 +57,8 @@ class TierDefaultsError(ValueError):
 
 
 def _defaults_path(root: Path | None = None) -> Path:
-    return (root or Path.cwd()) / DEFAULTS_PATH
+    """The overlay path the writer targets — the same one ``staffing.load_overlay`` reads."""
+    return _staffing.overlay_path(root)
 
 
 def load_tier_defaults(root: Path | None = None) -> dict[str, Tier]:

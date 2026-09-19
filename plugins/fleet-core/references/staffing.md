@@ -97,6 +97,9 @@ service being reachable.
 2. Set `runtime_supported` true **only** once the launch arguments are verified on a live host. Until
    then set it false and record why in `unsupported_reason`: `SUPPORTED_RUNTIMES` derives from the
    rows whose flag is true, so an unverified vendor is visible without being silently launchable.
+   Keep `accepted_efforts` **weakest-first** — `strongest-supported` resolves to its last entry, so
+   a list written the other way round silently returns the weakest rung, and a guard in
+   `tests/test_staffing.py` fails if it drifts.
 3. The palette's vendor keys are compared as a set against the agent-launcher's own `VENDOR_FLAGS`
    table, so adding a kind there without adding it here reds `tests/test_staffing.py`.
 

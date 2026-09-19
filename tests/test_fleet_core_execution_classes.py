@@ -131,7 +131,12 @@ def test_existing_resolve_call_sites_are_unaffected_by_the_sibling() -> None:
     defaults_mod = importlib.util.module_from_spec(defaults_spec)
     sys.modules["u1_tier_defaults_consumer"] = defaults_mod
     defaults_spec.loader.exec_module(defaults_mod)
-    assert defaults_mod._registry_default("judgment") == {"model": "opus", "effort": "high"}
+    # The private _registry_default helper became a delegating shim in issue #1021; the public
+    # function it folded into resolves the same work shape through the same registry.
+    assert defaults_mod.resolve_tier_with_overlay("judgment") == {
+        "model": "opus",
+        "effort": "high",
+    }
 
     emitter_spec = importlib.util.spec_from_file_location(
         "u1_team_emitter_consumer", saga_scripts / "team_emitter.py"

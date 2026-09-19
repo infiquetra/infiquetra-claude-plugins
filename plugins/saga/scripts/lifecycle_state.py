@@ -495,7 +495,7 @@ def resolve_build_unit_tier(
         _assert_known_tier(model, effort, source="plan_tier")
         return {"model": model, "effort": effort}
     shape = work_shape or "mechanical"
-    # Delegate to the existing chain so values stay in tier_policy.json and a
+    # Delegate to the existing chain so values stay in staffing.json's work_shapes and a
     # malformed .saga/tier-defaults.json still raises TierDefaultsError.
     from pathlib import Path as _Path  # noqa: PLC0415  (lazy to avoid top-level side effects)
 

@@ -262,11 +262,44 @@ def test_opencode_is_in_the_palette_but_not_a_supported_runtime() -> None:
         tier_resolver.collapse_effort_for_runtime("opencode", "high")
 
 
-def test_supported_runtimes_derive_from_the_palette() -> None:
+def test_supported_runtimes_are_the_six_the_resolver_knew_before_the_move() -> None:
+    """Pinned as literals, not recomputed with the implementation's own comprehension.
+
+    Deriving the expectation the way the code derives it cannot detect drift in the vendor data —
+    it only proves the comprehension runs. These six names are what tier_resolver carried as a
+    module-level literal before issue 1021 moved the palette into data.
+    """
     from fleet_commons import tier_resolver
 
-    expected = tuple(name for name, row in staffing.vendors().items() if row["runtime_supported"])
-    assert expected == tier_resolver.SUPPORTED_RUNTIMES
+    assert tier_resolver.SUPPORTED_RUNTIMES == ("claude", "codex", "grok", "muse", "qwen", "agy")
+
+
+def test_accepted_efforts_are_ordered_weakest_first() -> None:
+    """``strongest-supported`` returns ``accepted_efforts[-1]``, so the order is load-bearing.
+
+    In Python this order lived in a reviewed literal. As data it is editable, and a list written
+    strongest-first would silently make the strongest-supported fallback resolve to the weakest
+    rung — which the execution class review-max uses in a live fallback.
+    """
+    rungs = {name: row["rung"] for name, row in staffing.load_staffing()["scalar_efforts"].items()}
+    for name, row in staffing.vendors().items():
+        accepted = row["accepted_efforts"]
+        ranks = [rungs[effort] for effort in accepted]
+        assert ranks == sorted(ranks), (
+            f"{name}: accepted_efforts must be weakest-first, got {accepted}"
+        )
+
+
+def test_strongest_supported_resolves_to_each_vendors_top_accepted_rung() -> None:
+    from fleet_commons import tier_resolver
+
+    for name, row in staffing.vendors().items():
+        if not row["runtime_supported"]:
+            continue
+        resolved = tier_resolver.collapse_effort_for_runtime(
+            name, tier_resolver.STRONGEST_SUPPORTED
+        )
+        assert resolved == row["accepted_efforts"][-1]
 
 
 @pytest.mark.parametrize(

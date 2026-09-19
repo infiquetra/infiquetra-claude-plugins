@@ -230,15 +230,23 @@ def widen_flags(
         except Exception as exc:  # noqa: BLE001 - an absent fleet-core is not a parse failure
             return _keyword_only(floors, f"fleet-core is unavailable ({type(exc).__name__})")
 
-    result = widen(
-        {"issue": body},
-        "issue-flags",
-        floors,
-        decision_prefix="issue-flags",
-        threshold=threshold,
-        ask=ask,
-        log=log,
-    )
+    try:
+        result = widen(
+            {"issue": body},
+            "issue-flags",
+            floors,
+            decision_prefix="issue-flags",
+            threshold=threshold,
+            ask=ask,
+            log=log,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail open covers the primitive's own faults too
+        # `widen` already converts every CLIENT failure into a floors-only
+        # result.  This catches the rest -- an unknown verb, a registry that
+        # moved, a bug in the primitive -- because the promise four saga skills
+        # rely on is "this script still prints its JSON", not "the client
+        # behaved".
+        return _keyword_only(floors, f"the judgment raised {type(exc).__name__}")
 
     judgments = result.judgments
     return {
@@ -267,6 +275,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.issue is not None and args.body_file != "-":
         parser.error("pass either --issue or --body-file, not both")
+    if args.repo is not None and args.issue is None:
+        parser.error("--repo only applies to --issue")
     return args
 
 

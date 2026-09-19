@@ -12,6 +12,16 @@
 
 **Refs.** Issue #1036; DECISIONS `{#1036-widen-only-union-one-primitive}`; `tests/test_parse_issue_flags.py::test_the_keyword_floor_misses_the_plural_of_credential`.
 
+### Failing open to a floor hides a renamed key, so the seam needs its own guard  {#1036-fail-open-hides-a-renamed-key}
+
+**Evidence.** Issue #1036, found in this card's own code review. `jev_widen.widen()` treats a question key the answer does not carry as "missing" and returns that key's floor. That is the correct behaviour for a vendor that omits an answer — and it is also exactly what happens if the caller's key constant and the registry verb's question key stop agreeing. Renaming `has_refactor` in `jev_verbs.py` produced no failure at all until `tests/test_parse_issue_flags.py::test_parse_issue_key_constants_and_the_issue_flags_verb_name_the_same_keys` existed; then it reds.
+
+**Mechanism.** A fail-open policy converts *every* reason a value is absent into the same benign outcome, including reasons that are defects. The policy cannot distinguish "the vendor did not answer" from "nobody asked" — both arrive as a key that is not in the mapping. So the safety property that makes the feature trustworthy also removes the signal that would reveal it had quietly stopped working.
+
+**Generalizable rule.** Where two modules agree on a set of names and one of them falls back silently when a name is absent, assert the agreement in a test that loads both. A fail-open path is not self-checking; it is the opposite.
+
+**Refs.** Issue #1036; `plugins/fleet-core/scripts/fleet_commons/jev_widen.py`; `plugins/saga/scripts/parse_issue.py` `FLAG_KEYS` / `APPROVAL_BOUNDARY_KEYS`.
+
 ### Giving a hook a model call turns its existing tests into live network calls  {#1036-hook-tests-reach-the-network}
 
 **Evidence.** Issue #1036. Adding the widen path to `plugins/saga/hooks/journal_nudge_hook.py` reddened `tests/test_journal_nudge_hook.py::test_ae6_chore_commit_is_silent` on the first run. The test calls `main()` with a chore commit touching code — a path that previously exited early and now falls through to the model. With `TYPESAFE_API_KEY` in the environment it made a real request; in continuous integration, with no key, it would instead have paid the timeout on every such test.

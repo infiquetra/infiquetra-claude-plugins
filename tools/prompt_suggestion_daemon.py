@@ -43,7 +43,9 @@ if str(TOOLS_DIR) not in sys.path:
 import prompt_suggestion_latency as harness  # noqa: E402
 
 BACKLOG = 64
-READY_PREFIX = "READY "
+# One definition, imported rather than restated: the reader that waits for this line lives
+# in the harness, and two copies of the same literal drift silently.
+READY_PREFIX = harness.READY_PREFIX
 
 
 class Daemon:

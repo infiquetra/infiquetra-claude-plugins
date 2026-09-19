@@ -45,6 +45,7 @@ import argparse
 import json
 import math
 import os
+import select
 import socket
 import subprocess
 import sys
@@ -60,7 +61,17 @@ INPUTS_DIR = REPO_ROOT / "docs" / "analysis" / "2026-09-19-prompt-suggestion-lat
 CORPUS_PATH = INPUTS_DIR / "corpus.json"
 QUESTIONS_PATH = INPUTS_DIR / "questions.json"
 
-# How many candidates the verification pass re-checks, from the vendor cookbook.
+# The ceiling on how many candidates the verification pass re-checks.
+#
+# A known and deliberate deviation from the vendor cookbook, recorded here because the
+# measured numbers depend on it. The cookbook re-ranks the top THREE candidates; the
+# choice primitive returns one winner, and building a genuine top-three would mean reading
+# the answer's `probabilities` map. This harness verifies only the single winner, so the
+# cap below is a ceiling the shortlist never reaches. The call count -- and therefore every
+# latency figure -- is identical either way, because both variants make exactly one
+# verification request; only the two-request shapes' ACCURACY could differ under a real
+# three-candidate shortlist. Named as a limitation in the deliverable rather than changed
+# after the fact, so the shipped code is the code that produced the reported numbers.
 SHORTLIST_SIZE = 3
 
 # The hard client-side deadline a hook gives the resident process before it gives up and
@@ -95,6 +106,10 @@ WARM_SHAPES = frozenset({"s2", "s3", "s4", "s5"})
 COLD_SHAPES = frozenset({"s0", "s1"})
 
 NO_SUGGESTION = "none"
+
+# The line the resident process prints once it is listening. Defined here and imported by
+# the daemon so the writer and the reader cannot drift apart.
+READY_PREFIX = "READY "
 
 
 class HarnessError(RuntimeError):
@@ -286,7 +301,12 @@ def build_verify_request(
 
 
 def read_wide(answers: Mapping[str, Any], client: Any) -> tuple[list[str], float]:
-    """The ranked shortlist and the gate score, from the wide pass's answers."""
+    """The shortlist and the gate score, from the wide pass's answers.
+
+    The shortlist holds at most ONE entry -- the choice primitive's winner. See
+    ``SHORTLIST_SIZE`` for why that is a deviation from the cookbook and what it does and
+    does not affect.
+    """
     chosen = client.answer_value(answers.get("rank", {}))
     gates = []
     for key in ("needs_command", "is_substantial", "is_unambiguous"):
@@ -453,6 +473,33 @@ def time_process(argv: Sequence[str], *, env: Mapping[str, str] | None = None) -
     return elapsed_ms, completed.stdout
 
 
+def classify_trial(shape: str, payload: Mapping[str, Any]) -> tuple[bool, str]:
+    """Did this trial produce a real answer, and if not, why not?
+
+    Extracted and tested on its own because getting it wrong is not a visible failure: a
+    trial that produced no answer and a trial that answered "no command fits" are the same
+    bytes, and scoring the first as the second enters a deadline into the latency figures
+    and a timeout into the accuracy figures. That mistake already happened once here.
+    """
+    if shape == "floor":
+        return True, ""
+    if not payload:
+        note = (
+            "no answer within the client deadline"
+            if shape in WARM_SHAPES
+            else "the hook produced no answer"
+        )
+        return False, note
+    if payload.get("error"):
+        return False, f"the resident process raised {payload['error']}"
+    statuses = payload.get("statuses") or []
+    if not statuses:
+        return False, "the answer carried no request status"
+    if not all(status == "ok" for status in statuses):
+        return False, "|".join(sorted(set(statuses)))
+    return True, ""
+
+
 def rotation_order(shape_names: Sequence[str], trials: int) -> list[str]:
     """One trial of each shape in rotation, ``trials`` times over.
 
@@ -595,7 +642,21 @@ def cmd_hook(args: argparse.Namespace) -> int:
         return client.ask(state, asked, transport=args.transport or None)
 
     result = suggest(args.prompt, roster, questions, ask, client, deep_check=(args.shape == "s1"))
-    print(json.dumps({"command": result.command, "calls": result.calls, "usage": result.usage}))
+    # `statuses` must travel with the answer. Without it the caller cannot tell a request
+    # that failed from one that succeeded and had nothing to suggest -- both arrive as an
+    # answer of `none` -- so a failed cold trial would be recorded as a fast silent
+    # success, which is the same class of mistake the warm timeout produced.
+    print(
+        json.dumps(
+            {
+                "command": result.command,
+                "calls": result.calls,
+                "live_calls": result.live_calls,
+                "usage": result.usage,
+                "statuses": result.statuses,
+            }
+        )
+    )
     return 0
 
 
@@ -651,16 +712,25 @@ def start_daemon(
     process = subprocess.Popen(  # noqa: S603 - argv is built here
         argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
-    deadline = time.monotonic() + 30.0
     assert process.stdout is not None
+    # A blocking readline cannot be interrupted by the deadline below, so a process that
+    # starts and then says nothing would hang this call forever rather than time out.
+    # Waiting on the file descriptor instead keeps the deadline real.
+    deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
-        line = process.stdout.readline()
-        if line.startswith("READY "):
-            return DaemonHandle(process=process, pid=process.pid, socket_path=socket_path)
         if process.poll() is not None:
             stderr = process.stderr.read() if process.stderr else ""
             raise HarnessError(f"the resident process exited before listening: {stderr.strip()}")
+        ready, _, _ = select.select([process.stdout], [], [], 0.25)
+        if not ready:
+            continue
+        line = process.stdout.readline()
+        if not line:
+            continue
+        if line.startswith(READY_PREFIX):
+            return DaemonHandle(process=process, pid=process.pid, socket_path=socket_path)
     process.terminate()
+    process.wait(timeout=10)
     raise HarnessError("the resident process did not report listening within 30 seconds")
 
 
@@ -793,21 +863,7 @@ def cmd_measure(args: argparse.Namespace) -> int:
                 payload = json.loads(stdout.strip().splitlines()[-1])
             except json.JSONDecodeError:
                 payload = {}
-        statuses = payload.get("statuses") or []
-        note = ""
-        if shape == "floor":
-            ok = True
-        elif shape in WARM_SHAPES and not payload:
-            # The resident process said nothing within the deadline. Recording this as a
-            # successful trial would enter the deadline itself into the latency figures
-            # and score the silence as a judgement the model never made.
-            ok, note = False, "no answer within the client deadline"
-        elif payload.get("error"):
-            ok, note = False, f"the resident process raised {payload['error']}"
-        else:
-            ok = all(s == "ok" for s in statuses) if statuses else bool(payload)
-            if not ok:
-                note = "|".join(sorted(set(statuses))) or "empty answer"
+        ok, note = classify_trial(shape, payload)
         if shape != "floor":
             # Only the cold shapes are tallied here; the resident process reports its own
             # spend, which includes the primed and backgrounded calls no hook ever sees.

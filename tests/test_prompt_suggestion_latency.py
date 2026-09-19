@@ -90,13 +90,6 @@ class RecordingAsk:
         return self._results.pop(0)
 
 
-class ForbiddenAsk:
-    """Fails the test if it is called at all."""
-
-    def __call__(self, *args: Any, **kwargs: Any) -> FakeResult:
-        raise AssertionError("this path must make no request")
-
-
 def _noul(value: float) -> dict[str, Any]:
     return {"type": "noul", "noul": value}
 
@@ -268,6 +261,98 @@ def test_the_measurement_deadline_is_longer_than_the_operator_deadline() -> None
     that scored as a deliberate silence.
     """
     assert harness.MEASUREMENT_DEADLINE_SECONDS > harness.CLIENT_DEADLINE_SECONDS
+
+
+def test_a_warm_trial_with_no_answer_is_a_timeout_not_a_silent_success() -> None:
+    """The regression that corrupted the first measurement run, pinned.
+
+    An empty answer from a timeout and an empty answer from a suggester that chose to stay
+    quiet are the same bytes. Scoring the first as the second put the deadline into the
+    latency figures and a timeout into the accuracy figures.
+    """
+    ok, note = harness.classify_trial("s2", {})
+    assert ok is False
+    assert "deadline" in note
+
+
+def test_a_cold_trial_with_no_answer_is_also_a_failure() -> None:
+    ok, note = harness.classify_trial("s0", {})
+    assert ok is False
+    assert note
+
+
+def test_an_answer_without_a_request_status_is_not_trusted() -> None:
+    """A payload carrying no status cannot prove its request succeeded."""
+    ok, note = harness.classify_trial("s0", {"command": "plan", "calls": 1})
+    assert ok is False
+    assert "status" in note
+
+
+def test_a_failed_request_status_is_a_failed_trial() -> None:
+    ok, note = harness.classify_trial("s1", {"command": "none", "statuses": ["ok", "timeout"]})
+    assert ok is False
+    assert "timeout" in note
+
+
+def test_the_resident_process_raising_is_a_failed_trial() -> None:
+    ok, note = harness.classify_trial("s2", {"error": "ValueError"})
+    assert ok is False
+    assert "ValueError" in note
+
+
+def test_a_good_answer_is_a_good_trial() -> None:
+    ok, note = harness.classify_trial("s3", {"command": "plan", "statuses": ["ok"]})
+    assert ok is True
+    assert note == ""
+
+
+def test_the_floor_needs_no_answer_to_count() -> None:
+    """The floor shape prints nothing by design; that is what it measures."""
+    ok, note = harness.classify_trial("floor", {})
+    assert ok is True
+    assert note == ""
+
+
+def test_the_ready_marker_has_one_definition_shared_by_writer_and_reader() -> None:
+    """The daemon must take the marker from the harness, not restate the literal.
+
+    Asserting the two are equal would pass even if the daemon hard-coded its own copy,
+    because equal string literals are often the same interned object. Asserting the
+    daemon's source contains no literal assignment is what actually pins the property.
+    """
+    daemon_module = _load(DAEMON_PATH, "prompt_suggestion_daemon_test")
+    assert daemon_module.READY_PREFIX is harness.READY_PREFIX
+    source = DAEMON_PATH.read_text(encoding="utf-8")
+    assert 'READY_PREFIX = "' not in source, "the daemon restates the marker instead of importing it"
+
+
+def test_a_cold_hook_reports_the_status_of_every_request_it_made(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without a status the caller cannot tell a failed request from an empty answer.
+
+    This is the cold-side counterpart of the warm timeout: both arrive as a suggestion of
+    `none`, and only the status distinguishes them.
+    """
+    import argparse as _argparse
+
+    served = _wide("plan")
+    served.status = "error"
+    monkeypatch.setattr(harness, "_load_client", lambda: FakeClient())
+    monkeypatch.setattr(harness, "load_roster", lambda _dir: {"plan": "make a plan"})
+    monkeypatch.setattr(
+        FakeClient, "ask", staticmethod(lambda *a, **k: served), raising=False
+    )
+
+    args = _argparse.Namespace(
+        shape="s0", prompt="x", socket="", transport="", commands_dir=str(SAGA_COMMANDS)
+    )
+    assert harness.cmd_hook(args) == 0
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["statuses"] == ["error"]
+    # And the harness must read that status as a failed trial rather than a quiet success.
+    ok, _ = harness.classify_trial("s0", payload)
+    assert ok is False
 
 
 def test_a_failed_trial_is_counted_apart_and_never_averaged_into_the_tail() -> None:

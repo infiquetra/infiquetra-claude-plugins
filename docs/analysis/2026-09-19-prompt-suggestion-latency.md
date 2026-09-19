@@ -44,6 +44,8 @@ Twenty trials is a small sample for a 95th percentile: the figure is the second-
 
 **What the persistent process is worth.** Cold one-request 741.6 against warm one-request 398.9 at the median: 343 milliseconds saved, 46% of the cold cost. That is a real and large saving, and it is still not enough, which is the finding.
 
+That particular comparison spans two runs minutes apart on a shared machine, so it is not a controlled A/B and should not be read as one. What makes it trustworthy is that the `floor` shape was measured in both runs and came out at 46.5 and 46.9 milliseconds at the median — the same to within half a millisecond. The floor is the control variable here, and it says machine conditions did not move between the runs.
+
 ## 4. Accuracy
 
 Scored against the plan's two pre-committed bars, fixed before any measurement ran: 70% on the fifteen prompts that warrant a command, 80% silence on the five that warrant none.
@@ -60,6 +62,8 @@ Scored against the plan's two pre-committed bars, fixed before any measurement r
 Two things in this table need saying rather than leaving to the reader.
 
 **The verification pass did not help here.** One request scored 93% and two scored 87%, twice — the second pass changed two correct answers to wrong ones and cost an extra 350 milliseconds. That is the opposite of the vendor cookbook's result, and the likely reason is roster size: the cookbook ranks 182 skills, where a wide pass is genuinely uncertain and a verification pass earns its keep. This repository has 24 saga commands, and the wide pass is already confident on them (one probe returned `investigate` at 0.99). A shortlist re-check adds a second chance to talk itself out of a correct answer.
+
+**One deviation from the cookbook, and what it does and does not affect.** The cookbook's verification pass re-ranks the top *three* candidates. This harness verifies only the single winner the choice primitive returns; building a genuine top-three would have meant reading the answer's `probabilities` map, which it does not. This is recorded rather than quietly fixed after the fact, so that the shipped harness is the harness that produced these numbers. It cannot affect any latency figure, because both variants make exactly one verification request and the call count is what drives the timing. It could affect the two-request shapes' *accuracy*: a real three-candidate shortlist might recover the two answers the verification pass lost, or lose more. That is untested, and it is on the follow-up list below rather than asserted either way.
 
 **The stale shape's 7% is an artifact of the corpus, not a verdict on the shape.** `s5` answers with the previous prompt's suggestion, and the twenty corpus prompts are deliberately unrelated to one another, so the previous answer is almost never right. Real operator prompts arrive in related runs — three prompts about the same failing test — where a one-prompt-stale suggestion would do far better. This corpus cannot measure that, and the number above should not be read as though it could.
 
@@ -98,7 +102,7 @@ This is not a filed card and not the drafted card body a *keep* verdict would ha
 2. Whether 400 milliseconds is the right target. A single API round trip is about 352 milliseconds here, so any blocking shape needs a budget above roughly 450 milliseconds to be viable at all. That is an operator judgment about what is noticeable, not a measurement.
 3. Whether a one-prompt-stale suggestion is accurate on *related* consecutive prompts. This is the cheapest remaining experiment and the only one that could turn a blocked shape into a viable one: it needs a corpus of realistic prompt *sequences*, which the data rule makes awkward to build from real sessions.
 4. The installed-tree blocker. A hook cannot work until fleet-core 0.26.0 or later reaches the plugin trees, which is the repository's standing registry-skew problem and is not this card's to fix.
-5. Drop the verification pass unless the roster grows. It cost 350 milliseconds and lost accuracy on a 24-command roster.
+5. Drop the verification pass unless the roster grows. It cost 350 milliseconds and lost accuracy on a 24-command roster — and it was measured verifying one candidate rather than the cookbook's three, so if it is kept at all, measure the three-candidate form before judging it.
 
 ## 8. How this was run, and what would weaken it
 
@@ -107,6 +111,8 @@ This is not a filed card and not the drafted card body a *keep* verdict would ha
 **Sample sizes.** Twenty trials for shapes that spend an API call, fifty for the two that do not. The 95th percentile of twenty is an estimate, and this document has tried to say so everywhere it quotes one.
 
 **Accuracy is measured against a corpus written by the same agent that wrote the question set**, which flatters the suggester. Treat 93% as an upper bound, not a forecast.
+
+**The cold figures cannot prove that no request failed, and here is why they are still trustworthy.** At the time the cold shapes were measured, the cold hook did not report each request's status, so a failed request and a successful one with nothing to suggest were indistinguishable in its output. The code review caught this and it is now fixed, but fixing it does not retroactively add statuses to figures already taken. What the recorded data does show: a failed request returns either fast, with an error, or after the client's long retry deadline — and the cold maxima are 781 and 1253 milliseconds, with minima of 686 and 703, so there is no fast-error outlier and no multi-second timeout anywhere in the distribution. A failed request also yields no suggestion, which scores as a miss, and the cold shapes scored 14 of 15 and 13 of 15. Both lines of evidence say these were real calls; neither is a status field, and the difference is worth stating rather than glossing.
 
 **Two runs, and why.** The warm-shape figures come from a second run. In the first, the harness timed the warm shapes against the same half-second deadline the hook uses to fail open — so every two-request trial returned at the deadline, the recorded latency *was* the deadline, and the empty answer that came back was scored as a deliberate silence. Warm two-request accuracy read as 0 of 15 where the identical cold shape read 13 of 15, which is what exposed it. The measurement deadline is now fifteen seconds and separate from the fail-open policy, a timed-out warm trial is recorded as a failure rather than a fast success, and the shapes were re-measured. The cold figures are from the first run and are unaffected: a cold hook never talks to the resident process, so it never used that deadline.
 

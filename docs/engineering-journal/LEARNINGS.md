@@ -61,6 +61,601 @@
 **Generalizable rule.** A hand-rolled frontmatter parser has to handle both spellings of an empty collection, or the one case that is semantically empty becomes indistinguishable from a syntax error — and it will be the case that is rarest and therefore least tested.
 
 **Refs.** Issue #1022; `tests/test_roles_library.py::parse_frontmatter`, `::test_seeded_inline_empty_list_parses`.
+### A reference document can be load-bearing at runtime, and deleting one is a code change  {#1021-reference-documents-are-runtime}
+
+**Evidence.** Issue #1021, commit for U6. `plugins/saga/scripts/plan_save_contract.py:36` held
+`EFFORT_REFERENCE = Path("plugins/fleet-core/references/effort-convention.md")` and `:217` checked
+`(root / EFFORT_REFERENCE).is_file()`, failing the whole contract load when it did not exist.
+`plugins/saga/scripts/plan_save_proof.py:314` rendered the same path into operator prose, the plan
+skill carried it in a generated block, and `tests/test_saga_spec_consumer_row.py:72` copied it into
+its fixture tree.
+
+**Mechanism.** The plan's first draft listed the deletion of two reference documents under
+"documentation", which is what they look like: markdown under `references/`. Nothing in the file
+itself says it is checked for existence at import time by a sibling plugin. An implementer deleting
+it and running the fleet-core tests would have seen green, because the gate lives in saga; the
+failure surfaces only when a saga plan save runs. The adversarial review found it by grepping the
+document's *name* across the repository rather than reading the plan's file list.
+
+**Generalizable rule.** Before deleting any file, grep the repository for its path as a string, not
+just for links to it. A path held in a constant, asserted by a test fixture, or embedded in a
+generated block is code, and it moves in the same commit as the deletion — never after it.
+
+**And grep the whole repository, not the plugin you are working in.** This entry's own first sweep
+stopped at the saga plugin boundary and left two team-execution reference documents routing readers
+to the deleted `tier_policy.json`; a review lens found them two cycles later. The boundary is not a
+natural stopping point — it is just where attention ran out. Deleting a file across a repository of
+plugins means bumping every plugin whose files you then have to edit, and that cost is part of the
+deletion, not a reason to leave the pointers broken.
+
+### A validity check placed before a normalising step silently narrows the input class  {#1021-check-before-normalise}
+
+**Evidence.** Issue #1021, found by the contract review lens. `staffing.resolve_shape` rejected a
+work shape absent from the registry, then delegated to `tier_resolver.resolve`, which maps three
+`role-tier:` aliases onto registry keys before looking them up. The pre-check therefore fired
+first, and the aliases twenty-five team-execution agent definitions carry in frontmatter stopped
+resolving through saga's overlay chain:
+
+```
+resolve_tier_with_overlay("adversarial-review")  base: opus/high   after: TierDefaultsError
+```
+
+The saga changelog written in the same change asserted the five public functions kept "their
+behaviour". They kept their signatures; they lost an input class.
+
+**Mechanism.** The new module added a friendly error for an unknown work shape — a small,
+obviously good change — without noticing that the function it wrapped accepted a wider vocabulary
+than the registry it validated against. No test in either module mentioned an alias, so the suite
+stayed green. The aliases live in a Python constant and are consumed from Markdown frontmatter,
+which is why a grep for the failing input finds nothing in the test tree.
+
+**Generalizable rule.** When you add a validity check in front of an existing call, first read
+what that call accepts. Normalise before validating, never the reverse — and when a wrapper
+narrows an input class, the test that proves otherwise has to name the inputs the wrapper does not
+know about, because the existing suite by construction does not exercise them.
+
+### A test that reads a gitignored file is green on a fresh clone and red on a real machine  {#1021-gitignored-state-under-test}
+
+**Evidence.** Issue #1021, found by the testing review lens. `tests/test_staffing.py` called the
+resolver without a `root`, so it read `Path.cwd()/.saga/tier-defaults.json`. That path is
+gitignored and is exactly where saga writes an operator's confirmed tier overrides. Writing one
+turned 13 of the 92 tests the file then held red — the work-shape defaults, all three command-line
+tests, both suggestion tests and every pinned-vendor case — for a reason nothing in the diff
+explains. (The file has grown since; the count is the reproduction as it stood, not a running
+total.)
+
+**Mechanism.** Continuous integration starts from a fresh clone, which has no overlay, so the
+suite was green everywhere it ran automatically and red only on a machine that had actually used
+the feature. The author of the same change had already hit this class once and written a comment
+about it in a neighbouring test file, and still did not apply it to the new suite — knowing the
+rule is not the same as sweeping for it.
+
+**Generalizable rule.** A test that reads state from the working directory must select that
+directory itself, with an autouse `monkeypatch.chdir(tmp_path)` and a matching `cwd=` on any
+subprocess. Before trusting a green suite, write the ignored file the code under test reads and
+run it again: a fresh clone hiding the problem is the shape of the flake, not a defence against it.
+
+### Comparing two absent values with `!=` is how a permission check fails open  {#1021-absent-equals-absent-fails-open}
+
+**Evidence.** Issue #1021, found by the security review lens. `qualify_lens` decides whether an
+executor may establish a scoring threshold for a review lens — a privilege decision. It guarded with
+`entry.get("catalogue_version") != version` and `passed != total`. A ledger entry carrying only the
+four identity fields and none of the evidence fields made both sides `None` on both comparisons, so
+both guards passed and the entry was granted:
+
+```
+ledger entry: {"lens":"security","vendor":"claude","model":"opus","effort":"high"}
+result: qualified — "passed None of None fixtures at catalogue version None"
+```
+
+`fixtures_passed: 0, fixtures_total: 0` granted for the same reason: zero equals zero.
+
+**Mechanism.** Every test built its entry from a fixture helper that always supplied all three
+evidence fields, so no test could reach the branch. The code read as if it checked the evidence,
+and it did — it checked that two absent values matched each other. The failure direction was open
+on *incomplete* data, which is the likelier real-world shape than hostile data: a hand-edited or
+half-migrated ledger.
+
+**Generalizable rule.** In a permission or qualification check, assert presence and type before
+comparing, and write the test that omits each required field in turn. `a != b` passing is not
+evidence that `a` and `b` are right; it is only evidence they are the same, and two absences are
+always the same.
+
+### A version bump breaks every test that pinned the old version as a literal  {#1021-version-literals-in-tests}
+
+**Evidence.** Issue #1021. Bumping fleet-core from 0.25.3 to 0.26.0 failed three tests that had the
+old string hardcoded — `tests/test_liveness_events.py`, and two in `tests/test_team_execution_liveness.py`
+— none of which imports anything this change touched. Bumping saga from 0.159.0 to 0.160.0 then
+failed a fourth, `tests/test_saga_plugin.py:49`, which is the repository's own release-surface drift
+guard.
+
+**Mechanism.** Neither release-surface check catches this. `scripts/check_release_surface_parity.py`
+verifies the three-way version lock between manifest, marketplace entry and changelog;
+`tools/release_surface_diff_guard.py` verifies that a changed plugin bumped those three. A test
+asserting a version literal is a fourth surface neither one knows about, and the repository's own
+workflow rule already says so — "any version/metadata drift guard tests" move in the same change.
+
+**Generalizable rule.** After bumping a plugin version, `grep -rn` the old version string across
+**every** pytest root, and prefer reading the expected value from the manifest over pinning it, so
+the next bump cannot re-break the test. Both release-surface checks passing is not evidence the
+suite is green.
+
+**The rule as first written was itself too narrow, and cost a third round.** It said "grep across
+`tests/`". This repository's `pyproject.toml` sets `testpaths = ["tests", "plugins/*/tests"]`, and
+the third instance — `plugins/mission-control/tests/test_prompt_alignment.py:46` — lived in the
+root the rule did not name. Read `testpaths` before trusting a sweep; a rule that names one
+directory when the runner collects two is a rule that finds two thirds of the problem.
+
+### Every declared capability in the engine registry is rated, so a test asserting otherwise passes by accident  {#1021-unrated-capability-assertion}
+
+**Evidence.** Issue #1021, U4. A first version of
+`tests/test_staffing.py::test_an_unrated_capability_yields_an_empty_list_rather_than_an_exception`
+asserted `unrated, "expected at least one capability no engine row rates"` and failed immediately:
+all ten capabilities `plugins/saga/references/engine-registry.yaml` declares are rated by at least
+one of its thirteen engine rows.
+
+**Mechanism.** The behaviour worth pinning was the code path — a role whose capability nobody rates
+yields an empty tuple rather than raising — but the test tried to reach that path through the
+shipped data, which does not contain it. A test written that way either fails honestly, as this one
+did, or silently stops exercising anything the day the data changes.
+
+**Generalizable rule.** When the property under test is a code path the shipped data cannot reach,
+construct the input instead of asserting the data has a gap. Monkeypatching the one lookup is
+cheaper than a fixture registry and does not rot when the real data moves.
+### A grep for the retired ladder cannot find a retired name used alone  {#1020-sweep-names-not-ladders}
+
+**Context.** Issue #1020 replaced the retired board vocabulary across the mission-control plugin's
+prose. The plan recorded a completeness sweep to prove nothing was left behind.
+
+**Evidence.** The sweep matched the ladder as an arrow chain:
+`grep -rn "Idea ->\|-> Ready ->" plugins/mission-control/skills/ ...`. It returned one legitimate
+hit and was read as clean. Two later review cycles found retired Status names still shipping in
+files that sweep had covered: four examples in `skills/board/SKILL.md` passing `--status "Active"`
+or `--status "Shaping"`, then `README.md:115-116` and `commands/triage.md:74` doing the same. Each
+is a single name on a command line. None contains an arrow.
+
+**Mechanism.** The sweep pattern encoded the shape the vocabulary took in *tables* — a ladder with
+arrows between stages — not the shape it takes in *instructions*, where one name appears alone as a
+flag value. A pattern derived from how a thing is written in one place silently fails to cover how
+it is written elsewhere, and returns a short clean answer rather than an error, which is what made
+it persuasive twice.
+
+**Why it mattered more than a typo.** These files are read by agents as instruction. `board move
+--status "Active"` names a Stage, and the command writes Status, so an agent following the example
+emits an option the board rejects. `LIVE_LEGACY_STATUS_ALIASES` carries no entry for `Active`, so no
+migration hint fires either.
+
+**Fix.** Replaced the grep with an executable guard that parses every `--status "..."` value out of
+every Markdown surface under the plugin's `skills/`, `commands/` and `agents/` directories plus its
+README, and checks each against `workflows.stage_flow.statuses` in `sdlc-schema.json`
+(`tests/test_board_schema_drift.py`). It was proven by seeding one invalid value and watching it go
+red, then restoring. It carries its own vacuity guard, because a file-discovery bug would otherwise
+make it pass by scanning nothing.
+
+**Generalizable rule.** When sweeping for a retired name, match the NAME, and check each hit against
+the authoritative list — do not match the syntax the name happened to appear in when you last saw
+it. A sweep whose pattern encodes a layout rather than a value is a sweep that will miss the next
+place the value is used. And prefer a test over a one-off grep: the grep proves today, the test
+keeps proving.
+
+**The first guard written from this rule broke it, which is the sharpest evidence for it.**
+That guard matched `--status\s+"([^"]+)"` -- one flag, quotes required. The plugin also writes
+Status unquoted, through `--field Status --option <value>`, and as a bare name in an English
+sentence, so ten offenders across four files survived a review cycle that believed the class was
+closed; the changelog said so in as many words. The rule above was committed in the same commit
+as the guard that violated it. Writing a rule down does not apply it: the guard now enumerates
+the retired NAMES and checks every syntax, and it was confirmed red against the unfixed tree
+before being trusted. When it was widened it immediately found four more offenders nobody had
+reported -- which is what a guard built on the rule finds and a guard built on a syntax cannot.
+
+**State a guard's boundary, or the next reader assumes it has none.** This guard covers the
+names the board-stage migration renamed, plus `Done`, written in the syntaxes the plugin's
+Markdown actually uses. It does NOT cover the older Mount Olympus vocabulary (`Assigned`,
+`In Review`, `Needs Question`), argparse help strings in the Python sources, or exotic flag
+spellings such as `--status=X` and `--field=Status --option=X`. A later review found live
+instances of the first two classes. An earlier draft of this entry claimed the guard "checks
+every syntax", which was the same overclaim this entry exists to warn about, made about the
+remedy instead of the defect.
+
+**Corollary on exemptions.** A name-level sweep needs a history exemption or it drowns in false
+positives: a legacy ladder, a retirement note and a changelog all legitimately name retired
+values. Scope the exemption to a section marked as history, and leave the changelog out of the
+sweep entirely -- a record of what a release retired must be free to name it. An exemption that
+is per-line rather than per-section silently stops covering the line below it.
+
+**Refs.** Issue #1020 unit 4; `tests/test_board_schema_drift.py`;
+`plugins/mission-control/config/sdlc-schema.json` `workflows.stage_flow`.
+
+### A shape change's blast radius is found by searching for the producer's callers, not the artifact's name  {#1020-blast-radius-search-the-producer}
+
+**Context.** Issue #1020 changed `board_census.py` to emit the board census `fields` as a mapping
+keyed by field name instead of a list. Planning had to establish who consumes that shape.
+
+**Evidence.** The plan searched the repository for `board-schema` and `board_schema` and reported a
+blast radius of two files: `plugins/mission-control/scripts/board_census.py` and
+`plugins/mission-control/tests/test_board_census.py`. That claim was wrong, and shipped in the plan
+document and a decision record before review caught it. Searching instead for callers of the
+producing function found
+`plugins/mission-control/config/generated/check_issue_contract_parity.py:121,129,152`, which imports
+`board_census.fetch_project_fields_census` and at line 158 did
+`next((f for f in census["fields"] if f["name"] == "Status"), None)`. Under a mapping that iterates
+field-name strings, so `f["name"]` raises `TypeError`. Three fixtures in
+`plugins/mission-control/tests/test_issue_contract_parity.py` built the same list shape.
+
+**Mechanism.** The consumer never names the artifact. It receives the census by calling the
+function, and the file it writes to disk is irrelevant to it. A grep for the artifact's name is
+therefore structurally incapable of finding it — and returns a short, confident, wrong answer rather
+than nothing, which is what made it persuasive.
+
+**Why it nearly shipped green.** The broken path is live-gated: `check_issue_contract_parity.py`'s
+third leg needs a `project`-scoped token and raises `LiveParityUnavailableError` into a SKIP without
+one. The repository gate and continuous integration would both have skipped it, and the whole
+mission-control suite passed with the bug present, because the parity tests injected their own
+list-shaped fixture rather than the real producer's output.
+
+**Fix.** Index the mapping directly; update the three fixtures. Verified by running the live leg
+against the real boards: `check_issue_contract_parity.py --live` prints "live parity leg passed".
+
+**Generalizable rule.** When changing the shape of a value a function returns, enumerate callers of
+the *function*. Searching for the name of the file it serializes to finds only the consumers that
+happen to mention it. And when a test injects a fixture in place of the real producer, the fixture
+is now a second copy of the contract — change both, or the suite will agree with itself while
+production disagrees.
+
+**Refs.** Issue #1020; DECISIONS [[#1020-census-keyed-by-field-name]].
+
+### A precedence ladder hides a stale shipped file from the only person who could notice  {#1020-vendored-rung-masked-by-local-checkout}
+
+**Context.** Issue #1020 regenerated mission-control's cached board census. While grounding the
+plan, the vendored `plugins/mission-control/config/project-mappings.json` was found pinning
+`"workflow": "intent_flow"` for Operations and Asgard and `"campps_initiative"` for CAMPPS.
+`sdlc-schema.json` contains no `intent_flow` workflow at all, and marks `campps_initiative`
+`retired_historical` with `"active_routing": false`.
+
+**Evidence.** The first write-up of this called it a live defect. Running the resolver refuted
+that: `_status_order` through `load_config()` returned the correct 26-status stage-flow order for
+all three boards. `_resolve_project_mappings` (`sdlc_manager.py:305-317`) tries
+`$INFIQUETRA_SDLC_PATH/config/project-mappings.json` before the vendored copy, and
+`get_sdlc_path()` falls back to `~/workspace/infiquetra/infiquetra-sdlc` — a checkout that exists
+on the developer machine and is current. Driving `_project_workflow_name` and `_status_order` from
+the vendored file directly printed what shipped environments actually get: `['No Status']` for
+Operations and Asgard, and `['Idea', 'Committed', 'In Progress', 'Done', 'Parked', 'No Status']`
+for CAMPPS.
+
+**Mechanism.** Two independent facts compound. First, the mapping duplicates a name the schema
+owns, so the duplicate outlived the thing it named — `_project_workflow_name` prefers the mapping's
+label over the board's own declaration, and a label naming a deleted workflow resolves to an empty
+dictionary rather than raising. Second, the resolution ladder consults a developer's local checkout
+before the file that ships. The developer machine is therefore the one machine that cannot observe
+the bug, and it is the machine where anyone would look.
+
+**Fix.** Delete the three `workflow` keys so resolution falls through to each board's declared
+`stage_flow` — the branch the function already implements. The test added with the fix
+(`plugins/mission-control/tests/test_project_mappings_resolution.py`,
+`TestVendoredMappingsDoNotOverrideTheBoardWorkflow`) deliberately reads the real vendored file
+rather than going through `load_config()`; written the other way it would have passed before the
+fix and proved nothing.
+
+**Generalizable rule.** When a loader has a precedence ladder, test the rung that ships, not the
+rung your machine lands on — and treat a config key that restates a name another file owns as a
+latent staleness bug, because the restatement can outlive the name without anything failing.
+
+**Refs.** Issue #1020 unit 5; `sdlc_manager.py:305-317`, `:417-426`, `:436-441`.
+
+---
+
+### A drift check that skips without credentials reports success on every run that cannot check  {#1020-skip-on-no-credential-reports-green}
+
+**Context.** `board_census.py --check` compares the committed board census against the live
+GitHub Projects API and is wired into both `.github/workflows/ci.yml:115-116` and
+`scripts/gate.sh:195`. It has been in place since #424.
+
+**Evidence.** The committed `config/board-schema.json` was last regenerated on 2026-07-14
+(commit `5aa95e5c`) and by 2026-09-19 was two board migrations stale — no `Stage` field on any
+board, the retired six-value ladder on Operations and Asgard, `Todo / In Progress / Done` on
+CAMPPS. The check ran on every continuous-integration run throughout and never once complained.
+
+**Mechanism.** The check is deliberately live-gated: with no `project`-scoped token it prints
+`SKIPPED` and exits 0, a decision recorded in DECISIONS
+[[#board-census-shape-only-live-skip-424]] and still correct, because failing on credential
+absence would block unrelated work. The consequence is that in the environment where it always
+runs, it can never fail — so its green is evidence of nothing, and reads identically to a real
+pass. An operator seeing a passing pipeline has no signal distinguishing "checked and clean" from
+"could not check".
+
+**Fix.** Add a second guard that asserts an invariant needing no credentials, beside the live one
+rather than instead of it: `tests/test_board_schema_drift.py` compares the committed census to the
+vocabulary `sdlc-schema.json` declares. It was confirmed to fail against the pre-regeneration
+census — 12 failures — before being trusted, because a guard only ever seen green is not known to
+guard anything.
+
+**Generalizable rule.** A check that can skip needs a companion that cannot. When a gate's failure
+mode is "unavailable, therefore silent", pair it with an offline invariant covering the same
+property, and prove the new guard red before you accept it green.
+
+**Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
+[[#1020-census-keyed-by-field-name]].
+### The flag that gates security review missed its own card because the prose said "credentials"  {#1036-plural-of-credential}
+
+**Evidence.** Issue #1036. Its body is about credentials, production and destructive operations by name, and `uv run python plugins/saga/scripts/parse_issue.py` reported `has_security: false` for it. The pattern at `plugins/saga/scripts/parse_issue.py:19` alternates on `credential`, bounded by `\b` on both sides, and the body says `credentials` — the trailing `s` is a word character, so the closing boundary never matches.
+
+**Mechanism.** A word-list regular expression is a set of exact tokens, and English is not. Every unlisted inflection, compound and synonym is a silent negative. That is tolerable for a hint and expensive for a floor, and these five flags feed saga's mandatory test gate, so the miss removed a review lens rather than a suggestion. The same pattern is over-eager in the other direction: `handler` sets `has_api` on a sentence about an authentication handler, which is how a test I wrote for this card failed on its own expectation.
+
+**Generalizable rule.** When a keyword pattern gates something, treat it as a floor and name what raises it — then measure both directions before trusting either, because a word list is simultaneously too narrow for the words it lacks and too broad for the ones it has.
+
+**Refs.** Issue #1036; DECISIONS `{#1036-widen-only-union-one-primitive}`; `tests/test_parse_issue_flags.py::test_the_keyword_floor_misses_the_plural_of_credential`.
+
+### Failing open to a floor hides a renamed key, so the seam needs its own guard  {#1036-fail-open-hides-a-renamed-key}
+
+**Evidence.** Issue #1036, found in this card's own code review. `jev_widen.widen()` treats a question key the answer does not carry as "missing" and returns that key's floor. That is the correct behaviour for a vendor that omits an answer — and it is also exactly what happens if the caller's key constant and the registry verb's question key stop agreeing. Renaming `has_refactor` in `jev_verbs.py` produced no failure at all until `tests/test_parse_issue_flags.py::test_parse_issue_key_constants_and_the_issue_flags_verb_name_the_same_keys` existed; then it reds.
+
+**Mechanism.** A fail-open policy converts *every* reason a value is absent into the same benign outcome, including reasons that are defects. The policy cannot distinguish "the vendor did not answer" from "nobody asked" — both arrive as a key that is not in the mapping. So the safety property that makes the feature trustworthy also removes the signal that would reveal it had quietly stopped working.
+
+**Generalizable rule.** Where two modules agree on a set of names and one of them falls back silently when a name is absent, assert the agreement in a test that loads both. A fail-open path is not self-checking; it is the opposite.
+
+**Refs.** Issue #1036; `plugins/fleet-core/scripts/fleet_commons/jev_widen.py`; `plugins/saga/scripts/parse_issue.py` `FLAG_KEYS` / `APPROVAL_BOUNDARY_KEYS`.
+
+### Giving a hook a model call turns its existing tests into live network calls  {#1036-hook-tests-reach-the-network}
+
+**Evidence.** Issue #1036. Adding the widen path to `plugins/saga/hooks/journal_nudge_hook.py` reddened `tests/test_journal_nudge_hook.py::test_ae6_chore_commit_is_silent` on the first run. The test calls `main()` with a chore commit touching code — a path that previously exited early and now falls through to the model. With `TYPESAFE_API_KEY` in the environment it made a real request; in continuous integration, with no key, it would instead have paid the timeout on every such test.
+
+**Mechanism.** The existing tests were written against a function whose every branch was local. Widening a decision moves the early exit *later*, so inputs that used to stop at the top of the function now reach the new code — and a test that never mentioned the network suddenly depends on it. The absence of a key does not make this safe; it converts a wrong answer into a slow one.
+
+**Generalizable rule.** When a function gains an outbound call behind a branch that used to return early, default the new path OFF for the whole existing test file — an autouse fixture setting the switch — and turn it back on only in the tests that inject a fake. Then the old tests keep testing what they were written for, and the new behaviour is exercised deliberately rather than by fall-through.
+
+**Refs.** Issue #1036; `tests/test_journal_nudge_hook.py::_judgment_off`.
+### A persistent local client removes half a hook's cost and still cannot beat one API round trip  {#persistent-client-cannot-beat-the-round-trip-1038}
+
+**Evidence.** Issue #1038, `docs/analysis/2026-09-19-prompt-suggestion-latency.md`, measured with
+`tools/prompt_suggestion_latency.py` against the fleet-core TypeSafe client. A cold hook making one
+request: 741.6 ms median, 781.0 ms at the 95th percentile over 20 trials. The same request against a
+resident process: 398.9 ms median, 428.4 ms at the 95th. A process that starts and immediately exits:
+46.9 ms median. Two sequential requests cold: 1044.3 ms median.
+
+**Mechanism.** Subtract the floor from the warm single-request figure and about 352 ms is left, which
+is one API round trip and matches the 332–428 ms the 2026-09-18 research measured for a standalone
+call. A resident process removes interpreter start, module import and process spawn — 343 ms, 46% of
+the cold cost, a genuinely large saving. It removes nothing else. The shipped client closes its
+session per call (`typesafe_client.py`, `with client as session:`), so even holding a client resident
+does not keep a connection warm, and the round trip is paid in full every time.
+
+**Generalizable rule.** For any per-turn hook, budget the floor plus one round trip before choosing a
+client design: if the target is under about 450 ms on this machine, no local client shape can reach
+it and the only remaining move is to take the call off the critical path.
+
+### Timing a shape against a fail-open deadline measures the deadline, and scores the timeout as a decision  {#fail-open-deadline-corrupts-the-measurement-1038}
+
+**Evidence.** Issue #1038, first measurement run. The warm two-request shape reported a 547 ms median
+— suspiciously close to the harness's own 500 ms client deadline plus process start — and an accuracy
+of 0 correct out of 15, while the *identical* logic in a cold process scored 13 of 15. The second run,
+with the measurement deadline separated from the policy deadline, reported 694.5 ms and 13 of 15.
+
+**Mechanism.** The thin client gives up after 500 ms and prints nothing, which is the correct
+fail-open policy for a hook that fires every turn. Timing the shape against that policy meant every
+trial returned at the deadline, so the recorded latency was the deadline rather than the work. The
+second, worse half: an empty answer from a timeout is byte-identical to an empty answer from a
+suggester that deliberately stayed quiet, and the harness scored it as the latter — a timeout counted
+as a fast, correct silence. Both the latency and the accuracy were wrong, and they were wrong in the
+flattering direction.
+
+**Generalizable rule.** A measurement deadline and a production deadline are different numbers; never
+reuse one as the other. And whenever "no result" and "a negative result" share a representation,
+classify them apart at the point of collection, or the failure will be counted as the success.
+
+### Both plugin trees resolve fleet-core through one registry file, so registry skew is a hard blocker, not a nuisance  {#both-trees-resolve-through-one-registry-1038}
+
+**Evidence.** Issue #1038's resolution probe, run with `FLEET_COMMONS_DEBUG=1` against each tree's own
+copy of the shim. Both `~/.claude/plugins/cache/infiquetra-plugins` and
+`~/.claude-company/plugins/cache/infiquetra-plugins` reported
+`rung=3 (installed-plugins) root=/Users/jefcox/.claude/plugins/cache/infiquetra-plugins/fleet-core/0.25.3`.
+Both trees carry only 0.25.3, and 0.25.3 has no `fleet_commons/typesafe_client.py` — the client shipped
+in 0.26.0, merged to `main` in pull request #1045.
+
+**Mechanism.** Rung 3 of the resolution ladder reads `~/.claude/plugins/installed_plugins.json`, a
+single file under the personal tree. Whichever tree's shim runs, it consults that one registry and
+lands on whatever it names — so the two trees do not merely drift apart, they converge on one
+possibly-stale root. The standing "verify both trees after a release" rule reads as though the trees
+are independent; for anything resolving through rung 3 they are not.
+
+**Generalizable rule.** A feature depending on a newly-shipped fleet-core module cannot run from an
+installed tree until the registry points at a version carrying it — check the resolved root's
+contents, not the repository's, before believing a hook or script will work when installed.
+
+### A plugin version bump breaks three tests that restate the version as a literal  {#fleet-core-version-pins-1032}
+
+**Evidence.** Issue #1032, pull request #1045. Bumping fleet-core 0.25.3 to 0.26.0 turned the
+continuous-integration test job red on `tests/test_liveness_events.py:730` and
+`tests/test_team_execution_liveness.py:158` and `:483`, each asserting
+`result["fleet_core_version"] == "0.25.3"`. The repository's own rule already says any
+version or metadata drift guard moves in the same change as the bump; I moved the three release
+surfaces and missed the three assertions.
+
+**Mechanism.** The six test files this card added all passed locally, which is exactly why the
+failure reached continuous integration: the breakage was in files the card never touched, reachable
+only by running the whole suite. A per-file inner loop cannot see a cross-file version coupling, and
+the coupling is invisible from the changed diff because the literal lives somewhere else entirely.
+
+Worth noting against the pin guard this same card shipped: `tests/test_typesafe_sdk_pin.py` reads
+the declared specifier out of `pyproject.toml` at test time precisely so that editing the
+declaration moves the guard with it. These three liveness assertions do the opposite -- they restate
+a value that lives in `plugin.json` -- so every fleet-core release will keep breaking them until
+they read it instead.
+
+**Generalizable rule.** After bumping a plugin version, grep the whole repository for the old
+version string before pushing, and run the full test suite rather than the files the change touched.
+A guard that restates a value instead of reading it is a guard that fails on every legitimate
+change, which is the opposite of what a guard is for.
+### A file with no entrypoint answers every invocation with success, and the mistyped one is the dangerous case  {#998-no-entrypoint-means-silent-success}
+
+**Context.** `plugins/saga/scripts/plan_save_proof.py` is the independent proof `plan_save_contract.py` runs before it validates or writes any Plan document. Issue #926 turned it from a pytest test into a plain Python file invoked by path, which is what made the missing entrypoint visible.
+
+**Evidence.** Reproduced at `30c36bb5`: `--help`, a bare invocation, and `validate --root .` each printed nothing and exited 0. Issue #998, finding `agentusab06` from the issue #926 review, named only `--help`.
+
+**Mechanism.** A Python file with no `if __name__ == "__main__":` block runs its module body and exits 0. Nothing rejects the arguments because nothing reads them, so the third row above is the sharp one: a guessed subcommand is indistinguishable from a passing run. The card framed this as discoverability — an agent cannot learn what the file does — but silent success on a wrong invocation is the larger hazard, and the same repair closes both.
+
+**Two things the repair had to avoid.** Making the proof runnable standalone would duplicate `plan_save_contract.py validate` and bypass its tool-revision check at `plan_save_contract.py:496`, which exists so the renderer that writes is the one that was verified. And a `--help` added over the module-scope `import yaml` would have been born with the defect `{#997-import-outside-every-handler}` had just fixed next door, so the import moved to `SaveProbe.__call__` in the same change. Reverting either half alone fails the guard; both were run.
+
+**Generalizable rule.** When a module stops being imported and starts being invoked by path, it needs an entrypoint even if it is not runnable — one that names what it is and what to run instead, and refuses at a non-zero code. Silence at exit 0 is a worse answer than a refusal.
+
+**Refs.** Issue #998; parent grouping #1005; `plugins/saga/scripts/plan_save_proof.py`; `tests/test_saga_plan_contract_boundaries.py::test_proof_cli_describes_itself_and_stays_inert_under_the_loader`; canary `plan-save-contract-proof-cli`; DECISIONS `{#998-describe-and-refuse-not-a-second-runner}`.
+
+### A canary mutation must make the guard fail, not make the test runner crash  {#998-canary-mutation-must-fail-cleanly}
+
+**Context.** `tools/canary_registry.json` requires a behavioral mutation for every guard in the Plan contract test files, and `tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth` executes each one and asserts `result == "caught"`.
+
+**Evidence.** The first mutation for `plan-save-contract-proof-cli` replaced `if __name__ == "__main__":` with `if True:`, on the reasoning that the entrypoint would then fire under `runpy` and turn a clean `validate` into a refusal. The canary reported `result: error`, not `caught`, with `mainloop: caught unexpected SystemExit!` and `no tests ran`.
+
+**Mechanism.** The test session imports `plan_save_proof.py` into the pytest process, so an unconditional entrypoint runs during collection, sees pytest's own argv, and exits the interpreter. The guard never ran at all. `error` and `caught` are different verdicts for a reason: `caught` means the guard noticed the broken invariant, `error` means nobody got to look. A mutation that kills the runner proves nothing about the guard.
+
+**Fix.** The registered mutation replaces `parser.print_usage(sys.stderr)` with `return 0`, so a direct invocation returns the success code — the reported defect itself — and the guard fails cleanly on its exit-code assertion. The rejected mutation and the reason are recorded in the entry's `mutation_description` so the next maintainer does not retry it.
+
+**Generalizable rule.** Pick the mutation that breaks the invariant the guard asserts, not the one that breaks the most. Verify the canary reports `caught`; treat `error` as an unproven guard, never as a pass.
+
+**Refs.** Issue #998; `tools/canary_registry.json` entry `plan-save-contract-proof-cli`; `tests/test_wiring_canary.py:40`.
+
+### A module-scope import is outside every handler the file owns, and subclassing the dependency kills the sentinel repair  {#997-import-outside-every-handler}
+
+**Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. Issue #996 had just finished making that promise hold against the foreign code the tool executes. The tool still imported PyYAML at module scope.
+
+**Evidence.** Reproduced at `9f1bae8a`: on an interpreter without PyYAML, `validate`, `render --check` and `--help` each gave a raw traceback, empty stdout and exit 1. Issue #997, finding `adv10` from the issue #926 review, named only `validate`.
+
+**Mechanism.** Every handler a file owns lives inside a function. A module-scope import runs before any of them exist, so no handler can convert its failure however well written they are — issue #996 had just hardened two seams in this same file, and neither could see this one. Exit 1 is the code this tool documents for *drift*, so a broken interpreter was indistinguishable from a real documentation failure. `--help` broke too, and `--help` is the one invocation the docstring exempts, which means the defect reached further than the card said.
+
+**The trap.** The obvious repair — wrap the import in `except ImportError` and set `yaml = None` — does not work here, and fails three lines later rather than at the import. The module does not merely call PyYAML, it *subclasses* it: `class UniqueLoader(yaml.SafeLoader)` needs the real base class object at class-creation time, which is module-import time. The sentinel just moves the crash.
+
+**Fix.** Defer the import to first use inside the parsing path, and build the loader class there too, against the module the deferred import returned. `ImportError` is an ordinary `Exception`, so `main()`'s existing narrow handler converts it with no change — and argparse serves `--help` before any YAML is touched, so that facet closes for free.
+
+**Generalizable rule.** For a command-line tool that promises a machine-readable envelope, a third-party import at module scope is an uncovered failure path by construction; move it to first use. Before reaching for a `None` sentinel, check whether the module *subclasses* the dependency — a subclass needs the real object at class-creation time, which is exactly when the sentinel is not one.
+
+**Refs.** Issue #997; parent grouping #1005; `plugins/saga/scripts/plan_save_contract.py`; `tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_a_missing_pyyaml`; canary `plan-save-contract-missing-pyyaml`; DECISIONS `{#997-defer-the-import-keep-the-code-set-closed}`.
+
+### `except Exception` is not a boundary; a tool that runs someone else's code needs `BaseException`  {#996-envelope-needs-baseexception}
+
+**Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. It keeps that promise through two `except Exception` handlers. It also executes the repository checkout named by `--root` in-process through `runpy`, which makes that checkout's code an input the tool does not control.
+
+**Evidence.** Reproduced at `2044c363` against a temporary checkout: a module-level `sys.exit(7)` in `plan_save_proof.py` gave empty stdout and exit 7; a module-level `raise KeyboardInterrupt` gave a raw traceback and exit 130; and a `sys.exit(9)` as the first statement of `verify()` gave empty stdout and exit 9. Unmutated, the same command returned `{"outcome": "valid"}` at exit 0. Issue #996, finding `adv09` from the issue #926 review.
+
+**Mechanism.** `SystemExit` and `KeyboardInterrupt` derive from `BaseException`, not `Exception`, so neither handler saw them. Two seams could raise, not one: the finding named only the `runpy` load, but `verify_saved_examples` loads the proof and then *calls* it outside the loader's `try`, so guarding the load alone would have left the second escape open and looked fixed.
+
+**The trap.** The obvious repair — widening the top-level handler in `main()` — is wrong, and wrong in a way tests would have caught only if someone thought to test `--help`. Argparse raises `SystemExit(0)` for `--help` from inside that same `try`, so the narrow handler is the sole reason `--help` prints usage and exits 0. Widening it turns the one documented exemption into a JSON refusal at exit 2.
+
+**Fix.** Guard where the foreign code runs, not at the top: widen the loader's handler to `BaseException` and wrap the `verify()` call in a shared conversion that re-raises `ContractError` untouched (so a real verification diagnosis is not relabelled an engine fault). `main()` keeps `except Exception` with a comment saying why.
+
+**Generalizable rule.** When a handler's job is to be a boundary around code you do not control, it must name `BaseException` — and the boundary belongs at every place that code executes, which is usually more places than the bug report names. A deliberately narrow handler elsewhere in the same file is a fact to preserve, not an oversight to tidy up.
+
+**Refs.** Issue #996; parent grouping #1005; `plugins/saga/scripts/plan_save_contract.py`; `tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_baseexception_from_checkout_code`; DECISIONS `{#996-envelope-seam-not-top-handler}`.
+### A "no path skips this" guarantee needs an unforgeable token and a check at the exit  {#unforgeable-prepared-token-1032}
+
+**Evidence.** Issue #1032, adversarial code review of the implementation. The module claimed in its
+docstring, in `plugins/fleet-core/references/typesafe.md`, and in plan decision KTD5 that redaction
+was on the only path to a transport. The reviewer falsified it three ways in one sitting.
+
+**Mechanism.** Three separate holes, each individually plausible. (1) The marker was a string with a
+default value on a dataclass field, so `PreparedRequest(state=<raw secret>)` constructed by hand
+passed the check -- a default is not a guarantee, it is a convenience. (2) The check lived in
+`build_body`, but a transport takes a plain dictionary and the public `ask` is not the only way to
+reach one, so the guard sat one call away from the exit. (3) Only state was redacted; the question
+text, which the command-line tool takes verbatim from operator flags, went to the vendor untouched.
+The repair was a private module-level sentinel object whose identity cannot be reproduced from
+outside the module, the same check re-run inside both transports at the last point before bytes
+leave, and redaction applied to questions as well as state.
+
+**Generalizable rule.** Put the check at the exit, not one frame above it, and make the token
+something an outsider cannot construct. Then ask what else crosses the same boundary: a guarantee
+about "state" said nothing about the questions travelling in the same request.
+
+### A test named for a safety property proved nothing, because it called the wrong function  {#vacuous-guard-test-1032}
+
+**Evidence.** Issue #1032. `test_a_transport_refuses_unprepared_state` called `build_body`, not a
+transport, with a hand-made object whose marker was a wrong string. It passed throughout, and would
+have passed unchanged while both transports accepted arbitrary raw bodies -- which they did.
+
+**Mechanism.** The test asserted the thing the code already did rather than the thing its name
+claimed. Several others in the same suite had the same defect: a transport-equivalence test that
+compared two fakes the test itself built from one dict literal, an offline guarantee that diffed
+`sys.modules` after an earlier test file had already imported the module in question, and a verb
+round-trip whose expected answers were derived from the stub's own input.
+
+**Generalizable rule.** For any test guarding a safety property, ask: if the dangerous thing
+happened, would this fail? If the assertion is reachable without exercising the boundary the name
+refers to, it is documentation, not a guard. Write it to call the function that would actually be
+bypassed.
+
+### Removing a word-boundary anchor from a credential pattern turned redaction quadratic  {#regex-backtracking-in-redaction-1032}
+
+**Evidence.** Issue #1032, during repair of the review's findings. Widening the named-assignment
+pattern to catch JSON-quoted secrets meant dropping its leading `\b`, leaving an unanchored
+`[A-Z0-9_-]*` prefix. The full client test file stopped completing: a 500 kB state ran for minutes
+where the whole file had taken 1.3 seconds.
+
+**Mechanism.** With `(?i)` the prefix class matches ordinary lowercase text, so at every one of half
+a million positions the engine matched greedily to the end, failed to find the keyword, and
+backtracked all the way -- a quadratic scan. This is a denial of service in a redaction path, which
+is the worst place for one, because the alternative to waiting is sending unredacted content.
+
+**Generalizable rule.** An unbounded repeat in front of a literal is a backtracking trap, and
+`(?i)` makes a character class far wider than it reads. Anchor the prefix and bound its repeat, and
+keep a test that fails on the blow-up rather than on the output -- the symptom is a hang, which no
+assertion about correctness will ever catch.
+
+### A yes/no answer from Jev carries no confidence field, and the docs do not say so  {#jev-noul-has-no-confidence-1032}
+
+**Evidence.** Issue #1032; one live request to `https://api.typesafe.ai/v1/systemone` on
+2026-09-19 returned `{"type": "noul", "noul": 0.97}` for a yes/no question, while the choice
+question in the same response returned `choice`, `confidence` and `probabilities`. The vendor
+documentation describes confidence generally and does not name the asymmetry.
+
+**Mechanism.** The plan's verdict record assumed a confidence on every answer, because that is
+what the documentation implies. A yes/no answer instead carries only its probability, so a record
+built from the documentation would have stored `None` silently and the harness would have banded
+every yes/no verdict into nothing. The repair is to record `confidence` as null for that type and
+band it by the probability's distance from one half, doubled, in one shared helper
+(`typesafe_client.answer_confidence`) rather than in each caller.
+
+**Generalizable rule.** When a plan's data contract is derived from a vendor's prose, send one
+real request before writing the contract down. The same request also showed that no rate-limit
+headers are returned on success, which means the client cannot pace itself and must react to a
+429 — a second thing the documentation did not say.
+
+### Redaction that lands one unit after a working client has a window where it does not exist  {#redaction-ordering-window-1032}
+
+**Evidence.** Issue #1032, adversarial plan review, finding P1-5. The plan ordered a complete
+two-transport client in unit U2 and the redaction step in U3.
+
+**Mechanism.** On that ordering there is a revision of the module that sends raw repository
+content to a third-party vendor, and the unit's own secret-containment test could not have caught
+it: that test inspects results, logs and exception text, none of which is the outbound request
+body. The gap is invisible to exactly the test written to close it. The repair was to make the
+transports refuse any state lacking the marker `prepare_state()` stamps, from the first unit
+onward — in U2 the preparer is a pass-through, and U3 fills it in, so no revision can reach a
+transport unredacted.
+
+**Generalizable rule.** When a safety step and the thing it protects ship in different units,
+the protection must be enforced structurally from the first unit, not scheduled for the second.
+Ask of any containment test: would this fail if the dangerous thing happened? If it inspects a
+different surface than the one the data crosses, it would not.
+
+### The research inputs folder held no recorded answers, so an acceptance criterion could not pass  {#eval-cache-was-never-seeded-1032}
+
+**Evidence.** Issue #1032. The card's third acceptance criterion asked
+`jev eval --cached docs/analysis/2026-09-18-typesafe-jev-research-inputs/` to reproduce the tier
+probe's 10 of 10. That folder holds five research briefs, five probe scripts, the candidate ideas
+and a rendered ranking table — and zero API responses. The ten tasks and their expected tiers
+exist only as literals inside `tier_probe.py.txt`.
+
+**Mechanism.** The probe printed its answers and never saved them, so "replay the cached answers"
+had nothing to replay. An implementer following the criterion literally had three options and all
+three were wrong: fabricate a fixture and assert 10 of 10 against it (a test that passes while
+proving nothing), parse Python source out of a text file, or make the offline harness call the
+network. The repair was to re-run the ten tasks once through the shipped client and commit the
+responses as `tier_probe_answers.json`. The reseeded run reproduced 10 of 10 on model tier and
+7 of 10 on effort — matching the original figures exactly, which is a reproducibility result
+worth having rather than an assumption.
+
+**Generalizable rule.** An acceptance criterion that says "reproduce X from cached data" is only
+satisfiable if the cached data is committed. Before accepting such a criterion, open the directory
+it names and confirm the data is there; a criterion that cannot fail honestly will be made to pass
+dishonestly.
 
 ## 2026-09-16
 

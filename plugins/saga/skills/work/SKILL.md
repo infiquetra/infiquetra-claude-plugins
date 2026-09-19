@@ -160,7 +160,8 @@ If the input is a GitHub issue, run `scripts/parse_issue.py` and inspect the `ha
 
 Use the issue's `Handoff maturity`, `Source context`, and the parsed flags (`has_security`, `has_infra`,
 `has_api`) as authoritative input — they feed the backend recommendation (Phase 1) and the hard test
-gate (Phase 3).
+gate (Phase 3). Pass `--flags` to widen those flags with a model judgment (widen-only: a keyword flag
+stays set whatever the model answers, and a client failure returns the keyword result unchanged).
 
 ### 0.3 Saga scan — offer resume before minting
 
@@ -687,7 +688,8 @@ lease preflight retires with U6.
   and is still validated against the same vocabulary the shape path resolves from — a model or
   effort the registry does not carry is refused rather than passed through to a spawn. Otherwise the
   work shape (default `mechanical` when undeclared per `references/execution-strategy.md`) resolves
-  through the shared `tier_policy.json` registry via `tier_resolver` / `tier_defaults`. **The
+  through the shared `work_shapes` registry in `staffing.json` via `tier_resolver` /
+  `tier_defaults`. **The
   resolver takes no host or session input at all**, so the dispatch never consults the host
   session's tier — it cannot read one it is never given. Record the resolved tier in the Phase-4
   work-session execution evidence.

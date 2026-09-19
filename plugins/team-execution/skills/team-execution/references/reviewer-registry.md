@@ -10,7 +10,7 @@ dimensions, score anchors, acceptance policy, participant defaults, and Team Exe
 mappings. This file describes only how Team Execution consumes that data.
 
 **Tier note (#362, KTD5/KTD7):** every mapped reviewer agent's frontmatter carries
-`role-tier: adversarial-review`, which resolves through `fleet_commons/tier_policy.json` to the
+`role-tier: adversarial-review`, which resolves through the `work_shapes` block of `fleet_commons/staffing.json` to the
 review tier. The frontmatter `model:` literal remains a last-resort fallback; it is not the source
 of truth for dispatch tier.
 

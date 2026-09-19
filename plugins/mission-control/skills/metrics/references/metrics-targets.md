@@ -13,9 +13,19 @@ Quick reference for Infiquetra board-flow metrics. Source of truth:
 
 | Board | Start | Terminal |
 |-------|-------|----------|
-| Operations | Active | Done |
-| Asgard | Active | Done |
-| CAMPPS | In Progress | Done |
+| Operations / Asgard / CAMPPS | `Active` stage | `Ready to close` |
+
+> **How the start boundary is actually detected.** `_cycle_start_statuses` in
+> `scripts/sdlc_manager.py` returns the literal option name `Active`, and the
+> timeline query it feeds (`QUERY_GET_ISSUE_TIMELINE`) captures only the option
+> *name* of a single-select change — it records no field name or id, so it cannot
+> tell a `Stage` change from a `Status` change. `Active` is a live `Stage` option
+> on all three boards and is not a `Status` option at all, so the start boundary is
+> whichever field first carried an option named `Active`. That is close to the
+> boundary this table declares, but it is matched by name rather than by field.
+> Making the field explicit is outside issue #1020, whose scope is the cached
+> census and the prose describing it.
+
 
 Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as start with
 `Done`/`Closed`/`Cancelled` terminals; its history may include `In Progress`, `In Development`,
@@ -43,11 +53,9 @@ with those names.
 
 **Use**: Capacity planning, delivery forecasting, and trend analysis.
 
-| Board | Counted terminal statuses |
-|-------|---------------------------|
-| Operations | Done |
-| Asgard | Done |
-| CAMPPS | Done |
+| Board | Counted terminal status |
+|-------|-------------------------|
+| Operations / Asgard / CAMPPS | `Ready to close` |
 
 ---
 
@@ -59,9 +67,11 @@ with those names.
 
 | Board | Status | Threshold |
 |-------|--------|-----------|
-| Operations | Active, Verify | > 3 days |
-| Asgard | Active, Verify | > 3 days |
-| CAMPPS | In Progress | > 5 days |
+| Operations / Asgard / CAMPPS | every non-terminal Status | > 3 days |
+
+`_active_age_thresholds` in `scripts/sdlc_manager.py` derives this from the
+workflow: every stage-flow Status that is not terminal, at three days. The
+boards are not split and no board carries a longer threshold.
 
 ---
 
@@ -69,9 +79,9 @@ with those names.
 
 **Definition**: Active work time divided by total cycle time.
 
-For CAMPPS, active work is primarily `In Progress`. For intent-flow boards,
-active work is `Active` plus `Verify`. `Ready` and `Shaping` are wait or
-preparation states unless a card's evidence shows otherwise.
+All three boards share one ladder: active work is the `Active` and `Verify`
+stages. `Intake`, `Shaping` and `Planning` are wait or preparation states
+unless a card's evidence shows otherwise.
 
 Target: greater than 50%.
 
@@ -89,9 +99,9 @@ Target: greater than 50%.
 
 ### When Throughput Is Low
 
-1. Check WIP limits.
+1. Check how much work sits in the `Active` stage at once.
 2. Look at active-status aging.
-3. Check if `Ready` is empty or poorly shaped.
+3. Check if `Ready for Planning` is empty or poorly shaped.
 4. Look at defect rate and unplanned work.
 5. Consider whether large capabilities should be split.
 

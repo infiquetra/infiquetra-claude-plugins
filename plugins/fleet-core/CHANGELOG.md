@@ -5,6 +5,217 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0] - 2026-09-19
+
+### Added
+
+- **One staffing component** (`scripts/fleet_commons/staffing.py` and `staffing.json`, issue 1021).
+  One data file and one resolver answer "role or work shape, and for review the lens, to vendor,
+  model and effort". `resolve --shape` gives the work-shape tier honouring the per-repository
+  overlay; `resolve --role` gives a vendor, model and effort; `resolve --role --lens` adds the
+  qualification status read from the software-development-lifecycle repository's
+  executor-verification ledger; `explain --role` lists the candidate executors in rating order with
+  their ratings. The default output is the short `model/effort` pair, with `--json` for the whole
+  decision record. A work shape prints the tier alone; a role prints its vendor first.
+- **`references/staffing.md`**, the one reference document for this knowledge. It supersedes
+  `tier-palette.md` and `effort-convention.md`, which are removed.
+
+### Fixed
+
+- **A vendor-pinned role now resolves to a pair that vendor can run (#1021, architecture review).**
+  A role's vendor came from its own row and its model from the Claude-only work-shape policy, with
+  no translation between them, so a role pinning `codex` answered `codex opus/high` — a model codex
+  has never heard of — and the suite passed. The model is now rendered through the portable
+  execution-class names the vendor palette is keyed on, the effort collapses through the same
+  per-vendor table a launch would use, and a pin naming a vendor whose `runtime_supported` is false
+  is refused rather than answered.
+- **A reviewing role asked without a lens is refused rather than answered (#1021).** It returned a
+  record with no `qualification` key at all — the gating field absent rather than present and
+  negative.
+- **An advisory suggestion above a model's effort ceiling is refused (#1021).** The overlay
+  rejected that pair and the suggestion validator accepted it.
+- **`resolve_shape` renders its vendor too (#1021, testing review).** The sibling entry point took
+  a `vendor` argument and neither validated nor translated it, so it reproduced the defect the
+  role path had just been fixed for: `resolve_shape("judgment", vendor="codex")` answered
+  `opus`. Both entry points now translate through one path, and an unknown vendor or an
+  unsupported runtime is refused on both.
+- **`role-tier:` aliases resolve again through saga's overlay chain (#1021, contract review).**
+  `resolve_shape` checked work-shape membership before delegating, and the alias mapper runs
+  inside the delegate — so `adversarial-review`, `contract-test` and `mechanical-scan`, which
+  twenty-five team-execution agent definitions carry in frontmatter, stopped resolving through
+  `tier_defaults.resolve_tier_with_overlay`. It canonicalises first now, through
+  `tier_resolver.canonical_work_shape`, which is public for that reason rather than copied.
+- **An unverifiable lens name is no longer reported as a policy answer (#1021, agent-usability
+  review).** A misspelled `--lens` came back byte-identical to a correct call, at exit zero,
+  whenever the lens catalogue could not be read — which is every host without the
+  software-development-lifecycle checkout. The reason blamed the missing checkout, so a caller
+  could not tell "no executor is qualified for this lens" from "I typed the name wrong", and would
+  persist a record naming a lens that does not exist. A third status, `lens-unverified`, now says
+  the name went unchecked. The repository's own lens roster is a strict subset of the catalogue, so
+  validating against it offline would have rejected a real lens; saying the name is untrusted is
+  the honest answer.
+- **`explain` says its list is alternatives, not a selection (#1021).** The resolved executor is
+  usually not among the rated candidates, and the subcommand named "explain" printed them with no
+  header — inviting a reader to take the top-rated row as the answer.
+- **An absent or malformed lens catalogue degrades instead of raising (#1021).** A falsiness test
+  let a missing catalogue fall through to the unknown-lens error, on the path whose whole contract
+  is that it never raises.
+
+- **The lens qualification decision fails closed (#1021, security review).** A ledger entry
+  carrying only the four identity fields — lens, vendor, model, effort — and none of the evidence
+  fields was granted `qualified`, because `entry.get("catalogue_version") != version` and
+  `passed != total` both compared two absent values. Zero fixtures out of zero granted for the same
+  reason. Every evidence field is now checked for presence and type before it is compared, and a
+  ledger entry, a catalogue entry or a file that is malformed in any of six ways now degrades to
+  the documented-policy outcome rather than raising through a path documented never to break a
+  spawn — including a file with non-UTF-8 bytes, whose `UnicodeDecodeError` is a `ValueError` and
+  so escaped a handler that caught only `OSError` and `JSONDecodeError`.
+- **The decision record no longer carries the operator's absolute home path (#1021).** The reason
+  string for an absent checkout named the default path, and the record is handed to a caller to
+  persist; it now names the environment variable instead.
+
+### Changed
+
+- **`root` names one thing and `checkout` names the other (#1021).** Three functions took a
+  repository root and two took a lifecycle checkout, all spelled `root`. Passing the wrong one
+  degraded silently to the documented-policy outcome rather than failing, because any directory
+  satisfies the checkout resolution. `lens_catalogue`, `verification_ledger` and `sdlc_root` now
+  take `checkout`.
+- **The staffing registry is read once per process rather than five times per call (#1021).** One
+  `resolve_role` call re-read and re-parsed the 26 KB registry five times, because every block
+  accessor reloaded it. The load is memoized on the file's size and modification time, so an edit
+  on disk is still picked up, and a size ceiling refuses a registry far larger than the real one.
+
+
+
+- **`staffing.json` absorbs `models.json` and `tier_policy.json`**, which are deleted. It carries
+  the model palette, the effort vocabulary, the scalar effort superset, the work-shape tier policy
+  under a new `work_shapes` key, the per-vendor palette, the capability ratings and trust tiers
+  migrated from saga's engine registry, the per-role staffing defaults, the execution classes and
+  the root orchestration profile. Its `schema_version` is 3.
+- **The per-vendor palette is data, not Python.** `tier_resolver.py` derives `SUPPORTED_RUNTIMES`,
+  its model translation, its accepted efforts, its effort collapse and its effort application from
+  the `vendors` block. Behaviour is unchanged for all six supported runtimes.
+- **The palette covers every vendor the agent-launcher can start**, which is seven. `opencode`
+  carries `runtime_supported: false` with its reason recorded: nobody has verified its launch-time
+  effort and model arguments, and its model identifier must be in `provider/model` form. It is
+  visible in the data without being silently launchable.
+- **`tier_palette.py`, `tier_resolver.py` and `render_tier_table.py` read the new file.** Their
+  public Python surface is unchanged, so importers do not move. `load_policy()` reads the
+  `work_shapes` block and fails loud when it is absent.
+- **The capability ratings are copied, not moved.** `plugins/saga/references/engine-registry.yaml`
+  stays on disk and a parity test in `tests/test_staffing.py` holds the copy to it while both
+  exist; issue 1030 deletes both.
+
+## [0.27.0] - 2026-09-19
+
+### Added
+
+- **`fleet_commons/jev_widen.py` — the widen-only union (issue #1036).** House rule 3 says a
+  hand-written pattern is a floor the model may raise and never lower. This is the one place that
+  implements it: `widen(state, verb, floors, ...)` asks a verb's yes/no questions in one request
+  and returns, per key, the floor, the probability, the union (`floor or probability >= threshold`)
+  and which side produced it. There is no path in which a floor of `True` returns a union of
+  `False`, and a mutation of that one expression reds `tests/test_jev_widen.py`.
+  - **Failure is always the floor.** An error, a timeout, a malformed body, a missing key, a
+    missing answer or a non-numeric probability all return the caller's floors unchanged with a
+    reason in `note` and write no verdict. A caller that ignores `note` behaves exactly as it did
+    before it asked anything.
+  - **One injectable call path.** `ask` defaults to `typesafe_client.ask` and is a parameter, so
+    every test drives a recorded answer map and none can reach the network by accident.
+  - Each answered question writes a verdict through `jev_log.record_verdict` with the resolved
+    model version and the threshold in force; logging failures are swallowed, because a full disk
+    must not turn an advisory judgment into a caller-visible error.
+- **Two verbs in the registry: `issue-flags` and `journal-nudge`.** Both are available from the
+  command line as `jev issue-flags` and `jev journal-nudge` with no further work, because the tool
+  builds its subcommands from the registry. `issue-flags` carries the five saga keyword flags plus
+  the seven approval boundaries quoted from the sdlc chapter `docs/process/operator-escalations.md`
+  as policy text, at a confidence floor of 0.70; `journal-nudge` carries one question at 0.60, with
+  this repository's own journal rule as policy. Both floors are provisional, chosen by which
+  mistake is cheaper rather than by measurement, and stay that way until the evaluation harness
+  has about thirty verdicts per decision.
+- `references/typesafe.md` gains section 5, "The widen-only union": the primitive, the two verbs,
+  the provisional thresholds, which side each caller fails open on, and why the seven approval
+  boundaries report rather than approve. The transport section moves to 6.
+
+Released with saga 0.160.0, which carries the two callers. This bump is from `origin/main` at
+`866d3670`, where fleet-core was 0.26.0.
+
+## [0.26.0] - 2026-09-19
+
+### Added
+
+- **The TypeSafe client, the `jev` command-line tool, the evaluation harness, the verdict log,
+  and the data rule (issue #1032).** The foundation every later TypeSafe judgment point builds
+  on. Nothing here decides anything on its own: this release ships a library, a command, a log,
+  and a policy.
+  - `fleet_commons/typesafe_client.py` — one calling interface over two transports. The official
+    `typesafe-sdk` package is used where it can be imported; a dependency-free `urllib` transport
+    serves hooks and scripts that run outside this project's environment. Both return the same
+    frozen `AskResult`, proven by driving both from one recorded payload. Outcomes map onto the
+    closed vocabulary `ok` / `error` / `timeout` / `malformed`, mirroring
+    `saga/scripts/engine_bridge_http.py`; HTTP 429 and 529 retry with backoff behind a wall-clock
+    deadline; every result records the version that answered rather than the alias requested.
+  - **Redaction is a mechanism, not a convention.** `prepare_state()` redacts, then truncates,
+    then stamps a marker, and `build_body()` refuses state without it — so no caller, including
+    one inside the module, can reach a transport unredacted. The truncation ladder is fixed,
+    ordered, and reports the stages that fired.
+  - `fleet_commons/jev_log.py` — an append-only verdict log and answer cache under
+    `~/.claude/typesafe/`, outside the repository so a worktree's removal cannot take the
+    evidence with it. The cache keys on the requested model alias with a pin file that
+    invalidates the bucket when the alias resolves somewhere new.
+  - `fleet_commons/jev_eval.py` and `fleet_commons/jev_verbs.py` — agreement scoring per
+    confidence band, and the declarative registry behind the named verbs.
+  - `scripts/jev.py` — `ask` plus eleven named verbs and `eval`. `--dry-run` prints the request
+    body, which never carries the credential.
+  - `references/typesafe.md` — the data rule, the verdict-record contract, and the house rules,
+    bound to the code by a drift guard.
+
+### Security
+
+- **The redaction guarantee is enforced at the exit, with a token that cannot be forged.** An
+  adversarial review falsified the "no path skips redaction" claim three ways: the marker was a
+  string default on a dataclass field, so a hand-built request passed; the check sat in
+  `build_body` rather than in the transports, which take a plain dictionary; and question text --
+  taken verbatim from the command-line flags -- was never redacted at all. The token is now a
+  private sentinel object, both transports re-run the check at the last point before bytes leave,
+  and questions are redacted alongside state.
+- **Redaction catches the shapes a credential actually takes in a diff.** A content hash anywhere
+  on a line previously switched the high-entropy rule off for that whole line, so a token beside a
+  commit identifier rode through; the exemption now tests the candidate run itself. Added
+  JSON-quoted assignments, connection strings, basic-auth URLs, JSON Web Tokens and Slack tokens.
+  Long repository paths are no longer destroyed as high-entropy -- the data rule explicitly permits
+  sending them -- and this API's own `input_tokens`/`output_tokens` vocabulary is no longer
+  mistaken for a credential.
+- **The endpoint base must be `https`, and a cross-host redirect drops the credential.** The base
+  is environment-controlled, so it is not a fixed endpoint; Python's default redirect handler
+  forwards `Authorization` to any host.
+- **A large state cannot hang the redaction path.** An unanchored prefix repeat made the
+  credential pattern backtrack quadratically; a regression test fails on the blow-up.
+
+### Changed
+
+- **The vendor SDK's own retry policy is disabled so this client owns retry on both transports.**
+  Its defaults nested inside ours: up to nine requests where three are promised, 5xx retried though
+  the policy deliberately excludes it, and one attempt able to outlast the wall-clock deadline. A
+  single request is now bounded by whatever remains of that deadline, and an elapsed deadline
+  reports `timeout` rather than `error`.
+- **The answer cache is wired into `ask` rather than shipped unreachable.** The alias pin
+  invalidates the bucket at the one moment the resolution becomes knowable -- when a live call
+  returns a version different from the pin.
+- **A verdict record carries an optional `label`,** without which the evaluation harness could
+  never score accumulated history: it joins answers to labels on `decision_id` and found none.
+- **The truncation ladder reports only the stages that changed something,** reaches nested tool
+  outputs, and collapses large mappings as well as lists.
+- **The harness scores a repeated identifier once and excludes a conflicting one entirely,** rather
+  than inflating the sample and resolving the conflict by picking the first occurrence.
+- **`typesafe-sdk` is a new declared dependency, pinned to `>=0.7,<0.8` with a guard test.** The
+  package is pre-1.0 and shipped breaking changes in 0.6.0 and 0.7.0 four days apart, so the
+  guard reds when the installed version leaves the range — a breaking vendor release is caught
+  by continuous integration rather than by a live judgment point. The declared `pydantic` floor
+  rises from `>=2.5` to `>=2.12` to match what the package actually requires, so the constraint
+  is visible rather than implied by a transitive requirement.
+
 ## [0.25.3] - 2026-08-24
 
 ### Fixed

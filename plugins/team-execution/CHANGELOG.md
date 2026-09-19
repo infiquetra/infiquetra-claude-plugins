@@ -4,6 +4,14 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [3.2.0] - 2026-09-19
+
+- **The validator and reviewer registries route to the merged staffing data (#1021).** Both
+  documents told a reader that `role-tier:` resolves through `fleet_commons/tier_policy.json`.
+  That file is deleted by issue #1021, which merged it into `fleet_commons/staffing.json`; both
+  now name the `work_shapes` block of the merged file. Resolution behaviour is unchanged — the
+  same work shapes resolve to the same tiers.
+
 ## [3.1.1] - 2026-09-15
 
 ### Fixed

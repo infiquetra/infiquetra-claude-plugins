@@ -21,7 +21,7 @@ EXEC_STRATEGY = (
     ROOT / "plugins" / "saga" / "skills" / "work" / "references" / "execution-strategy.md"
 )
 LIFECYCLE_STATE_PY = ROOT / "plugins" / "saga" / "scripts" / "lifecycle_state.py"
-TIER_POLICY = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "tier_policy.json"
+STAFFING_JSON = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "staffing.json"
 
 
 def _read_skill() -> str:
@@ -29,7 +29,8 @@ def _read_skill() -> str:
 
 
 def _load_policy() -> dict[str, dict[str, str]]:
-    return json.loads(TIER_POLICY.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+    document = json.loads(STAFFING_JSON.read_text(encoding="utf-8"))
+    return document["work_shapes"]  # type: ignore[no-any-return]
 
 
 # A {model, effort} pair written as a literal -- the shape the spawn site must never carry.
@@ -229,7 +230,7 @@ def test_resolved_tier_in_execution_evidence_prose() -> None:
     # Strategy doc must describe build-unit tier resolution.
     assert "resolve_build_unit_tier" in strat
     assert "mechanical" in strat.lower()
-    assert "tier_policy.json" in strat
+    assert "staffing.json" in strat
 
 
 def test_no_new_operator_question_on_dispatch() -> None:

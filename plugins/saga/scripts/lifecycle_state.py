@@ -440,7 +440,7 @@ def _assert_known_tier(model: str, effort: str, *, source: str) -> None:
     effort is a legal effort and every model a legal model, but not every pairing runs. ``haiku``
     tops out below ``xhigh``, so a plan naming that model at that effort passed two membership
     checks and named a tier no host can execute. The sibling path could never produce it -- an
-    overlay entry goes through ``_validate_shape_and_tier`` against the registry, and a registry
+    overlay entry goes through ``fleet_commons.staffing.validate_tier`` against the registry, and a registry
     default is runnable by construction -- so an explicit tier was the one door into this function
     that skipped the check its own alternative enforces.
     """
@@ -495,7 +495,7 @@ def resolve_build_unit_tier(
         _assert_known_tier(model, effort, source="plan_tier")
         return {"model": model, "effort": effort}
     shape = work_shape or "mechanical"
-    # Delegate to the existing chain so values stay in tier_policy.json and a
+    # Delegate to the existing chain so values stay in staffing.json's work_shapes and a
     # malformed .saga/tier-defaults.json still raises TierDefaultsError.
     from pathlib import Path as _Path  # noqa: PLC0415  (lazy to avoid top-level side effects)
 

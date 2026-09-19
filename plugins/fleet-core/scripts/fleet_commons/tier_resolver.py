@@ -4,8 +4,8 @@
 One callable seam for tier decisions that today live scattered across team-execution's 25
 hardcoded agent ``model:`` literals, the prose-only heuristic table at
 ``plugins/saga/skills/plan/SKILL.md:298-304``, and assorted per-call literals. ``resolve()``
-reads defaults from the machine-readable ``tier_policy.json`` registry (U1) and never hardcodes
-a heuristic in code.
+reads defaults from the ``work_shapes`` block of the machine-readable ``staffing.json`` registry
+(U1, merged there by issue #1021) and never hardcodes a heuristic in code.
 
 Imports ``MODELS``, ``EFFORTS``, ``model_rank``, ``effort_rank`` from ``tier_palette`` via
 ``fleet_commons_shim`` — never re-declaring the tuples (KTD1/KTD2).
@@ -16,7 +16,7 @@ frontmatter value (KTD7) is a small alias that maps onto a ``work_shape`` regist
 lookup, so migrated team-execution agents resolve through the same registry as everything else.
 
 ``resolve_for_runtime`` is a sibling, not a replacement: it keys on execution-class names from
-``models.json`` and returns a runtime-owned
+``staffing.json`` and returns a runtime-owned
 ``{model, effort, fallbacks, workspace_boundary, effort_application}``.
 ``adapt_runtime_argv`` is the only place a resolved pair becomes vendor CLI flags.
 ``effort_application`` is the directive for *how* the collapsed effort is applied (launch
@@ -54,7 +54,9 @@ EFFORTS: tuple[str, ...] = _tier_palette.EFFORTS
 model_rank = _tier_palette.model_rank
 effort_rank = _tier_palette.effort_rank
 
-TIER_POLICY_PATH = Path(__file__).resolve().parent / "tier_policy.json"
+STAFFING_PATH = Path(__file__).resolve().parent / "staffing.json"
+# Retained names: both blocks now live in the one staffing registry (issue #1021).
+TIER_POLICY_PATH = STAFFING_PATH
 
 # The strongest model / highest effort rungs (KTD4): resolving to either gates on operator confirm.
 _EXPENSIVE_MODELS = frozenset({MODELS[0]})
@@ -69,14 +71,35 @@ ROLE_TIER_ALIASES: dict[str, str] = {
     "mechanical-scan": "purely-mechanical",
 }
 
-MODELS_JSON_PATH = Path(__file__).resolve().parent / "models.json"
-SUPPORTED_RUNTIMES: tuple[str, ...] = (
-    "claude",
-    "codex",
-    "grok",
-    "muse",
-    "qwen",
-    "agy",
+MODELS_JSON_PATH = STAFFING_PATH
+
+
+class TierResolverError(ValueError):
+    """Raised for an unresolvable work_shape/role_kind or an invalid override/ceiling."""
+
+
+def _vendor_palette() -> dict[str, Any]:
+    """Read the per-vendor palette from ``staffing.json`` (issue #1021).
+
+    The palette used to be five module-level literals here. It is data now because the card
+    asks for one data file and because a second table naming a vendor's models is exactly the
+    drift ``tests/test_tier_vocab_single_source.py`` exists to prevent. The reading interface —
+    the functions below — is unchanged.
+    """
+    document: Any = json.loads(STAFFING_PATH.read_text(encoding="utf-8"))
+    block = document.get("vendors")
+    if not isinstance(block, dict) or not block:
+        raise TierResolverError("staffing.json is missing a non-empty vendors object")
+    return block
+
+
+_VENDORS: dict[str, Any] = _vendor_palette()
+
+# Only the vendors whose launch arguments have been verified on a live host are runtimes this
+# resolver will translate for. ``opencode`` is in the palette with ``runtime_supported`` false
+# and its reason recorded in the data, so it is visible without being silently launchable.
+SUPPORTED_RUNTIMES: tuple[str, ...] = tuple(
+    name for name, row in _VENDORS.items() if row.get("runtime_supported")
 )
 STRONGEST_SUPPORTED = "strongest-supported"
 
@@ -85,56 +108,24 @@ STRONGEST_SUPPORTED = "strongest-supported"
 # Verified on this host 2026-08-13 from each CLI's own catalog/config, not inferred
 # across vendors. Two-rung catalogs share the weaker id for terra and 5.5.
 _RUNTIME_MODELS: dict[str, dict[str, str]] = {
-    "codex": {
-        "gpt-5.6-sol": "gpt-5.6-sol",
-        "gpt-5.6-terra": "gpt-5.6-terra",
-        "gpt-5.5": "gpt-5.5",
-    },
-    "claude": {
-        "gpt-5.6-sol": "fable",
-        "gpt-5.6-terra": "opus",
-        "gpt-5.5": "sonnet",
-    },
-    "grok": {
-        "gpt-5.6-sol": "grok-4.6",
-        "gpt-5.6-terra": "grok-4.5",
-        "gpt-5.5": "grok-4.5",
-    },
-    "muse": {
-        "gpt-5.6-sol": "muse-spark-1.2-contributor",
-        "gpt-5.6-terra": "muse-spark-1.2-contributor",
-        "gpt-5.5": "muse-spark-1.2-contributor",
-    },
-    "qwen": {
-        "gpt-5.6-sol": "qwen3.8-max-preview",
-        "gpt-5.6-terra": "qwen3.7-plus",
-        "gpt-5.5": "qwen3.6-plus",
-    },
-    "agy": {
-        "gpt-5.6-sol": "gemini-3.1-pro-high",
-        "gpt-5.6-terra": "gemini-3.6-flash-high",
-        "gpt-5.5": "gemini-3.5-flash-high",
-    },
+    name: dict(row["models"]) for name, row in _VENDORS.items() if row.get("runtime_supported")
 }
 
 # Per-vendor accepted effort rungs, verified on this host 2026-08-13.
 # These are the values collapse may emit. See DECISIONS {#effort-collapse-max}.
 _RUNTIME_ACCEPTED_EFFORTS: dict[str, tuple[str, ...]] = {
-    "claude": ("low", "medium", "high", "xhigh", "max"),
-    "codex": ("low", "medium", "high", "xhigh", "max"),
-    "grok": ("low", "medium", "high", "xhigh"),
-    "muse": ("low", "medium", "high", "xhigh"),
-    "qwen": ("low", "medium", "high", "xhigh", "max"),
-    "agy": ("low", "medium", "high"),
+    name: tuple(row["accepted_efforts"])
+    for name, row in _VENDORS.items()
+    if row.get("runtime_supported")
 }
 
 # Explicit effort-collapse policy. A vendor with no row passes the scalar through.
 # Muse accepts `ultra` on the CLI; it is never emitted (not a leaf scalar).
 # See DECISIONS {#effort-collapse-max}.
 _EFFORT_COLLAPSE: dict[str, dict[str, str]] = {
-    "grok": {"max": "xhigh"},
-    "muse": {"max": "xhigh"},
-    "agy": {"max": "high", "xhigh": "high"},
+    name: dict(row["effort_collapse"])
+    for name, row in _VENDORS.items()
+    if row.get("runtime_supported") and row.get("effort_collapse")
 }
 
 # How the collapsed effort is applied. Verified 2026-08-13 from each runtime's
@@ -145,17 +136,10 @@ _EFFORT_COLLAPSE: dict[str, dict[str, str]] = {
 # took is U4 (session lifecycle, pane.output_matched), not this unit.
 # See DECISIONS {#effort-collapse-max}.
 _EFFORT_APPLICATION_MODE: dict[str, str] = {
-    "claude": "argv",
-    "codex": "argv",
-    "grok": "argv",
-    "muse": "argv",
-    "agy": "argv",
-    "qwen": "in_session",
+    name: str(row["effort_application"])
+    for name, row in _VENDORS.items()
+    if row.get("runtime_supported")
 }
-
-
-class TierResolverError(ValueError):
-    """Raised for an unresolvable work_shape/role_kind or an invalid override/ceiling."""
 
 
 @dataclass(frozen=True)
@@ -187,17 +171,35 @@ class RuntimeResolution:
 
 
 def load_policy(path: Path | None = None) -> dict[str, dict[str, str]]:
-    """Load the work-shape -> tier registry (U1's ``tier_policy.json``)."""
-    policy_path = path if path is not None else TIER_POLICY_PATH
-    data: Any = json.loads(policy_path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise TierResolverError(f"tier policy at {policy_path} must be a JSON object")
+    """Load the work-shape -> tier registry (the ``work_shapes`` block of ``staffing.json``).
+
+    Fails loud when the block is absent rather than returning the whole document: a
+    caller that silently received the staffing registry would treat ``models`` and
+    ``vendors`` as work shapes.
+    """
+    policy_path = path if path is not None else STAFFING_PATH
+    document: Any = json.loads(policy_path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise TierResolverError(f"staffing registry at {policy_path} must be a JSON object")
+    data = document.get("work_shapes")
+    if not isinstance(data, dict) or not data:
+        raise TierResolverError(
+            f"staffing registry at {policy_path} is missing a non-empty 'work_shapes' object"
+        )
     return data
 
 
-def _canonical_work_shape(work_shape: str) -> str:
-    """Map a ``role-tier:`` alias (KTD7) onto its registry work-shape key, else pass through."""
+def canonical_work_shape(work_shape: str) -> str:
+    """Map a ``role-tier:`` alias (KTD7) onto its registry work-shape key, else pass through.
+
+    Public since issue #1021: ``fleet_commons.staffing`` checks work-shape membership before
+    delegating here, so it needs the same alias vocabulary rather than a second copy of it.
+    """
     return ROLE_TIER_ALIASES.get(work_shape, work_shape)
+
+
+# Retained for any caller of the former private name.
+_canonical_work_shape = canonical_work_shape
 
 
 def cheaper_fallback(model: str, effort: str) -> tuple[str, str]:
@@ -279,7 +281,7 @@ def resolve(
 
 
 def _load_models_registry(path: Path | None = None) -> dict[str, Any]:
-    """Load ``models.json``; used by the execution-class sibling, not by ``resolve()``."""
+    """Load ``staffing.json``; used by the execution-class sibling, not by ``resolve()``."""
     registry_path = path if path is not None else MODELS_JSON_PATH
     data: Any = json.loads(registry_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -291,7 +293,7 @@ def _execution_classes(registry: dict[str, Any] | None = None) -> dict[str, Any]
     data = registry if registry is not None else _load_models_registry()
     classes = data.get("execution_classes")
     if not isinstance(classes, dict) or not classes:
-        raise TierResolverError("models.json is missing a non-empty execution_classes object")
+        raise TierResolverError("staffing.json is missing a non-empty execution_classes object")
     return classes
 
 
@@ -343,7 +345,10 @@ def _effort_application(runtime: str, effort: str) -> dict[str, str]:
             f"unknown runtime {runtime!r}; expected one of {list(SUPPORTED_RUNTIMES)}"
         )
     if mode == "in_session":
-        return {"mode": "in_session", "command": f"/effort {effort}"}
+        # The command template lives in the data beside the mode (#1021). Reading it rather than
+        # hardcoding the string is what stops a future edit to staffing.json doing nothing.
+        template = str(_VENDORS[runtime].get("effort_command", "/effort {effort}"))
+        return {"mode": "in_session", "command": template.format(effort=effort)}
     return {"mode": "argv"}
 
 
@@ -351,7 +356,7 @@ def resolve_for_runtime(work_shape: str, runtime: str) -> RuntimeResolution:
     """Resolve an execution class to a runtime-owned ``{model, effort, fallbacks}``.
 
     ``work_shape`` is an ``execution_classes`` name (the portable vocabulary).
-    Existing ``tier_policy.json`` work shapes stay on ``resolve()``. Unknown class
+    Existing ``work_shapes`` rows stay on ``resolve()``. Unknown class
     or runtime raises; nothing defaults.
     """
     if runtime not in SUPPORTED_RUNTIMES:

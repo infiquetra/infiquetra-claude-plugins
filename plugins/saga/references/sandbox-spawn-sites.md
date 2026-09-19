@@ -40,7 +40,7 @@ the parallel-layer thunk's inlined iterate-to-consensus loop — each emits `age
 unconditionally (KTD6). Resolver work-shape: `judgment` (verify/refute-class work — same shape as
 the four skill spawns above).
 
-**Resolver work-shape column (#362 U5, R7):** each row above names the `tier_policy.json` registry
+**Resolver work-shape column (#362 U5, R7):** each row above names the `staffing.json` registry
 key (or `role-tier:` alias, KTD7) that `fleet_commons.tier_resolver.resolve()` would use to tier
 this spawn site — a routing pointer, not a claim that the site dispatches a model today (the four
 skill spawns above name a `subagent_type`, not a `{model, effort}` tier). Every entry here must be

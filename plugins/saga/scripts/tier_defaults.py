@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Persisted per-repo tier preferences (#368).
+"""Per-repository tier preferences (#368) — a thin shim over fleet-core's staffing resolver.
 
-A committed ``.saga/tier-defaults.json`` overlay pins repo-tuned work-shape -> tier defaults over the
-shared ``tier_policy.json`` registry, so ``/plan`` proposes accreted preferences instead of re-deriving
-cold on every run. Precedence (AC7): **repo overlay > issue-carried band > shared registry**. The file
-is committed (``.saga/`` is not git-ignored), so the whole repo/team shares the accreted judgment. A
-missing file falls back cleanly; a malformed one (bad JSON, unknown work-shape, off-palette or
-unrunnable tier) fails loud -- the same halt-not-degrade discipline as the rest of the tier system.
-Every persisted override originates from an explicit operator confirmation in ``/plan`` (never a silent
-auto-promotion).
+A ``.saga/tier-defaults.json`` overlay pins repo-tuned work-shape -> tier defaults over the shared
+work-shape registry, so ``/plan`` proposes accreted preferences instead of re-deriving cold on every
+run. Precedence (AC7): **repo overlay > issue-carried band > shared registry**. A missing file falls
+back cleanly; a malformed one (bad JSON, unknown work-shape, off-palette or unrunnable tier) fails
+loud -- the same halt-not-degrade discipline as the rest of the tier system. Every persisted override
+originates from an explicit operator confirmation in ``/plan`` (never a silent auto-promotion).
+
+Since issue #1021 the overlay reading, its validation and the registry lookup live once, in
+``fleet_commons.staffing``. The five public functions below keep their signatures and their
+behaviour and delegate; only the duplicated half moved. ``parse_tier_band`` stays here, because it
+parses a GitHub issue body, which is saga's concern rather than fleet-core's.
+
+Note on the word "committed": this module reads a path and does not care whether git tracks it. In
+this repository ``.gitignore`` ignores ``.saga/`` outright, so the overlay is local to one checkout.
+Whether that should change is an open question recorded in the issue #1021 plan, and it is not this
+module's to answer.
 """
 
 from __future__ import annotations
@@ -24,11 +32,30 @@ import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
 
 _tier_palette = fleet_commons_shim.load("tier_palette")
 _tier_resolver = fleet_commons_shim.load("tier_resolver")
+try:
+    _staffing = fleet_commons_shim.load("staffing")
+except RuntimeError as exc:  # pragma: no cover - exercised by the install-obligation test
+    # saga 0.161.0 requires fleet-core 0.28.0 or later: the overlay read moved there (issue
+    # #1021). This repository has two installed plugin roots and a release has updated one and
+    # not the other six times, so say which version is needed and which was found rather than
+    # letting a bare "module not found" reach the operator.
+    _resolved = getattr(fleet_commons_shim, "resolved_version", lambda: "unknown")()
+    raise RuntimeError(
+        "saga requires fleet-core 0.28.0 or later for fleet_commons.staffing; the resolved "
+        f"fleet-core is {_resolved}. Update the fleet-core plugin in this root, and check BOTH "
+        f"installed roots — they have diverged before. Underlying error: {exc}"
+    ) from exc
 MODELS: tuple[str, ...] = _tier_palette.MODELS
 EFFORTS: tuple[str, ...] = _tier_palette.EFFORTS
 
-# Committed, per-repo (sibling of the repo's .github/, NOT the git-ignored .claude/saga cache).
-DEFAULTS_PATH = Path(".saga/tier-defaults.json")
+# Per-repository, beside the repo's .github/ and distinct from the .claude/saga cache. Whether
+# this path is tracked is the repository's choice; this module only reads it.
+#
+# Bound to fleet-core's constant rather than re-declared (#1021): the read goes through
+# staffing.load_overlay and the write goes through _defaults_path below, so two independently
+# edited copies of this path would silently point the writer and the reader at different files —
+# the exact duplicate-source class this component exists to remove.
+DEFAULTS_PATH: Path = _staffing.OVERLAY_PATH
 
 # The issue-carried band section mission-control stamps at issue-create time (#368 AC5).
 # Format contract with sdlc_manager._append_tier_band: an H3 header followed by "model/effort".
@@ -42,60 +69,30 @@ class TierDefaultsError(ValueError):
 
 
 def _defaults_path(root: Path | None = None) -> Path:
-    return (root or Path.cwd()) / DEFAULTS_PATH
-
-
-def _validate_shape_and_tier(
-    work_shape: str, tier: object, registry: dict[str, dict], where: str
-) -> Tier:
-    if work_shape not in registry:
-        raise TierDefaultsError(
-            f"{where}: unknown work-shape {work_shape!r}; expected one of {sorted(registry)}"
-        )
-    if not isinstance(tier, dict) or "model" not in tier or "effort" not in tier:
-        raise TierDefaultsError(f"{where}: tier must be {{'model', 'effort'}}, got {tier!r}")
-    model, effort = str(tier["model"]), str(tier["effort"])
-    if model not in MODELS:
-        raise TierDefaultsError(f"{where}: model {model!r} not in {MODELS}")
-    if effort not in EFFORTS:
-        raise TierDefaultsError(f"{where}: effort {effort!r} not in {EFFORTS}")
-    if not _tier_palette.supports_effort(model, effort):
-        raise TierDefaultsError(
-            f"{where}: {model}/{effort} is unrunnable ({model}'s ceiling is "
-            f"{_tier_palette.effort_ceiling(model)!r})"
-        )
-    return {"model": model, "effort": effort}
-
-
-def _registry_default(work_shape: str) -> Tier:
-    res = _tier_resolver.resolve(None, work_shape)
-    return {"model": res.model, "effort": res.effort}
+    """The overlay path the writer targets — the same one ``staffing.load_overlay`` reads."""
+    return _staffing.overlay_path(root)
 
 
 def load_tier_defaults(root: Path | None = None) -> dict[str, Tier]:
-    """Return the repo overlay ``{work_shape: {model, effort}}``; missing => {}, malformed => raise."""
-    path = _defaults_path(root)
-    if not path.exists():
-        return {}
+    """Return the repo overlay ``{work_shape: {model, effort}}``; missing => {}, malformed => raise.
+
+    Delegates to ``fleet_commons.staffing.load_overlay``, which owns the one implementation of the
+    read and its validation. ``StaffingError`` is re-raised as ``TierDefaultsError`` so callers that
+    already catch the saga exception keep working.
+    """
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        raise TierDefaultsError(f"{path}: not valid JSON ({exc})") from exc
-    if not isinstance(data, dict):
-        raise TierDefaultsError(f"{path}: top level must be an object of work-shape -> tier")
-    registry = _tier_resolver.load_policy()
-    return {
-        str(ws): _validate_shape_and_tier(str(ws), tier, registry, f"{path}[{ws}]")
-        for ws, tier in data.items()
-    }
+        return _staffing.load_overlay(root=root)
+    except _staffing.StaffingError as exc:
+        raise TierDefaultsError(str(exc)) from exc
 
 
 def resolve_tier_with_overlay(work_shape: str, root: Path | None = None) -> Tier:
     """Repo overlay > shared registry default for ``work_shape`` (AC1)."""
-    overlay = load_tier_defaults(root)
-    if work_shape in overlay:
-        return overlay[work_shape]
-    return _registry_default(work_shape)
+    try:
+        decision = _staffing.resolve_shape(work_shape, root=root)
+    except _staffing.StaffingError as exc:
+        raise TierDefaultsError(str(exc)) from exc
+    return {"model": decision.model, "effort": decision.effort}
 
 
 def resolve_tier_for_plan(
@@ -111,7 +108,7 @@ def resolve_tier_for_plan(
         return overlay[work_shape]
     if issue_band is not None:
         return {"model": str(issue_band["model"]), "effort": str(issue_band["effort"])}
-    return _registry_default(work_shape)
+    return resolve_tier_with_overlay(work_shape, root)
 
 
 def _unfenced_lines(body: str) -> list[str]:
@@ -178,10 +175,12 @@ def parse_tier_band(body: str) -> Tier | None:
 
 def write_tier_default(work_shape: str, model: str, effort: str, root: Path | None = None) -> Path:
     """Persist one confirmed override (read-merge-write); validated; never clobbers other keys (AC2)."""
-    registry = _tier_resolver.load_policy()
-    tier = _validate_shape_and_tier(
-        work_shape, {"model": model, "effort": effort}, registry, f"write[{work_shape}]"
-    )
+    try:
+        tier = _staffing.validate_tier(
+            work_shape, {"model": model, "effort": effort}, where=f"write[{work_shape}]"
+        )
+    except _staffing.StaffingError as exc:
+        raise TierDefaultsError(str(exc)) from exc
     existing = load_tier_defaults(root)  # re-validates any existing entries too
     existing[work_shape] = tier
     path = _defaults_path(root)

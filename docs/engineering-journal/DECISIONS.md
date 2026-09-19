@@ -103,6 +103,265 @@
 **Revisit when.** A second consumer appears that does not go through the session layer, or the plugin's manifest description has to stretch further than one sentence to cover both jobs. Either is the signal to move it.
 
 **Refs.** Issue #1022; a code-review finding that this was the one load-bearing placement choice with no journal entry.
+### One staffing component in fleet-core: one data file, one resolver, the loaders repointed  {#1021-staffing-component}
+
+**Decision.** `staffing.json` becomes the single authoring source for the model palette, the effort vocabulary, the work-shape tier policy, the per-vendor palette, the capability ratings and trust tiers, and the per-role staffing defaults; `models.json` and `tier_policy.json` are deleted. `staffing.py` is the one resolver and composes `tier_palette` and `tier_resolver` rather than replacing them, so their public Python surface is frozen and the 61 files that reference the tier vocabulary do not move. The authoritative vendor kind list is agent-launcher's code-level `VENDOR_FLAGS` (seven vendors); `hermes` is excluded because it reconciles a profile workspace and owns its own routing, and a test pins that exclusion. The per-vendor effort-collapse table and model translation move from Python literals into the data file. Capability ratings are copied from `engine-registry.yaml` with a parity test holding them together until issue #1030 deletes the YAML. The executor-verification ledger is read from the sibling `infiquetra-sdlc` checkout through the `INFIQUETRA_SDLC_PATH` ladder, and an absent, unreadable, or empty ledger yields the lens catalogue's documented-policy outcome rather than an error. Roles map to rated capabilities: planner and plan-reviewer to long-form-writing, worker, release-worker and merging-worker to code-generation, lens-reviewer to adversarial-review, functional-tester to debug. `opencode` gets a palette row carrying `runtime_supported: false`, because `tier_resolver` knows six runtimes and nobody has verified opencode's launch-time model and effort arguments; `SUPPORTED_RUNTIMES` derives from the rows whose flag is true, so launch behavior is unchanged. Deleting `effort-convention.md` is a runtime change, not a documentation change: `plan_save_contract.py` holds its path in a constant and checks the file exists, so the constant is repointed at `staffing.md` in the same commit as the deletion.
+
+**Rationale.** Two production modules holding three path constants, and four test modules, read the two data files by path, so one data file costs an enumerable set of edits rather than a 61-file refactor. The ledger is empty on purpose today, so raising on an unqualified lens would fail every lens resolution on day one. Leaving vendor vocabulary in Python is the second source the single-source guard exists to prevent.
+
+**Alternatives rejected.** Keeping three data files (fails the card's central requirement). Folding `tier_resolver.py` into `staffing.py` (moves runtime argv adaptation and execution classes in the same change, and their consumers are #1030's scope). Vendoring a copy of the qualification ledger (a stale copy would grant qualification never run). Fetching the ledger over the network per resolution (a network call on a path every spawn reads). Deleting `engine-registry.yaml` here (thirteen scripts under `plugins/saga/scripts/` read it and twenty-two files across the plugin name it; they are #1030's scope). Inventing a `testing` capability and rating engines against it (fabricates evidence).
+
+**Revisit when.** Issue #1030 removes `/tier`, `/engines`, and `engine-registry.yaml`; issue #1022 lands the roles library and becomes the role vocabulary's authority; or `hermes` gains a model and effort and enters `VENDOR_FLAGS`.
+
+**Refs.** Issue #1021; plan `docs/plans/2026-09-19-issue-1021-staffing-component-plan.md` KTD1 through KTD11; `docs/analysis/2026-09-19-saga-simplification-review.md` section 6G recommendation R29.
+### The board census keys `fields` by field name; a duplicate name raises rather than overwriting  {#1020-census-keyed-by-field-name}
+
+**Decision.** `plugins/mission-control/config/board-schema.json` records each board's `fields` as a
+mapping from field name to field record, not as a sorted list of records. A duplicate field name
+raises `ValueError` rather than letting one field overwrite another.
+
+**Rationale.** The census exists to be read. A list forces every consumer to scan, and issue
+#1020's acceptance criteria — written as executable `jq` commands — index it as a mapping
+(`.boards.operations.fields.Status.options[].name`, `.boards.campps.fields | keys[]`). The
+automatic board moves planned in issue #1028 read this file too. Diff stability, the property the
+sorted list was chosen for, is preserved: keys are emitted in sorted order and `cmd_write` already
+serializes with `sort_keys=True`.
+
+**The blast radius was larger than the first search said, and the way it was missed is the lesson.**
+Planning searched the repository for the strings `board-schema` and `board_schema` and concluded the
+only consumers were `board_census.py` and its own test. That search finds files that name the
+*artifact*. It does not find `plugins/mission-control/config/generated/check_issue_contract_parity.py`,
+which imports `board_census.fetch_project_fields_census` and consumed its result positionally at
+line 158 (`next((f for f in census["fields"] if f["name"] == "Status"), None)`) — under a mapping that
+iterates field-name strings and raises `TypeError`. It was caught during code review by searching for
+callers of the *producing function* instead, and fixed along with three fixtures in
+`tests/test_issue_contract_parity.py`. The full consumer set is four files, and the fix is confirmed
+against real boards: `check_issue_contract_parity.py --live` passes.
+
+**Generalizable rule (also in LEARNINGS).** When changing the shape of a produced value, search for
+callers of the producer, not for mentions of the artifact's name. A consumer that calls the function
+and never names the file is invisible to the obvious search, and reads as a clean blast radius.
+
+**Rejected: keep the list and treat the card's `jq` checks as approximate.** They are executable
+criteria the operator wrote. Narrowing an acceptance check so the existing code passes it is
+weakening the card, and a mapping is also the shape a consumer actually wants.
+
+**Rejected: let a duplicate name overwrite silently.** A mapping keyed by name can lose a field
+that a list cannot. GitHub project field names are unique in practice — counted across all three
+live boards during this work: 16 fields each, no duplicate — so the raise is unreachable today,
+which is precisely why it must be loud if it ever becomes reachable. The raise sits after
+`paginate_or_raise` has run, so a runaway-pagination fixture whose repeated pages carry one field
+name still reports the pagination fault it was written to catch, not a duplicate-name error.
+
+**Revisit when:** a board legitimately grows two fields with one name (GitHub does not allow this
+today), or a consumer needs the fields in live board order rather than by name — at which point the
+record should carry an explicit order key rather than reverting to positional meaning.
+
+**Refs.** Issue #1020 units 1 and 2; `plugins/mission-control/scripts/board_census.py`;
+LEARNINGS [[#1020-skip-on-no-credential-reports-green]] (the companion guard),
+[[#board-census-shape-only-live-skip-424]] (the census's original shape-only scope).
+
+---
+
+### Retired policy in a reference document is deleted, never restated in the new vocabulary  {#1020-delete-retired-policy-dont-restate}
+
+**Decision.** When a board reference documents a policy the schema has withdrawn, remove the
+section. Do not translate it into the current vocabulary. Applied to the work-in-progress **limit**
+tables in `skills/board/references/kanban-workflow.md`, and to the instructions in
+`skills/metrics/SKILL.md` and `skills/metrics/references/metrics-targets.md` that told an agent to
+enforce those limits.
+
+**The distinction that matters: limits were deleted, age thresholds were corrected.** A
+work-in-progress *limit* is a cap on card count, and no code computes one — the schema deleted the
+block and retired the script, so the prose describing it had nothing behind it and was removed.
+A work-in-progress *age* threshold is a real, code-backed measure: `_active_age_thresholds`
+(`scripts/sdlc_manager.py:477-489`) returns three days for every non-terminal Status on every board.
+Those tables stayed, but they had been describing a per-board split with a five-day CAMPPS threshold
+keyed on the retired Status `In Progress`, none of which the function computes. They were rewritten
+to one row. Deleting them would have discarded a measure that exists; restating the limits would
+have reinstated one that does not. The test is whether code computes the thing, not whether the
+prose looks stale.
+
+**Rationale.** `sdlc-schema.json`'s migration decision E6 removed the `wip_limits` block outright
+and retired `check-wip-limits.py`; `sdlc_manager.py:1227-1228` and `:1409` already report that no
+limits exist. Rewriting the tables with stage-flow column names would have reinstated, in prose
+that agents read as instruction, a policy the source of truth deleted — and prose is the surface
+an agent obeys, so a stale instruction there is worse than a stale cache.
+
+**Rejected: map the old per-column numbers onto the nearest new stages.** It reads like
+housekeeping and silently re-enacts the withdrawn policy under new names, with no decision record
+anywhere authorizing the numbers.
+
+**Rejected: leave the tables and note they are historical.** The same document already carried a
+sentence admitting its workflow section was stale and deferring the fix; that sentence survived two
+board migrations. A deferral note in a reference document is not a fix, it is a fix that never
+happens.
+
+**Revisit when:** a work-in-progress limit is deliberately reintroduced, at which point it belongs
+in `sdlc-schema.json` first and in the reference only as a transcription of it.
+
+**Refs.** Issue #1020 unit 4; `sdlc-schema.json` migration note `2026-09-07.1` decision E6;
+`sdlc_manager.py:1227-1228`, `:1409`.
+### The widen-only union lives in one fleet-core primitive, and the five gated flags keep their names  {#1036-widen-only-union-one-primitive}
+
+**Decision.** `plugins/fleet-core/scripts/fleet_commons/jev_widen.py` holds the union rule — `floor or probability >= threshold` — and both callers use it. The question sets live in the verb registry `jev_verbs.py` as `issue-flags` and `journal-nudge`, not in the callers. The five keyword flags `parse_issue.py` already emits keep their exact key names and gain a judgment each; the seven approval boundaries from the sdlc chapter `docs/process/operator-escalations.md` arrive as a separate advisory key with no pattern floor and no consumer.
+
+**Rationale.** Both callers need the same four steps: ask, union with a floor, log a verdict, fail open to the floor. Written inline twice, the fail-open policy would live in two places and the second copy would drift. The registry is already declared the single home for question text, and putting the verbs there makes `jev issue-flags` work from a shell for free. The key names are a contract: saga's mandatory test gate and four skill documents read `has_security` and its siblings by name, so the card's phrasing — which describes the flags as the approval boundaries — could not be taken literally without narrowing a mandatory gate, which is the one thing a widen-only card forbids. Delivering both sets satisfies the card's words and the research requirement at once.
+
+**Alternatives rejected.** Writing the union inline in each caller (two copies of a failure policy). Keeping the question text in the callers (`jev issue-flags` becomes impossible; the policy splits). Replacing the five flags with the seven boundaries (narrows a mandatory gate, breaks five named consumers). Giving the seven boundaries their own keyword floors (seven invented word lists, each either too narrow to help or broad enough — "cost", "customer" — to fire on nearly every card, which is worse than no floor when the whole point is that the model carries the weight).
+
+**Revisit when.** A third caller needs a different failure posture, or the harness reports that the seven advisory boundaries agree well enough to be worth a consumer.
+
+**Refs.** Issue #1036, parent #1019; plan `docs/plans/2026-09-19-issue-1036-widen-only-unions-plan.md` KTD1, KTD2, KTD3; research `docs/analysis/2026-09-18-typesafe-jev-integration-research.md` requirements R7 and R8; LEARNINGS `{#1036-plural-of-credential}`.
+
+### The journal-nudge hook asks by default, fails silent, and is bounded to three seconds  {#1036-nudge-asks-by-default-fails-silent}
+
+**Decision.** The hook asks the model whenever the `feat`/`fix` prefix did *not* already nudge and every existing precondition holds. It asks at most once, with a two-second request timeout and a three-second total deadline, and produces no output at all on any failure. `INFIQUETRA_TYPESAFE_JOURNAL_NUDGE=off` skips the call entirely. The code-file precondition is deliberately *not* widened: the model widens which message earns an entry, not which kind of file does.
+
+**Rationale.** This runs after every commit, so the cost of being wrong is paid constantly. One attempt with a hard deadline means an unreachable vendor costs a noticeable pause, never a retry ladder and never a blocked terminal. The quiet side is the safe side: a broken model must not invent a nudge. Asking on a `feat`/`fix` commit would cost a request to confirm a decision already made, so the floor short-circuits it. Leaving the code-file precondition alone keeps the widen to one dimension and keeps documentation commits — the bulk of this repository — off the wire.
+
+**Alternatives rejected.** Opt-in by default (the judgment would never accumulate the verdicts the harness needs). Widening the code-file precondition too (a model call on nearly every commit in a repository that is mostly prose). Blocking or writing anything (the hook's whole contract is that it never does).
+
+**Revisit when.** The evaluation harness has about thirty verdicts for `journal-nudge:earns_entry`, or the pause becomes something an operator complains about — the switch is the immediate answer either way.
+
+**Refs.** Issue #1036; plan KTD4, KTD5; `plugins/fleet-core/references/typesafe.md` §5.
+### A measurement card fixes its pass/fail bars before it measures anything  {#measurement-bars-precede-the-numbers-1038}
+
+**Context.** Issue #1038 asked whether a `UserPromptSubmit` hook can suggest a saga command inside 400
+milliseconds, and to recommend keep, defer or drop. Plan
+`docs/plans/2026-09-19-issue-1038-prompt-suggestion-latency-plan.md` (KTD5); deliverable
+`docs/analysis/2026-09-19-prompt-suggestion-latency.md`.
+
+- **KTD1 — the keep/defer/drop rule and both accuracy bars are written into the plan before the
+  harness runs.** The card set a latency target and no accuracy bar, so the plan fixed two (70% on
+  prompts warranting a command, 80% silence on prompts warranting none) with the evidence for each
+  stated. A recommendation composed after the numbers are known is a rationalization of the numbers,
+  and a threshold chosen afterwards is the same failure wearing a different hat. *Rejected:* deciding
+  the bars at write-up time, which is what "beats the baseline by a margin the document states" —
+  the plan's own first draft — actually meant. The doc review caught it.
+  *Revisit when:* a follow-up measures a shape this corpus could not.
+- **KTD2 — the exploration measures shapes with no blocking call, not only the vendor's shape.** The
+  cookbook's two-request pattern was near-certain to miss the target given a round trip of about 350
+  ms. Measuring only it would have answered "is the cookbook shape too slow" rather than the card's
+  actual question, which is which client shape makes the target reachable. *Rejected:* a faithful
+  two-shape measurement.
+- **KTD3 — the resident prototype listens on an owner-only Unix domain socket, not a localhost
+  port.** The card said "bound to localhost"; a Unix socket is the stricter reading — no port, no
+  network stack, filesystem permissions. Those permissions are load-bearing rather than decorative:
+  the process holds a live API credential and answers whatever connects, so it creates the socket and
+  its directory owner-only and refuses to start otherwise. *Rejected:* a localhost TCP port, which
+  has no equivalent control without inventing an authentication scheme.
+- **KTD4 — a cached answer is not counted against the live-call budget, and the resident process
+  reports its own spend.** The client reports `cache` as its transport when it serves from disk. An
+  outside-only tally also misses every primed and backgrounded call, because those never appear in
+  any timed hook's output — so the resident process counts its own and the harness adds the two.
+  *Rejected:* counting calls from the hook payloads alone, which under-reported the spend.
+- **The exploration does not decide whether a live operator prompt may be sent to the vendor.** The
+  data rule permits issue bodies, plans and diffs after redaction and forbids raw session transcripts.
+  One live prompt is not a transcript but is uncontrolled unvetted text, which is the stated reason
+  transcripts are excluded. That is a data-governance decision the operator owns; the measurement ran
+  on synthetic prompts and the deliverable carries the question forward as a precondition on any
+  implementation.
+
+**Release surfaces:** none. The harness lives under `tools/` and the deliverable under `docs/`, so no
+file under `plugins/` changed and no version, marketplace entry or changelog moved.
+
+**Refs.** Issue #1038, child of #1019; the client it measures is #1032 (fleet-core 0.26.0); the hook
+registration #1029 has not shipped, so the harness is standalone.
+
+### The proof's entrypoint describes and refuses; it does not become a second way to run the proof  {#998-describe-and-refuse-not-a-second-runner}
+
+**Decision.** `plugins/saga/scripts/plan_save_proof.py` gains a command-line entrypoint that names the proof and the command that runs it, serves that text at exit 0 for `--help`, and refuses every other direct invocation at exit 2 with usage on standard error and standard output left empty. It does not gain a way to run the proof standalone.
+
+**Rationale.** `verify(api, contract, candidate)` needs the contract module's globals, a loaded contract and a rendered candidate, none of which exist for a standalone run — producing them means doing what `plan_save_contract.py main()` already does. A `--root` runner here would therefore duplicate an existing command, add a dependency edge from the proof back to the contract tool that reverses the one-way direction the two files have today, and bypass the tool-revision check at `plan_save_contract.py:496` that exists so the renderer that writes is the one that was verified. A second, weaker way to verify the documentation is a liability. Exit 2 matches argparse's usage-error code and the sibling tool's refusal code, so a caller reading exit codes across the pair sees one vocabulary; the empty standard output is the load-bearing half, because the contract tool's callers parse standard output as JSON and nothing here may be mistaken for that envelope.
+
+**Alternatives rejected.** A standalone `--root` runner (above). Leaving the file alone because 27 other scripts under `plugins/saga/scripts/` also have no entrypoint (true, but they are imported by name rather than invoked by path, and this card is tracked work with a named acceptance). Exit 0 with guidance (that is the reported defect with prose added). Exit 1 (the contract tool reserves 1 for drift).
+
+**Revisit when.** A caller genuinely needs to run the proof against a checkout without the contract tool — at which point the right move is to give `plan_save_contract.py` the mode, not to grow a second runner here.
+
+**Refs.** Issue #998 (finding `agentusab06`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-998-plan-save-proof-cli-entrypoint-plan.md` KTD1, KTD2, KTD3, KTD4, KTD5; LEARNINGS `{#998-no-entrypoint-means-silent-success}`.
+
+### PyYAML is imported at first use, and the missing-dependency refusal reuses the closed error-code set  {#997-defer-the-import-keep-the-code-set-closed}
+
+**Decision.** `plugins/saga/scripts/plan_save_contract.py` imports PyYAML inside `yaml_module()`, called from the parsing path, and builds its duplicate-key loader in `unique_loader()` against the module that call returns. Neither name exists at module scope. A missing PyYAML is reported through the existing refusal vocabulary — exit 2, `code: engine`, `entry: python dependency`, `file` naming this script, and an `error` naming PyYAML and the repair — and no new documented error code is introduced.
+
+**Rationale.** A module-scope import runs before any handler in the file exists, so no handler can convert it; the failure escaped as a traceback at exit 1, the code this tool documents for drift, and it also broke `--help`. Deferring the import makes the failure an ordinary `ImportError` inside `main()`'s existing narrow handler, and lets argparse serve `--help` before any YAML is touched, which closes both facets with one change and leaves the `{#996-envelope-seam-not-top-handler}` decision untouched. The loader class has to move with the import because `class UniqueLoader(yaml.SafeLoader)` needs the real base class at class-creation time. Reusing `engine` keeps the published code table closed: its documented repair already reads "Restore the named engine file and its dependencies", and `entry` plus `file` give a caller the discrimination it needs without every consumer learning a new branch.
+
+**Alternatives rejected.** A module-scope `except ImportError` setting `yaml = None` (the class statement three lines later still needs the real `yaml.SafeLoader`, so the crash moves rather than goes). A new `dependency` error code (widens a published contract — the runbook table, the closed-set guard in `tests/test_saga_spec_consumer_row.py` and every code-branching consumer — for a failure the operator repairs with one `uv sync`). Letting the top-level handler's default conversion report it as `syntax` (blames the YAML carrier for an interpreter fault). Widening `main()` to `except BaseException` (already rejected for issue #996, and unnecessary: `ImportError` is an ordinary `Exception`).
+
+**Revisit when.** This tool gains a second third-party import, or the documented error-code set is opened for another reason and a distinct `dependency` code becomes free.
+
+**Refs.** Issue #997 (finding `adv10`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-997-plan-save-contract-missing-pyyaml-plan.md` KTD1, KTD2, KTD3, KTD4; LEARNINGS `{#997-import-outside-every-handler}`.
+
+### The JSON envelope is repaired at the checkout-execution seam, not at the top-level handler  {#996-envelope-seam-not-top-handler}
+
+**Decision.** `plugins/saga/scripts/plan_save_contract.py` converts a `BaseException` raised by the repository checkout it executes through `runpy` into its documented refusal envelope at the two places that checkout code actually runs — the `module()` loader and the `proof.verify(...)` call in `verify_saved_examples()` — through one shared conversion that re-raises `ContractError` unchanged. The top-level handler in `main()` stays `except Exception`. An interrupt arriving inside that window is converted rather than re-raised.
+
+**Rationale.** `except Exception` does not cover `SystemExit` or `KeyboardInterrupt`, so checkout code raising either left the tool with no JSON on standard output and an exit code outside the documented `{0, 1, 2}`. The handler in `main()` cannot be widened: argparse raises `SystemExit(0)` for `--help` from inside that same `try`, and the narrow handler is the only reason `--help` prints usage and exits 0. A `KeyboardInterrupt` raised by the checkout's own code is indistinguishable at the seam from one delivered by the terminal, so converting is the only treatment that closes the defect.
+
+**Alternatives rejected.** Widening `main()` to `except BaseException` (turns `--help` into a JSON refusal at exit 2). Special-casing `SystemExit(0)` in a broad top-level handler (makes the envelope contract depend on an exit-code value rather than on provenance). Re-raising `KeyboardInterrupt` while converting everything else (leaves the reported reproduction unfixed). Duplicating the handler at both seams (they drift on the next edit).
+
+**Revisit when.** `plan_save_contract.py` gains a third place where checkout code executes, or the tool stops promising JSON for every invocation but `--help`.
+
+**Refs.** Issue #996 (finding `adv09`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-996-plan-save-contract-baseexception-plan.md` KTD1, KTD2, KTD3.
+### The TypeSafe client ships two transports behind one interface, and the SDK is the default  {#typesafe-two-transports-1032}
+
+**Context.** `docs/plans/2026-09-19-typesafe-client-jev-tool-plan.md` (issue #1032). The research
+that preceded this card recommended a standard-library client and no vendor package. The operator
+then recorded a steer on the card: TypeSafe now ships official SDKs, evaluate the Python one first,
+and keep the dependency-free pattern only where a hook or script must run outside the project
+environment.
+
+- **KTD1 — both transports exist behind one `ask()`, the SDK by default where importable,
+  `urllib` otherwise.** The steer requires both, so neither extreme was available. The SDK is the
+  vendor's own contract, MIT licensed, free, and ships typed responses and a retry policy we would
+  otherwise hand-write. Against relying on it alone: `typesafe-sdk` was at 0.7.0 published
+  2026-09-18, the fourth release in ten days, with breaking changes in two of the last three, and
+  it pulls in `httpx2`. The out-of-project case is real, not hypothetical — a hook cannot assume
+  the package is importable, and `urllib` is always there. Proven equivalent by driving both
+  against the live endpoint from one input: byte-identical answers, model and usage.
+  *Rejected:* SDK only (leaves every out-of-project caller with no path); `urllib` only (the
+  original research position, superseded by the steer, and means hand-writing what the vendor
+  ships). *Revisit when:* `typesafe-sdk` reaches 1.0 and goes ninety days without a breaking
+  release, at which point `urllib` can become a hook-only fallback rather than a co-equal
+  implementation.
+- **KTD2 — the dependency is pinned to `>=0.7,<0.8` and guarded by a test that reads the
+  declaration.** A pin alone is weaker than it looks because `uv.lock` can be regenerated without
+  anyone reading the diff. `tests/test_typesafe_sdk_pin.py` parses the specifier out of
+  `pyproject.toml` at test time, so editing the range and the installed version together stays
+  green while either drifting alone reds. *Rejected:* an unbounded dependency — the next breaking
+  minor would land silently on a lock refresh. *Revisit when:* the vendor publishes a stability
+  policy or reaches 1.0.
+- **KTD3 — the declared `pydantic` floor rises to `>=2.12`.** The package requires it; the lock
+  already resolved 2.13.3, so nothing broke. Leaving the declaration at `>=2.5` would have left
+  the real constraint visible only as a transitive requirement, which a future resolution could
+  quietly violate. *Rejected:* relying on the lock to happen to satisfy it.
+- **KTD4 — the tool ships as `scripts/jev.py`, not `jev.py.txt`.** The card's body and three of
+  its four acceptance criteria named a `.py.txt` path, carried over from the research folder where
+  probe scripts are stored as text so linting skips them. There are zero `*.py.txt` files anywhere
+  under `plugins/`, and over a hundred shipped scripts use a plain `.py`. The suffix would make
+  the tool invisible to the repository-wide `ruff check .` and break the import-and-call-`main`
+  pattern its own tests need. The coordinator, who authored the card, confirmed the correction.
+- **KTD5 — redaction runs before truncation, on the only path to a transport.** `prepare_state()`
+  redacts, truncates, and stamps a marker; `build_body()` refuses state without it. Redacting
+  after truncation would let a secret survive in a kept segment, and redacting in the caller would
+  make the data rule a convention rather than a mechanism. *Rejected:* trusting callers to redact.
+- **KTD6 — the answer cache keys on the requested model alias, not the resolved version.** The
+  resolved version is only known from the response while a lookup happens before the call, so
+  keying on it would mean a cache that can never hit; keying on the alias alone would replay a
+  stale answer after the alias moved. A pin file records what each alias last resolved to and the
+  bucket is invalidated when that changes. *Revisit when:* the vendor offers a way to resolve an
+  alias without spending a request.
+- **KTD7 — the verdict log lives at `~/.claude/typesafe/`, outside the repository.** Agents here
+  run in worktrees under `.claude/`, so a repository-rooted log is per-worktree and dies with it,
+  taking the accumulated evidence the harness needs. Matches `audit_store.py`'s default.
+- **The data rule (R4).** Issue bodies, plan text, and diffs may be sent after redaction — this
+  fleet already sends comparable content to other model vendors through the external-engine HTTP
+  bridge. Credentials, raw transcripts, and customer content never may. Recorded in full in
+  `plugins/fleet-core/references/typesafe.md` and bound to the code by a drift guard.
+
+**Release surfaces** (same PR): `plugins/fleet-core` 0.25.3 -> 0.26.0, `.claude-plugin/marketplace.json`
+mirrored, `plugins/fleet-core/CHANGELOG.md`, and `tests/test_release_triad.py` green.
 
 ## 2026-09-16
 

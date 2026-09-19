@@ -1,0 +1,572 @@
+[
+  {
+    "answer": {
+      "effort": {
+        "choice": "medium",
+        "confidence": 0.39,
+        "probabilities": {
+          "high": 0.12,
+          "low": 0.34,
+          "max": 0.0,
+          "medium": 0.54
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "haiku",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 1.0,
+          "opus": 0.0,
+          "sonnet": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-01",
+    "label": "haiku",
+    "label_effort": "low",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "rename var across 12 files, tests must pass"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "max",
+        "confidence": 0.31,
+        "probabilities": {
+          "high": 0.46,
+          "low": 0.0,
+          "max": 0.49,
+          "medium": 0.05
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "opus",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 0.0,
+          "opus": 1.0,
+          "sonnet": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-02",
+    "label": "opus",
+    "label_effort": "high",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "design retry/idempotency for payment webhook + write ADR"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "low",
+        "confidence": 0.99,
+        "probabilities": {
+          "high": 0.0,
+          "low": 0.99,
+          "max": 0.0,
+          "medium": 0.01
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "sonnet",
+        "confidence": 0.46,
+        "probabilities": {
+          "haiku": 0.36,
+          "opus": 0.0,
+          "sonnet": 0.64
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-03",
+    "label": "sonnet",
+    "label_effort": "low",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "list every file:line that reads TYPESAFE_API_KEY"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "high",
+        "confidence": 0.92,
+        "probabilities": {
+          "high": 0.94,
+          "low": 0.0,
+          "max": 0.01,
+          "medium": 0.05
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "opus",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 0.0,
+          "opus": 1.0,
+          "sonnet": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-04",
+    "label": "opus",
+    "label_effort": "high",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "adversarial review of PR for concurrency defects in lease handling"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "low",
+        "confidence": 0.97,
+        "probabilities": {
+          "high": 0.0,
+          "low": 0.98,
+          "max": 0.0,
+          "medium": 0.02
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "haiku",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 1.0,
+          "opus": 0.0,
+          "sonnet": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-05",
+    "label": "haiku",
+    "label_effort": "low",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "scaffold a new plugin dir from the template named unifi-two"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "medium",
+        "confidence": 0.31,
+        "probabilities": {
+          "high": 0.1,
+          "low": 0.42,
+          "max": 0.0,
+          "medium": 0.48
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "haiku",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 1.0,
+          "opus": 0.0,
+          "sonnet": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-06",
+    "label": "haiku",
+    "label_effort": "low",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "convert 40 unittest cases to pytest style, no behavior change"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "high",
+        "confidence": 0.63,
+        "probabilities": {
+          "high": 0.72,
+          "low": 0.0,
+          "max": 0.0,
+          "medium": 0.28
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "opus",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 0.0,
+          "opus": 1.0,
+          "sonnet": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-07",
+    "label": "opus",
+    "label_effort": "high",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "investigate flaky test failing 1 in 20 runs (race in worker pool)"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "medium",
+        "confidence": 0.85,
+        "probabilities": {
+          "high": 0.04,
+          "low": 0.06,
+          "max": 0.0,
+          "medium": 0.9
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "sonnet",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 0.0,
+          "opus": 0.0,
+          "sonnet": 1.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-08",
+    "label": "sonnet",
+    "label_effort": "medium",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "summarise last 50 commits into a CHANGELOG entry"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "max",
+        "confidence": 0.62,
+        "probabilities": {
+          "high": 0.25,
+          "low": 0.0,
+          "max": 0.71,
+          "medium": 0.04
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "opus",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 0.0,
+          "opus": 1.0,
+          "sonnet": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-09",
+    "label": "opus",
+    "label_effort": "max",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "decide whether to split the saga plugin into three; weigh tradeoffs"
+    }
+  },
+  {
+    "answer": {
+      "effort": {
+        "choice": "low",
+        "confidence": 0.99,
+        "probabilities": {
+          "high": 0.0,
+          "low": 0.99,
+          "max": 0.0,
+          "medium": 0.01
+        },
+        "type": "choice"
+      },
+      "model": {
+        "choice": "haiku",
+        "confidence": 1.0,
+        "probabilities": {
+          "haiku": 1.0,
+          "opus": 0.0,
+          "sonnet": 0.0
+        },
+        "type": "choice"
+      }
+    },
+    "id": "tier-probe-10",
+    "label": "haiku",
+    "label_effort": "low",
+    "question_key": "model",
+    "questions": {
+      "effort": {
+        "criteria": {
+          "high": "substantial ambiguity or many interacting constraints",
+          "low": "obvious steps, little ambiguity",
+          "max": "consequential architectural or strategic decision",
+          "medium": "some judgment"
+        },
+        "instructions": "How much reasoning effort does `task` need?",
+        "type": "choice"
+      },
+      "model": {
+        "criteria": {
+          "haiku": "cheapest; mechanical or deterministic work",
+          "opus": "most capable; judgment, design, adversarial review, root cause",
+          "sonnet": "mid; survey, search, summarising, moderate coding"
+        },
+        "instructions": {
+          "policy": "Tiering rule: judgment, design, architecture, root-cause investigation, or adversarial review -> opus. Mechanical or deterministic work (scaffolding, fixed transforms, mechanical edits, running commands) -> haiku. Read-only survey, search, sampling, summarising -> sonnet.",
+          "question": "Which model tier should run `task`?"
+        },
+        "type": "choice"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "state": {
+      "task": "run the test suite and report failing test names"
+    }
+  }
+]

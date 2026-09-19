@@ -13,7 +13,7 @@ non-linear so premium tiers cost disproportionately more). It is validated at IM
 against the live ``tier_palette`` ordering — completeness, per-axis strict monotonicity,
 and off-palette-key rejection all raise ``CostWeightsError`` here rather than letting a
 drifted table silently mis-price a run. A malformed table therefore fails fast and loud,
-exactly like ``tier_palette`` failing on a malformed ``models.json``.
+exactly like ``tier_palette`` failing on a malformed ``staffing.json``.
 
 Weights are ORDINAL/RELATIVE, never dollar prices (#366 non-goal): stable across provider
 price changes. The guard checks only the *per-axis* monotonic contract; the *cross-axis*

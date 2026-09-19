@@ -36,20 +36,19 @@ requires an explicit `--project`.
 
 | Project key | Board | Workflow |
 |-------------|-------|----------|
-| `operations` | Operations | `Idea -> Shaping -> Ready -> Active -> Verify -> Done` |
-| `asgard` | Asgard | `Idea -> Shaping -> Ready -> Active -> Verify -> Done` |
+| `operations` | Operations | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `asgard` | Asgard | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
 | `campps` | CAMPPS | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
 
-The former project #1 (Mount Olympus) is retired-historical and closed; it is not an active
+The former project #1 (Mount Olympus) is closed and archived history; it is not an active
 board and is not a routing target. Deployment state is not a workflow status; use deployment
 fields and GitHub Deployments/Environments for environment movement.
 
-The Operations and Asgard rows in the table above still show the retired `intent_flow` ladder
-names; correcting them is tracked as a separate change and is not done here. CAMPPS follows the
-`stage_flow` workflow recorded in `$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`: `Stage` is
-the board column and `Status` carries the in-stage condition (the cross-cutting `Blocked`
-status applies everywhere). No active board carries a pause column; a paused card is expressed
-through labels and issue state.
+All three boards follow the one shared `stage_flow` workflow recorded in
+`$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`: `Stage` is the board column and `Status`
+carries the in-stage condition (the cross-cutting `Blocked` status applies everywhere). No
+active board carries a pause column; a paused card is expressed through labels and issue
+state.
 
 ## Script Location
 
@@ -119,8 +118,8 @@ python3 sdlc_manager.py board archive --project asgard --dry-run
 python3 sdlc_manager.py board archive --project campps
 ```
 
-The command archives terminal workflow items. For Operations and Asgard that means `Done`.
-For CAMPPS, whose workflow is `stage_flow`, that means `Ready to close`.
+The command archives terminal workflow items. All three boards share the `stage_flow`
+workflow, whose only terminal status is `Ready to close`.
 
 ### WIP And Standup
 
@@ -172,5 +171,5 @@ not a workflow status.
 
 ## Reference Documents
 
-- `references/kanban-workflow.md` - Board structure, status definitions, WIP limits, and standup format
+- `references/kanban-workflow.md` - Board structure, stage and status definitions, and standup format
 - `references/graphql-queries.md` - GraphQL queries used by the script

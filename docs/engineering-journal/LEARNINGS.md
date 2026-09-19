@@ -1,5 +1,79 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-09-19
+
+### A precedence ladder hides a stale shipped file from the only person who could notice  {#1020-vendored-rung-masked-by-local-checkout}
+
+**Context.** Issue #1020 regenerated mission-control's cached board census. While grounding the
+plan, the vendored `plugins/mission-control/config/project-mappings.json` was found pinning
+`"workflow": "intent_flow"` for Operations and Asgard and `"campps_initiative"` for CAMPPS.
+`sdlc-schema.json` contains no `intent_flow` workflow at all, and marks `campps_initiative`
+`retired_historical` with `"active_routing": false`.
+
+**Evidence.** The first write-up of this called it a live defect. Running the resolver refuted
+that: `_status_order` through `load_config()` returned the correct 26-status stage-flow order for
+all three boards. `_resolve_project_mappings` (`sdlc_manager.py:305-317`) tries
+`$INFIQUETRA_SDLC_PATH/config/project-mappings.json` before the vendored copy, and
+`get_sdlc_path()` falls back to `~/workspace/infiquetra/infiquetra-sdlc` — a checkout that exists
+on the developer machine and is current. Driving `_project_workflow_name` and `_status_order` from
+the vendored file directly printed what shipped environments actually get: `['No Status']` for
+Operations and Asgard, and `['Idea', 'Committed', 'In Progress', 'Done', 'Parked', 'No Status']`
+for CAMPPS.
+
+**Mechanism.** Two independent facts compound. First, the mapping duplicates a name the schema
+owns, so the duplicate outlived the thing it named — `_project_workflow_name` prefers the mapping's
+label over the board's own declaration, and a label naming a deleted workflow resolves to an empty
+dictionary rather than raising. Second, the resolution ladder consults a developer's local checkout
+before the file that ships. The developer machine is therefore the one machine that cannot observe
+the bug, and it is the machine where anyone would look.
+
+**Fix.** Delete the three `workflow` keys so resolution falls through to each board's declared
+`stage_flow` — the branch the function already implements. The test added with the fix
+(`plugins/mission-control/tests/test_project_mappings_resolution.py`,
+`TestVendoredMappingsDoNotOverrideTheBoardWorkflow`) deliberately reads the real vendored file
+rather than going through `load_config()`; written the other way it would have passed before the
+fix and proved nothing.
+
+**Generalizable rule.** When a loader has a precedence ladder, test the rung that ships, not the
+rung your machine lands on — and treat a config key that restates a name another file owns as a
+latent staleness bug, because the restatement can outlive the name without anything failing.
+
+**Refs.** Issue #1020 unit 5; `sdlc_manager.py:305-317`, `:417-426`, `:436-441`.
+
+---
+
+### A drift check that skips without credentials reports success on every run that cannot check  {#1020-skip-on-no-credential-reports-green}
+
+**Context.** `board_census.py --check` compares the committed board census against the live
+GitHub Projects API and is wired into both `.github/workflows/ci.yml:115-116` and
+`scripts/gate.sh:195`. It has been in place since #424.
+
+**Evidence.** The committed `config/board-schema.json` was last regenerated on 2026-07-14
+(commit `5aa95e5c`) and by 2026-09-19 was two board migrations stale — no `Stage` field on any
+board, the retired six-value ladder on Operations and Asgard, `Todo / In Progress / Done` on
+CAMPPS. The check ran on every continuous-integration run throughout and never once complained.
+
+**Mechanism.** The check is deliberately live-gated: with no `project`-scoped token it prints
+`SKIPPED` and exits 0, a decision recorded in DECISIONS
+[[#board-census-shape-only-live-skip-424]] and still correct, because failing on credential
+absence would block unrelated work. The consequence is that in the environment where it always
+runs, it can never fail — so its green is evidence of nothing, and reads identically to a real
+pass. An operator seeing a passing pipeline has no signal distinguishing "checked and clean" from
+"could not check".
+
+**Fix.** Add a second guard that asserts an invariant needing no credentials, beside the live one
+rather than instead of it: `tests/test_board_schema_drift.py` compares the committed census to the
+vocabulary `sdlc-schema.json` declares. It was confirmed to fail against the pre-regeneration
+census — 12 failures — before being trusted, because a guard only ever seen green is not known to
+guard anything.
+
+**Generalizable rule.** A check that can skip needs a companion that cannot. When a gate's failure
+mode is "unavailable, therefore silent", pair it with an offline invariant covering the same
+property, and prove the new guard red before you accept it green.
+
+**Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
+[[#1020-census-keyed-by-field-name]].
+
 ## 2026-09-16
 
 ### A key flip without a copy orphans the only authority  {#908-slot-key-flip-orphans}

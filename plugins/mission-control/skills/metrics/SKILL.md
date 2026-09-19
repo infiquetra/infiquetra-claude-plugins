@@ -40,11 +40,9 @@ Always run the script with `python3`.
 
 ## Metric Boundaries
 
-| Board | Active start | Terminal statuses |
-|-------|--------------|-------------------|
-| Operations | Active | Done |
-| Asgard | Active | Done |
-| CAMPPS | In Progress | Done |
+| Board | Active start | Terminal status |
+|-------|--------------|-----------------|
+| Operations / Asgard / CAMPPS | `Active` stage | `Ready to close` |
 
 Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as active start
 with `Done`/`Closed`/`Cancelled` terminals, and its timeline may include `In Progress`,
@@ -130,14 +128,15 @@ Use this to diagnose where one card spent time.
 1. Run `metrics column-time` on slow items to find the status consuming the most time.
 2. Check WIP age for active or review bottlenecks.
 3. Look for `blocked` or `Needs Question` state.
-4. Check whether WIP limits are being respected.
+4. Check how many cards sit in the `Active` stage at once; no limit is enforced, so a
+   pile-up there is a judgement call, not a gate.
 5. Separate deployment delay from work status; deployment evidence belongs to deployment fields.
 
 ### When Throughput Is Low
 
-1. Check whether active statuses are at or over WIP.
+1. Check how much work sits in the `Active` stage at once.
 2. Look for aging items that are not moving to review or verification.
-3. Check whether `Ready` is empty or poorly shaped.
+3. Check whether `Ready for Planning` is empty or poorly shaped.
 4. Confirm the board is the right one: raw intent should not be counted as initiative execution.
 
 ### When WIP Age Is High
@@ -149,4 +148,4 @@ Use this to diagnose where one card spent time.
 ## Reference Documents
 
 - `references/metrics-targets.md` - Complete targets, definitions, and interpretation guide
-- `skills/board/references/kanban-workflow.md` - Board workflows and WIP limits
+- `skills/board/references/kanban-workflow.md` - Board workflow, stages, and statuses

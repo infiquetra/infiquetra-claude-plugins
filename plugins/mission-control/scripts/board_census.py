@@ -23,6 +23,12 @@ page on a >200-item board) is proven independently by
 ``get_project_items()`` — its own tests assert the full count is returned,
 not truncated at a single page.
 
+``fields`` is a mapping keyed by field name, so a consumer can ask for one
+field directly (``.boards.operations.fields.Status.options[].name``) instead
+of scanning a list. Keys are emitted in sorted order and ``--write``
+serializes with ``sort_keys=True``, so the committed file still diffs
+stably; a duplicate field name raises rather than overwriting (#1020).
+
 Usage::
 
     python3 board_census.py --write   # regenerate config/board-schema.json
@@ -76,10 +82,22 @@ def fetch_project_fields_census(project_number: int, *, max_pages: int = 200) ->
 
     fields = paginate_or_raise(_fetch_page, max_pages=max_pages)
 
-    census_fields = []
+    census_fields: dict[str, dict[str, Any]] = {}
     for field in fields:
+        name = field.get("name", "")
+        if name in census_fields:
+            # A mapping keyed by name can silently lose a field that a list
+            # cannot. GitHub project field names are unique in practice, so
+            # this never fires -- but drop loudly rather than quietly if it
+            # ever does (#1020 KTD2). Raised here, AFTER `paginate_or_raise`
+            # has had its chance, so a runaway-pagination fixture whose pages
+            # repeat one field name still reports the pagination fault.
+            raise ValueError(
+                f"duplicate field name {name!r} in project {project_number} census; "
+                "the census keys fields by name and cannot represent this board"
+            )
         entry: dict[str, Any] = {
-            "name": field.get("name", ""),
+            "name": name,
             "id": field.get("id", ""),
             "dataType": field.get("dataType", ""),
         }
@@ -88,14 +106,13 @@ def fetch_project_fields_census(project_number: int, *, max_pages: int = 200) ->
                 ({"id": o["id"], "name": o["name"]} for o in field.get("options", [])),
                 key=lambda o: str(o.get("name", "")),
             )
-        census_fields.append(entry)
-    census_fields.sort(key=lambda f: str(f.get("name", "")))
+        census_fields[name] = entry
 
     return {
         "number": project_number,
         "id": project_id_box["id"],
         "title": project_id_box["title"],
-        "fields": census_fields,
+        "fields": {name: census_fields[name] for name in sorted(census_fields)},
     }
 
 

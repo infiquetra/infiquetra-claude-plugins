@@ -13,9 +13,7 @@ Quick reference for Infiquetra board-flow metrics. Source of truth:
 
 | Board | Start | Terminal |
 |-------|-------|----------|
-| Operations | Active | Done |
-| Asgard | Active | Done |
-| CAMPPS | In Progress | Done |
+| Operations / Asgard / CAMPPS | `Active` stage | `Ready to close` |
 
 Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as start with
 `Done`/`Closed`/`Cancelled` terminals; its history may include `In Progress`, `In Development`,
@@ -43,11 +41,9 @@ with those names.
 
 **Use**: Capacity planning, delivery forecasting, and trend analysis.
 
-| Board | Counted terminal statuses |
-|-------|---------------------------|
-| Operations | Done |
-| Asgard | Done |
-| CAMPPS | Done |
+| Board | Counted terminal status |
+|-------|-------------------------|
+| Operations / Asgard / CAMPPS | `Ready to close` |
 
 ---
 
@@ -69,9 +65,9 @@ with those names.
 
 **Definition**: Active work time divided by total cycle time.
 
-For CAMPPS, active work is primarily `In Progress`. For intent-flow boards,
-active work is `Active` plus `Verify`. `Ready` and `Shaping` are wait or
-preparation states unless a card's evidence shows otherwise.
+All three boards share one ladder: active work is the `Active` and `Verify`
+stages. `Intake`, `Shaping` and `Planning` are wait or preparation states
+unless a card's evidence shows otherwise.
 
 Target: greater than 50%.
 
@@ -89,9 +85,9 @@ Target: greater than 50%.
 
 ### When Throughput Is Low
 
-1. Check WIP limits.
+1. Check how much work sits in the `Active` stage at once.
 2. Look at active-status aging.
-3. Check if `Ready` is empty or poorly shaped.
+3. Check if `Ready for Planning` is empty or poorly shaped.
 4. Look at defect rate and unplanned work.
 5. Consider whether large capabilities should be split.
 

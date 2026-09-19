@@ -1,0 +1,58 @@
+# Work session — board vocabulary drift, issue 1020
+
+**What shipped.** The mission-control plugin's cached snapshot of the three GitHub project boards
+was two board migrations stale. It is regenerated from the live boards, the prose that described
+the old vocabulary is rewritten, a credential-free drift guard is added so the gap cannot reopen
+silently, and a stale workflow label in the shipped project mappings is removed.
+
+## Units executed
+
+| Unit | What it did | Verified by |
+|---|---|---|
+| U1 | `board_census.py` now writes `fields` as a mapping keyed by field name, raising on a duplicate name | `plugins/mission-control/tests/test_board_census.py`, 12 passed, including a new duplicate-name test |
+| U2 | Regenerated `config/board-schema.json` from the live boards | The card's two `jq` acceptance checks; the diff matched the plan's predicted field membership exactly |
+| U3 | Added `tests/test_board_schema_drift.py` | 13 passed, 1 skipped (the opt-in live leg); proven red first — 12 failures against the pre-regeneration census |
+| U4 | Rewrote the board reference and board skill onto `stage_flow`, deleted the withdrawn work-in-progress limits, corrected the terminal-status tables in the metrics skill and its reference | The card's `grep -n "retired"` check returns nothing; both completeness sweeps clean; `test_prompt_alignment.py` still passes |
+| U5 | Removed the three stale `workflow` labels from `config/project-mappings.json` | New `TestVendoredMappingsDoNotOverrideTheBoardWorkflow` class, 3 tests; the vendored file now resolves `stage_flow` for all three boards |
+| U6 | Release surfaces to 2.17.0 and the journal entries | `sync_marketplace.py`; the repository gate |
+
+## How the drift guard was proven
+
+The plan required observing the new guard fail before trusting it, because a guard only ever seen
+green is not known to guard anything. Restoring the census as it stood at the branch base and
+re-running gave 12 failures, 1 pass and 1 skip. The single pass was the board-presence assertion,
+which the plan predicted would pass beforehand. Restoring the regenerated census returned it to 13
+passed, 1 skipped.
+
+## Answers applied, and where each came from
+
+Every choice below was supplied by the run coordinator before work began, in the message opening
+this stage. None was invented, and none was taken from chat memory.
+
+| Choice | Answer applied | Source |
+|---|---|---|
+| Saga identity | Resumed `issue-1020`; no second saga minted | Coordinator |
+| Branch | Stayed on `issue/1020`; no new branch | Coordinator |
+| Execution backend | `inline`, matching the plan's `backend:` frontmatter; no other backend offered or entered | Coordinator, and the plan document |
+| Doc-review gate | Passed, zero P0 and zero P1, per `docs/reviews/doc-review-issue-1020-2026-09-19.md`; no override sought | Coordinator |
+| Complexity triage | Small-to-medium: build a task list from the plan's unit identifiers rather than implementing directly | Skill default, recorded here |
+| Round-N detection | Fresh build — the restored saga carries no pull-request references, so this is not a re-entry into the round-N loop | Skill default, confirmed from the saga scan |
+| Board write | Submitted the `Stage` = `Active`, `Status` = `Implementing` pair through the reconcile controller; the record came back `written` with `field` reading `Stage+Status`, so both halves landed | Coordinator permitted this write |
+| Pull request | None opened | Coordinator |
+| Merge | None; the card merges onto the integration branch `parent/1018` by merge turn, performed by the coordinator | Coordinator |
+| Ship ceremony | Not run | Coordinator |
+| Push | Never | Coordinator |
+| Continuation routing | Return to the coordinator | Coordinator |
+
+## Deviation from the skill, recorded
+
+The `/work` skill reaches a pull-request-ready boundary and then offers to open a pull request and
+to merge. Both were declined by standing instruction, because this card is a child of the saga
+simplification parent (issue 1018) and lands on the integration branch by merge turn rather than
+through its own pull request. No ship ceremony ran and nothing was pushed.
+
+## Residual risk
+
+The census regeneration reached the live GitHub Projects API using this session's `project`-scoped
+token. A session without that scope cannot run unit 2 and must stop rather than hand-edit the
+census — a hand-written census is the failure this card exists to repair.

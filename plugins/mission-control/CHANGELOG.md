@@ -1,5 +1,57 @@
 # Changelog
 
+## [2.17.0] - 2026-09-19
+
+### Fixed
+
+- **Board vocabulary drift, three surfaces at once (issue #1020).** The cached board census
+  `config/board-schema.json` was last regenerated on 2026-07-14 and had fallen two board
+  migrations behind: it recorded no `Stage` field on any board, gave Operations and Asgard the
+  retired `Idea / Shaping / Ready / Active / Verify / Done` ladder, and gave CAMPPS an even older
+  `Todo / In Progress / Done`. It is regenerated from the live boards and now records, for all
+  three, the `Stage` field with six stages and the `Status` field with the 26 stage-flow options
+  that `config/sdlc-schema.json` declares. The regeneration also picks up field membership that
+  had drifted: `Stage` added to all three boards and `Priority` to Asgard and CAMPPS, with
+  `Risk` and `Work Type` gone from Operations, `Jeff Needed`, `Mode`, `Risk`, `Target Repository`
+  and `Transfer Target` gone from Asgard, and `Initiative`, `Start`, `Target` and `Test Strategy`
+  gone from CAMPPS. No live board changed; only the snapshot of it did.
+- **The vendored `config/project-mappings.json` no longer overrides each board's declared
+  workflow.** It pinned `intent_flow` for Operations and Asgard — a workflow `sdlc-schema.json`
+  no longer defines at all — and `campps_initiative` for CAMPPS, which the schema does define but
+  marks `retired_historical` with `active_routing` false. Because `_project_workflow_name` prefers
+  the mapping's label over the board's own declaration, an environment resolving through the
+  vendored file got a one-entry status order (`['No Status']`) for Operations and Asgard and the
+  retired five-status ladder for CAMPPS. The three labels are removed so resolution falls through
+  to the board's declared `stage_flow`. This was invisible on any machine with an
+  `infiquetra-sdlc` checkout, whose external copy is current and wins the resolution ladder.
+- **The board and metrics prose stopped describing a vocabulary the boards do not have.**
+  `skills/board/references/kanban-workflow.md` and `skills/board/SKILL.md` each carried the
+  retired ladder plus a sentence admitting the section was stale and deferring the fix; both now
+  describe the single shared `stage_flow`. The withdrawn work-in-progress limits are removed
+  rather than restated, matching the schema decision that retired them. Terminal-status and
+  cycle-time boundary tables across `skills/metrics/SKILL.md` and
+  `skills/metrics/references/metrics-targets.md` no longer name `Done` or `In Progress`, neither
+  of which is an option on any live board; the terminal is `Ready to close` everywhere.
+
+### Changed
+
+- **`board-schema.json` keys `fields` by field name instead of listing them.** A consumer can now
+  ask for one field directly — `.boards.operations.fields.Status.options[].name` — instead of
+  scanning a list. Keys are emitted sorted and `--write` still serializes with `sort_keys=True`,
+  so the committed file diffs as stably as before. A duplicate field name now raises rather than
+  silently overwriting, since a name-keyed mapping can lose a field that a list cannot.
+
+### Added
+
+- **`tests/test_board_schema_drift.py`, a credential-free drift guard.** The existing
+  `board_census.py --check` compares against the live boards but deliberately prints SKIPPED and
+  exits 0 without a `project`-scoped token, which is every normal continuous-integration run —
+  so a drift can sit unnoticed, and this one did for two months. The new guard needs no network:
+  it asserts that every Status and Stage option in the committed census matches the vocabulary
+  `sdlc-schema.json` declares, that no retired status name survives, and that `fields` is a
+  mapping. The live comparison remains available as an opt-in leg under `BOARD_SCHEMA_LIVE=1`.
+  The guard was confirmed to fail against the pre-regeneration census before being trusted.
+
 ## [2.16.0] - 2026-09-13
 
 ### Added

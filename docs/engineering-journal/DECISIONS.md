@@ -1,5 +1,72 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-19
+
+### The board census keys `fields` by field name; a duplicate name raises rather than overwriting  {#1020-census-keyed-by-field-name}
+
+**Decision.** `plugins/mission-control/config/board-schema.json` records each board's `fields` as a
+mapping from field name to field record, not as a sorted list of records. A duplicate field name
+raises `ValueError` rather than letting one field overwrite another.
+
+**Rationale.** The census exists to be read. A list forces every consumer to scan, and issue
+#1020's acceptance criteria — written as executable `jq` commands — index it as a mapping
+(`.boards.operations.fields.Status.options[].name`, `.boards.campps.fields | keys[]`). The
+automatic board moves planned in issue #1028 read this file too. The blast radius was checked
+before committing to it: a repository-wide search for `board-schema` and `board_schema` outside
+`docs/` finds only `board_census.py`, its own test file, and a changelog line — no runtime code
+resolves field or option identifiers from the census, so nothing downstream breaks. Diff stability,
+the property the sorted list was chosen for, is preserved: keys are emitted in sorted order and
+`cmd_write` already serializes with `sort_keys=True`.
+
+**Rejected: keep the list and treat the card's `jq` checks as approximate.** They are executable
+criteria the operator wrote. Narrowing an acceptance check so the existing code passes it is
+weakening the card, and a mapping is also the shape a consumer actually wants.
+
+**Rejected: let a duplicate name overwrite silently.** A mapping keyed by name can lose a field
+that a list cannot. GitHub project field names are unique in practice — counted across all three
+live boards during this work: 16 fields each, no duplicate — so the raise is unreachable today,
+which is precisely why it must be loud if it ever becomes reachable. The raise sits after
+`paginate_or_raise` has run, so a runaway-pagination fixture whose repeated pages carry one field
+name still reports the pagination fault it was written to catch, not a duplicate-name error.
+
+**Revisit when:** a board legitimately grows two fields with one name (GitHub does not allow this
+today), or a consumer needs the fields in live board order rather than by name — at which point the
+record should carry an explicit order key rather than reverting to positional meaning.
+
+**Refs.** Issue #1020 units 1 and 2; `plugins/mission-control/scripts/board_census.py`;
+LEARNINGS [[#1020-skip-on-no-credential-reports-green]] (the companion guard),
+[[#board-census-shape-only-live-skip-424]] (the census's original shape-only scope).
+
+---
+
+### Retired policy in a reference document is deleted, never restated in the new vocabulary  {#1020-delete-retired-policy-dont-restate}
+
+**Decision.** When a board reference documents a policy the schema has withdrawn, remove the
+section. Do not translate it into the current vocabulary. Applied to the work-in-progress limit
+tables in `skills/board/references/kanban-workflow.md` and to the enforcement instructions in
+`skills/metrics/SKILL.md` and `skills/metrics/references/metrics-targets.md`.
+
+**Rationale.** `sdlc-schema.json`'s migration decision E6 removed the `wip_limits` block outright
+and retired `check-wip-limits.py`; `sdlc_manager.py:1227-1228` and `:1409` already report that no
+limits exist. Rewriting the tables with stage-flow column names would have reinstated, in prose
+that agents read as instruction, a policy the source of truth deleted — and prose is the surface
+an agent obeys, so a stale instruction there is worse than a stale cache.
+
+**Rejected: map the old per-column numbers onto the nearest new stages.** It reads like
+housekeeping and silently re-enacts the withdrawn policy under new names, with no decision record
+anywhere authorizing the numbers.
+
+**Rejected: leave the tables and note they are historical.** The same document already carried a
+sentence admitting its workflow section was stale and deferring the fix; that sentence survived two
+board migrations. A deferral note in a reference document is not a fix, it is a fix that never
+happens.
+
+**Revisit when:** a work-in-progress limit is deliberately reintroduced, at which point it belongs
+in `sdlc-schema.json` first and in the reference only as a transcription of it.
+
+**Refs.** Issue #1020 unit 4; `sdlc-schema.json` migration note `2026-09-07.1` decision E6;
+`sdlc_manager.py:1227-1228`, `:1409`.
+
 ## 2026-09-16
 
 ### Named review slots migrate run-global state, then become the authority  {#908-review-slot-migration}

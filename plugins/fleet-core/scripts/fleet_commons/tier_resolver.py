@@ -189,9 +189,17 @@ def load_policy(path: Path | None = None) -> dict[str, dict[str, str]]:
     return data
 
 
-def _canonical_work_shape(work_shape: str) -> str:
-    """Map a ``role-tier:`` alias (KTD7) onto its registry work-shape key, else pass through."""
+def canonical_work_shape(work_shape: str) -> str:
+    """Map a ``role-tier:`` alias (KTD7) onto its registry work-shape key, else pass through.
+
+    Public since issue #1021: ``fleet_commons.staffing`` checks work-shape membership before
+    delegating here, so it needs the same alias vocabulary rather than a second copy of it.
+    """
     return ROLE_TIER_ALIASES.get(work_shape, work_shape)
+
+
+# Retained for any caller of the former private name.
+_canonical_work_shape = canonical_work_shape
 
 
 def cheaper_fallback(model: str, effort: str) -> tuple[str, str]:

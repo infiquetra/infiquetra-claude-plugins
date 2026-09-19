@@ -32,7 +32,19 @@ import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
 
 _tier_palette = fleet_commons_shim.load("tier_palette")
 _tier_resolver = fleet_commons_shim.load("tier_resolver")
-_staffing = fleet_commons_shim.load("staffing")
+try:
+    _staffing = fleet_commons_shim.load("staffing")
+except RuntimeError as exc:  # pragma: no cover - exercised by the install-obligation test
+    # saga 0.160.0 requires fleet-core 0.26.0 or later: the overlay read moved there (issue
+    # #1021). This repository has two installed plugin roots and a release has updated one and
+    # not the other six times, so say which version is needed and which was found rather than
+    # letting a bare "module not found" reach the operator.
+    _resolved = getattr(fleet_commons_shim, "resolved_version", lambda: "unknown")()
+    raise RuntimeError(
+        "saga requires fleet-core 0.26.0 or later for fleet_commons.staffing; the resolved "
+        f"fleet-core is {_resolved}. Update the fleet-core plugin in this root, and check BOTH "
+        f"installed roots — they have diverged before. Underlying error: {exc}"
+    ) from exc
 MODELS: tuple[str, ...] = _tier_palette.MODELS
 EFFORTS: tuple[str, ...] = _tier_palette.EFFORTS
 

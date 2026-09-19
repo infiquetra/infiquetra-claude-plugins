@@ -29,6 +29,32 @@ natural stopping point — it is just where attention ran out. Deleting a file a
 plugins means bumping every plugin whose files you then have to edit, and that cost is part of the
 deletion, not a reason to leave the pointers broken.
 
+### A validity check placed before a normalising step silently narrows the input class  {#1021-check-before-normalise}
+
+**Evidence.** Issue #1021, found by the contract review lens. `staffing.resolve_shape` rejected a
+work shape absent from the registry, then delegated to `tier_resolver.resolve`, which maps three
+`role-tier:` aliases onto registry keys before looking them up. The pre-check therefore fired
+first, and the aliases twenty-five team-execution agent definitions carry in frontmatter stopped
+resolving through saga's overlay chain:
+
+```
+resolve_tier_with_overlay("adversarial-review")  base: opus/high   after: TierDefaultsError
+```
+
+The saga changelog written in the same change asserted the five public functions kept "their
+behaviour". They kept their signatures; they lost an input class.
+
+**Mechanism.** The new module added a friendly error for an unknown work shape — a small,
+obviously good change — without noticing that the function it wrapped accepted a wider vocabulary
+than the registry it validated against. No test in either module mentioned an alias, so the suite
+stayed green. The aliases live in a Python constant and are consumed from Markdown frontmatter,
+which is why a grep for the failing input finds nothing in the test tree.
+
+**Generalizable rule.** When you add a validity check in front of an existing call, first read
+what that call accepts. Normalise before validating, never the reverse — and when a wrapper
+narrows an input class, the test that proves otherwise has to name the inputs the wrapper does not
+know about, because the existing suite by construction does not exercise them.
+
 ### A test that reads a gitignored file is green on a fresh clone and red on a real machine  {#1021-gitignored-state-under-test}
 
 **Evidence.** Issue #1021, found by the testing review lens. `tests/test_staffing.py` called the

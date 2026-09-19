@@ -1232,3 +1232,79 @@ def test_every_work_shape_resolves_to_a_pair_the_model_can_actually_run() -> Non
         assert tier_palette.supports_effort(decision.model, decision.effort), (
             f"{shape}: {decision.model}/{decision.effort} is above the model's ceiling"
         )
+
+
+# ---------------------------------------------------------------------------
+# role-tier aliases resolve through every path (API contract lens, issue #1021).
+#
+# Twenty-five team-execution agent definitions carry one of these three aliases in frontmatter.
+# A membership check that ran before the alias mapper silently lost all three, and no test in
+# either module mentioned an alias, which is why the suite stayed green.
+# ---------------------------------------------------------------------------
+
+
+def _aliases() -> dict[str, str]:
+    from fleet_commons import tier_resolver
+
+    return dict(tier_resolver.ROLE_TIER_ALIASES)
+
+
+@pytest.mark.parametrize(
+    ("alias", "expected"),
+    [
+        ("adversarial-review", ("opus", "high")),
+        ("contract-test", ("sonnet", "medium")),
+        ("mechanical-scan", ("haiku", "low")),
+    ],
+)
+def test_a_role_tier_alias_resolves_to_its_registry_rows_tier(
+    alias: str, expected: tuple[str, str]
+) -> None:
+    decision = staffing.resolve_shape(alias)
+    assert (decision.model, decision.effort) == expected
+
+
+def test_every_alias_agrees_with_the_resolver_it_delegates_to() -> None:
+    """One alias vocabulary, not two: whatever the resolver maps, this module must map."""
+    from fleet_commons import tier_resolver
+
+    for alias in _aliases():
+        through_staffing = staffing.resolve_shape(alias)
+        through_resolver = tier_resolver.resolve(None, alias)
+        assert (through_staffing.model, through_staffing.effort) == (
+            through_resolver.model,
+            through_resolver.effort,
+        )
+
+
+def test_an_alias_reports_the_registry_row_it_canonicalised_to() -> None:
+    """The record must name the row that answered, not the alias the caller typed."""
+    assert staffing.resolve_shape("adversarial-review").work_shape == "judgment"
+
+
+def test_the_overlay_wins_over_a_tier_reached_through_an_alias(tmp_path: pathlib.Path) -> None:
+    _write_overlay(tmp_path, {"judgment": {"model": "sonnet", "effort": "low"}})
+    decision = staffing.resolve_shape("adversarial-review", root=tmp_path)
+    assert (decision.model, decision.effort) == ("sonnet", "low")
+    assert decision.source == "overlay"
+
+
+def test_an_unknown_work_shape_still_fails_and_names_the_aliases() -> None:
+    with pytest.raises(StaffingError, match="not-a-shape"):
+        staffing.resolve_shape("not-a-shape")
+
+
+def test_the_saga_shim_resolves_every_alias_as_it_did_before_the_merge() -> None:
+    """The regression was visible only through saga's chain; pin it there too."""
+    saga_scripts = REPO_ROOT / "plugins" / "saga" / "scripts"
+    if str(saga_scripts) not in sys.path:
+        sys.path.insert(0, str(saga_scripts))
+    import tier_defaults
+
+    expected = {
+        "adversarial-review": {"model": "opus", "effort": "high"},
+        "contract-test": {"model": "sonnet", "effort": "medium"},
+        "mechanical-scan": {"model": "haiku", "effort": "low"},
+    }
+    for alias, tier in expected.items():
+        assert tier_defaults.resolve_tier_with_overlay(alias) == tier

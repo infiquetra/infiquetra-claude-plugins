@@ -317,9 +317,14 @@ def resolve_shape(
 ) -> StaffingDecision:
     """Resolve a work shape to a tier: the repository overlay first, then the shared policy."""
     registry = work_shapes()
+    # Canonicalise first: a role-tier alias is a legal input that maps onto a registry key, and
+    # checking membership before mapping silently lost the three aliases the team-execution agent
+    # definitions carry. The mapper is the resolver's, so there is one alias vocabulary.
+    work_shape = _tier_resolver.canonical_work_shape(work_shape)
     if work_shape not in registry:
         raise StaffingError(
-            f"unknown work-shape {work_shape!r}; expected one of {sorted(registry)}"
+            f"unknown work-shape {work_shape!r}; expected one of {sorted(registry)} "
+            f"or an alias of one ({sorted(_tier_resolver.ROLE_TIER_ALIASES)})"
         )
     recorded = _validate_suggestion(suggestion)
     overlay = load_overlay(root)
@@ -524,7 +529,7 @@ def _is_reviewing_role(role: str) -> bool:
 # --------------------------------------------------------------------------- lens
 
 
-def sdlc_root(explicit: Path | None = None) -> Path | None:
+def sdlc_root(checkout: Path | None = None) -> Path | None:
     """Resolve the software-development-lifecycle checkout, or report its absence.
 
     The resolution order is the one ``plugins/mission-control/scripts/sdlc_manager.py`` uses: an
@@ -537,8 +542,8 @@ def sdlc_root(explicit: Path | None = None) -> Path | None:
     ``None`` means no checkout is there — a documented-policy outcome for a lens, never an error,
     because a missing sibling repository must not break every spawn.
     """
-    if explicit is not None:
-        return explicit if explicit.is_dir() else None
+    if checkout is not None:
+        return checkout if checkout.is_dir() else None
     configured = os.environ.get(SDLC_PATH_ENV)
     if configured:
         candidate = Path(configured).expanduser()
@@ -559,9 +564,14 @@ def _read_json(path: Path) -> Any | None:
         return None
 
 
-def lens_catalogue(root: Path | None = None) -> tuple[dict[str, Any], str | None]:
-    """Return ``{lens id: entry}`` and the catalogue version, or ``({}, None)`` when unreadable."""
-    checkout = sdlc_root(root)
+def lens_catalogue(checkout: Path | None = None) -> tuple[dict[str, Any], str | None]:
+    """Return ``{lens id: entry}`` and the catalogue version, or ``({}, None)`` when unreadable.
+
+    Takes a lifecycle *checkout*, not a repository root. The two were both called ``root``, and
+    passing the wrong one degraded silently to the documented-policy outcome rather than failing,
+    because any directory satisfies the resolution.
+    """
+    checkout = sdlc_root(checkout)
     if checkout is None:
         return {}, None
     document = _read_json(checkout / LENS_CATALOGUE_RELATIVE_PATH)
@@ -576,9 +586,12 @@ def lens_catalogue(root: Path | None = None) -> tuple[dict[str, Any], str | None
     return catalogue, document.get("version")
 
 
-def verification_ledger(root: Path | None = None) -> list[dict[str, Any]]:
-    """Return the ledger's entries, or ``[]`` when the checkout or the file is unreadable."""
-    checkout = sdlc_root(root)
+def verification_ledger(checkout: Path | None = None) -> list[dict[str, Any]]:
+    """Return the ledger's entries, or ``[]`` when the checkout or the file is unreadable.
+
+    Takes a lifecycle *checkout*, not a repository root.
+    """
+    checkout = sdlc_root(checkout)
     if checkout is None:
         return []
     document = _read_json(checkout / LEDGER_RELATIVE_PATH)

@@ -2,6 +2,13 @@
 
 ## [0.160.0] - 2026-09-19
 
+**Requires fleet-core 0.26.0 or later.** `scripts/tier_defaults.py` loads
+`fleet_commons.staffing`, which fleet-core gained in 0.26.0, at import time. Installing this saga
+without that fleet-core makes the module fail to import with a message naming both the required and
+the resolved version. This repository has two installed plugin roots and a release has updated one
+and not the other six times, so check both.
+
+
 - **The per-repository tier overlay reads through one implementation (#1021).**
   `scripts/tier_defaults.py` keeps its five public functions and their behaviour but is now a thin
   shim over `fleet_commons.staffing`: the overlay read, its validation and the registry lookup live

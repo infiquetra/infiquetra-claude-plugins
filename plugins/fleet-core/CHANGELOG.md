@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   role path had just been fixed for: `resolve_shape("judgment", vendor="codex")` answered
   `opus`. Both entry points now translate through one path, and an unknown vendor or an
   unsupported runtime is refused on both.
+- **`role-tier:` aliases resolve again through saga's overlay chain (#1021, contract review).**
+  `resolve_shape` checked work-shape membership before delegating, and the alias mapper runs
+  inside the delegate — so `adversarial-review`, `contract-test` and `mechanical-scan`, which
+  twenty-five team-execution agent definitions carry in frontmatter, stopped resolving through
+  `tier_defaults.resolve_tier_with_overlay`. It canonicalises first now, through
+  `tier_resolver.canonical_work_shape`, which is public for that reason rather than copied.
 - **An absent or malformed lens catalogue degrades instead of raising (#1021).** A falsiness test
   let a missing catalogue fall through to the unknown-lens error, on the path whose whole contract
   is that it never raises.
@@ -58,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`root` names one thing and `checkout` names the other (#1021).** Three functions took a
+  repository root and two took a lifecycle checkout, all spelled `root`. Passing the wrong one
+  degraded silently to the documented-policy outcome rather than failing, because any directory
+  satisfies the checkout resolution. `lens_catalogue`, `verification_ledger` and `sdlc_root` now
+  take `checkout`.
 - **The staffing registry is read once per process rather than five times per call (#1021).** One
   `resolve_role` call re-read and re-parsed the 26 KB registry five times, because every block
   accessor reloaded it. The load is memoized on the file's size and modification time, so an edit

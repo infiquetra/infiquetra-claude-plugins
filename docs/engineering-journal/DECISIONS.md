@@ -13,6 +13,117 @@
 **Revisit when.** Issue #1030 removes `/tier`, `/engines`, and `engine-registry.yaml`; issue #1022 lands the roles library and becomes the role vocabulary's authority; or `hermes` gains a model and effort and enters `VENDOR_FLAGS`.
 
 **Refs.** Issue #1021; plan `docs/plans/2026-09-19-issue-1021-staffing-component-plan.md` KTD1 through KTD11; `docs/analysis/2026-09-19-saga-simplification-review.md` section 6G recommendation R29.
+### The board census keys `fields` by field name; a duplicate name raises rather than overwriting  {#1020-census-keyed-by-field-name}
+
+**Decision.** `plugins/mission-control/config/board-schema.json` records each board's `fields` as a
+mapping from field name to field record, not as a sorted list of records. A duplicate field name
+raises `ValueError` rather than letting one field overwrite another.
+
+**Rationale.** The census exists to be read. A list forces every consumer to scan, and issue
+#1020's acceptance criteria — written as executable `jq` commands — index it as a mapping
+(`.boards.operations.fields.Status.options[].name`, `.boards.campps.fields | keys[]`). The
+automatic board moves planned in issue #1028 read this file too. Diff stability, the property the
+sorted list was chosen for, is preserved: keys are emitted in sorted order and `cmd_write` already
+serializes with `sort_keys=True`.
+
+**The blast radius was larger than the first search said, and the way it was missed is the lesson.**
+Planning searched the repository for the strings `board-schema` and `board_schema` and concluded the
+only consumers were `board_census.py` and its own test. That search finds files that name the
+*artifact*. It does not find `plugins/mission-control/config/generated/check_issue_contract_parity.py`,
+which imports `board_census.fetch_project_fields_census` and consumed its result positionally at
+line 158 (`next((f for f in census["fields"] if f["name"] == "Status"), None)`) — under a mapping that
+iterates field-name strings and raises `TypeError`. It was caught during code review by searching for
+callers of the *producing function* instead, and fixed along with three fixtures in
+`tests/test_issue_contract_parity.py`. The full consumer set is four files, and the fix is confirmed
+against real boards: `check_issue_contract_parity.py --live` passes.
+
+**Generalizable rule (also in LEARNINGS).** When changing the shape of a produced value, search for
+callers of the producer, not for mentions of the artifact's name. A consumer that calls the function
+and never names the file is invisible to the obvious search, and reads as a clean blast radius.
+
+**Rejected: keep the list and treat the card's `jq` checks as approximate.** They are executable
+criteria the operator wrote. Narrowing an acceptance check so the existing code passes it is
+weakening the card, and a mapping is also the shape a consumer actually wants.
+
+**Rejected: let a duplicate name overwrite silently.** A mapping keyed by name can lose a field
+that a list cannot. GitHub project field names are unique in practice — counted across all three
+live boards during this work: 16 fields each, no duplicate — so the raise is unreachable today,
+which is precisely why it must be loud if it ever becomes reachable. The raise sits after
+`paginate_or_raise` has run, so a runaway-pagination fixture whose repeated pages carry one field
+name still reports the pagination fault it was written to catch, not a duplicate-name error.
+
+**Revisit when:** a board legitimately grows two fields with one name (GitHub does not allow this
+today), or a consumer needs the fields in live board order rather than by name — at which point the
+record should carry an explicit order key rather than reverting to positional meaning.
+
+**Refs.** Issue #1020 units 1 and 2; `plugins/mission-control/scripts/board_census.py`;
+LEARNINGS [[#1020-skip-on-no-credential-reports-green]] (the companion guard),
+[[#board-census-shape-only-live-skip-424]] (the census's original shape-only scope).
+
+---
+
+### Retired policy in a reference document is deleted, never restated in the new vocabulary  {#1020-delete-retired-policy-dont-restate}
+
+**Decision.** When a board reference documents a policy the schema has withdrawn, remove the
+section. Do not translate it into the current vocabulary. Applied to the work-in-progress **limit**
+tables in `skills/board/references/kanban-workflow.md`, and to the instructions in
+`skills/metrics/SKILL.md` and `skills/metrics/references/metrics-targets.md` that told an agent to
+enforce those limits.
+
+**The distinction that matters: limits were deleted, age thresholds were corrected.** A
+work-in-progress *limit* is a cap on card count, and no code computes one — the schema deleted the
+block and retired the script, so the prose describing it had nothing behind it and was removed.
+A work-in-progress *age* threshold is a real, code-backed measure: `_active_age_thresholds`
+(`scripts/sdlc_manager.py:477-489`) returns three days for every non-terminal Status on every board.
+Those tables stayed, but they had been describing a per-board split with a five-day CAMPPS threshold
+keyed on the retired Status `In Progress`, none of which the function computes. They were rewritten
+to one row. Deleting them would have discarded a measure that exists; restating the limits would
+have reinstated one that does not. The test is whether code computes the thing, not whether the
+prose looks stale.
+
+**Rationale.** `sdlc-schema.json`'s migration decision E6 removed the `wip_limits` block outright
+and retired `check-wip-limits.py`; `sdlc_manager.py:1227-1228` and `:1409` already report that no
+limits exist. Rewriting the tables with stage-flow column names would have reinstated, in prose
+that agents read as instruction, a policy the source of truth deleted — and prose is the surface
+an agent obeys, so a stale instruction there is worse than a stale cache.
+
+**Rejected: map the old per-column numbers onto the nearest new stages.** It reads like
+housekeeping and silently re-enacts the withdrawn policy under new names, with no decision record
+anywhere authorizing the numbers.
+
+**Rejected: leave the tables and note they are historical.** The same document already carried a
+sentence admitting its workflow section was stale and deferring the fix; that sentence survived two
+board migrations. A deferral note in a reference document is not a fix, it is a fix that never
+happens.
+
+**Revisit when:** a work-in-progress limit is deliberately reintroduced, at which point it belongs
+in `sdlc-schema.json` first and in the reference only as a transcription of it.
+
+**Refs.** Issue #1020 unit 4; `sdlc-schema.json` migration note `2026-09-07.1` decision E6;
+`sdlc_manager.py:1227-1228`, `:1409`.
+### PyYAML is imported at first use, and the missing-dependency refusal reuses the closed error-code set  {#997-defer-the-import-keep-the-code-set-closed}
+
+**Decision.** `plugins/saga/scripts/plan_save_contract.py` imports PyYAML inside `yaml_module()`, called from the parsing path, and builds its duplicate-key loader in `unique_loader()` against the module that call returns. Neither name exists at module scope. A missing PyYAML is reported through the existing refusal vocabulary — exit 2, `code: engine`, `entry: python dependency`, `file` naming this script, and an `error` naming PyYAML and the repair — and no new documented error code is introduced.
+
+**Rationale.** A module-scope import runs before any handler in the file exists, so no handler can convert it; the failure escaped as a traceback at exit 1, the code this tool documents for drift, and it also broke `--help`. Deferring the import makes the failure an ordinary `ImportError` inside `main()`'s existing narrow handler, and lets argparse serve `--help` before any YAML is touched, which closes both facets with one change and leaves the `{#996-envelope-seam-not-top-handler}` decision untouched. The loader class has to move with the import because `class UniqueLoader(yaml.SafeLoader)` needs the real base class at class-creation time. Reusing `engine` keeps the published code table closed: its documented repair already reads "Restore the named engine file and its dependencies", and `entry` plus `file` give a caller the discrimination it needs without every consumer learning a new branch.
+
+**Alternatives rejected.** A module-scope `except ImportError` setting `yaml = None` (the class statement three lines later still needs the real `yaml.SafeLoader`, so the crash moves rather than goes). A new `dependency` error code (widens a published contract — the runbook table, the closed-set guard in `tests/test_saga_spec_consumer_row.py` and every code-branching consumer — for a failure the operator repairs with one `uv sync`). Letting the top-level handler's default conversion report it as `syntax` (blames the YAML carrier for an interpreter fault). Widening `main()` to `except BaseException` (already rejected for issue #996, and unnecessary: `ImportError` is an ordinary `Exception`).
+
+**Revisit when.** This tool gains a second third-party import, or the documented error-code set is opened for another reason and a distinct `dependency` code becomes free.
+
+**Refs.** Issue #997 (finding `adv10`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-997-plan-save-contract-missing-pyyaml-plan.md` KTD1, KTD2, KTD3, KTD4; LEARNINGS `{#997-import-outside-every-handler}`.
+
+### The JSON envelope is repaired at the checkout-execution seam, not at the top-level handler  {#996-envelope-seam-not-top-handler}
+
+**Decision.** `plugins/saga/scripts/plan_save_contract.py` converts a `BaseException` raised by the repository checkout it executes through `runpy` into its documented refusal envelope at the two places that checkout code actually runs — the `module()` loader and the `proof.verify(...)` call in `verify_saved_examples()` — through one shared conversion that re-raises `ContractError` unchanged. The top-level handler in `main()` stays `except Exception`. An interrupt arriving inside that window is converted rather than re-raised.
+
+**Rationale.** `except Exception` does not cover `SystemExit` or `KeyboardInterrupt`, so checkout code raising either left the tool with no JSON on standard output and an exit code outside the documented `{0, 1, 2}`. The handler in `main()` cannot be widened: argparse raises `SystemExit(0)` for `--help` from inside that same `try`, and the narrow handler is the only reason `--help` prints usage and exits 0. A `KeyboardInterrupt` raised by the checkout's own code is indistinguishable at the seam from one delivered by the terminal, so converting is the only treatment that closes the defect.
+
+**Alternatives rejected.** Widening `main()` to `except BaseException` (turns `--help` into a JSON refusal at exit 2). Special-casing `SystemExit(0)` in a broad top-level handler (makes the envelope contract depend on an exit-code value rather than on provenance). Re-raising `KeyboardInterrupt` while converting everything else (leaves the reported reproduction unfixed). Duplicating the handler at both seams (they drift on the next edit).
+
+**Revisit when.** `plan_save_contract.py` gains a third place where checkout code executes, or the tool stops promising JSON for every invocation but `--help`.
+
+**Refs.** Issue #996 (finding `adv09`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-996-plan-save-contract-baseexception-plan.md` KTD1, KTD2, KTD3.
 
 ## 2026-09-16
 

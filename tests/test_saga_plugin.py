@@ -192,6 +192,7 @@ def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
         "test_contract_values_are_shell_data",
         "test_contract_rejects_corrupting_structure",
         "test_contract_cli_reports_operation_and_checkout",
+        "test_contract_cli_envelopes_baseexception_from_checkout_code",
     ):
         matches = [node for node in functions if node.name == name]
         assert len(matches) == 1, f"{guard.relative_to(ROOT)}: expected exactly one {name}"

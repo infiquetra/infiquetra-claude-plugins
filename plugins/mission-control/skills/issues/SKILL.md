@@ -235,7 +235,7 @@ Safe starting statuses (the declared Stage drives them):
 - Readiness accepts any `Status` configured for the declared `Stage`, plus the
   cross-cutting `Blocked`; retired (`Idea`, `Shaping`, `Done`), unknown, and
   out-of-Stage values are refused.
-- Never auto-move a prepared issue to `Ready`.
+- Never auto-move a prepared issue to `Ready for Planning`.
 
 ### Create Issue with Template
 
@@ -294,7 +294,7 @@ python3 sdlc_manager.py flow set-field \
   --number <N> \
   --project campps \
   --field Status \
-  --option Committed
+  --option Implementing
 ```
 
 Use live field discovery rather than cached field IDs.

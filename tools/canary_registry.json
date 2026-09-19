@@ -281,5 +281,29 @@
       "replace": "        result = SimpleNamespace(**runpy.run_path(str(target)))"
     },
     "mutation_description": "Let fleet-core resolution fall through to the operator's installed plugins."
+  },
+  {
+    "id": "plan-save-contract-baseexception",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_baseexception_from_checkout_code",
+    "invariant": "the JSON envelope boundary around checkout code is independently exercised.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "    except BaseException as exc:\n        fail(entry, f\"{exc}; {reason}\", source=path, code=\"engine\")",
+      "replace": "    except Exception as exc:\n        fail(entry, f\"{exc}; {reason}\", source=path, code=\"engine\")"
+    },
+    "mutation_description": "Narrow the checkout-code boundary back to Exception, so a SystemExit raised while the loaded proof runs escapes the JSON envelope again."
+  },
+  {
+    "id": "plan-save-contract-missing-pyyaml",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_a_missing_pyyaml",
+    "invariant": "PyYAML is imported at first use, not at module scope, so an interpreter without it gets the documented refusal (exit 2, code engine) instead of a traceback at exit 1, and --help keeps working (#997).",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_contract.py",
+      "find": "# PyYAML is imported by yaml_module() at first use, deliberately not here -- see its docstring.",
+      "replace": "import yaml"
+    },
+    "mutation_description": "Hoist the PyYAML import back to module scope, outside every handler this tool owns, so a missing PyYAML crashes before argparse runs."
   }
 ]

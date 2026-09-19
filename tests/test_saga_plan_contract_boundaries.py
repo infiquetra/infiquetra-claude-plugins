@@ -16,7 +16,15 @@ from types import ModuleType
 import pytest
 import yaml
 from saga_plan_contract import SaveProbe, save_blocks
-from test_saga_spec_consumer_row import ROOT, cli, contract_api, mutated, save_tick, tree
+from test_saga_spec_consumer_row import (
+    ROOT,
+    SCRIPT,
+    cli,
+    contract_api,
+    mutated,
+    save_tick,
+    tree,
+)
 
 __all__ = ["contract_api"]
 
@@ -384,3 +392,166 @@ def test_contract_cli_resolves_the_engine_from_the_checkout(
     assert refused.returncode == 2, refused.stdout + refused.stderr
     payload = json.loads(refused.stdout)
     assert payload["code"] == "engine" and payload["file"] == api.RIDER
+
+
+PROOF = "plugins/saga/scripts/plan_save_proof.py"
+_ANNOTATIONS = "from __future__ import annotations"
+_VERIFY_DOC = (
+    '    """Prove candidate facts and saved semantics without loading tests or launching pytest."""'
+)
+
+
+def test_contract_cli_envelopes_baseexception_from_checkout_code(
+    contract_api: ModuleType, tmp_path: Path
+) -> None:
+    """Checkout code raising a BaseException stays inside the JSON envelope (issue #996).
+
+    The tool executes the checkout named by --root in-process. `except Exception` does not
+    cover SystemExit or KeyboardInterrupt, so either one used to leave a caller parsing stdout
+    with no JSON at all and an exit code outside the documented 0/1/2. Two seams can raise:
+    loading the proof through runpy, and calling the loaded verify(). Both are probed, because
+    the second one is reachable only after the first one is guarded.
+    """
+    api = contract_api
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    proof = checkout / PROOF
+    original = proof.read_text()
+    assert _ANNOTATIONS in original and _VERIFY_DOC in original, (
+        f"{PROOF}: probe anchors are gone; re-derive them from the current file"
+    )
+
+    def refusal(mutation: str, *, entry: str, code: str = "engine") -> dict[str, object]:
+        proof.write_text(mutation)
+        result = cli(api, checkout, "validate")
+        proof.write_text(original)
+        assert result.returncode == 2, (
+            f"{entry}: expected the documented refusal exit 2, "
+            f"got {result.returncode}\n{result.stdout}\n{result.stderr}"
+        )
+        payload: dict[str, object] = json.loads(result.stdout)
+        assert payload["outcome"] == "invalid"
+        assert payload["code"] == code and payload["entry"] == entry, payload
+        assert payload["file"] == PROOF, payload
+        return payload
+
+    # Seam one: the BaseException escapes while runpy loads the file.
+    refusal(
+        original.replace(_ANNOTATIONS, _ANNOTATIONS + "\nimport sys\nsys.exit(7)", 1),
+        entry="engine import",
+    )
+    refusal(
+        original.replace(_ANNOTATIONS, _ANNOTATIONS + "\nraise KeyboardInterrupt('probe')", 1),
+        entry="engine import",
+    )
+    # Seam two: the file loads, and the BaseException escapes while verify() runs.
+    refusal(
+        original.replace(_VERIFY_DOC, _VERIFY_DOC + "\n    import sys; sys.exit(9)", 1),
+        entry="engine proof",
+    )
+    # A ContractError from the proof keeps its own diagnosis; it is not relabelled an engine fault.
+    diagnosed = refusal(
+        original.replace(
+            _VERIFY_DOC,
+            _VERIFY_DOC
+            + '\n    api.fail("probe entry", "probe reason",'
+            + f' source="{PROOF}", code="verification")',
+            1,
+        ),
+        entry="probe entry",
+        code="verification",
+    )
+    assert "probe reason" in str(diagnosed["error"]), diagnosed
+
+    # The unmutated checkout is untouched by the guard.
+    clean = cli(api, checkout, "validate")
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    assert json.loads(clean.stdout)["outcome"] == "valid"
+
+    # --help is the one documented exemption, and it only works because main()'s handler stays
+    # narrow: argparse raises SystemExit(0) from inside that try. A broad handler there would
+    # print a JSON refusal at exit 2 instead of usage at exit 0.
+    usage = subprocess.run(
+        [sys.executable, str(ROOT / "plugins/saga/scripts/plan_save_contract.py"), "--help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert usage.returncode == 0, usage.stdout + usage.stderr
+    assert usage.stdout.startswith("usage: plan_save_contract.py"), usage.stdout
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(usage.stdout)
+
+
+def test_contract_cli_envelopes_a_missing_pyyaml(contract_api: ModuleType, tmp_path: Path) -> None:
+    """An absent PyYAML stays inside the documented envelope (issue #997).
+
+    The tool used to import PyYAML at module scope, which is outside every handler it owns: a
+    machine without PyYAML got a traceback, empty stdout and exit 1 -- the code the docstring
+    reserves for drift, so a broken interpreter was indistinguishable from a real documentation
+    failure. `--help` broke the same way, and it is the one invocation the docstring exempts.
+
+    The interpreter here genuinely lacks PyYAML rather than carrying a module that raises on
+    import. A stub proves the symptom; only a real absence proves the repair.
+    """
+    api = contract_api
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    environment = tmp_path / "python"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+    python = environment / "bin/python"
+    absent = subprocess.run(
+        [str(python), "-I", "-c", 'import importlib.util; assert importlib.util.find_spec("yaml")'],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert absent.returncode != 0, "this environment can import PyYAML; the guard proves nothing"
+    script = checkout / SCRIPT
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(python), "-I", str(script), "--root", str(checkout), *args],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    originals = {path: (checkout / path).read_bytes() for path in (api.SKILL, api.SPEC)}
+    for args in (("validate",), ("render", "--check"), ("render", "--write")):
+        result = run(*args)
+        assert result.returncode == 2, (
+            f"{args}: expected the documented refusal exit 2, got {result.returncode}"
+            f"\n{result.stdout}\n{result.stderr}"
+        )
+        assert not result.stderr, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["outcome"] == "invalid", payload
+        assert payload["code"] == "engine", payload
+        assert payload["entry"] == "python dependency", payload
+        assert payload["file"] == str(SCRIPT), payload
+        assert "PyYAML" in str(payload["error"]), payload
+    assert originals == {path: (checkout / path).read_bytes() for path in originals}, (
+        "a refused render wrote to an owned document"
+    )
+
+    # --help is the documented exemption, and it must survive an interpreter with no PyYAML at all:
+    # argparse runs before any YAML is touched.
+    usage = subprocess.run(
+        [str(python), "-I", str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert usage.returncode == 0, usage.stdout + usage.stderr
+    assert not usage.stderr, usage.stderr
+    assert usage.stdout.startswith("usage: plan_save_contract.py"), usage.stdout
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(usage.stdout)
+
+    # The same checkout under this suite's own interpreter, which has PyYAML, is unaffected.
+    clean = cli(api, checkout, "validate")
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    assert json.loads(clean.stdout)["outcome"] == "valid"

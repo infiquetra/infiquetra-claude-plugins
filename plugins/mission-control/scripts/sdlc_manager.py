@@ -2614,8 +2614,10 @@ def rollout_deploy_all(repo: str, fmt: str) -> None:
 # #812 correction seam: saga submits Stage/Status through ``flow set-field --correction``.
 # The operator CLI without ``--correction`` still sets Initiative / Objective / other
 # live fields. No new operation; field name is part of operation, authorization, and
-# retry identity. Stage is allowed by name only — no Stage field exists on the live
-# boards and no ``set-field-stage`` op-kind is created.
+# retry identity. Stage is allowed by name and resolved live like any other field;
+# no ``set-field-stage`` op-kind is created. (The older note here said no Stage
+# field existed on the live boards. That stopped being true at the board-stage
+# migration: all three boards carry one, as the regenerated census records — #1020.)
 CORRECTION_FIELDS = frozenset({"Status", "Stage"})
 
 

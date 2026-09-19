@@ -23,9 +23,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn
 
-import yaml
+# PyYAML is imported by yaml_module() at first use, deliberately not here -- see its docstring.
 
 ROOT = Path(__file__).resolve().parents[3]
+TOOL = Path("plugins/saga/scripts/plan_save_contract.py")
 CONTRACT = Path("plugins/saga/references/plan-save-contract.yaml")
 SKILL = Path("plugins/saga/skills/plan/SKILL.md")
 SPEC = Path("plugins/saga/references/saga-spec.md")
@@ -75,6 +76,33 @@ def fleet_root(root: Path) -> Iterator[None]:
             os.environ[FLEET_ROOT_ENV] = previous
 
 
+@contextlib.contextmanager
+def checkout_code(path: str, entry: str, reason: str) -> Iterator[None]:
+    """Keep a BaseException raised by checkout code inside this tool's JSON envelope.
+
+    The checkout named by --root is executed in-process, so whatever it raises lands here.
+    `except Exception` does not cover SystemExit or KeyboardInterrupt, and either one escaping
+    leaves a caller parsing stdout with no JSON at all and an exit code outside the documented
+    0/1/2 (issue #996). A ContractError passes through untouched: the checkout already diagnosed
+    itself and relabelling that as an engine fault would lose the diagnosis.
+
+    An interrupt arriving while checkout code runs is converted rather than re-raised. A
+    KeyboardInterrupt raised BY the checkout is indistinguishable here from one delivered by the
+    terminal, so re-raising would leave the reported defect unfixed. The window is deliberately
+    only as wide as the checkout's own execution.
+
+    This is the only correct home for the repair. main()'s handler must stay `except Exception`,
+    because argparse raises SystemExit(0) for --help from inside that same try: widen it and
+    --help returns a JSON refusal at exit 2 instead of usage at exit 0.
+    """
+    try:
+        yield
+    except ContractError:
+        raise
+    except BaseException as exc:
+        fail(entry, f"{exc}; {reason}", source=path, code="engine")
+
+
 def module(root: Path, path: str, *members: str) -> Any:
     try:
         target = (root / path).resolve()
@@ -85,7 +113,11 @@ def module(root: Path, path: str, *members: str) -> Any:
         for member in members:
             getattr(result, member)
         return result
-    except Exception as exc:
+    # BaseException, not Exception: SystemExit and KeyboardInterrupt from the loaded file used to
+    # escape this tool's JSON envelope entirely (issue #996, see checkout_code above). Ordinary
+    # exceptions keep the treatment they have always had, ContractError included -- this loader
+    # has always rewritten them into the message below -- so no documented path changes.
+    except BaseException as exc:
         fail(
             "engine import",
             f"{exc}; restore this checkout and its Python dependencies",
@@ -94,18 +126,54 @@ def module(root: Path, path: str, *members: str) -> Any:
         )
 
 
-class UniqueLoader(yaml.SafeLoader):
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
-        result = {}
-        for key_node, value_node in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if not isinstance(key, str) or key in result:
-                fail(
-                    f"line {key_node.start_mark.line + 1} key {key!r}",
-                    "mapping keys must be unique strings; remove the duplicate/invalid entry",
-                )
-            result[key] = self.construct_object(value_node, deep=deep)
-        return result
+def yaml_module() -> Any:
+    """Import PyYAML at first use, so a machine without it gets the documented refusal.
+
+    Deliberately not a module-level `import yaml`. A module-scope import sits outside every
+    handler this tool owns, so a missing PyYAML killed the process with a raw traceback, empty
+    stdout and exit 1 -- the code the docstring reserves for drift, which made a broken
+    interpreter indistinguishable from a real documentation failure -- and it took `--help` down
+    with it, the one invocation the docstring exempts (issue #997).
+
+    Called from the parsing path, the failure is an ordinary ImportError inside main()'s existing
+    `try`, which already knows how to answer, and argparse has served `--help` long before this
+    runs. Do not hoist this back to the preamble.
+    """
+    try:
+        import yaml
+    except ImportError as exc:
+        fail(
+            "python dependency",
+            f"{exc}; install PyYAML (pyyaml>=6.0) into the interpreter running this tool",
+            source=TOOL,
+            code="engine",
+        )
+    return yaml
+
+
+def unique_loader(yaml: Any) -> Any:
+    """Build the duplicate-key-rejecting loader against an already-imported PyYAML.
+
+    Built here rather than at module scope because the class statement needs the real
+    yaml.SafeLoader object at class-creation time. That is why yaml_module() defers the import
+    instead of leaving a `yaml = None` sentinel at module scope: a sentinel would simply move the
+    crash from the import down into this class statement (issue #997).
+    """
+
+    class UniqueLoader(yaml.SafeLoader):
+        def construct_mapping(self, node: Any, deep: bool = False) -> dict[Any, Any]:
+            result = {}
+            for key_node, value_node in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                if not isinstance(key, str) or key in result:
+                    fail(
+                        f"line {key_node.start_mark.line + 1} key {key!r}",
+                        "mapping keys must be unique strings; remove the duplicate/invalid entry",
+                    )
+                result[key] = self.construct_object(value_node, deep=deep)
+            return result
+
+    return UniqueLoader
 
 
 @dataclass
@@ -116,6 +184,7 @@ class Contract:
 
 def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
     """Read structure; the mandatory CLI proof binds values to engine and output."""
+    yaml = yaml_module()
     raw = (root / CONTRACT).read_text() if text is None else text
     # Aliases earn nothing in this small carrier. Reject before constructing any graph.
     for token in yaml.scan(raw):
@@ -124,7 +193,7 @@ def load(*, root: Path = ROOT, text: str | None = None) -> Contract:
                 f"line {token.start_mark.line + 1} alias {token.value}",
                 "aliases are unsupported; spell out this entry",
             )
-    data = yaml.load(raw, Loader=UniqueLoader)  # nosec B506: subclass of SafeLoader; no object constructors
+    data = yaml.load(raw, Loader=unique_loader(yaml))  # nosec B506: subclass of SafeLoader; no object constructors
     schema = data.get("schema") if isinstance(data, dict) else None
     if schema != SCHEMA:
         fail(
@@ -424,16 +493,21 @@ class Parser(argparse.ArgumentParser):
 
 def verify_saved_examples(contract: Contract, candidate: dict[Path, str]) -> None:
     """Verify this candidate with the checkout's plain Python proof before any write."""
-    tool = Path("plugins/saga/scripts/plan_save_contract.py")
-    if (contract.root / tool).read_bytes() != Path(__file__).read_bytes():
+    if (contract.root / TOOL).read_bytes() != Path(__file__).read_bytes():
         fail(
             "tool revision",
             "run the tool from the target checkout so its verified renderer is the one that writes",
-            source=tool,
+            source=TOOL,
             code="verification",
         )
-    proof = module(contract.root, "plugins/saga/scripts/plan_save_proof.py", "verify")
-    proof.verify(SimpleNamespace(**globals()), contract, candidate)
+    # Not TOOL above: that is this script; this is the checkout's proof, a different file.
+    proof_path = "plugins/saga/scripts/plan_save_proof.py"
+    proof = module(contract.root, proof_path, "verify")
+    # Loading the proof is guarded by module(); RUNNING it is the second seam. A BaseException
+    # raised here escaped the envelope too, and a ContractError from the proof's own api.fail()
+    # keeps its verification diagnosis rather than being relabelled an engine fault (issue #996).
+    with checkout_code(proof_path, "engine proof", "restore this checkout's saved-example proof"):
+        proof.verify(SimpleNamespace(**globals()), contract, candidate)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -490,6 +564,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         write_documents(root, originals, rendered, changed)
         return report(0, root, outcome="rendered", changed=list(map(str, changed)))
+    # Exception, deliberately, and not BaseException: argparse raises SystemExit(0) for --help from
+    # inside this try, and letting it through is the only reason --help prints usage and exits 0.
+    # A BaseException from the checkout is caught where the checkout runs instead -- see
+    # checkout_code() and module(). Do not widen this handler (issue #996).
     except Exception as exc:
         if not isinstance(exc, ContractError):
             exc = ContractError(

@@ -24,6 +24,13 @@ and not the other six times, so check both.
   documents that named the deleted `tier_policy.json` — `references/sandbox-spawn-sites.md`,
   `skills/work/references/execution-strategy.md`, `skills/work/SKILL.md` and
   `skills/plan/SKILL.md` — together with two comments in `scripts/lifecycle_state.py`.
+## [0.159.2] - 2026-09-19
+
+- **A missing PyYAML stays inside the Plan save-contract JSON envelope (#997).** `plan_save_contract.py` imported PyYAML at module scope, which is outside every handler the tool owns. On an interpreter without PyYAML that killed the process with a raw traceback, empty stdout and exit 1 -- the code the tool documents for *drift*, so a broken environment was indistinguishable from a real documentation failure -- and it took `--help` with it, the one invocation the docstring exempts. The import now happens at first use, so `validate` and both `render` modes return the documented refusal (`code: engine`, `entry: python dependency`, exit 2) naming PyYAML and the repair, and `--help` prints usage at exit 0 with no PyYAML installed at all. The duplicate-key loader moved with the import, because its class statement needs the real `yaml.SafeLoader` at class-creation time. No documented error code, exit code or JSON field changed.
+
+## [0.159.1] - 2026-09-19
+
+- **A BaseException from checkout code stays inside the Plan save-contract JSON envelope (#996).** `plan_save_contract.py` executes the checkout named by `--root` in-process, and `except Exception` does not cover `SystemExit` or `KeyboardInterrupt`. Either one left a caller parsing stdout with no JSON and an exit code outside the documented 0/1/2. Both seams where checkout code runs are now guarded -- loading a file through `runpy` and calling the loaded `verify()` -- and both report the existing refusal shape (`code: engine`, exit 2). A `ContractError` raised by the proof keeps its own diagnosis. `--help` is unchanged: `main()`'s handler stays narrow on purpose, because argparse raises `SystemExit(0)` from inside it.
 
 ## [0.159.0] - 2026-09-16
 

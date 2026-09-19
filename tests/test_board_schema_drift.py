@@ -64,13 +64,18 @@ def census_keys_by_board_key() -> dict[str, str]:
     """Map each schema board key to the census key that holds it.
 
     The census is keyed by the project name in `project-mappings.json`;
-    `sdlc-schema.json` keys its `boards` block by board key. `sdlc_manager`'s
-    `_project_board_key` shows the two can diverge, and they coincide today
-    only because every mapping sets `board_key` explicitly -- so cross-walk
-    through it rather than assuming the names match.
+    `sdlc-schema.json` keys its `boards` block by board key. The two can
+    diverge, and they coincide today only because every mapping sets
+    `board_key` explicitly -- so cross-walk through `sdlc_manager`'s own
+    `_project_board_key` rather than re-implementing its fallback here. A
+    reimplementation would miss its `mount-olympus` -> `olympus` special case
+    and drift from the function it claims to mirror.
     """
+    sys.path.insert(0, str(REPO_ROOT / "plugins" / "mission-control" / "scripts"))
+    import sdlc_manager  # noqa: PLC0415
+
     projects = _load(PROJECT_MAPPINGS_PATH)["projects"]
-    return {proj.get("board_key", name.replace("-", "_")): name for name, proj in projects.items()}
+    return {sdlc_manager._project_board_key(name, proj): name for name, proj in projects.items()}
 
 
 def _board_fields(
@@ -90,6 +95,25 @@ def _active_board_keys() -> list[str]:
 
 
 ACTIVE_BOARD_KEYS = _active_board_keys()
+
+# Every guard below is parametrized over ACTIVE_BOARD_KEYS. An empty list would
+# collect zero cases and report "passed" -- a drift guard that silently covers
+# nothing, which is the same failure class this module exists to catch. Assert
+# the list is populated, and pin the count so a board appearing or disappearing
+# is a deliberate edit rather than a quiet loss of coverage.
+EXPECTED_ACTIVE_BOARD_COUNT = 3
+
+
+def test_the_guard_actually_covers_the_active_boards() -> None:
+    assert ACTIVE_BOARD_KEYS, (
+        "no board in sdlc-schema.json is marked active, so every guard in this "
+        "module collects zero cases and passes vacuously"
+    )
+    assert len(ACTIVE_BOARD_KEYS) == EXPECTED_ACTIVE_BOARD_COUNT, (
+        f"expected {EXPECTED_ACTIVE_BOARD_COUNT} active boards, found "
+        f"{len(ACTIVE_BOARD_KEYS)}: {ACTIVE_BOARD_KEYS}. If a board was added or "
+        "retired on purpose, update EXPECTED_ACTIVE_BOARD_COUNT in the same change."
+    )
 
 
 def test_every_active_board_is_present_in_the_census(

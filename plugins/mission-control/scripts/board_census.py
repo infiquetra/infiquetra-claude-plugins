@@ -170,6 +170,13 @@ def cmd_check() -> int:
     except PaginationExhaustedError as exc:
         print(f"FAIL board census pagination did not terminate: {exc}")
         return 1
+    except ValueError as exc:
+        # A duplicate field name (#1020). `ValueError` is outside the
+        # `RuntimeError` hierarchy the SKIP branch below catches, so this was
+        # already not misreported as a pass -- it just surfaced as a traceback.
+        # Report it in this script's own FAIL convention instead.
+        print(f"FAIL board census is not representable: {exc}")
+        return 1
     except (GhApiError, RuntimeError, OSError) as exc:
         # Live GitHub Projects access is unavailable (no auth/network in this
         # environment, e.g. a CI runner with no Projects-scoped token) — a

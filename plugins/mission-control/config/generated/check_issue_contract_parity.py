@@ -150,6 +150,13 @@ def live_status_option_errors(
 
         try:
             census = fetch_fields_census(proj["number"])
+        except ValueError:
+            # A malformed census -- today, two board fields sharing one name,
+            # which the name-keyed census refuses (#1020) -- is a real defect on
+            # the board, not an access failure. Let it propagate: folding it into
+            # LiveParityUnavailableError would report the very condition the
+            # raise exists to surface as a skipped check.
+            raise
         except Exception as exc:  # noqa: BLE001 - any live-access failure is a SKIP
             raise LiveParityUnavailableError(
                 f"could not fetch live fields for board '{board_key}': {exc}"

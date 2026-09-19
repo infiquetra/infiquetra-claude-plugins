@@ -274,6 +274,95 @@ def resolve_shape(
     )
 
 
+# --------------------------------------------------------------------------- role
+
+
+def _role_row(role: str) -> dict[str, Any]:
+    table = roles()
+    if role not in table:
+        raise StaffingError(f"unknown role {role!r}; expected one of {sorted(table)}")
+    return dict(table[role])
+
+
+def _rating_strength(rating: str) -> int:
+    """Strength as a sort key: STRONG above MODERATE above WEAK, an unknown rating last."""
+    try:
+        return RATINGS.index(rating)
+    except ValueError:
+        return len(RATINGS)
+
+
+def candidates_for(role: str) -> tuple[dict[str, Any], ...]:
+    """Executors that rate the role's capability, strongest rating first.
+
+    Ties break on the cheaper cost-and-speed rank, which is the tie-break rule the engine
+    registry's own header states: rating dominates first, and ``cost_speed_rank`` only separates
+    variants that rate the requested capability equally.
+    """
+    row = _role_row(role)
+    capability = str(row["capability"])
+    ratings = capability_ratings()
+    found: list[dict[str, Any]] = []
+    for key, engine in ratings["engines"].items():
+        profile = engine.get("capability_profile") or {}
+        rated = profile.get(capability)
+        if not rated:
+            continue
+        found.append(
+            {
+                "executor": key,
+                "engine_id": engine["engine_id"],
+                "variant": engine["variant"],
+                "model_identity": engine["model_identity"],
+                "capability": capability,
+                "rating": rated["rating"],
+                "note": rated.get("note", ""),
+                "trust_tier": engine["trust_tier"],
+                "cost_speed_rank": engine["cost_speed_rank"],
+                "last_validated": engine["last_validated"],
+            }
+        )
+    found.sort(
+        key=lambda candidate: (_rating_strength(candidate["rating"]), candidate["cost_speed_rank"])
+    )
+    return tuple(found)
+
+
+def resolve_role(
+    role: str,
+    *,
+    root: Path | None = None,
+    suggestion: dict[str, str] | None = None,
+) -> StaffingDecision:
+    """Resolve a role to a vendor, model and effort.
+
+    The tier comes from the role's work shape, so the per-repository overlay still wins where it
+    names that shape. A role may pin a vendor, in which case the decision record says the answer
+    came from the role rather than from the overlay or the policy.
+    """
+    row = _role_row(role)
+    work_shape = str(row["work_shape"])
+    vendor = str(row.get("vendor", DEFAULT_VENDOR))
+    if vendor not in vendors():
+        raise StaffingError(f"role {role!r} pins unknown vendor {vendor!r}")
+    base = resolve_shape(work_shape, root=root, suggestion=suggestion, vendor=vendor)
+    source = "role" if "vendor" in row else base.source
+    return StaffingDecision(
+        vendor=vendor,
+        model=base.model,
+        effort=base.effort,
+        source=source,
+        work_shape=work_shape,
+        role=role,
+        suggestion=base.suggestion,
+    )
+
+
+def _is_reviewing_role(role: str) -> bool:
+    """A role reviews when its capability is the registry's adversarial-review one."""
+    return str(_role_row(role)["capability"]) == "adversarial-review"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="staffing.py",
@@ -283,6 +372,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     resolve = sub.add_parser("resolve", help="resolve one staffing question")
     resolve.add_argument("--shape", help="a work shape from the staffing registry")
+    resolve.add_argument("--role", help="a role from the staffing registry")
     resolve.add_argument(
         "--suggest",
         metavar="MODEL/EFFORT",
@@ -291,6 +381,10 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument(
         "--json", action="store_true", help="print the whole decision record instead of the tier"
     )
+
+    explain = sub.add_parser("explain", help="list a role's candidate executors in rating order")
+    explain.add_argument("--role", required=True, help="a role from the staffing registry")
+    explain.add_argument("--json", action="store_true", help="print the candidates as JSON")
 
     return parser
 
@@ -315,18 +409,49 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(args: argparse.Namespace) -> int:
-    return _cli_resolve(args)
+    if args.command == "resolve":
+        return _cli_resolve(args)
+    return _cli_explain(args)
 
 
 def _cli_resolve(args: argparse.Namespace) -> int:
-    if not args.shape:
-        raise StaffingError("pass --shape with a work shape from the staffing registry")
+    if bool(args.shape) == bool(args.role):
+        raise StaffingError("pass exactly one of --shape or --role")
     suggestion = _parse_suggestion(args.suggest)
-    decision = resolve_shape(args.shape, suggestion=suggestion)
+    if args.shape:
+        decision = resolve_shape(args.shape, suggestion=suggestion)
+    else:
+        decision = resolve_role(args.role, suggestion=suggestion)
     if args.json:
         print(json.dumps(decision.as_dict(), indent=2, sort_keys=True))
     else:
         print(_short_form(decision))
+    return 0
+
+
+def _cli_explain(args: argparse.Namespace) -> int:
+    rows = candidates_for(args.role)
+    decision = resolve_role(args.role)
+    if args.json:
+        payload = decision.as_dict()
+        payload["candidates"] = list(rows)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"{args.role}: {_short_form(decision)} (work shape {decision.work_shape})")
+    if not rows:
+        capability = _role_row(args.role)["capability"]
+        print(
+            f"  no executor rates {capability!r}; the role runs on the resolved tier "
+            "with no rated alternative"
+        )
+        return 0
+    for row in rows:
+        print(
+            f"  {row['rating']:<9} {row['executor']:<28} "
+            f"trust {row['trust_tier']:<9} cost/speed rank {row['cost_speed_rank']} "
+            f"validated {row['last_validated']}"
+        )
     return 0
 
 

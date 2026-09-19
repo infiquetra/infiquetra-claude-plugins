@@ -221,7 +221,8 @@ def _launcher_vendor_flags() -> dict[str, dict[str, str]]:
     tree = ast.parse(LAUNCHER.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == "VENDOR_FLAGS":
-            return ast.literal_eval(node.value)  # type: ignore[arg-type]
+            flags: dict[str, dict[str, str]] = ast.literal_eval(node.value)  # type: ignore[arg-type]
+            return flags
     raise AssertionError("VENDOR_FLAGS not found in the agent-launcher launcher module")
 
 
@@ -303,3 +304,140 @@ def test_an_unknown_vendor_raises_rather_than_clamping() -> None:
 
     with pytest.raises(tier_resolver.TierResolverError, match="not-a-vendor"):
         tier_resolver.collapse_effort_for_runtime("not-a-vendor", "high")
+
+
+# ---------------------------------------------------------------------------
+# Roles, capability ratings and the explain view (R8, R11, KTD6, KTD10).
+# ---------------------------------------------------------------------------
+
+ENGINE_REGISTRY = REPO_ROOT / "plugins" / "saga" / "references" / "engine-registry.yaml"
+
+KTD10_ROLES = {
+    "planner": "long-form-writing",
+    "plan-reviewer": "long-form-writing",
+    "worker": "code-generation",
+    "lens-reviewer": "adversarial-review",
+    "functional-tester": "debug",
+    "release-worker": "code-generation",
+    "merging-worker": "code-generation",
+}
+
+
+def test_the_seven_roles_and_their_capabilities_are_the_ones_the_plan_fixed() -> None:
+    table = staffing.roles()
+    assert set(table) == set(KTD10_ROLES)
+    for role, capability in KTD10_ROLES.items():
+        assert table[role]["capability"] == capability
+
+
+def test_every_role_resolves_to_a_vendor_model_and_effort() -> None:
+    for role in staffing.roles():
+        decision = staffing.resolve_role(role)
+        assert decision.vendor in staffing.vendors()
+        assert decision.model in staffing.MODELS
+        assert decision.effort in staffing.EFFORTS
+        assert decision.role == role
+
+
+def test_explain_lists_candidates_strongest_rating_first() -> None:
+    """The card's third acceptance criterion, as the ordering the ranking must produce."""
+    rows = staffing.candidates_for("functional-tester")
+    assert len(rows) >= 2
+    strengths = [staffing.RATINGS.index(row["rating"]) for row in rows]
+    assert strengths == sorted(strengths)
+    for row in rows:
+        assert row["rating"] in staffing.RATINGS
+        assert row["trust_tier"]
+
+
+def test_equal_ratings_break_on_the_cheaper_cost_and_speed_rank() -> None:
+    """The registry's own tie-break rule: rating dominates, cost and speed only separates ties."""
+    rows = staffing.candidates_for("functional-tester")
+    for earlier, later in zip(rows, rows[1:], strict=False):
+        if earlier["rating"] == later["rating"]:
+            assert earlier["cost_speed_rank"] <= later["cost_speed_rank"]
+
+
+def test_no_role_produces_an_empty_candidate_list() -> None:
+    """Every role maps onto a capability the registry actually rates (KTD10)."""
+    for role in staffing.roles():
+        assert staffing.candidates_for(role), f"{role}: no executor rates its capability"
+
+
+def test_every_declared_capability_is_rated_by_at_least_one_engine_row() -> None:
+    """The migrated ratings leave no capability declared but unrated."""
+    ratings = staffing.capability_ratings()
+    rated = {
+        capability
+        for engine in ratings["engines"].values()
+        for capability in (engine.get("capability_profile") or {})
+    }
+    unrated = [capability for capability in ratings["capabilities"] if capability not in rated]
+    assert unrated == [], f"declared but unrated capabilities: {unrated}"
+
+
+def test_a_role_whose_capability_nobody_rates_yields_an_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Data, not a raise — the path an unrated role would take if the registry ever had one.
+
+    Exercised directly rather than asserted about the shipped data, because every capability the
+    registry declares is currently rated by at least one row.
+    """
+    monkeypatch.setattr(
+        staffing,
+        "roles",
+        lambda registry=None: {"orphan": {"work_shape": "judgment", "capability": "telepathy"}},
+    )
+    assert staffing.candidates_for("orphan") == ()
+    decision = staffing.resolve_role("orphan")
+    assert (decision.model, decision.effort) == ("opus", "high")
+
+
+def test_unknown_role_raises_with_the_offending_value() -> None:
+    with pytest.raises(StaffingError, match="not-a-role"):
+        staffing.resolve_role("not-a-role")
+
+
+def test_cli_explain_exits_non_zero_on_an_unknown_role() -> None:
+    result = _run("explain", "--role", "not-a-role")
+    assert result.returncode == 2
+    assert "not-a-role" in result.stderr
+
+
+def test_cli_explain_prints_the_candidates_in_rating_order() -> None:
+    result = _run("explain", "--role", "functional-tester")
+    assert result.returncode == 0
+    prefixes = ("  STRONG", "  MODERATE", "  WEAK")
+    ratings = [line.split()[0] for line in result.stdout.splitlines() if line.startswith(prefixes)]
+    assert ratings
+    assert ratings == sorted(ratings, key=staffing.RATINGS.index)
+
+
+def test_cli_resolve_rejects_passing_both_a_shape_and_a_role() -> None:
+    result = _run("resolve", "--shape", "judgment", "--role", "planner")
+    assert result.returncode == 2
+    assert "exactly one" in result.stderr
+
+
+def test_migrated_ratings_match_the_engine_registry_while_both_exist() -> None:
+    """KTD6: the ratings are copied, so a parity test is what stops the copy drifting.
+
+    This test is deleted together with engine-registry.yaml when issue 1030 removes it.
+    """
+    yaml = pytest.importorskip("yaml")
+    registry = yaml.safe_load(ENGINE_REGISTRY.read_text(encoding="utf-8"))
+    migrated = staffing.capability_ratings()
+
+    assert migrated["capabilities"] == list(registry["capabilities"])
+
+    for name, row in registry["model_families"].items():
+        assert migrated["model_families"][name]["capability_profile"] == row["capability_profile"]
+
+    for row in registry["engines"]:
+        key = f"{row['engine_id']}/{row['variant']}"
+        copied = migrated["engines"][key]
+        assert copied["trust_tier"] == row["trust_tier"]
+        assert copied["cost_speed_rank"] == row["cost_speed_rank"]
+        assert copied["model_identity"] == row["model_identity"]
+        assert copied["capability_profile"] == row.get("capability_profile", {})

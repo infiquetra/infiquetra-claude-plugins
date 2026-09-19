@@ -199,14 +199,25 @@ def load_overlay(root: Path | None = None) -> dict[str, dict[str, str]]:
         raise StaffingError(f"{path}: top level must be an object of work-shape to tier")
     registry = work_shapes()
     return {
-        str(shape): _validate_tier(str(shape), tier, registry, f"{path}[{shape}]")
+        str(shape): validate_tier(str(shape), tier, registry=registry, where=f"{path}[{shape}]")
         for shape, tier in data.items()
     }
 
 
-def _validate_tier(
-    work_shape: str, tier: object, registry: dict[str, Any], where: str
+def validate_tier(
+    work_shape: str,
+    tier: object,
+    *,
+    registry: dict[str, Any] | None = None,
+    where: str = "tier",
 ) -> dict[str, str]:
+    """Validate one ``{work_shape: {model, effort}}`` pair against the palette.
+
+    Public because saga's ``tier_defaults.write_tier_default`` validates an operator-confirmed
+    override before persisting it, and that check must be the same one the overlay reader uses —
+    two copies is how a write starts accepting a pair the read would refuse.
+    """
+    registry = registry if registry is not None else work_shapes()
     if work_shape not in registry:
         raise StaffingError(
             f"{where}: unknown work-shape {work_shape!r}; expected one of {sorted(registry)}"

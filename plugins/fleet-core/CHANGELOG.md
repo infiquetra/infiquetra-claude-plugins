@@ -5,6 +5,42 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-09-19
+
+### Added
+
+- **One staffing component** (`scripts/fleet_commons/staffing.py` and `staffing.json`, issue 1021).
+  One data file and one resolver answer "role or work shape, and for review the lens, to vendor,
+  model and effort". `resolve --shape` gives the work-shape tier honouring the per-repository
+  overlay; `resolve --role` gives a vendor, model and effort; `resolve --role --lens` adds the
+  qualification status read from the software-development-lifecycle repository's
+  executor-verification ledger; `explain --role` lists the candidate executors in rating order with
+  their ratings. The default output is the short `model/effort` pair, with `--json` for the whole
+  decision record.
+- **`references/staffing.md`**, the one reference document for this knowledge. It supersedes
+  `tier-palette.md` and `effort-convention.md`, which are removed.
+
+### Changed
+
+- **`staffing.json` absorbs `models.json` and `tier_policy.json`**, which are deleted. It carries
+  the model palette, the effort vocabulary, the scalar effort superset, the work-shape tier policy
+  under a new `work_shapes` key, the per-vendor palette, the capability ratings and trust tiers
+  migrated from saga's engine registry, the per-role staffing defaults, the execution classes and
+  the root orchestration profile. Its `schema_version` is 3.
+- **The per-vendor palette is data, not Python.** `tier_resolver.py` derives `SUPPORTED_RUNTIMES`,
+  its model translation, its accepted efforts, its effort collapse and its effort application from
+  the `vendors` block. Behaviour is unchanged for all six supported runtimes.
+- **The palette covers every vendor the agent-launcher can start**, which is seven. `opencode`
+  carries `runtime_supported: false` with its reason recorded: nobody has verified its launch-time
+  effort and model arguments, and its model identifier must be in `provider/model` form. It is
+  visible in the data without being silently launchable.
+- **`tier_palette.py`, `tier_resolver.py` and `render_tier_table.py` read the new file.** Their
+  public Python surface is unchanged, so importers do not move. `load_policy()` reads the
+  `work_shapes` block and fails loud when it is absent.
+- **The capability ratings are copied, not moved.** `plugins/saga/references/engine-registry.yaml`
+  stays on disk and a parity test in `tests/test_staffing.py` holds the copy to it while both
+  exist; issue 1030 deletes both.
+
 ## [0.25.3] - 2026-08-24
 
 ### Fixed

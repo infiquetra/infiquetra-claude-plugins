@@ -347,7 +347,7 @@ def test_guard_reds_when_vocab_reintroduced() -> None:
 
 PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
 TEAM_SKILL_MD = REPO_ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "SKILL.md"
-TIER_PALETTE_RUNBOOK = REPO_ROOT / "plugins" / "fleet-core" / "references" / "tier-palette.md"
+STAFFING_RUNBOOK = REPO_ROOT / "plugins" / "fleet-core" / "references" / "staffing.md"
 
 _TIER_TOKEN = re.compile(r"\b([a-z0-9-]+)/([a-z0-9-]+)\b")
 
@@ -398,8 +398,8 @@ def test_tier_catalog_check_reds_on_drift() -> None:
 def test_onboarding_guard() -> None:
     """AC4: the onboarding runbook exists and encodes the {#tier-vocab-ordering} rule; a
     mis-inserted model at the wrong rank is caught by the import-time ordering guard."""
-    assert TIER_PALETTE_RUNBOOK.exists()
-    runbook = TIER_PALETTE_RUNBOOK.read_text(encoding="utf-8")
+    assert STAFFING_RUNBOOK.exists()
+    runbook = STAFFING_RUNBOOK.read_text(encoding="utf-8")
     assert ".index(" in runbook and "{#tier-vocab-ordering}" in runbook
     assert "staffing.json" in runbook
     # a correct prepend derives a clean order; a mis-ranked insertion is rejected.

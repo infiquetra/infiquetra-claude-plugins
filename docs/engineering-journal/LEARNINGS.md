@@ -1,5 +1,44 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-09-19
+
+### A reference document can be load-bearing at runtime, and deleting one is a code change  {#1021-reference-documents-are-runtime}
+
+**Evidence.** Issue #1021, commit for U6. `plugins/saga/scripts/plan_save_contract.py:36` held
+`EFFORT_REFERENCE = Path("plugins/fleet-core/references/effort-convention.md")` and `:217` checked
+`(root / EFFORT_REFERENCE).is_file()`, failing the whole contract load when it did not exist.
+`plugins/saga/scripts/plan_save_proof.py:314` rendered the same path into operator prose, the plan
+skill carried it in a generated block, and `tests/test_saga_spec_consumer_row.py:72` copied it into
+its fixture tree.
+
+**Mechanism.** The plan's first draft listed the deletion of two reference documents under
+"documentation", which is what they look like: markdown under `references/`. Nothing in the file
+itself says it is checked for existence at import time by a sibling plugin. An implementer deleting
+it and running the fleet-core tests would have seen green, because the gate lives in saga; the
+failure surfaces only when a saga plan save runs. The adversarial review found it by grepping the
+document's *name* across the repository rather than reading the plan's file list.
+
+**Generalizable rule.** Before deleting any file, grep the repository for its path as a string, not
+just for links to it. A path held in a constant, asserted by a test fixture, or embedded in a
+generated block is code, and it moves in the same commit as the deletion — never after it.
+
+### Every declared capability in the engine registry is rated, so a test asserting otherwise passes by accident  {#1021-unrated-capability-assertion}
+
+**Evidence.** Issue #1021, U4. A first version of
+`tests/test_staffing.py::test_an_unrated_capability_yields_an_empty_list_rather_than_an_exception`
+asserted `unrated, "expected at least one capability no engine row rates"` and failed immediately:
+all ten capabilities `plugins/saga/references/engine-registry.yaml` declares are rated by at least
+one of its thirteen engine rows.
+
+**Mechanism.** The behaviour worth pinning was the code path — a role whose capability nobody rates
+yields an empty tuple rather than raising — but the test tried to reach that path through the
+shipped data, which does not contain it. A test written that way either fails honestly, as this one
+did, or silently stops exercising anything the day the data changes.
+
+**Generalizable rule.** When the property under test is a code path the shipped data cannot reach,
+construct the input instead of asserting the data has a gap. Monkeypatching the one lookup is
+cheaper than a fixture registry and does not rot when the real data moves.
+
 ## 2026-09-16
 
 ### A key flip without a copy orphans the only authority  {#908-slot-key-flip-orphans}

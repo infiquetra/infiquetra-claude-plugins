@@ -547,7 +547,7 @@ Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_ge
 The honoring seam is `fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)`.
 For `external-engine`, `workflow`: effort already rides on real controls; injecting a rider would double-count it.
 For `agent`: prepend an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.
-See `plugins/fleet-core/references/effort-convention.md`.
+See `plugins/fleet-core/references/staffing.md`.
 The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`
 and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.
 Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.

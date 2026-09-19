@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -331,14 +332,18 @@ def candidates_for(role: str) -> tuple[dict[str, Any], ...]:
 def resolve_role(
     role: str,
     *,
+    lens: str | None = None,
     root: Path | None = None,
     suggestion: dict[str, str] | None = None,
+    checkout: Path | None = None,
 ) -> StaffingDecision:
-    """Resolve a role to a vendor, model and effort.
+    """Resolve a role to a vendor, model and effort, and for a reviewing role its lens status.
 
     The tier comes from the role's work shape, so the per-repository overlay still wins where it
     names that shape. A role may pin a vendor, in which case the decision record says the answer
-    came from the role rather than from the overlay or the policy.
+    came from the role rather than from the overlay or the policy. A lens only ever narrows the
+    answer: it attaches the qualification status read from the ledger, which can downgrade a
+    scoring executor to the documented-policy outcome but never promote one.
     """
     row = _role_row(role)
     work_shape = str(row["work_shape"])
@@ -347,6 +352,18 @@ def resolve_role(
         raise StaffingError(f"role {role!r} pins unknown vendor {vendor!r}")
     base = resolve_shape(work_shape, root=root, suggestion=suggestion, vendor=vendor)
     source = "role" if "vendor" in row else base.source
+
+    qualification: Qualification | None = None
+    if lens is not None:
+        if not _is_reviewing_role(role):
+            raise StaffingError(
+                f"a lens applies to a reviewing role; {role!r} reviews nothing "
+                f"(its capability is {row['capability']!r})"
+            )
+        qualification = qualify_lens(
+            lens, vendor=vendor, model=base.model, effort=base.effort, checkout=checkout
+        )
+
     return StaffingDecision(
         vendor=vendor,
         model=base.model,
@@ -354,6 +371,7 @@ def resolve_role(
         source=source,
         work_shape=work_shape,
         role=role,
+        qualification=qualification,
         suggestion=base.suggestion,
     )
 
@@ -361,6 +379,147 @@ def resolve_role(
 def _is_reviewing_role(role: str) -> bool:
     """A role reviews when its capability is the registry's adversarial-review one."""
     return str(_role_row(role)["capability"]) == "adversarial-review"
+
+
+# --------------------------------------------------------------------------- lens
+
+
+def sdlc_root(explicit: Path | None = None) -> Path | None:
+    """Resolve the software-development-lifecycle checkout, or report its absence.
+
+    The ladder is the one ``plugins/mission-control/scripts/sdlc_manager.py`` already uses: an
+    explicit path, then the ``INFIQUETRA_SDLC_PATH`` environment variable, then the default
+    checkout. ``None`` means no checkout is there — which is a documented-policy outcome for a
+    lens, never an error, because a missing sibling repository must not break every spawn.
+    """
+    if explicit is not None:
+        return explicit if explicit.is_dir() else None
+    configured = os.environ.get(SDLC_PATH_ENV)
+    if configured:
+        candidate = Path(configured).expanduser()
+        return candidate if candidate.is_dir() else None
+    return DEFAULT_SDLC_PATH if DEFAULT_SDLC_PATH.is_dir() else None
+
+
+def _read_json(path: Path) -> Any | None:
+    """Read a JSON document, or ``None`` when it is absent or unreadable."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def lens_catalogue(root: Path | None = None) -> tuple[dict[str, Any], str | None]:
+    """Return ``{lens id: entry}`` and the catalogue version, or ``({}, None)`` when unreadable."""
+    checkout = sdlc_root(root)
+    if checkout is None:
+        return {}, None
+    document = _read_json(checkout / LENS_CATALOGUE_RELATIVE_PATH)
+    if not isinstance(document, dict):
+        return {}, None
+    entries = document.get("lenses")
+    if not isinstance(entries, list):
+        return {}, None
+    return {str(entry["id"]): entry for entry in entries if "id" in entry}, document.get("version")
+
+
+def verification_ledger(root: Path | None = None) -> list[dict[str, Any]]:
+    """Return the ledger's entries, or ``[]`` when the checkout or the file is unreadable."""
+    checkout = sdlc_root(root)
+    if checkout is None:
+        return []
+    document = _read_json(checkout / LEDGER_RELATIVE_PATH)
+    if not isinstance(document, dict):
+        return []
+    entries = document.get("entries")
+    return entries if isinstance(entries, list) else []
+
+
+def qualify_lens(
+    lens: str,
+    *,
+    vendor: str,
+    model: str,
+    effort: str,
+    checkout: Path | None = None,
+) -> Qualification:
+    """Whether this executor may establish a threshold for this lens, and why.
+
+    ``qualified`` needs an entry matching the lens, that exact vendor, model and effort, the
+    current catalogue version, and every fixture passed. Every other case is the catalogue's
+    documented-policy outcome with the reason named: a lens the catalogue marks unscorable, an
+    empty ledger, a partial fixture pass, an entry recorded against an older catalogue version,
+    an unreadable ledger, and an absent checkout. The ledger can only ever downgrade a scoring
+    executor; it never promotes one.
+    """
+    checkout = sdlc_root(checkout)
+    if checkout is None:
+        return Qualification(
+            DOCUMENTED_POLICY,
+            f"no software-development-lifecycle checkout ({SDLC_PATH_ENV} unset or not a "
+            f"directory, and {DEFAULT_SDLC_PATH} is absent)",
+            lens,
+        )
+
+    catalogue, version = lens_catalogue(checkout)
+    if not catalogue:
+        return Qualification(
+            DOCUMENTED_POLICY, f"the lens catalogue at {checkout} is absent or unreadable", lens
+        )
+    if lens not in catalogue:
+        raise StaffingError(f"unknown lens {lens!r}; expected one of {sorted(catalogue)}")
+    if not catalogue[lens].get("scorable"):
+        return Qualification(
+            DOCUMENTED_POLICY,
+            f"the catalogue marks {lens!r} unscorable, so there are no fixtures to qualify "
+            "against and the ledger is not consulted",
+            lens,
+        )
+
+    entries = verification_ledger(checkout)
+    if not entries:
+        return Qualification(
+            DOCUMENTED_POLICY,
+            "the executor-verification ledger is empty, so no executor has been qualified "
+            "against this catalogue and the lens establishes no threshold",
+            lens,
+        )
+
+    for entry in entries:
+        if (
+            entry.get("lens") == lens
+            and entry.get("vendor") == vendor
+            and entry.get("model") == model
+            and entry.get("effort") == effort
+        ):
+            if entry.get("catalogue_version") != version:
+                return Qualification(
+                    DOCUMENTED_POLICY,
+                    f"the entry was recorded against catalogue version "
+                    f"{entry.get('catalogue_version')!r}, not the current {version!r}; "
+                    "qualification is re-run, never carried forward",
+                    lens,
+                )
+            passed, total = entry.get("fixtures_passed"), entry.get("fixtures_total")
+            if passed != total:
+                return Qualification(
+                    DOCUMENTED_POLICY,
+                    f"partial qualification ({passed} of {total} fixtures) is recorded and "
+                    "refused, not rounded up",
+                    lens,
+                )
+            return Qualification(
+                QUALIFIED,
+                f"{vendor} {model}/{effort} passed {passed} of {total} fixtures at catalogue "
+                f"version {version}",
+                lens,
+            )
+
+    return Qualification(
+        DOCUMENTED_POLICY,
+        f"no ledger entry qualifies {vendor} {model}/{effort} for {lens!r}",
+        lens,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -373,6 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
     resolve = sub.add_parser("resolve", help="resolve one staffing question")
     resolve.add_argument("--shape", help="a work shape from the staffing registry")
     resolve.add_argument("--role", help="a role from the staffing registry")
+    resolve.add_argument("--lens", help="a review lens; only meaningful for a reviewing role")
     resolve.add_argument(
         "--suggest",
         metavar="MODEL/EFFORT",
@@ -384,6 +544,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     explain = sub.add_parser("explain", help="list a role's candidate executors in rating order")
     explain.add_argument("--role", required=True, help="a role from the staffing registry")
+    explain.add_argument(
+        "--lens",
+        help="a review lens; attaches its qualification status to a reviewing role's listing",
+    )
     explain.add_argument("--json", action="store_true", help="print the candidates as JSON")
 
     return parser
@@ -419,9 +583,11 @@ def _cli_resolve(args: argparse.Namespace) -> int:
         raise StaffingError("pass exactly one of --shape or --role")
     suggestion = _parse_suggestion(args.suggest)
     if args.shape:
+        if args.lens:
+            raise StaffingError("a lens applies to a reviewing role, not a work shape")
         decision = resolve_shape(args.shape, suggestion=suggestion)
     else:
-        decision = resolve_role(args.role, suggestion=suggestion)
+        decision = resolve_role(args.role, lens=args.lens, suggestion=suggestion)
     if args.json:
         print(json.dumps(decision.as_dict(), indent=2, sort_keys=True))
     else:
@@ -431,7 +597,7 @@ def _cli_resolve(args: argparse.Namespace) -> int:
 
 def _cli_explain(args: argparse.Namespace) -> int:
     rows = candidates_for(args.role)
-    decision = resolve_role(args.role)
+    decision = resolve_role(args.role, lens=args.lens)
     if args.json:
         payload = decision.as_dict()
         payload["candidates"] = list(rows)

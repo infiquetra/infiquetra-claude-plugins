@@ -441,3 +441,204 @@ def test_migrated_ratings_match_the_engine_registry_while_both_exist() -> None:
         assert copied["cost_speed_rank"] == row["cost_speed_rank"]
         assert copied["model_identity"] == row["model_identity"]
         assert copied["capability_profile"] == row.get("capability_profile", {})
+
+
+# ---------------------------------------------------------------------------
+# Lens staffing and the qualification ledger (R7, R12, R13, KTD4).
+# ---------------------------------------------------------------------------
+
+CATALOGUE_VERSION = "1.0.0"
+
+
+def _fake_checkout(
+    root: pathlib.Path,
+    *,
+    entries: list[dict[str, object]] | None = None,
+    lenses: list[dict[str, object]] | None = None,
+    catalogue_version: str = CATALOGUE_VERSION,
+) -> pathlib.Path:
+    """A software-development-lifecycle checkout holding just the two files the resolver reads."""
+    config = root / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "executor-verifications.json").write_text(
+        json.dumps({"schema": "executor_verifications.v1", "entries": entries or []}),
+        encoding="utf-8",
+    )
+    (config / "lens-catalogue.json").write_text(
+        json.dumps(
+            {
+                "version": catalogue_version,
+                "lenses": lenses
+                or [
+                    {"id": "security", "scorable": True, "always_on": True},
+                    {"id": "correctness", "scorable": True, "always_on": True},
+                    {"id": "privacy", "scorable": False, "always_on": False},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+def _qualified_entry(**overrides: object) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "lens": "security",
+        "vendor": "claude",
+        "model": "opus",
+        "effort": "high",
+        "catalogue_version": CATALOGUE_VERSION,
+        "fixtures_passed": 12,
+        "fixtures_total": 12,
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_a_full_fixture_entry_at_the_current_version_qualifies(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(tmp_path, entries=[_qualified_entry()])
+    decision = staffing.resolve_role("lens-reviewer", lens="security", checkout=checkout)
+    assert decision.qualification is not None
+    assert decision.qualification.status == staffing.QUALIFIED
+    assert decision.vendor == "claude"
+    assert (decision.model, decision.effort) == ("opus", "high")
+
+
+def test_the_real_ledger_is_empty_so_every_lens_reads_documented_policy() -> None:
+    """Against the shipped ledger, which records that it is empty on purpose."""
+    entries = staffing.verification_ledger()
+    catalogue, _ = staffing.lens_catalogue()
+    if not catalogue:
+        pytest.skip("no software-development-lifecycle checkout on this host")
+    assert entries == [], "this test describes an empty ledger; it has entries now"
+    for lens in ("security", "correctness"):
+        qualification = staffing.qualify_lens(lens, vendor="claude", model="opus", effort="high")
+        assert qualification.status == staffing.DOCUMENTED_POLICY
+        assert "empty" in qualification.reason
+
+
+def test_a_partial_fixture_pass_is_refused_not_rounded_up(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(
+        tmp_path, entries=[_qualified_entry(fixtures_passed=11, fixtures_total=12)]
+    )
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert "11 of 12" in qualification.reason
+
+
+def test_an_entry_against_an_older_catalogue_version_is_not_carried_forward(
+    tmp_path: pathlib.Path,
+) -> None:
+    checkout = _fake_checkout(tmp_path, entries=[_qualified_entry(catalogue_version="0.9.0")])
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert "never carried forward" in qualification.reason
+
+
+def test_an_unscorable_lens_never_consults_the_ledger(tmp_path: pathlib.Path) -> None:
+    """A lens the catalogue marks unscorable has no fixtures, so there is nothing to qualify."""
+    checkout = _fake_checkout(tmp_path, entries=[_qualified_entry(lens="privacy")])
+    qualification = staffing.qualify_lens(
+        "privacy", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert "unscorable" in qualification.reason
+
+
+def test_an_entry_for_a_different_executor_does_not_qualify(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(tmp_path, entries=[_qualified_entry(model="sonnet")])
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert "no ledger entry qualifies" in qualification.reason
+
+
+def test_a_checkout_with_no_ledger_reads_documented_policy(tmp_path: pathlib.Path) -> None:
+    """Absent files are data, not an exception: a missing sibling must not break every spawn."""
+    config = tmp_path / "config"
+    config.mkdir(parents=True)
+    (config / "lens-catalogue.json").write_text(
+        json.dumps(
+            {"version": CATALOGUE_VERSION, "lenses": [{"id": "security", "scorable": True}]}
+        ),
+        encoding="utf-8",
+    )
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=tmp_path
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert "empty" in qualification.reason
+
+
+def test_an_unparseable_ledger_reads_documented_policy(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(tmp_path)
+    (checkout / "config" / "executor-verifications.json").write_text("{not json", encoding="utf-8")
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert qualification.reason
+
+
+def test_an_absent_checkout_reads_documented_policy_and_never_raises(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R13: the resolver sits on a path every spawn reads, so absence cannot be fatal."""
+    monkeypatch.setenv(staffing.SDLC_PATH_ENV, str(tmp_path / "nowhere"))
+    monkeypatch.setattr(staffing, "DEFAULT_SDLC_PATH", tmp_path / "also-nowhere")
+    qualification = staffing.qualify_lens("security", vendor="claude", model="opus", effort="high")
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert staffing.SDLC_PATH_ENV in qualification.reason
+
+
+def test_the_checkout_ladder_prefers_the_environment_variable(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ladder mission-control already uses: explicit, then the variable, then the default."""
+    configured = _fake_checkout(tmp_path / "configured")
+    monkeypatch.setenv(staffing.SDLC_PATH_ENV, str(configured))
+    assert staffing.sdlc_root() == configured
+
+    explicit = _fake_checkout(tmp_path / "explicit")
+    assert staffing.sdlc_root(explicit) == explicit
+
+
+def test_an_unknown_lens_raises_with_the_offending_value(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(tmp_path)
+    with pytest.raises(StaffingError, match="not-a-lens"):
+        staffing.qualify_lens(
+            "not-a-lens", vendor="claude", model="opus", effort="high", checkout=checkout
+        )
+
+
+def test_a_lens_on_a_non_reviewing_role_raises() -> None:
+    with pytest.raises(StaffingError, match="reviews nothing"):
+        staffing.resolve_role("worker", lens="security")
+
+
+def test_cli_resolve_role_with_a_lens_prints_vendor_tier_and_status() -> None:
+    """The card's second acceptance criterion."""
+    result = _run("resolve", "--role", "lens-reviewer", "--lens", "security")
+    assert result.returncode == 0
+    parts = result.stdout.split()
+    assert parts[0] in staffing.vendors()
+    assert "/" in parts[1]
+    assert parts[2] in {staffing.QUALIFIED, staffing.DOCUMENTED_POLICY}
+
+
+def test_cli_explain_accepts_the_lens_the_card_verification_block_uses() -> None:
+    """The card runs explain --role lens-reviewer --lens correctness; it must not be rejected."""
+    result = _run("explain", "--role", "lens-reviewer", "--lens", "correctness")
+    assert result.returncode == 0, result.stderr
+    assert "lens-reviewer" in result.stdout
+
+
+def test_cli_rejects_a_lens_on_a_work_shape() -> None:
+    result = _run("resolve", "--shape", "judgment", "--lens", "security")
+    assert result.returncode == 2
+    assert "reviewing role" in result.stderr

@@ -43,8 +43,10 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.16.0"
-    )  # 2.16.0: schema resync, Risk body field, Saga readiness delegation (issues 999/1000/942)
+        plugin_json["version"] == "2.17.0"
+    )  # 2.17.0: the tier-band comment names fleet-core's merged staffing data (issue 1021).
+    # Predecessor 2.16.0: schema resync, Risk body field, Saga readiness delegation
+    # (issues 999/1000/942)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]

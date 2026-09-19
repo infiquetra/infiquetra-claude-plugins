@@ -233,8 +233,16 @@ def load_overlay(root: Path | None = None) -> dict[str, dict[str, str]]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise StaffingError(f"{path}: unreadable ({exc})") from exc
+    except ValueError as exc:
+        raise StaffingError(f"{path}: not valid JSON ({exc})") from exc
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        # ValueError, not JSONDecodeError: a file with non-UTF-8 bytes raises UnicodeDecodeError,
+        # which is a ValueError and not a decode error, so the narrower clause let it escape.
         raise StaffingError(f"{path}: not valid JSON ({exc})") from exc
     if not isinstance(data, dict):
         raise StaffingError(f"{path}: top level must be an object of work-shape to tier")
@@ -362,9 +370,14 @@ def translate_for_vendor(vendor: str, model: str, effort: str) -> tuple[str, str
     claude_models = palette[DEFAULT_VENDOR]["models"]
     portable = {target: name for name, target in claude_models.items()}
     if model not in portable:
+        # The portable vocabulary has three rungs and the Claude palette has four, so the
+        # weakest Claude model has no portable equivalent to translate through. Say that, and
+        # say what to do about it, rather than failing with a bare lookup message.
         raise StaffingError(
-            f"no portable execution-class name maps to {model!r}, so it cannot be rendered for "
-            f"{vendor!r}; {DEFAULT_VENDOR}'s palette covers {sorted(portable)}"
+            f"{model!r} has no portable execution-class name, so it cannot be rendered for "
+            f"{vendor!r}: {DEFAULT_VENDOR}'s palette maps {sorted(portable)} and the portable "
+            "vocabulary has no fourth rung. Pin this role to a work shape whose tier is one of "
+            "those, or give the vendor palettes a fourth execution class first."
         )
     vendor_model = row["models"].get(portable[model])
     if not vendor_model:
@@ -448,6 +461,7 @@ def resolve_role(
     root: Path | None = None,
     suggestion: dict[str, str] | None = None,
     checkout: Path | None = None,
+    require_lens: bool = True,
 ) -> StaffingDecision:
     """Resolve a role to a vendor, model and effort, and for a reviewing role its lens status.
 
@@ -471,7 +485,7 @@ def resolve_role(
 
     qualification: Qualification | None = None
     if lens is None:
-        if _is_reviewing_role(role):
+        if require_lens and _is_reviewing_role(role):
             raise StaffingError(
                 f"role {role!r} reviews, so it needs a lens: pass one to learn whether this "
                 "executor may establish a threshold for it"
@@ -771,7 +785,13 @@ def _cli_resolve(args: argparse.Namespace) -> int:
 
 def _cli_explain(args: argparse.Namespace) -> int:
     rows = candidates_for(args.role)
-    decision = resolve_role(args.role, lens=args.lens)
+    # The lens is optional here, as this subcommand's help says: explain's subject is the
+    # candidate list, and a reviewing role asked without one simply has no status to attach.
+    # resolve_role requires a lens for a reviewing role, so ask it only when one was given.
+    if args.lens is None and _is_reviewing_role(args.role):
+        decision = resolve_role(args.role, lens=None, require_lens=False)
+    else:
+        decision = resolve_role(args.role, lens=args.lens)
     if args.json:
         listed = replace(decision, candidates=rows)
         print(json.dumps(listed.as_dict(), indent=2, sort_keys=True))

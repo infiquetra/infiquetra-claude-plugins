@@ -10,6 +10,7 @@ each fail loud rather than degrading to a default.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -25,32 +26,48 @@ sys.path.insert(0, str(FLEET_CORE_SCRIPTS))
 from fleet_commons import staffing  # noqa: E402
 from fleet_commons.staffing import StaffingError  # noqa: E402
 
+#: Named before the autouse fixture uses it, so the isolation reads in one place.
+SDLC_ENV_FOR_TESTS = staffing.SDLC_PATH_ENV
+
 
 @pytest.fixture(autouse=True)
-def _isolated_from_a_local_overlay(
+def _isolated_from_machine_state(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> pathlib.Path:
-    """Run every test from a directory holding no per-repository overlay.
+    """Run every test against constructed state, never against this machine's.
+
+    Two dependencies, both invisible in a diff and both green on a fresh clone:
 
     The resolver reads ``Path.cwd()/.saga/tier-defaults.json`` whenever a caller omits ``root``.
-    That path is gitignored and is where saga writes an operator's confirmed tier overrides, so
-    without this a developer who has ever confirmed one would see a third of this file go red for
-    a reason nothing in the diff explains. A fresh clone hiding the problem is the shape of the
-    flake, not a defence against it.
+    That path is gitignored and is where saga writes an operator's confirmed tier overrides, so a
+    developer who has ever confirmed one would otherwise see a third of this file go red.
+
+    It also resolves a software-development-lifecycle checkout from ``INFIQUETRA_SDLC_PATH`` or a
+    default under the home directory, and asks its lens catalogue whether a lens exists. A
+    developer whose catalogue lists different lenses would see the pinned-vendor tests fail on a
+    lens the registry does not know. Pointing the variable at an empty directory makes the absent
+    checkout the default for every test, which is the documented-policy path; a test that wants a
+    catalogue builds one with ``_fake_checkout`` and passes it explicitly.
+
+    A fresh clone hiding either problem is the shape of the flake, not a defence against it.
     """
-    cwd = tmp_path_factory.mktemp("no-overlay")
+    cwd = tmp_path_factory.mktemp("isolated")
     monkeypatch.chdir(cwd)
+    absent = tmp_path_factory.mktemp("no-sdlc-checkout") / "nowhere"
+    monkeypatch.setenv(SDLC_ENV_FOR_TESTS, str(absent))
     return cwd
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the command line from the overlay-free directory the autouse fixture selected."""
+    """Invoke the command line under the same isolation the autouse fixture established."""
+    environment = dict(os.environ)
     return subprocess.run(
         [sys.executable, str(STAFFING_SCRIPT), *args],
         capture_output=True,
         text=True,
         check=False,
         cwd=pathlib.Path.cwd(),
+        env=environment,
     )
 
 
@@ -558,17 +575,34 @@ def test_a_full_fixture_entry_at_the_current_version_qualifies(tmp_path: pathlib
     assert (decision.model, decision.effort) == ("opus", "high")
 
 
-def test_the_real_ledger_is_empty_so_every_lens_reads_documented_policy() -> None:
-    """Against the shipped ledger, which records that it is empty on purpose."""
-    entries = staffing.verification_ledger()
-    catalogue, _ = staffing.lens_catalogue()
-    if not catalogue:
-        pytest.skip("no software-development-lifecycle checkout on this host")
-    assert entries == [], "this test describes an empty ledger; it has entries now"
+def test_an_empty_ledger_leaves_every_lens_on_documented_policy(tmp_path: pathlib.Path) -> None:
+    """The shipped ledger's state, asserted against a constructed copy of it.
+
+    This used to read the operator's own checkout, which made it skip in continuous integration
+    and made it red on a developer's machine the day the real ledger recorded its first entry —
+    which is the ledger's whole purpose. The property under test is the code's, not the machine's.
+    """
+    checkout = _fake_checkout(tmp_path, entries=[])
     for lens in ("security", "correctness"):
-        qualification = staffing.qualify_lens(lens, vendor="claude", model="opus", effort="high")
+        qualification = staffing.qualify_lens(
+            lens, vendor="claude", model="opus", effort="high", checkout=checkout
+        )
         assert qualification.status == staffing.DOCUMENTED_POLICY
         assert "empty" in qualification.reason
+
+
+def test_the_shipped_ledger_is_still_empty_if_this_host_has_a_checkout() -> None:
+    """A separate, explicitly environmental check, so the behavioural test above stays hermetic.
+
+    It skips without a checkout rather than asserting nothing, and it reds the day an executor is
+    genuinely qualified — at which point the staffing defaults deserve a fresh look.
+    """
+    import os as _os
+
+    checkout = staffing.sdlc_root(None) if not _os.environ.get(SDLC_ENV_FOR_TESTS) else None
+    if checkout is None:
+        pytest.skip("no software-development-lifecycle checkout resolvable on this host")
+    assert staffing.verification_ledger(checkout) == []
 
 
 def test_a_partial_fixture_pass_is_refused_not_rounded_up(tmp_path: pathlib.Path) -> None:

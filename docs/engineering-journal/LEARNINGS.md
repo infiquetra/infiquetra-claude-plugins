@@ -89,8 +89,15 @@ asserting a version literal is a fourth surface neither one knows about, and the
 workflow rule already says so — "any version/metadata drift guard tests" move in the same change.
 
 **Generalizable rule.** After bumping a plugin version, `grep -rn` the old version string across
-`tests/`, and prefer reading the expected value from the manifest over pinning it, so the next bump
-cannot re-break the test. Both release-surface checks passing is not evidence the suite is green.
+**every** pytest root, and prefer reading the expected value from the manifest over pinning it, so
+the next bump cannot re-break the test. Both release-surface checks passing is not evidence the
+suite is green.
+
+**The rule as first written was itself too narrow, and cost a third round.** It said "grep across
+`tests/`". This repository's `pyproject.toml` sets `testpaths = ["tests", "plugins/*/tests"]`, and
+the third instance — `plugins/mission-control/tests/test_prompt_alignment.py:46` — lived in the
+root the rule did not name. Read `testpaths` before trusting a sweep; a rule that names one
+directory when the runner collects two is a rule that finds two thirds of the problem.
 
 ### Every declared capability in the engine registry is rated, so a test asserting otherwise passes by accident  {#1021-unrated-capability-assertion}
 

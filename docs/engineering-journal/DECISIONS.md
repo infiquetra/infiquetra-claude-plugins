@@ -37,6 +37,72 @@
 **Revisit when.** A judgment in this repository is ever promoted from advisory to automatic, at which point that specific gate needs its own fail-open statement and this one stops covering it.
 
 **Refs.** Issue #1035; parent issue #1019; plan `docs/plans/2026-09-19-mission-control-triage-suggestions-plan.md` KTD5, KTD9.
+### The widen-only union lives in one fleet-core primitive, and the five gated flags keep their names  {#1036-widen-only-union-one-primitive}
+
+**Decision.** `plugins/fleet-core/scripts/fleet_commons/jev_widen.py` holds the union rule — `floor or probability >= threshold` — and both callers use it. The question sets live in the verb registry `jev_verbs.py` as `issue-flags` and `journal-nudge`, not in the callers. The five keyword flags `parse_issue.py` already emits keep their exact key names and gain a judgment each; the seven approval boundaries from the sdlc chapter `docs/process/operator-escalations.md` arrive as a separate advisory key with no pattern floor and no consumer.
+
+**Rationale.** Both callers need the same four steps: ask, union with a floor, log a verdict, fail open to the floor. Written inline twice, the fail-open policy would live in two places and the second copy would drift. The registry is already declared the single home for question text, and putting the verbs there makes `jev issue-flags` work from a shell for free. The key names are a contract: saga's mandatory test gate and four skill documents read `has_security` and its siblings by name, so the card's phrasing — which describes the flags as the approval boundaries — could not be taken literally without narrowing a mandatory gate, which is the one thing a widen-only card forbids. Delivering both sets satisfies the card's words and the research requirement at once.
+
+**Alternatives rejected.** Writing the union inline in each caller (two copies of a failure policy). Keeping the question text in the callers (`jev issue-flags` becomes impossible; the policy splits). Replacing the five flags with the seven boundaries (narrows a mandatory gate, breaks five named consumers). Giving the seven boundaries their own keyword floors (seven invented word lists, each either too narrow to help or broad enough — "cost", "customer" — to fire on nearly every card, which is worse than no floor when the whole point is that the model carries the weight).
+
+**Revisit when.** A third caller needs a different failure posture, or the harness reports that the seven advisory boundaries agree well enough to be worth a consumer.
+
+**Refs.** Issue #1036, parent #1019; plan `docs/plans/2026-09-19-issue-1036-widen-only-unions-plan.md` KTD1, KTD2, KTD3; research `docs/analysis/2026-09-18-typesafe-jev-integration-research.md` requirements R7 and R8; LEARNINGS `{#1036-plural-of-credential}`.
+
+### The journal-nudge hook asks by default, fails silent, and is bounded to three seconds  {#1036-nudge-asks-by-default-fails-silent}
+
+**Decision.** The hook asks the model whenever the `feat`/`fix` prefix did *not* already nudge and every existing precondition holds. It asks at most once, with a two-second request timeout and a three-second total deadline, and produces no output at all on any failure. `INFIQUETRA_TYPESAFE_JOURNAL_NUDGE=off` skips the call entirely. The code-file precondition is deliberately *not* widened: the model widens which message earns an entry, not which kind of file does.
+
+**Rationale.** This runs after every commit, so the cost of being wrong is paid constantly. One attempt with a hard deadline means an unreachable vendor costs a noticeable pause, never a retry ladder and never a blocked terminal. The quiet side is the safe side: a broken model must not invent a nudge. Asking on a `feat`/`fix` commit would cost a request to confirm a decision already made, so the floor short-circuits it. Leaving the code-file precondition alone keeps the widen to one dimension and keeps documentation commits — the bulk of this repository — off the wire.
+
+**Alternatives rejected.** Opt-in by default (the judgment would never accumulate the verdicts the harness needs). Widening the code-file precondition too (a model call on nearly every commit in a repository that is mostly prose). Blocking or writing anything (the hook's whole contract is that it never does).
+
+**Revisit when.** The evaluation harness has about thirty verdicts for `journal-nudge:earns_entry`, or the pause becomes something an operator complains about — the switch is the immediate answer either way.
+
+**Refs.** Issue #1036; plan KTD4, KTD5; `plugins/fleet-core/references/typesafe.md` §5.
+### A measurement card fixes its pass/fail bars before it measures anything  {#measurement-bars-precede-the-numbers-1038}
+
+**Context.** Issue #1038 asked whether a `UserPromptSubmit` hook can suggest a saga command inside 400
+milliseconds, and to recommend keep, defer or drop. Plan
+`docs/plans/2026-09-19-issue-1038-prompt-suggestion-latency-plan.md` (KTD5); deliverable
+`docs/analysis/2026-09-19-prompt-suggestion-latency.md`.
+
+- **KTD1 — the keep/defer/drop rule and both accuracy bars are written into the plan before the
+  harness runs.** The card set a latency target and no accuracy bar, so the plan fixed two (70% on
+  prompts warranting a command, 80% silence on prompts warranting none) with the evidence for each
+  stated. A recommendation composed after the numbers are known is a rationalization of the numbers,
+  and a threshold chosen afterwards is the same failure wearing a different hat. *Rejected:* deciding
+  the bars at write-up time, which is what "beats the baseline by a margin the document states" —
+  the plan's own first draft — actually meant. The doc review caught it.
+  *Revisit when:* a follow-up measures a shape this corpus could not.
+- **KTD2 — the exploration measures shapes with no blocking call, not only the vendor's shape.** The
+  cookbook's two-request pattern was near-certain to miss the target given a round trip of about 350
+  ms. Measuring only it would have answered "is the cookbook shape too slow" rather than the card's
+  actual question, which is which client shape makes the target reachable. *Rejected:* a faithful
+  two-shape measurement.
+- **KTD3 — the resident prototype listens on an owner-only Unix domain socket, not a localhost
+  port.** The card said "bound to localhost"; a Unix socket is the stricter reading — no port, no
+  network stack, filesystem permissions. Those permissions are load-bearing rather than decorative:
+  the process holds a live API credential and answers whatever connects, so it creates the socket and
+  its directory owner-only and refuses to start otherwise. *Rejected:* a localhost TCP port, which
+  has no equivalent control without inventing an authentication scheme.
+- **KTD4 — a cached answer is not counted against the live-call budget, and the resident process
+  reports its own spend.** The client reports `cache` as its transport when it serves from disk. An
+  outside-only tally also misses every primed and backgrounded call, because those never appear in
+  any timed hook's output — so the resident process counts its own and the harness adds the two.
+  *Rejected:* counting calls from the hook payloads alone, which under-reported the spend.
+- **The exploration does not decide whether a live operator prompt may be sent to the vendor.** The
+  data rule permits issue bodies, plans and diffs after redaction and forbids raw session transcripts.
+  One live prompt is not a transcript but is uncontrolled unvetted text, which is the stated reason
+  transcripts are excluded. That is a data-governance decision the operator owns; the measurement ran
+  on synthetic prompts and the deliverable carries the question forward as a precondition on any
+  implementation.
+
+**Release surfaces:** none. The harness lives under `tools/` and the deliverable under `docs/`, so no
+file under `plugins/` changed and no version, marketplace entry or changelog moved.
+
+**Refs.** Issue #1038, child of #1019; the client it measures is #1032 (fleet-core 0.26.0); the hook
+registration #1029 has not shipped, so the harness is standalone.
 
 ### The proof's entrypoint describes and refuses; it does not become a second way to run the proof  {#998-describe-and-refuse-not-a-second-runner}
 

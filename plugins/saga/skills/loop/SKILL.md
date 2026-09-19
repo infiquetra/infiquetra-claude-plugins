@@ -121,7 +121,8 @@ stdin and emits the `handoff` object). Use `handoff.maturity` for maturity routi
 - empty with `handoff.requires_clarification` True -> the Handoff maturity section is present but its value is unrecognized (including any `unknown:` sentinel); STOP, show the declared value, and have the issue's handoff section fixed; never continue to the saga scan on it.
 
 The parsed `flags` (`has_security`, `has_infra`, `has_api`) feed the hard test-gate check (Phase 2)
-and the backend recommendation when `/loop` itself drives (Phase 3).
+and the backend recommendation when `/loop` itself drives (Phase 3). Pass `--flags` to widen them with
+a model judgment (widen-only: a keyword flag stays set whatever the model answers).
 
 ### 0.3 Scan the saga (find in-flight work)
 

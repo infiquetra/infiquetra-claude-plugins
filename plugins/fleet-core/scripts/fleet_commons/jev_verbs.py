@@ -25,6 +25,32 @@ TIER_POLICY = (
     "survey, search, sampling, summarising -> sonnet."
 )
 
+# The seven approval boundaries, quoted from the sdlc process chapter
+# docs/process/operator-escalations.md.  Passed as policy text rather than
+# paraphrased into each question, because a paraphrase of a governance boundary
+# is a second, unversioned copy of it.
+APPROVAL_BOUNDARY_POLICY = (
+    "Seven categories mark where a run's authority ends and the sole human "
+    "operator must decide: production changes; destructive operations; secrets "
+    "or credential changes; identity and permission changes; billing or "
+    "cost-impacting actions; external commitments; major team or process "
+    "authority changes. Judge only whether the work DESCRIBED touches the "
+    "category, not whether it is permitted -- nothing reading this answer "
+    "grants or withholds an approval."
+)
+
+# The repository's own rule for what earns a durable journal entry, from its
+# CLAUDE.md.  Generic criteria get the generic meaning, which in a repository of
+# prose and skills classifies almost every commit as noteworthy.
+JOURNAL_POLICY = (
+    "A commit earns an engineering-journal entry when it fixed something whose "
+    "cause was not obvious from the symptom, when it built a feature whose "
+    "mechanism is not obvious from the diff, or when it settled a pattern, "
+    "convention or tooling choice with alternatives worth recording. Routine "
+    "work does not: renaming, reformatting, dependency bumps, straightforward "
+    "test additions, prose edits, and fixes whose cause the diff states plainly."
+)
+
 
 @dataclass(frozen=True)
 class Verb:
@@ -196,6 +222,83 @@ VERBS: dict[str, Verb] = {
             "same": _noul("Do `left` and `right` describe the same underlying thing?"),
         },
     ),
+    "issue-flags": Verb(
+        name="issue-flags",
+        summary="Which review and approval categories an issue body touches",
+        state_help='the issue body, as {"issue": "..."}',
+        # 0.70 rather than the registry default: these five keys widen saga's
+        # mandatory test gate, so an eager answer costs a whole extra lens.
+        # Provisional until the harness has about thirty verdicts per key.
+        confidence_floor=0.70,
+        questions={
+            "has_security": _noul(
+                "Does `issue` involve authentication, authorisation, cryptography, key "
+                "or credential handling, or any other security-sensitive behaviour?"
+            ),
+            "has_api": _noul(
+                "Does `issue` change an interface other code depends on -- an endpoint, "
+                "a command-line surface, a returned shape, or a module's public functions?"
+            ),
+            "has_infra": _noul(
+                "Does `issue` touch infrastructure, deployment, or hosting configuration?"
+            ),
+            "has_privacy": _noul(
+                "Does `issue` involve personal data, customer content, retention, or consent?"
+            ),
+            "has_refactor": _noul(
+                "Is `issue` substantially a restructuring of existing code rather than "
+                "new behaviour?"
+            ),
+            "production": _noul(
+                "Does `issue` describe a change to a production system?",
+                APPROVAL_BOUNDARY_POLICY,
+            ),
+            "destructive": _noul(
+                "Does `issue` describe a destructive operation -- deleting, dropping, "
+                "overwriting or otherwise discarding something not trivially recoverable?",
+                APPROVAL_BOUNDARY_POLICY,
+            ),
+            "credentials": _noul(
+                "Does `issue` describe creating, rotating, moving or changing a secret "
+                "or a credential?",
+                APPROVAL_BOUNDARY_POLICY,
+            ),
+            "permissions": _noul(
+                "Does `issue` describe an identity or permission change -- a role, a "
+                "policy, an access grant or a scope?",
+                APPROVAL_BOUNDARY_POLICY,
+            ),
+            "billing": _noul(
+                "Does `issue` describe an action that costs money or changes what is spent?",
+                APPROVAL_BOUNDARY_POLICY,
+            ),
+            "external_commitments": _noul(
+                "Does `issue` describe a commitment to someone outside this repository?",
+                APPROVAL_BOUNDARY_POLICY,
+            ),
+            "process_authority": _noul(
+                "Does `issue` describe a change to team structure, decision authority, "
+                "or a process that governs how work is approved?",
+                APPROVAL_BOUNDARY_POLICY,
+            ),
+        },
+    ),
+    "journal-nudge": Verb(
+        name="journal-nudge",
+        summary="Whether a commit earns an engineering-journal entry",
+        state_help='the commit, as {"message": "...", "files": ["..."]}',
+        # 0.60: the whole cost of an eager answer here is one advisory line on
+        # standard error, so this decision can afford to be readier than the
+        # issue flags above.  Provisional on the same terms.
+        confidence_floor=0.60,
+        questions={
+            "earns_entry": _noul(
+                "Does the commit described by `message` and `files` record a non-obvious "
+                "mechanism or a pattern decision worth a durable journal entry?",
+                JOURNAL_POLICY,
+            ),
+        },
+    ),
     "readiness": Verb(
         name="readiness",
         summary="Whether an idea is ready to be planned",
@@ -212,4 +315,11 @@ def verb_names() -> tuple[str, ...]:
     return tuple(sorted(VERBS))
 
 
-__all__: Sequence[str] = ("TIER_POLICY", "VERBS", "Verb", "verb_names")
+__all__: Sequence[str] = (
+    "APPROVAL_BOUNDARY_POLICY",
+    "JOURNAL_POLICY",
+    "TIER_POLICY",
+    "VERBS",
+    "Verb",
+    "verb_names",
+)

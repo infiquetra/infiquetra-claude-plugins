@@ -160,7 +160,7 @@ def unique_loader(yaml: Any) -> Any:
     crash from the import down into this class statement (issue #997).
     """
 
-    class UniqueLoader(yaml.SafeLoader):  # type: ignore[misc]
+    class UniqueLoader(yaml.SafeLoader):
         def construct_mapping(self, node: Any, deep: bool = False) -> dict[Any, Any]:
             result = {}
             for key_node, value_node in node.value:

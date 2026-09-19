@@ -1,12 +1,45 @@
 # Code Review — board vocabulary drift, issue 1020
 
-**Three rounds ran. None reached the 9.0 acceptance bar; the last came closest at 8.6 with nothing
-gating open.** Round one finished at 7.6 with an open P1. Round two, a fresh run on the repaired
-tree, finished at 8.5 with two P2s, both then repaired. Round three was a scoring pass on the final
-head, ordered because the last two commits had never been reviewed: it found no P0 and no P1 in any
-of the seven lenses, every dimension at or above the 7.0 floor, and an overall of 8.6.
+**Outcome: ACCEPTED BY EXPLICIT OPERATOR OVERRIDE at 8.6, on 2026-09-19.** The review itself did
+not reach the 9.0 bar in any of its three rounds. The operator overrode that bar in these words:
 
-Whether to accept at 8.6 with two P2 findings recorded is the operator's call, not the driver's.
+> "8.6 is fine, its accepted"
+
+That is an override of a blocking gate, not a passing score, and it is recorded here as such so no
+later reader mistakes the one for the other. The numbers below are what the lenses actually
+returned.
+
+**Three rounds ran; the last came closest at 8.6 with nothing gating open.** Round one finished at
+7.6 with an open P1. Round two, a fresh run on the repaired tree, finished at 8.5 with two P2s, both
+then repaired. Round three was a scoring pass on the final head, ordered because the last two
+commits had never been reviewed: it found no P0 and no P1 in any of the seven lenses, every
+dimension at or above the 7.0 floor, and an overall of 8.6.
+
+## Residuals carried past the override
+
+Two P2 findings were recorded and deliberately not repaired. The run coordinator will file each as a
+follow-up defect card; neither is a defect this change introduced, and both concern a different
+retired vocabulary from the one this card names.
+
+1. **Retired Mount Olympus vocabulary reads as current in three files this change edited.**
+   `plugins/mission-control/skills/milestones/SKILL.md:122` names `Assigned` and `In Review` as
+   states to watch; `:123`, `plugins/mission-control/skills/metrics/SKILL.md:145` and
+   `plugins/mission-control/skills/metrics/references/metrics-targets.md:96` present `Needs Question`
+   as a live state; and `metrics-targets.md:111` instructs an agent to write it. None is a Status on
+   any live board and `LIVE_LEGACY_STATUS_ALIASES` has no key for any of them, so no migration hint
+   fires. The prose guard added by this card cannot see them: it covers the names the board-stage
+   migration renamed plus `Done`, not the older Mount Olympus set.
+
+2. **The `--status` help string offers three values no board accepts.**
+   `plugins/mission-control/scripts/sdlc_manager.py:7313` reads
+   `help="Target status (e.g. 'Assigned', 'In Review', 'Active')"`, which argparse prints on a parse
+   error — so an agent whose Status was just rejected is handed three more rejected ones. Pre-existing
+   and untouched here. `:7320` similarly registers `board wip` as "Show WIP counts and limits" while
+   the function's own docstring and the rewritten reference both say limits are retired.
+
+Together these mark the guard's boundary: it sweeps Markdown instruction surfaces and the
+W13-renamed names. Argparse help strings in the Python sources and the Mount Olympus vocabulary sit
+outside it.
 
 The honest summary across all three rounds: every finding raised was real, every one was verified
 against repository source before being accepted, and six of them were defects the driver had
@@ -18,7 +51,9 @@ introduced while repairing earlier ones. That pattern is set out under "What the
 |---|---|
 | Target | Branch `issue/1020` against base `2044c363` (today both `main` and the integration branch `parent/1018`) |
 | Reviewed revision | `9ab008b3` |
-| Outcome | `repairs requested` — not `accepted` |
+| Outcome | `accepted` **by operator override**, 2026-09-19 — the lenses returned 8.6 against a 9.0 bar, which is `repairs requested` on the roster's own rule |
+| Override | Explicit, by the operator, quoted verbatim: "8.6 is fine, its accepted" |
+| Residuals carried | Two P2 findings, to be filed as follow-up defect cards by the run coordinator |
 | Mode | Interactive, caller-supplied lens selection |
 | Lens selection | `accept-recommended`, supplied by the run coordinator |
 | Lenses | Always-on four: architecture-maintainability, correctness, security, testing. Conditionals: api-contract, documentation-clarity, agent-usability |

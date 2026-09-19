@@ -219,11 +219,24 @@ def _candidates(count: int) -> list[dict[str, str]]:
     return [{"id": f"C{index}", "text": f"idea number {index}"} for index in range(1, count + 1)]
 
 
-def _pairwise_ask(same_pairs: set[frozenset[str]]):
+def _pairwise_ask(same_pairs: set[frozenset[str]]) -> Callable[..., _FakeResult]:
+    """Answer a batched pair request by reading the indices out of each question.
+
+    The fake resolves `items[i].text` back to a candidate id the same way the
+    model would read the state, so the test exercises the real batch shape
+    rather than a convenience shortcut.
+    """
+
     def _ask(state: Any, questions: dict[str, Any], **_kwargs: Any) -> _FakeResult:
-        pair = frozenset({state["left"], state["right"]})
-        probability = 0.95 if pair in same_pairs else 0.05
-        return _FakeResult({key: _noul_answer(probability) for key in questions})
+        items = state["items"]
+        answers = {}
+        for key, question in questions.items():
+            left_index, right_index = (
+                int(part) for part in re.findall(r"items\[(\d+)\]", question["instructions"])
+            )
+            pair = frozenset({items[left_index]["text"], items[right_index]["text"]})
+            answers[key] = _noul_answer(0.95 if pair in same_pairs else 0.05)
+        return _FakeResult(answers)
 
     return _ask
 
@@ -257,6 +270,51 @@ def test_above_the_cap_the_judgment_declines_and_asks_nothing() -> None:
     assert "above the cap" in result["note"]
     flattened = [identifier for group in result["groups"] for identifier in group]
     assert sorted(flattened) == sorted(entry["id"] for entry in oversized)
+
+
+def test_pairs_are_batched_not_one_request_each() -> None:
+    """One request per pair at the cap would be 2,016 sequential calls."""
+    calls: list[dict[str, Any]] = []
+    candidates = _candidates(20)
+    result = sj.dedupe_groups(candidates, ask=_fake_ask(calls))
+    pairs = 20 * 19 // 2
+    assert result["pairs_judged"] == pairs
+    assert len(calls) < pairs, "every pair got its own request"
+    assert len(calls) == result["requests"]
+    expected = -(-pairs // sj.DEDUPE_PAIRS_PER_REQUEST)  # ceiling division
+    assert len(calls) == expected
+
+
+def test_a_batch_carries_each_candidate_once_and_one_question_per_pair() -> None:
+    calls: list[dict[str, Any]] = []
+    sj.dedupe_groups(_candidates(5), ask=_fake_ask(calls))
+    sent = calls[0]
+    assert len(sent["questions"]) == 10, "five candidates is ten pairs, ten questions"
+    ids = [item["id"] for item in sent["state"]["items"]]
+    assert len(ids) == len(set(ids)), "a candidate is carried once per request, not once per pair"
+    assert sorted(ids) == ["C1", "C2", "C3", "C4", "C5"]
+
+
+def test_a_run_that_judged_no_pair_does_not_report_itself_as_ok() -> None:
+    """Under-grouping from an outage must not look like a real answer."""
+    failed = _FakeResult(status="error", note="no key")
+    result = sj.dedupe_groups(_candidates(4), ask=_fake_ask(result=failed))
+    assert result["ok"] is False
+    assert result["pairs_judged"] == 0
+    assert result["pairs_unjudged"] == 6
+    flattened = [identifier for group in result["groups"] for identifier in group]
+    assert sorted(flattened) == ["C1", "C2", "C3", "C4"], "still never removes a candidate"
+
+
+def test_an_unwritable_verdict_log_does_not_break_the_judgment(tmp_path: Path) -> None:
+    """Fail open: a measurement problem is not the caller's problem."""
+    unwritable = tmp_path / "not-a-directory"
+    unwritable.write_text("this is a file, so the log directory cannot be created here")
+    result = sj.judge(
+        {"focus": "x"}, "tactical-scope", ask=_fake_ask(), log=True, log_dir=unwritable
+    )
+    assert result["ok"] is True
+    assert result["answers"]["tactical"]["value"] == 0.91
 
 
 def test_duplicate_candidate_ids_are_refused() -> None:

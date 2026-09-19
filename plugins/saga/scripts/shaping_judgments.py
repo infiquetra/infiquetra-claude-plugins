@@ -30,6 +30,7 @@ and a declined or failed judgment has no answer to score.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -57,6 +58,13 @@ DEFAULT_CONFIDENCE_FLOOR = 0.6
 # merges the way it does today -- an unbounded pairwise fan-out inside an
 # interactive command is the failure this cap prevents.
 DEDUPE_CANDIDATE_CAP = 64
+
+# Pairs per request.  Independent questions about one state travel together, so
+# the cap's 2,016 pairs cost 17 requests rather than 2,016 -- roughly seven
+# seconds at the measured 330 to 430 milliseconds per call, instead of thirteen
+# minutes.  The number is bounded by the client's own state budget, which
+# truncates rather than fails, so it stays well under it.
+DEDUPE_PAIRS_PER_REQUEST = 120
 
 STATE_DOC = "doc"
 STATE_JSON = "json"
@@ -410,17 +418,27 @@ def judge(
     if log:
         # Only an answered call is logged, the way jev.py logs: the evaluation
         # harness scores answers, and a declined or failed judgment has none.
+        #
+        # Recording is best-effort by design.  An unwritable log directory is a
+        # problem with the fleet's measurement, not with the judgment the
+        # caller asked for, and an advisory call that takes down a
+        # conversational command because a log write failed is the opposite of
+        # failing open.
         for key, answer in answers.items():
-            jev_log.record_verdict(
-                decision_id=f"{judgment.command}:{name}:{key}",
-                state=state,
-                questions=question_set,
-                answer=answer,
-                confidence=typesafe_client.answer_confidence(answer),
-                threshold=judgment.confidence_floor,
-                resolved_model=model,
-                directory=log_dir,
-            )
+            # jev_log wraps an unwritable log in RuntimeError rather than
+            # letting the OSError through, so suppressing OSError alone would
+            # miss the very failure this guard exists for.
+            with contextlib.suppress(OSError, RuntimeError):
+                jev_log.record_verdict(
+                    decision_id=f"{judgment.command}:{name}:{key}",
+                    state=state,
+                    questions=question_set,
+                    answer=answer,
+                    confidence=typesafe_client.answer_confidence(answer),
+                    threshold=judgment.confidence_floor,
+                    resolved_model=model,
+                    directory=log_dir,
+                )
     return _advisory(
         name=name,
         ok=True,
@@ -500,6 +518,37 @@ def _pairs(identifiers: Sequence[str]) -> list[tuple[str, str]]:
     ]
 
 
+def _dedupe_batch(
+    chunk: Sequence[tuple[str, str]], text_of: Mapping[str, str]
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, tuple[str, str]]]:
+    """Build one request covering many pairs.
+
+    Every candidate a chunk mentions is carried once in the state, and each
+    question references two of them by the vendor's documented backticked path
+    form.  One question per pair, one request per chunk -- not one request per
+    pair, which at the cap would be 2,016 sequential calls inside a
+    conversational command.
+    """
+    ordered: list[str] = []
+    position: dict[str, int] = {}
+    for left, right in chunk:
+        for identifier in (left, right):
+            if identifier not in position:
+                position[identifier] = len(ordered)
+                ordered.append(identifier)
+    state = {"items": [{"id": identifier, "text": text_of[identifier]} for identifier in ordered]}
+    questions: dict[str, Any] = {}
+    index_of: dict[str, tuple[str, str]] = {}
+    for number, (left, right) in enumerate(chunk):
+        key = f"pair_{number}"
+        questions[key] = _noul(
+            f"Do `items[{position[left]}].text` and `items[{position[right]}].text` "
+            "describe the same underlying idea?"
+        )
+        index_of[key] = (left, right)
+    return state, questions, index_of
+
+
 def dedupe_groups(
     candidates: Sequence[Mapping[str, Any]],
     *,
@@ -555,27 +604,46 @@ def dedupe_groups(
         if left_root != right_root:
             parent[right_root] = left_root
 
-    asked = 0
-    for left, right in _pairs(identifiers):
-        state = {"left": text_of[left], "right": text_of[right]}
-        result = judge(state, "dedupe", ask=ask, log=log, log_dir=log_dir)
-        asked += 1
+    all_pairs = _pairs(identifiers)
+    requests = 0
+    judged = 0
+    unjudged = 0
+    for start in range(0, len(all_pairs), DEDUPE_PAIRS_PER_REQUEST):
+        chunk = all_pairs[start : start + DEDUPE_PAIRS_PER_REQUEST]
+        state, questions, index_of = _dedupe_batch(chunk, text_of)
+        result = judge(state, "dedupe", ask=ask, questions=questions, log=log, log_dir=log_dir)
+        requests += 1
         if not result["ok"]:
+            unjudged += len(chunk)
             continue
-        same = result["answers"].get("same", {}).get("value")
-        if isinstance(same, (int, float)) and float(same) > threshold:
-            _union(left, right)
+        for key, (left, right) in index_of.items():
+            same = result["answers"].get(key, {}).get("value")
+            if not isinstance(same, (int, float)):
+                unjudged += 1
+                continue
+            judged += 1
+            if float(same) > threshold:
+                _union(left, right)
 
     grouped: dict[str, list[str]] = {}
     for identifier in identifiers:
         grouped.setdefault(_find(identifier), []).append(identifier)
     groups = [grouped[root] for root in sorted(grouped, key=identifiers.index)]
+    # An answered-nothing run must not report itself as a judgment.  Under-
+    # grouping caused by a partial outage looks exactly like a real answer, so
+    # the count of pairs nobody judged travels with the result and a run that
+    # judged none of them is not `ok`.
+    note = ""
+    if unjudged:
+        note = f"{unjudged} of {len(all_pairs)} pairs were not judged; they were left ungrouped"
     return {
         "judgment": "dedupe",
         "advisory": True,
-        "ok": True,
-        "note": "",
-        "pairs_asked": asked,
+        "ok": judged > 0,
+        "note": note or ("no pair was judged" if not judged else ""),
+        "requests": requests,
+        "pairs_judged": judged,
+        "pairs_unjudged": unjudged,
         "groups": groups,
     }
 

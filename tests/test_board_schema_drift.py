@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -194,7 +195,7 @@ def test_no_retired_status_name_survives(
     os.environ.get("BOARD_SCHEMA_LIVE") != "1",
     reason="live board comparison is opt-in; set BOARD_SCHEMA_LIVE=1 (needs a project-scoped token)",
 )
-def test_committed_census_matches_the_live_boards() -> None:
+def test_committed_census_matches_the_live_boards(capsys: pytest.CaptureFixture[str]) -> None:
     """The opt-in live leg.
 
     Calls `board_census.cmd_check()` rather than re-implementing its comparison.
@@ -202,16 +203,73 @@ def test_committed_census_matches_the_live_boards() -> None:
     `cmd_check` gains a normalization step or a tolerated difference, this guard
     would start reporting a drift the shipped check does not. One authority.
 
-    `cmd_check` returns 0 both when the census matches AND when live access is
-    unavailable, which it reports as an explicit SKIPPED line. That is its
-    documented posture and it is not overridden here: this leg runs only when the
-    operator opts in, so an unavailable-credential 0 is a legible non-answer
-    rather than a false green.
+    But `cmd_check` returns 0 for two different reasons: the census matched, or
+    live access was unavailable and it printed SKIPPED. Asserting only on the
+    return code would turn the second into a green test -- and pytest discards
+    captured output on a pass, so the operator would see `1 passed` and nothing
+    else. That is precisely the failure this module exists to prevent, reproduced
+    inside the module itself. Read the output and turn a SKIPPED into a real
+    pytest skip, so "could not check" never renders as "checked and clean".
     """
     sys.path.insert(0, str(REPO_ROOT / "plugins" / "mission-control" / "scripts"))
     import board_census  # noqa: PLC0415
 
-    assert board_census.cmd_check() == 0, (
+    exit_code = board_census.cmd_check()
+    printed = capsys.readouterr().out
+    if "SKIPPED" in printed:
+        pytest.skip(f"live board access unavailable: {printed.strip()}")
+
+    assert exit_code == 0, (
         "board-schema.json has drifted from the live boards; "
         "re-run `python3 plugins/mission-control/scripts/board_census.py --write`"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prose surfaces, not just the census (#1020).
+#
+# Two agent-facing files kept shipping `--status "Active"` through a whole
+# review cycle because the completeness sweep matched the retired ladder as an
+# arrow chain (`Idea -> Shaping -> ...`), which cannot find an isolated status
+# name on a command line. These files are instructions an agent executes, so an
+# invalid option here is a runtime failure, not a typo. Check the names.
+# ---------------------------------------------------------------------------
+
+MISSION_CONTROL = REPO_ROOT / "plugins" / "mission-control"
+STATUS_FLAG = re.compile(r'--status\s+"([^"]+)"')
+
+
+def _prose_surfaces() -> list[Path]:
+    paths: list[Path] = []
+    for sub in ("skills", "commands", "agents"):
+        paths.extend(sorted((MISSION_CONTROL / sub).rglob("*.md")))
+    readme = MISSION_CONTROL / "README.md"
+    if readme.is_file():
+        paths.append(readme)
+    return paths
+
+
+def test_the_prose_sweep_actually_scans_something() -> None:
+    """Same vacuity guard as above: an empty file list would pass silently."""
+    surfaces = _prose_surfaces()
+    assert len(surfaces) >= 10, f"expected the plugin's prose surfaces, found {len(surfaces)}"
+
+
+def test_no_prose_surface_names_a_status_the_boards_reject(stage_flow: dict[str, Any]) -> None:
+    valid = set(stage_flow["statuses"])
+    stages = set(stage_flow["stages"])
+    offenders: list[str] = []
+
+    for path in _prose_surfaces():
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for value in STATUS_FLAG.findall(line):
+                if value in valid:
+                    continue
+                why = "a Stage, not a Status" if value in stages else "not in the schema"
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT)}:{number} --status {value!r} ({why})"
+                )
+
+    assert not offenders, (
+        "prose instructs an agent to write a Status the boards reject:\n" + "\n".join(offenders)
     )

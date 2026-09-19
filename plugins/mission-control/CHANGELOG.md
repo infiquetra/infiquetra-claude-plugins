@@ -35,14 +35,19 @@
   work-in-progress **age** tables in both metrics files are rewritten to the one threshold
   `_active_age_thresholds` actually computes — three days for every non-terminal Status on every
   board — replacing a per-board split with a five-day CAMPPS row keyed on the retired Status
-  `In Progress`. The cycle-time boundary tables now also state plainly that `metrics cycle-time`
-  keys its start off the Status field and matches nothing today, because `_cycle_start_statuses`
-  still returns the retired Status `Active`; that code defect predates this change and is left for
-  a separate card rather than described as though it worked.
-- **`skills/board/SKILL.md` no longer shows commands that cannot succeed.** Four examples passed
-  `--status "Active"` or `--status "Shaping"`, both of which are Stage names and neither of which is
-  a valid Status option, under a heading naming the retired `intent_flow` workflow. An agent
-  following them would have emitted an option the board rejects.
+  `In Progress`. The cycle-time boundary tables now also record how the start boundary is really
+  detected: `_cycle_start_statuses` returns the literal option name `Active`, and the timeline query
+  it feeds captures only the option *name* of a single-select change — it records no field name, so
+  it cannot tell a `Stage` change from a `Status` change. `Active` is a live `Stage` option and not
+  a `Status` option, so the boundary is whichever field last carried an option of that name. Making
+  the field explicit is left to a separate card.
+- **No prose surface shows a command that cannot succeed.** Examples in `skills/board/SKILL.md`,
+  `README.md` and `commands/triage.md` passed `--status "Active"`, `--status "Shaping"` or
+  `--status "In Progress"` — Stage names or retired names, none of them a valid Status option — and
+  one sat under a heading naming the retired `intent_flow` workflow. An agent following them would
+  have emitted an option the board rejects. `tests/test_board_schema_drift.py` now checks every
+  `--status` value in every Markdown surface under `skills/`, `commands/` and `agents/` plus the
+  README against the schema's status list, so this cannot reopen quietly.
 
 ### Changed
 

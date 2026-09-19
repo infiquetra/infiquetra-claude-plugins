@@ -2,6 +2,45 @@
 
 ## 2026-09-19
 
+### A grep for the retired ladder cannot find a retired name used alone  {#1020-sweep-names-not-ladders}
+
+**Context.** Issue #1020 replaced the retired board vocabulary across the mission-control plugin's
+prose. The plan recorded a completeness sweep to prove nothing was left behind.
+
+**Evidence.** The sweep matched the ladder as an arrow chain:
+`grep -rn "Idea ->\|-> Ready ->" plugins/mission-control/skills/ ...`. It returned one legitimate
+hit and was read as clean. Two later review cycles found retired Status names still shipping in
+files that sweep had covered: four examples in `skills/board/SKILL.md` passing `--status "Active"`
+or `--status "Shaping"`, then `README.md:115-116` and `commands/triage.md:74` doing the same. Each
+is a single name on a command line. None contains an arrow.
+
+**Mechanism.** The sweep pattern encoded the shape the vocabulary took in *tables* — a ladder with
+arrows between stages — not the shape it takes in *instructions*, where one name appears alone as a
+flag value. A pattern derived from how a thing is written in one place silently fails to cover how
+it is written elsewhere, and returns a short clean answer rather than an error, which is what made
+it persuasive twice.
+
+**Why it mattered more than a typo.** These files are read by agents as instruction. `board move
+--status "Active"` names a Stage, and the command writes Status, so an agent following the example
+emits an option the board rejects. `LIVE_LEGACY_STATUS_ALIASES` carries no entry for `Active`, so no
+migration hint fires either.
+
+**Fix.** Replaced the grep with an executable guard that parses every `--status "..."` value out of
+every Markdown surface under the plugin's `skills/`, `commands/` and `agents/` directories plus its
+README, and checks each against `workflows.stage_flow.statuses` in `sdlc-schema.json`
+(`tests/test_board_schema_drift.py`). It was proven by seeding one invalid value and watching it go
+red, then restoring. It carries its own vacuity guard, because a file-discovery bug would otherwise
+make it pass by scanning nothing.
+
+**Generalizable rule.** When sweeping for a retired name, match the NAME, and check each hit against
+the authoritative list — do not match the syntax the name happened to appear in when you last saw
+it. A sweep whose pattern encodes a layout rather than a value is a sweep that will miss the next
+place the value is used. And prefer a test over a one-off grep: the grep proves today, the test
+keeps proving.
+
+**Refs.** Issue #1020 unit 4; `tests/test_board_schema_drift.py`;
+`plugins/mission-control/config/sdlc-schema.json` `workflows.stage_flow`.
+
 ### A shape change's blast radius is found by searching for the producer's callers, not the artifact's name  {#1020-blast-radius-search-the-producer}
 
 **Context.** Issue #1020 changed `board_census.py` to emit the board census `fields` as a mapping

@@ -71,10 +71,12 @@ When the user invokes `/triage repo#number`:
    - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Initiative --option <name>`
    - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Objective --option <name>`
 8. Recommend status:
-   - Defect (critical/high): move to Active on Operations or Asgard (or In Progress on CAMPPS)
-   - Has complete context: Ready
+   All three boards share the one `stage_flow` vocabulary, so the same Status names apply
+   everywhere; there is no per-board split.
+   - Defect (critical/high): move to `Implementing`
+   - Has complete context: `Ready for Planning`
    - Needs more context: keep `needs-plan` on actionable cards, optionally add `needs-context`,
-     and leave in Backlog or Shaping
+     and leave in `Backlog` or `Discovering`
 9. Show summary of all actions taken
 
 If the issue is a defect with `critical` label, flag urgency: "This is a critical defect with a 4-hour SLA. Moving to active ownership now."

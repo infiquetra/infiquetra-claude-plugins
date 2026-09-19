@@ -128,13 +128,16 @@ Cycle time starts when active ownership begins:
 |-------|-------|----------|
 | Operations / Asgard / CAMPPS | `Active` stage | `Ready to close` |
 
-> **What the tool measures today.** `metrics cycle-time` keys the start off the
-> **Status** field, not the Stage column: `_cycle_start_statuses` in
-> `scripts/sdlc_manager.py` returns the literal `Active`, which the board-stage
-> migration retired as a Status value. So the command matches nothing on any board
-> until that function is moved onto the Stage field. The boundary above is the
-> intended definition; it is not what the current code computes. Tracked separately
-> from issue #1020, whose scope is the cached census and the prose describing it.
+> **How the start boundary is actually detected.** `_cycle_start_statuses` in
+> `scripts/sdlc_manager.py` returns the literal option name `Active`, and the
+> timeline query it feeds (`QUERY_GET_ISSUE_TIMELINE`) captures only the option
+> *name* of a single-select change — it records no field name or id, so it cannot
+> tell a `Stage` change from a `Status` change. `Active` is a live `Stage` option
+> on all three boards and is not a `Status` option at all, so the start boundary is
+> whichever field last carried an option named `Active`. That is close to the
+> boundary this table declares, but it is matched by name rather than by field.
+> Making the field explicit is outside issue #1020, whose scope is the cached
+> census and the prose describing it.
 
 
 Legacy `Mount Olympus` timeline values may be read for history but are never used to create

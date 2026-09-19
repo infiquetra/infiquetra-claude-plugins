@@ -48,6 +48,31 @@ passed. Confirmed against pytest rather than assumed: with an empty list the loo
 parametrized test is skipped, and only an explicit guard fails. Fixed in commit `f9d3a50f`, together
 with three smaller findings about error handling around the new duplicate-name exception.
 
+## The fresh review round, and the decision it reached
+
+**Decision: the round did not accept, and the driver stopped rather than opening a third.**
+
+Round one ended at 7.6 with an open P1. The coordinator directed a repair and a fresh round rather
+than an override, on the reasoning that the finding was concrete and the fix known — which it was.
+Round two ran the same seven lenses on the repaired tree with a fresh repair allowance, and finished
+at 8.5 with every dimension above the 7.0 floor. Two P2 findings remained. Both are now repaired in
+`b7b859bf`; no lens has reviewed that commit, because a third round is the operator's call.
+
+One repair inside round two was not an improvement but a correction of harm the driver had just
+done: the `flow set-field` line added to `agents/sdlc-operator.md` to fix the Stage-and-Status
+pairing omitted a required `--project` argument and exited 2. Shipping a documented command that
+cannot run is worse than the omission it was meant to fix, so it was corrected even though the
+round's re-review budget had been used. That is the one case where completing a botched repair was
+judged not to be the same thing as opening a new cycle.
+
+**What the two rounds actually bought.** Fourteen findings were raised and closed across four review
+passes. Six of them were defects a previous repair had introduced. The counter-measure that worked
+was mechanical, not attentional: prove a guard red before trusting it green, and mutation-test a
+test by reverting the fix it covers. Every guard in `tests/test_board_schema_drift.py` has now been
+watched to fail against a tree that should trip it, and the newest two were confirmed to die when
+their fix is reverted. The test count rose from 526 to 541, and thirteen of the additions exercise
+the guard's own logic with synthetic input rather than against prose that happens to be clean.
+
 ## Answers applied, and where each came from
 
 Every choice below was supplied by the run coordinator before work began, in the message opening

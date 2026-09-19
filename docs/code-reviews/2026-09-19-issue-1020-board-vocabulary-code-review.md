@@ -1,10 +1,15 @@
 # Code Review — board vocabulary drift, issue 1020
 
-**Verdict: NOT ACCEPTED.** Four cycles ran. The overall score went 9.2 (two lenses), then 7.9, 8.1
-and 7.6 across the five-lens set, against an acceptance bar of 9.0 with every applicable dimension
-at 7.0 or better. At the branch head two dimensions sit below the per-dimension floor and one P1
-finding is open. The three repair cycles allowed by the run coordinator are spent, so this review
-stops here and hands the finding to the operator. Only the operator can override a blocking gate.
+**Two rounds ran. Neither reached the 9.0 acceptance bar.** Round one finished at 7.6 with an open
+P1. Round two, a fresh run on the repaired tree with the same seven-lens roster, finished at 8.5
+with every dimension at or above the 7.0 floor and two P2 findings, both of which are now repaired
+in commits the round did not re-review. A third round is the operator's call, not the driver's, so
+this review stops here.
+
+The honest summary of the two rounds: every finding raised was real, every one was verified against
+repository source before being accepted, and a meaningful share of them were defects the driver had
+introduced while repairing earlier ones. That pattern — a repair creating the next finding — is the
+most useful thing this review recorded, and it is set out under "What the rounds cost" below.
 
 ## Review-result contract
 
@@ -135,3 +140,66 @@ exist — the reviewer typed a revision from memory instead of reading it. It is
 than edited, because the ledger is append-only and hash-chained and removing a row is what the chain
 exists to prevent. Sequence 2 is the real freeze. `verify-chain` reports two entries, two verified
 criteria.
+
+---
+
+# Round two — fresh run on the repaired tree
+
+Approved by the run coordinator with the same seven-lens roster and `accept-recommended`, a fresh
+repair allowance, backend inline. Each lens was spawned with worktree isolation and instructed to
+`/usr/bin/git checkout --detach <sha>` before reading, because an isolated worktree otherwise starts
+on the base commit and would review the wrong tree.
+
+## Roster
+
+| Lens | Revision reviewed | Score | Gating findings | Resolution |
+|---|---|---|---|---|
+| correctness | `1197c986` | 8.5 | P2: the prose guard shipped with a live instance of the class it exists to stop (`Done` missing from the bare-name pattern) | Repaired in `bf69f927` |
+| security | `1197c986` | 10.0 | None | — |
+| architecture-maintainability | `da9d2a05` | 8.5 | None | — |
+| testing | `da9d2a05` | 9.0 | P2 (on `bf69f927`): the guard's own helpers had no direct test; two evasions demonstrated | Repaired in `da9d2a05` |
+| api-contract | `da9d2a05` | 8.0 | P2: a documented command exits 2 | Repaired in `b7b859bf` |
+| documentation-clarity | `da9d2a05` | 8.0 | Same broken command | Repaired in `b7b859bf` |
+| agent-usability | `da9d2a05` | 7.5 | P2 (on `bf69f927`): instructions wrote a Status without the Stage it implies | Repaired in `da9d2a05`; the repair itself carried the broken command, fixed in `b7b859bf` |
+
+**Round overall: 8.5.** Every dimension at or above 7.0; the bar is 9.0, so the round does not
+accept. The reviewer's own assessment was that the two remaining P2s were "a one-token fix and a
+one-condition fix" that together would carry the round over the bar. Both are now made, in
+`b7b859bf`, which no lens has reviewed.
+
+## What the rounds cost, and what that is worth recording
+
+Six findings across the two rounds were defects introduced by a repair to an earlier finding:
+
+1. A bare `except ValueError` added to stop a duplicate-name error being swallowed also caught
+   `json.JSONDecodeError`, turning a documented skip into a hard failure.
+2. Moving the live leg onto `cmd_check()` made it return green when credentials were missing,
+   because that function returns 0 for two different reasons and pytest hides output on a pass.
+3. A note written to correct someone else's inaccuracy asserted a mechanism that had not been
+   traced: the timeline query cannot distinguish a Stage change from a Status change at all.
+4. A comment claimed a `json.JSONDecodeError` reaches a SKIP branch it does not reach.
+5. The prose guard, written from a rule that says "match the NAME, not the syntax", encoded a
+   syntax — and shipped in the same commit as the rule it violated.
+6. The command added to fix the Stage-and-Status pairing omitted a required argument and exited 2,
+   which is worse than the omission it was meant to fix.
+
+The pattern is one thing, not six: each repair was made confidently and verified narrowly. The
+counter-measure that actually worked was mechanical rather than attentional — proving a guard red
+before trusting it green, and mutation-testing a test by reverting the fix it covers. Every guard
+in `tests/test_board_schema_drift.py` has now been watched to fail, and the two newest were
+confirmed to die when their fix is reverted.
+
+## Open at the final head
+
+Nothing gating that a lens has named. The reviewer recorded four further value-syntax evasions
+(`--field "Status"`, `--field=Status --option=Done`, reversed flag order, and a backslash-wrapped
+`--status`) as P3: three are backstopped by the bare-name scan, and none appears in the plugin's
+prose today. The one genuine gap is that `Active` is deliberately absent from the bare-name pattern
+on the stated grounds that the flag patterns catch it, which is true for the forms in use and not
+true for those four.
+
+Two findings were deliberately declined and the reviewer ruled on both. The 2.17.0 minor bump for a
+change labelled BREAKING is defensible under the repository's own recorded test — whether a caller
+can observe the change — with the caveat that the "no external consumer" premise was verified only
+within this repository. The reviewer withdrew the test-file-location finding outright: the card
+names that path in an executable criterion and the repository instruction agrees.

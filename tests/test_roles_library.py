@@ -30,6 +30,7 @@ vendor a copy, pin it, and gate it, rather than checking the sibling repository 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -51,9 +52,11 @@ SDLC_PIN = "5efc869f"
 #: because it accounts for where each retired prompt went.
 README_NAME = "README.md"
 
-#: The only prompt allowed an empty ``emits`` list: its result is aggregated into the Review
-#: Controller's contract rather than posted as its own.
+#: The only role allowed an empty ``emits`` list: its result is aggregated into the Review
+#: Controller's contract rather than posted as its own. Keyed on the role identifier, not the
+#: filename -- keying on the filename let any role become exempt by being renamed.
 AGGREGATED_PROMPT = "lens-reviewer.md"
+AGGREGATED_ROLE_ID = "lens_reviewer"
 
 #: The machine-readable map, so a consumer never parses the README's Markdown table to select a
 #: prompt or slice a lens section.
@@ -404,8 +407,10 @@ def role_map() -> dict[str, tuple[str, str]]:
                 break
             continue
         cells = [cell.strip().strip("`") for cell in stripped.strip("|").split("|")]
-        if set(cells[0]) <= {"-", ":"}:
+        if cells[0] and set(cells[0]) <= {"-", ":"}:
             continue
+        if not cells[0].strip():
+            raise AssertionError(f"role map row with a blank Role cell: {cells}")
         if len(cells) != 3:
             raise AssertionError(
                 f"the role map table must have exactly three columns, found {len(cells)}: {cells}"
@@ -465,14 +470,18 @@ def missing_headings(text: str) -> list[str]:
     if [s for s, _ in spans] != sorted(s for s, _ in spans):
         return ["<out of order>"]
 
+    # Each section ends at the next heading of ANY level, not at the next *required* one. Bounding
+    # the last required heading at end-of-file instead counted everything after it as its body --
+    # so in the Lens Reviewer, where 170 lines of lens sections follow, the stop rule's body could
+    # be deleted entirely and this still returned clean. The stop rule is the one thing that makes
+    # an autonomous session terminate, so it was the worst possible section to leave unenforced.
+    heading_starts = [m.start() for m in re.finditer(r"^#{1,6} ", body, re.MULTILINE)]
+
     empty: list[str] = []
-    ordered = sorted(spans)
-    for index, (start, heading) in enumerate(ordered):
-        end = ordered[index + 1][0] if index + 1 < len(ordered) else len(body)
-        section = body[start:end]
-        # Drop the next heading's own line before judging emptiness.
-        section = re.sub(r"^#{1,6} .*$", "", section, flags=re.MULTILINE)
-        if len(section.strip()) < 40:
+    for start, heading in sorted(spans):
+        following = [pos for pos in heading_starts if pos > start]
+        end = following[0] if following else len(body)
+        if len(body[start:end].strip()) < 40:
             empty.append(f"{heading} <empty>")
     return empty
 
@@ -504,8 +513,10 @@ def emits_violations(role_id: str, emits: object, filename: str) -> list[str]:
     problems: list[str] = []
     if not isinstance(emits, list):
         return [f"emits must be a list, not {type(emits).__name__}"]
-    if not emits and filename != AGGREGATED_PROMPT:
-        return [f"emits is empty; only {AGGREGATED_PROMPT} may emit nothing of its own"]
+    if not emits and role_id != AGGREGATED_ROLE_ID:
+        return [f"emits is empty; only {AGGREGATED_ROLE_ID} may emit nothing of its own"]
+    if len(emits) != len(set(emits)):
+        problems.append(f"emits repeats a contract: {emits}")
     for contract in emits:
         if contract not in CONTRACT_SENDERS:
             problems.append(f"{contract!r} is not a lifecycle handoff contract")
@@ -738,6 +749,22 @@ def test_vendored_snapshot_is_stamped_with_the_pin() -> None:
         "an empty snapshot would make every check against it vacuous"
     )
 
+    # The snapshot is the sole source for every lifecycle check that runs on a runner, and the
+    # parity check that would catch a bad one skips there. Without this, a contributor could hand
+    # a bogus contract row into the snapshot, add a matching prompt, and get a green suite
+    # everywhere continuous integration runs.
+    payload = json.dumps(
+        {k: SNAPSHOT[k] for k in ("roles", "contracts", "lenses")},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    assert SNAPSHOT["content_sha256"] == digest, (
+        f"{SNAPSHOT_PATH.name} was edited by hand: its content hash says"
+        f" {SNAPSHOT['content_sha256'][:12]}, its contents hash to {digest[:12]}. Regenerate it"
+        " from the lifecycle rather than editing it."
+    )
+
 
 def test_vendored_snapshot_matches_the_live_lifecycle() -> None:
     """The parity gate: vendored data against the lifecycle, wherever the lifecycle is reachable.
@@ -961,17 +988,34 @@ def test_lens_slice_is_a_complete_prompt(lens_id: str) -> None:
         )
 
 
-@pytest.mark.parametrize("lens_id", [lens for lens in LENS_IDS if lens not in ALWAYS_ON_LENSES])
-def test_conditional_lens_slice_permits_reporting_without_a_score(lens_id: str) -> None:
+def test_shared_half_permits_reporting_without_a_score() -> None:
     """A conditional lens with no fixture must be told it may report findings and not score.
 
-    Without it the slice's stop rule demands a score for every applicable dimension, and a session
-    staffing one of the eleven either fabricates one or never terminates.
+    Asserted once, on the shared half, because that is where the permission lives and where it has
+    to live: a per-lens parametrization of this same string claimed eleven cases of coverage that
+    did not exist, since every slice carries the identical shared text.
+    """
+    shared = lens_slice(LENS_IDS[0]).split(f"{LENS_SECTION_PREFIX}{LENS_IDS[0]}")[0]
+    assert "without scores" in shared, (
+        "the shared half never says a conditional lens may report without scoring; without it the"
+        " stop rule demands a score for every applicable dimension and eleven of fifteen sessions"
+        " either fabricate one or never terminate"
+    )
+
+
+@pytest.mark.parametrize("lens_id", LENS_IDS)
+def test_lens_section_is_about_its_own_lens(lens_id: str) -> None:
+    """Something genuinely per-lens: the section names its own lens and its own subject matter.
+
+    This is what the conditional-permission test used to pretend to check. A section copied from
+    another lens, or left as a stub, fails here.
     """
     sliced = lens_slice(lens_id)
-    assert "without scores" in sliced, (
-        f"the {lens_id} slice never says a conditional lens may report without scoring"
+    section = sliced[sliced.index(f"{LENS_SECTION_PREFIX}{lens_id}") :]
+    assert VENDORED_LENS_FLOORS[lens_id] in section, (
+        f"the {lens_id} section does not name its own floor level ({VENDORED_LENS_FLOORS[lens_id]})"
     )
+    assert "Dimension" in section, f"the {lens_id} section lists no dimensions"
 
 
 def test_lens_reviewer_states_no_thresholds() -> None:
@@ -1039,6 +1083,22 @@ def test_seeded_empty_section_fires() -> None:
     ]
 
 
+def test_seeded_empty_last_section_fires_even_with_trailing_content() -> None:
+    """The stop rule's body must be checked, not the whole remainder of the file.
+
+    Bounding the last required heading at end-of-file counted every later section as its body, so
+    a prompt with content after the stop rule -- which the Lens Reviewer has 170 lines of -- could
+    have an empty stop rule and pass.
+    """
+    filler = "Enough prose here to clear the emptiness floor for this section, comfortably.\n"
+    text = (
+        f"## Role\n\n{filler}\n## Inputs from the run record\n\n{filler}\n"
+        f"## Output contract\n\n{filler}\n### Stop rule\n\n"  # deliberately empty
+        f"# The lenses\n\n#### correctness\n\n{filler}{filler}"
+    )
+    assert missing_headings(text) == ["### Stop rule <empty>"]
+
+
 def test_seeded_heading_inside_a_fence_does_not_count() -> None:
     """Every prompt embeds a fenced handoff example; a heading there is not a real section."""
     text = "# Title\n\n```markdown\n### Stop rule\n```\n"
@@ -1063,8 +1123,11 @@ def test_seeded_emits_rules_fire() -> None:
     assert emits_violations("planner", "dispatch", "planner.md")[0].startswith("emits must be")
     assert emits_violations("planner", [], "planner.md")[0].startswith("emits is empty")
     assert emits_violations("lens_reviewer", [], AGGREGATED_PROMPT) == []
+    # The exemption is the role's, not the filename's: renaming a file must not confer it.
+    assert emits_violations("planner", [], AGGREGATED_PROMPT)[0].startswith("emits is empty")
     assert "not a lifecycle handoff contract" in emits_violations("planner", ["nope"], "p.md")[0]
     assert "produced by" in emits_violations("product", ["run-record"], "product.md")[0]
+    assert "repeats a contract" in emits_violations("controller", ["dispatch", "dispatch"], "d")[0]
     assert emits_violations("planner", ["planner-to-orchestrator"], "planner.md") == []
 
 
@@ -1115,12 +1178,17 @@ def test_only_the_parity_test_needs_a_sibling_checkout() -> None:
     direction for that asymmetry. The prompts are now always checked against the vendored
     snapshot, and exactly one test reaches for the lifecycle itself.
     """
-    assert LENS_IDS is VENDORED_LENS_IDS
-    assert CONTRACT_SENDERS is VENDORED_CONTRACT_SENDERS
-    assert ROLE_IDS is VENDORED_ROLE_IDS
-    assert CONTRACT_FIELDS is VENDORED_CONTRACT_FIELDS
-    assert CONTRACT_NAMES is VENDORED_CONTRACT_NAMES
-    assert ROLE_NAMES is VENDORED_ROLE_NAMES
+    # Asserted against the file on disk rather than against the constants five lines above it:
+    # comparing two names assigned to each other cannot fail, and is a comment with assert syntax.
+    on_disk = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    assert tuple(on_disk["roles"]) == ROLE_IDS
+    assert on_disk["roles"] == ROLE_NAMES
+    assert tuple(on_disk["lenses"]) == LENS_IDS
+    assert set(CONTRACT_SENDERS) == set(on_disk["contracts"])
+    for cid, row in on_disk["contracts"].items():
+        assert CONTRACT_SENDERS[cid] == row["sender_role"]
+        assert CONTRACT_NAMES[cid] == row["name"]
+        assert CONTRACT_FIELDS[cid] == frozenset(row["required_fields"])
 
 
 def test_parity_test_skips_rather_than_fails_without_a_checkout(
@@ -1132,7 +1200,7 @@ def test_parity_test_skips_rather_than_fails_without_a_checkout(
     while green on a developer machine. Proven by simulation rather than argued.
     """
     monkeypatch.delenv("INFIQUETRA_SDLC_ROOT", raising=False)
-    monkeypatch.setattr(pathlib.Path, "is_file", lambda self: False)
+    monkeypatch.setattr(pathlib.Path, "is_file", lambda self, *a, **k: False)
     assert _sdlc_root() is None
 
     # `pytest.skip` raises a BaseException subclass, so a bare `pytest.raises(Exception)` does not

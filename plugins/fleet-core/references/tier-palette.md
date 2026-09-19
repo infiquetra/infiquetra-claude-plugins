@@ -1,7 +1,7 @@
 # Tier palette — adding a model or effort
 
 The fleet's model/effort vocabulary is **single-source**: it lives in
-[`scripts/fleet_commons/models.json`](../scripts/fleet_commons/models.json) and is derived into the
+[`scripts/fleet_commons/staffing.json`](../scripts/fleet_commons/staffing.json) and is derived into the
 ordered `MODELS` / `EFFORTS` tuples by [`tier_palette.py`](../scripts/fleet_commons/tier_palette.py) at
 import. Every other surface — `execution_spec.py`, the `/plan` tier table, the team-execution worker
 table, the ladder ops — reads from there. Grow the vocabulary **here**, never with a second bare literal
@@ -21,7 +21,7 @@ weakest) — the two run in *opposite* directions. That is exactly why callers m
 
 ## To add a model
 
-1. Add a row to `models.json` under `"models"` with an explicit integer `rank` and an `effort_ceiling`
+1. Add a row to `staffing.json` under `"models"` with an explicit integer `rank` and an `effort_ceiling`
    (the strongest effort the model actually runs). **Ranks must stay contiguous `0..n-1`** — inserting a
    new strongest model means renumbering the existing ranks, not squeezing in a duplicate or a gap.
    Import-time validation (`_derive_ordered`) rejects a duplicate/gapped/non-int rank loudly.
@@ -32,7 +32,7 @@ weakest) — the two run in *opposite* directions. That is exactly why callers m
 
 ## To add an effort
 
-1. Add a row to `models.json` under `"efforts"` with an explicit integer `rung` (0 = weakest), keeping
+1. Add a row to `staffing.json` under `"efforts"` with an explicit integer `rung` (0 = weakest), keeping
    the rungs contiguous.
 2. Review every model's `effort_ceiling`: a new top effort is **not** automatically reachable by a
    weaker model — set each `effort_ceiling` deliberately so an unsupported `{model, effort}` combination
@@ -41,12 +41,12 @@ weakest) — the two run in *opposite* directions. That is exactly why callers m
 
 ## Execution classes (portable version-2 subset)
 
-`models.json` also carries `schema_version`, `scalar_efforts`, `execution_classes`, and
+`staffing.json` also carries `schema_version`, `scalar_efforts`, `execution_classes`, and
 `root_orchestration_profiles`. Those keys are the portable Codex version-2 subset (KTD7).
 They are **additive**. Do not rename `models` / `efforts` to `lineage_models` /
 `lineage_efforts`, and do not port those lineage tables as the live router.
 
-`resolve()` still reads `tier_policy.json` and the Claude `models` / `efforts` vocabulary.
+`resolve()` still reads the `work_shapes` block of `staffing.json` and the Claude `models` / `efforts` vocabulary.
 The sibling `resolve_for_runtime(work_shape, runtime)` keys on an execution-class name
 (`review-max`, `review-high`, `test-medium`, `scan-low`, `monitor-low`, `work-high`,
 `work-medium`) and returns a runtime-owned

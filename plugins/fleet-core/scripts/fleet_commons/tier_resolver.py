@@ -4,8 +4,8 @@
 One callable seam for tier decisions that today live scattered across team-execution's 25
 hardcoded agent ``model:`` literals, the prose-only heuristic table at
 ``plugins/saga/skills/plan/SKILL.md:298-304``, and assorted per-call literals. ``resolve()``
-reads defaults from the machine-readable ``tier_policy.json`` registry (U1) and never hardcodes
-a heuristic in code.
+reads defaults from the ``work_shapes`` block of the machine-readable ``staffing.json`` registry
+(U1, merged there by issue #1021) and never hardcodes a heuristic in code.
 
 Imports ``MODELS``, ``EFFORTS``, ``model_rank``, ``effort_rank`` from ``tier_palette`` via
 ``fleet_commons_shim`` — never re-declaring the tuples (KTD1/KTD2).
@@ -16,7 +16,7 @@ frontmatter value (KTD7) is a small alias that maps onto a ``work_shape`` regist
 lookup, so migrated team-execution agents resolve through the same registry as everything else.
 
 ``resolve_for_runtime`` is a sibling, not a replacement: it keys on execution-class names from
-``models.json`` and returns a runtime-owned
+``staffing.json`` and returns a runtime-owned
 ``{model, effort, fallbacks, workspace_boundary, effort_application}``.
 ``adapt_runtime_argv`` is the only place a resolved pair becomes vendor CLI flags.
 ``effort_application`` is the directive for *how* the collapsed effort is applied (launch
@@ -54,7 +54,9 @@ EFFORTS: tuple[str, ...] = _tier_palette.EFFORTS
 model_rank = _tier_palette.model_rank
 effort_rank = _tier_palette.effort_rank
 
-TIER_POLICY_PATH = Path(__file__).resolve().parent / "tier_policy.json"
+STAFFING_PATH = Path(__file__).resolve().parent / "staffing.json"
+# Retained names: both blocks now live in the one staffing registry (issue #1021).
+TIER_POLICY_PATH = STAFFING_PATH
 
 # The strongest model / highest effort rungs (KTD4): resolving to either gates on operator confirm.
 _EXPENSIVE_MODELS = frozenset({MODELS[0]})
@@ -69,7 +71,7 @@ ROLE_TIER_ALIASES: dict[str, str] = {
     "mechanical-scan": "purely-mechanical",
 }
 
-MODELS_JSON_PATH = Path(__file__).resolve().parent / "models.json"
+MODELS_JSON_PATH = STAFFING_PATH
 SUPPORTED_RUNTIMES: tuple[str, ...] = (
     "claude",
     "codex",
@@ -187,11 +189,21 @@ class RuntimeResolution:
 
 
 def load_policy(path: Path | None = None) -> dict[str, dict[str, str]]:
-    """Load the work-shape -> tier registry (U1's ``tier_policy.json``)."""
-    policy_path = path if path is not None else TIER_POLICY_PATH
-    data: Any = json.loads(policy_path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise TierResolverError(f"tier policy at {policy_path} must be a JSON object")
+    """Load the work-shape -> tier registry (the ``work_shapes`` block of ``staffing.json``).
+
+    Fails loud when the block is absent rather than returning the whole document: a
+    caller that silently received the staffing registry would treat ``models`` and
+    ``vendors`` as work shapes.
+    """
+    policy_path = path if path is not None else STAFFING_PATH
+    document: Any = json.loads(policy_path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise TierResolverError(f"staffing registry at {policy_path} must be a JSON object")
+    data = document.get("work_shapes")
+    if not isinstance(data, dict) or not data:
+        raise TierResolverError(
+            f"staffing registry at {policy_path} is missing a non-empty 'work_shapes' object"
+        )
     return data
 
 
@@ -279,7 +291,7 @@ def resolve(
 
 
 def _load_models_registry(path: Path | None = None) -> dict[str, Any]:
-    """Load ``models.json``; used by the execution-class sibling, not by ``resolve()``."""
+    """Load ``staffing.json``; used by the execution-class sibling, not by ``resolve()``."""
     registry_path = path if path is not None else MODELS_JSON_PATH
     data: Any = json.loads(registry_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -291,7 +303,7 @@ def _execution_classes(registry: dict[str, Any] | None = None) -> dict[str, Any]
     data = registry if registry is not None else _load_models_registry()
     classes = data.get("execution_classes")
     if not isinstance(classes, dict) or not classes:
-        raise TierResolverError("models.json is missing a non-empty execution_classes object")
+        raise TierResolverError("staffing.json is missing a non-empty execution_classes object")
     return classes
 
 
@@ -351,7 +363,7 @@ def resolve_for_runtime(work_shape: str, runtime: str) -> RuntimeResolution:
     """Resolve an execution class to a runtime-owned ``{model, effort, fallbacks}``.
 
     ``work_shape`` is an ``execution_classes`` name (the portable vocabulary).
-    Existing ``tier_policy.json`` work shapes stay on ``resolve()``. Unknown class
+    Existing ``work_shapes`` rows stay on ``resolve()``. Unknown class
     or runtime raises; nothing defaults.
     """
     if runtime not in SUPPORTED_RUNTIMES:

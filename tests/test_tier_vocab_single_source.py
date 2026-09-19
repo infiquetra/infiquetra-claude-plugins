@@ -4,7 +4,7 @@ Covers the registry-derived vocabulary (U1), the ladder operations and effort-ce
 clamp (U2), the unsupported-combo HALT + ladder-monotonicity invariant (U3), the
 repo-wide bare-literal drift guard (U4), and the operator-table sync check + onboarding
 guard (U5). The vocabulary now lives in fleet-core's ``tier_palette.py``, derived from
-``models.json`` — these tests are the standing drift guards the issue's Definition of
+``staffing.json`` — these tests are the standing drift guards the issue's Definition of
 Done requires.
 """
 
@@ -19,7 +19,7 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 FLEET_CORE_SCRIPTS = REPO_ROOT / "plugins" / "fleet-core" / "scripts"
-MODELS_JSON = FLEET_CORE_SCRIPTS / "fleet_commons" / "models.json"
+STAFFING_JSON = FLEET_CORE_SCRIPTS / "fleet_commons" / "staffing.json"
 
 sys.path.insert(0, str(FLEET_CORE_SCRIPTS))
 
@@ -27,7 +27,7 @@ from fleet_commons import tier_palette  # noqa: E402
 from fleet_commons.tier_palette import TierPaletteError  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# U1 (AC2) — MODELS/EFFORTS derive from models.json's explicit rank/rung.
+# U1 (AC2) — MODELS/EFFORTS derive from staffing.json's explicit rank/rung.
 # ---------------------------------------------------------------------------
 
 
@@ -378,7 +378,7 @@ def test_tier_catalog_check() -> None:
 
 
 def test_plan_table_render_synced() -> None:
-    """AC8 (/plan half): the /plan tier table equals a fresh render from tier_policy.json, so
+    """AC8 (/plan half): the /plan tier table equals a fresh render from staffing.json, so
     a spaced-token drift (`opus / superhigh`) OR removal of the generated block reds this —
     the coverage the unspaced tier-token check above cannot provide for /plan."""
     from fleet_commons import render_tier_table
@@ -401,7 +401,7 @@ def test_onboarding_guard() -> None:
     assert TIER_PALETTE_RUNBOOK.exists()
     runbook = TIER_PALETTE_RUNBOOK.read_text(encoding="utf-8")
     assert ".index(" in runbook and "{#tier-vocab-ordering}" in runbook
-    assert "models.json" in runbook
+    assert "staffing.json" in runbook
     # a correct prepend derives a clean order; a mis-ranked insertion is rejected.
     good = {"m0": {"rank": 0}, "fable": {"rank": 1}, "opus": {"rank": 2}}
     assert tier_palette._derive_ordered(good, "rank", "model") == ("m0", "fable", "opus")

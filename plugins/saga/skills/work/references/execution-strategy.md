@@ -225,11 +225,12 @@ python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
 An explicit `{model, effort}` on the plan unit wins on **precedence** — and is validated against the
 same vocabulary the shape path resolves from, so a model or effort the registry does not carry is
 refused rather than passed through to a spawn. Otherwise the work shape is selected and resolved
-through the shared registry: `plugins/fleet-core/scripts/fleet_commons/tier_policy.json` via
+through the shared registry: the `work_shapes` block of
+`plugins/fleet-core/scripts/fleet_commons/staffing.json` via
 `tier_resolver` / `tier_defaults`. When a unit declares neither a tier nor a work shape, the selected
 shape is `mechanical` — bounded, specified work per `/work`'s own execution context and the middle
 rung that bounds either-direction error (KTD7) — so the resolver with neither argument resolves the
-`mechanical` row from `tier_policy.json`, not a literal at the spawn site. Values stay in that
+`mechanical` row from `staffing.json`, not a literal at the spawn site. Values stay in that
 registry; this file only names the shape-selection rule — `resolve_build_unit_tier` in
 `lifecycle_state.py` is the single delegation seam behind the subcommand. **The resolver takes no
 host or session input at all**, which is what makes inheritance impossible: it cannot consult a host

@@ -1,6 +1,6 @@
 """Tests for U1 (R2): the machine-readable work-shape -> tier registry.
 
-Asserts `tier_policy.json` parses as JSON, every `default_model` / `default_effort`
+Asserts the `work_shapes` block of `staffing.json` parses as JSON, every `default_model` / `default_effort`
 is a member of the canonical `MODELS` / `EFFORTS` vocabulary (tier_palette.py), and
 all generated work-shape rows from `plugins/saga/skills/plan/SKILL.md:298-304` are
 represented as registry keys.
@@ -16,7 +16,16 @@ import sys
 import pytest
 
 FLEET_CORE_SCRIPTS = pathlib.Path(__file__).parent.parent / "plugins" / "fleet-core" / "scripts"
-TIER_POLICY_PATH = FLEET_CORE_SCRIPTS / "fleet_commons" / "tier_policy.json"
+STAFFING_PATH = FLEET_CORE_SCRIPTS / "fleet_commons" / "staffing.json"
+
+
+def _work_shapes() -> dict[str, dict[str, str]]:
+    """The work-shape registry, read from the one staffing data file (issue #1021)."""
+    document: dict[str, dict[str, dict[str, str]]] = json.loads(
+        STAFFING_PATH.read_text(encoding="utf-8")
+    )
+    return document["work_shapes"]  # type: ignore[return-value]
+
 
 sys.path.insert(0, str(FLEET_CORE_SCRIPTS))
 
@@ -38,13 +47,12 @@ SKILL_MD_ROWS = (
 
 @pytest.fixture(scope="module")
 def registry() -> dict[str, dict[str, str]]:
-    data: dict[str, dict[str, str]] = json.loads(TIER_POLICY_PATH.read_text())
-    return data
+    return _work_shapes()
 
 
 def test_tier_policy_is_valid_json() -> None:
-    """tier_policy.json parses as JSON and is a non-empty object."""
-    data = json.loads(TIER_POLICY_PATH.read_text())
+    """The staffing registry's work_shapes block parses as JSON and is a non-empty object."""
+    data = _work_shapes()
     assert isinstance(data, dict)
     assert data
 
@@ -260,7 +268,7 @@ def test_cli_resolve_unknown_work_shape_errors(capsys: pytest.CaptureFixture[str
 
 
 # ---------------------------------------------------------------------------
-# U3 (R6): `/plan`'s Step-1 tier table is rendered from `tier_policy.json`, not
+# U3 (R6): `/plan`'s Step-1 tier table is rendered from `staffing.json`, not
 # hand-authored — a drift-guard fails a seeded divergence between SKILL.md's
 # generated block and the registry.
 # ---------------------------------------------------------------------------
@@ -503,7 +511,7 @@ def test_spawn_site_enumeration_routes_through_resolver() -> None:
     pairs = _parse_spawn_site_work_shapes(text)
     assert pairs, "no enumerated spawn sites found in sandbox-spawn-sites.md"
 
-    registry = json.loads(TIER_POLICY_PATH.read_text())
+    registry = _work_shapes()
     valid_keys = set(registry.keys()) | set(tier_resolver.ROLE_TIER_ALIASES)
 
     for site, work_shape in pairs:

@@ -19,7 +19,7 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 FLEET_CORE_SCRIPTS = REPO_ROOT / "plugins" / "fleet-core" / "scripts"
-MODELS_JSON = FLEET_CORE_SCRIPTS / "fleet_commons" / "models.json"
+STAFFING_JSON = FLEET_CORE_SCRIPTS / "fleet_commons" / "staffing.json"
 
 sys.path.insert(0, str(FLEET_CORE_SCRIPTS))
 
@@ -51,7 +51,7 @@ _EXISTING_RESOLVE_CONSUMERS = (
 
 
 def _registry() -> dict[str, Any]:
-    loaded = json.loads(MODELS_JSON.read_text(encoding="utf-8"))
+    loaded = json.loads(STAFFING_JSON.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return loaded
 
@@ -73,7 +73,9 @@ def test_existing_models_and_efforts_readers_are_unaffected() -> None:
     }
     assert "lineage_models" not in registry
     assert "lineage_efforts" not in registry
-    assert registry["schema_version"] == 2
+    # Version 3 is the merge of the former models.json and tier_policy.json (issue #1021).
+    assert registry["schema_version"] == 3
+    assert isinstance(registry["work_shapes"], dict) and registry["work_shapes"]
     assert set(registry["scalar_efforts"]) == {"low", "medium", "high", "xhigh", "max"}
     assert tier_palette.MODELS == ("fable", "opus", "sonnet", "haiku")
     assert tier_palette.EFFORTS == ("low", "medium", "high", "xhigh")

@@ -475,7 +475,7 @@ not the prose plan — is the single source of truth (KTD1, `references/operator
 **Step 1 — Derive per-unit tiers.** For each Implementation Unit in the plan, assign a `{model, effort}`
 tier from the work-shape heuristic (R10). Surface the tier table for operator override before locking:
 
-<!-- BEGIN GENERATED TIER TABLE (rendered from tier_policy.json via render_tier_table.py — do not hand-edit; a seeded divergence fails tests/test_tier_resolver.py::test_skill_registry_sync) -->
+<!-- BEGIN GENERATED TIER TABLE (rendered from staffing.json via render_tier_table.py — do not hand-edit; a seeded divergence fails tests/test_tier_resolver.py::test_skill_registry_sync) -->
 | Work shape | Default tier | Rationale |
 |---|---|---|
 | Judgment, design, adversarial review, architectural decisions | `opus / high` | Judgment, design, adversarial review, architectural decisions — deep reasoning needed; cost-justified. |

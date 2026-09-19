@@ -16,7 +16,15 @@ from types import ModuleType
 import pytest
 import yaml
 from saga_plan_contract import SaveProbe, save_blocks
-from test_saga_spec_consumer_row import ROOT, cli, contract_api, mutated, save_tick, tree
+from test_saga_spec_consumer_row import (
+    ROOT,
+    SCRIPT,
+    cli,
+    contract_api,
+    mutated,
+    save_tick,
+    tree,
+)
 
 __all__ = ["contract_api"]
 
@@ -473,3 +481,77 @@ def test_contract_cli_envelopes_baseexception_from_checkout_code(
     assert usage.stdout.startswith("usage: plan_save_contract.py"), usage.stdout
     with pytest.raises(json.JSONDecodeError):
         json.loads(usage.stdout)
+
+
+def test_contract_cli_envelopes_a_missing_pyyaml(contract_api: ModuleType, tmp_path: Path) -> None:
+    """An absent PyYAML stays inside the documented envelope (issue #997).
+
+    The tool used to import PyYAML at module scope, which is outside every handler it owns: a
+    machine without PyYAML got a traceback, empty stdout and exit 1 -- the code the docstring
+    reserves for drift, so a broken interpreter was indistinguishable from a real documentation
+    failure. `--help` broke the same way, and it is the one invocation the docstring exempts.
+
+    The interpreter here genuinely lacks PyYAML rather than carrying a module that raises on
+    import. A stub proves the symptom; only a real absence proves the repair.
+    """
+    api = contract_api
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    environment = tmp_path / "python"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+    python = environment / "bin/python"
+    absent = subprocess.run(
+        [str(python), "-I", "-c", 'import importlib.util; assert importlib.util.find_spec("yaml")'],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert absent.returncode != 0, "this environment can import PyYAML; the guard proves nothing"
+    script = checkout / SCRIPT
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(python), "-I", str(script), "--root", str(checkout), *args],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    originals = {path: (checkout / path).read_bytes() for path in (api.SKILL, api.SPEC)}
+    for args in (("validate",), ("render", "--check"), ("render", "--write")):
+        result = run(*args)
+        assert result.returncode == 2, (
+            f"{args}: expected the documented refusal exit 2, got {result.returncode}"
+            f"\n{result.stdout}\n{result.stderr}"
+        )
+        assert not result.stderr, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["outcome"] == "invalid", payload
+        assert payload["code"] == "engine", payload
+        assert payload["entry"] == "python dependency", payload
+        assert payload["file"] == str(SCRIPT), payload
+        assert "PyYAML" in str(payload["error"]), payload
+    assert originals == {path: (checkout / path).read_bytes() for path in originals}, (
+        "a refused render wrote to an owned document"
+    )
+
+    # --help is the documented exemption, and it must survive an interpreter with no PyYAML at all:
+    # argparse runs before any YAML is touched.
+    usage = subprocess.run(
+        [str(python), "-I", str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert usage.returncode == 0, usage.stdout + usage.stderr
+    assert not usage.stderr, usage.stderr
+    assert usage.stdout.startswith("usage: plan_save_contract.py"), usage.stdout
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(usage.stdout)
+
+    # The same checkout under this suite's own interpreter, which has PyYAML, is unaffected.
+    clean = cli(api, checkout, "validate")
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    assert json.loads(clean.stdout)["outcome"] == "valid"

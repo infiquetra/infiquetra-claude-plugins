@@ -747,6 +747,23 @@ both roots, not one.
 
 ---
 
+## Divergences the review introduced
+
+The plan is the decision record as it stood before execution; these are the places the shipped code
+went past it, each forced by a review finding and recorded in the fleet-core changelog.
+
+- **`resolve_shape` gained a fourth keyword, `vendor`.** U2 specified
+  `resolve_shape(work_shape, root=None, suggestion=None)`. The architecture and testing lenses
+  found that a role's vendor and its model came from unconnected places, so both entry points now
+  render the tier for the named vendor and `resolve_shape` takes it.
+- **A reviewing role requires its lens.** U5's error path asked for this on the command line; it is
+  enforced in the function, with `explain` opting out because its subject is the candidate list.
+- **`tier_resolver.canonical_work_shape` became public.** KTD2 said this module composes the
+  resolver rather than replacing it; the alias mapper had to be shared rather than copied when a
+  membership check in front of it silently lost three aliases.
+
+---
+
 ## Open Questions
 
 **Is the per-repository tier overlay meant to be committed, and if so, should this repository stop

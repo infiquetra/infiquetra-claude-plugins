@@ -39,6 +39,11 @@ arithmetic.
 
 ## Asking the resolver
 
+A work-shape argument may also be one of three `role-tier:` aliases that map onto a registry row —
+`adversarial-review` onto `judgment`, `contract-test` onto `mechanical`, `mechanical-scan` onto
+`purely-mechanical`. Twenty-five agent definitions carry one in frontmatter, so both forms resolve
+identically and the decision record names the row that answered, not the alias you typed.
+
 ```bash
 # by work shape
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve --shape judgment
@@ -51,16 +56,32 @@ uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve \
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py explain --role lens-reviewer
 ```
 
-The default output is the short pair, `opus/high`. Pass `--json` for the whole decision record: the
-vendor, model and effort, the layer that supplied them, the lens qualification where one was asked
-for, and the advisory suggestion where one was passed in. The short form is a projection of that
-record, never a separately computed answer.
+The default output is short and human, and its shape depends on what you asked:
+
+| Command | Prints |
+|---|---|
+| `resolve --shape judgment` | `opus/high` |
+| `resolve --role functional-tester` | `claude opus/high` |
+| `resolve --role lens-reviewer --lens security` | `claude opus/high documented-policy` |
+
+A work shape answers with the tier alone; a role answers with its vendor first, because a role's
+tier is meaningless without knowing which vendor it was rendered for; a lens appends the
+qualification status. **Do not parse these.** `--json` is the machine contract: it gives the
+vendor, model and effort as separate fields, the layer that supplied them, the lens qualification
+where one was asked for, and the advisory suggestion where one was passed in. The short form is a
+projection of that record, never a separately computed answer.
 
 **A pinned vendor is rendered for that vendor.** A role's tier resolves through the Claude-only
 work-shape policy, so a role that pins another vendor has its model translated through the portable
 execution-class names the vendor palette is keyed on, and its effort collapsed through the same
 per-vendor table a launch would use. A pin naming a vendor whose `runtime_supported` is false is
 refused rather than answered, because the answer would be a tier nobody can launch.
+
+**The translation has a hole, and it is the weakest rung.** The portable vocabulary has three names
+(`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`) and the Claude palette has four, so `haiku` has nothing
+to translate through. Two work shapes resolve to `haiku` — `purely-mechanical` and
+`offload-test-gated` — and a role pinning a non-Claude vendor on either of them fails loud rather
+than guessing. Giving the vendor palettes a fourth execution class is what closes it.
 
 **Precedence.** For a work shape: the per-repository overlay at `.saga/tier-defaults.json` first,
 then the shared `work_shapes` policy. For a role: the role's own entry, which names a work shape and
@@ -101,8 +122,27 @@ service being reachable.
 
 ## To add a vendor
 
-1. Add a row under `"vendors"` naming its models, its accepted efforts, its effort collapse and how
-   effort is applied (`argv`, or `in_session` with the command to send).
+1. Add a row under `"vendors"` naming its models, its accepted efforts, its effort collapse, and
+   how effort is applied. Two keys carry that last part: `effort_application` is `argv` or
+   `in_session`, and an `in_session` vendor **must** also carry `effort_command`, the template to
+   send. Omitting `effort_command` does not fail — `tier_resolver` falls back to `/effort {effort}`,
+   so a vendor that names its command differently silently inherits qwen's. The qwen row is the
+   worked example:
+
+   ```json
+   "qwen": {
+     "runtime_supported": true,
+     "models": {"gpt-5.6-sol": "qwen3.8-max-preview", "gpt-5.6-terra": "qwen3.7-plus",
+                "gpt-5.5": "qwen3.6-plus"},
+     "accepted_efforts": ["low", "medium", "high", "xhigh", "max"],
+     "effort_collapse": {},
+     "effort_application": "in_session",
+     "effort_command": "/effort {effort}"
+   }
+   ```
+
+   A row that is not a supported runtime uses `"effort_application": "unverified"` and carries an
+   `unsupported_reason` instead of efforts — `opencode` is the worked example of that.
 2. Set `runtime_supported` true **only** once the launch arguments are verified on a live host. Until
    then set it false and record why in `unsupported_reason`: `SUPPORTED_RUNTIMES` derives from the
    rows whose flag is true, so an unverified vendor is visible without being silently launchable.
@@ -115,6 +155,21 @@ service being reachable.
 `hermes` is the eighth agent kind the launcher skill names in prose and is deliberately absent: the
 topology table describes it as reconciling a profile workspace and owning its own routing, so there
 is no model or effort for this component to choose.
+
+## To add a role
+
+1. Add a row under `"roles"` naming the `work_shape` its tier comes from and the `capability` its
+   candidates are ranked by. The capability must be one the ratings block actually rates — the
+   registry rates ten, and none of them is called "testing", which is why `functional-tester` draws
+   on `debug`.
+2. Optionally add `"vendor"` to pin the role to a vendor other than `claude`. No shipped role does,
+   so read the hole named under "Asking the resolver" first: a pinned vendor on a work shape that
+   resolves to `haiku` cannot be rendered.
+3. A role whose capability is `adversarial-review` is a *reviewing* role: `resolve` requires a lens
+   for it, and `explain` accepts one optionally.
+4. The role vocabulary itself belongs to the software-development-lifecycle repository (issue
+   #1022). This block holds staffing defaults for the roles the run chain uses; an unknown role
+   name fails loud rather than falling back to a work shape.
 
 ## Effort: the three-layer cascade
 
@@ -153,11 +208,35 @@ Effort collapse for a vendor that cannot represent `max` is an **explicit table 
 silent clamp (`{#effort-collapse-max}`). Do not read another program's configuration files to guess
 what it will do.
 
+**Chaperone workers are outside the cascade.** A worker dispatched with intent `offload` or
+`second-opinion` takes an intent-driven default — `sonnet/medium` and `opus/high` respectively,
+carried as `work_shapes` rows — and that is not a value to resolve or override. The cascade's three
+layers do not apply to it.
+
+## Effort: reconciliation after a run
+
+`fleet_commons.effort_rider.reconcile_effort(resolved_effort, spawn_kind, manifest_effort=...,
+spawn_prompt=...)` compares what a teammate was resolved to against what the run recorded for it. A
+mismatch returns a named `tiering-drift[<spawn_kind>]` line; a match returns `None` and emits
+nothing.
+
+The comparison is honest per path, which is the whole point. On a real-knob path (`workflow`,
+`external-engine`) pass `manifest_effort`: the manifest's value is what was actually handed to the
+call, so a mismatch names both efforts. On the `agent` path pass `spawn_prompt` instead —
+reconciliation can only confirm that the rider text for the resolved effort reached the constructed
+prompt, so a mismatch names the compared quantity as `rider-text` and never as reasoning spend,
+because that seam cannot observe reasoning spend at all.
+
 ## Review lenses and the qualification ledger
 
 A lens's qualification is read from the software-development-lifecycle repository's
 `config/executor-verifications.json`, through the same checkout ladder mission-control uses: an
 explicit path, then `INFIQUETRA_SDLC_PATH`, then `~/workspace/infiquetra/infiquetra-sdlc`.
+
+The resolution order is deliberately **not** a fall-through: an explicit path, or an
+`INFIQUETRA_SDLC_PATH`, that does not name a directory returns "no checkout" rather than quietly
+trying the next rung. A caller that names a wrong path gets the documented-policy outcome, never
+the operator's real checkout.
 
 `qualified` requires all of it: an entry matching the lens, that exact vendor, model and effort, the
 current lens-catalogue version, and every fixture passed. Everything else is the catalogue's
@@ -166,10 +245,12 @@ fixture pass, an entry against an older catalogue version, an unreadable ledger,
 checkout. **Absence is data, not an exception**: the shipped ledger is empty on purpose, so raising
 would fail every lens resolution on day one.
 
-## Execution classes (portable version-2 subset)
+## Execution classes (the portable subset shared with Codex)
 
 `staffing.json` also carries `schema_version`, `scalar_efforts`, `execution_classes` and
-`root_orchestration_profiles`. Those keys are the portable Codex version-2 subset and are
+`root_orchestration_profiles`. Those keys are the subset shared with the Codex plugin repository,
+whose own copy stays at its `schema_version` 2 while this file is at 3 — the subset is shared by
+content, not by version number, and neither repository reads the other's file. They are
 **additive**. Do not rename `models` / `efforts` to `lineage_models` / `lineage_efforts`, and do not
 port those lineage tables as the live router.
 
@@ -193,6 +274,25 @@ runtimes. `SCALAR_EFFORTS` derives from `scalar_efforts` the same way `EFFORTS` 
   registry and the test goes red until someone re-copies. Issue 1030 deletes the registry and that
   test with it, at which point these ratings become the only copy and their `last_validated` dates
   have nothing left to check them against.
+
+## Wiring a new consumer
+
+Load the module through the fleet-commons shim, never by file path — a path import works in a
+checkout and breaks under the installed-plugin layout, where fleet-core lives in a versioned cache
+directory:
+
+```python
+import fleet_commons_shim
+
+staffing = fleet_commons_shim.load("staffing")
+decision = staffing.resolve_shape("judgment")
+```
+
+Consuming this module means depending on the fleet-core version that introduced it. Say so in your
+plugin's changelog and fail with a message naming both versions if the module is absent;
+`plugins/saga/scripts/tier_defaults.py` is the worked example. This machine carries two installed
+plugin roots and a release has updated one and not the other before, so a consumer that assumes
+the newer fleet-core is present will fail in one root and not the other.
 
 ## Where to look
 

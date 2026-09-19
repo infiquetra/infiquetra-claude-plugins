@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   qualification status read from the software-development-lifecycle repository's
   executor-verification ledger; `explain --role` lists the candidate executors in rating order with
   their ratings. The default output is the short `model/effort` pair, with `--json` for the whole
-  decision record.
+  decision record. A work shape prints the tier alone; a role prints its vendor first.
 - **`references/staffing.md`**, the one reference document for this knowledge. It supersedes
   `tier-palette.md` and `effort-convention.md`, which are removed.
 

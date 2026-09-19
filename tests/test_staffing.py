@@ -1308,3 +1308,49 @@ def test_the_saga_shim_resolves_every_alias_as_it_did_before_the_merge() -> None
     }
     for alias, tier in expected.items():
         assert tier_defaults.resolve_tier_with_overlay(alias) == tier
+
+
+# ---------------------------------------------------------------------------
+# The two silent failures the documentation lens found (issue #1021).
+# ---------------------------------------------------------------------------
+
+
+def test_an_in_session_vendor_names_its_own_effort_command() -> None:
+    """Omitting effort_command does not fail — it silently inherits qwen's template.
+
+    tier_resolver reads the key with `/effort {effort}` as the default, so a vendor whose command
+    is spelled differently would launch with the wrong one and nothing would say so.
+    """
+    for name, row in staffing.vendors().items():
+        if row.get("effort_application") == "in_session":
+            assert row.get("effort_command"), (
+                f"{name}: an in_session vendor must name its own effort_command, or it inherits "
+                "the fallback template silently"
+            )
+
+
+def test_the_short_output_shape_is_the_one_the_reference_document_states() -> None:
+    """The document claimed one shape for all three forms; three of its examples produced another."""
+    assert _run("resolve", "--shape", "judgment").stdout.strip() == "opus/high"
+    assert _run("resolve", "--role", "functional-tester").stdout.strip() == "claude opus/high"
+    assert (
+        _run("resolve", "--role", "lens-reviewer", "--lens", "security").stdout.strip()
+        == "claude opus/high documented-policy"
+    )
+
+
+def test_the_reference_document_states_each_of_those_three_shapes() -> None:
+    """A wrong output-format claim is the kind a reader acts on, so pin the document to the code."""
+    reference = (REPO_ROOT / "plugins" / "fleet-core" / "references" / "staffing.md").read_text(
+        encoding="utf-8"
+    )
+    for shape in ("`opus/high`", "`claude opus/high`", "`claude opus/high documented-policy`"):
+        assert shape in reference, f"staffing.md does not state the {shape} output shape"
+
+
+def test_the_reference_document_carries_the_shim_import_idiom() -> None:
+    """A path import works in a checkout and breaks under the installed-plugin layout."""
+    reference = (REPO_ROOT / "plugins" / "fleet-core" / "references" / "staffing.md").read_text(
+        encoding="utf-8"
+    )
+    assert 'fleet_commons_shim.load("staffing")' in reference

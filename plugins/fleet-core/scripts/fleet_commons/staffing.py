@@ -117,7 +117,11 @@ class StaffingDecision:
 
     @property
     def tier(self) -> str:
-        """The short human form the card's acceptance criteria name, e.g. ``opus/high``."""
+        """The model and effort as one ``model/effort`` token, e.g. ``opus/high``.
+
+        This is the whole short output only for a work-shape answer; a role answer prints its
+        vendor first and a lens appends the qualification status. ``_short_form`` composes those.
+        """
         return f"{self.model}/{self.effort}"
 
     def as_dict(self) -> dict[str, Any]:
@@ -225,9 +229,10 @@ def overlay_path(root: Path | None = None) -> Path:
 def load_overlay(root: Path | None = None) -> dict[str, dict[str, str]]:
     """Return the per-repository overlay; absent means ``{}``, malformed raises.
 
-    Validation mirrors ``plugins/saga/scripts/tier_defaults.py`` exactly: an unknown work shape,
-    an off-palette model or effort, and a model-effort pair above the model's ceiling are each a
-    loud failure rather than a silent fall-through to the policy default.
+    This is the one implementation of the read and its validation; saga's ``tier_defaults``
+    delegates here. An unknown work shape, an off-palette model or effort, and a model-effort pair
+    above the model's ceiling are each a loud failure rather than a silent fall-through to the
+    policy default.
     """
     path = overlay_path(root)
     if not path.exists():

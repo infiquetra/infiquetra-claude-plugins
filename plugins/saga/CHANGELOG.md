@@ -20,8 +20,10 @@ and not the other six times, so check both.
   (#1021).** `skills/plan/SKILL.md`'s generated tier-table block is re-rendered from
   `staffing.json`, and `scripts/plan_save_contract.py`'s `EFFORT_REFERENCE` constant — which is
   checked for existence at contract-load time, not merely linked — now names
-  `plugins/fleet-core/references/staffing.md`. `scripts/plan_save_proof.py` and the two reference
-  documents that named the deleted `tier_policy.json` follow.
+  `plugins/fleet-core/references/staffing.md`. `scripts/plan_save_proof.py` follows it, and so do the four
+  documents that named the deleted `tier_policy.json` — `references/sandbox-spawn-sites.md`,
+  `skills/work/references/execution-strategy.md`, `skills/work/SKILL.md` and
+  `skills/plan/SKILL.md` — together with two comments in `scripts/lifecycle_state.py`.
 
 ## [0.159.0] - 2026-09-16
 

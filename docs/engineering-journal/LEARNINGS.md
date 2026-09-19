@@ -60,8 +60,10 @@ know about, because the existing suite by construction does not exercise them.
 **Evidence.** Issue #1021, found by the testing review lens. `tests/test_staffing.py` called the
 resolver without a `root`, so it read `Path.cwd()/.saga/tier-defaults.json`. That path is
 gitignored and is exactly where saga writes an operator's confirmed tier overrides. Writing one
-turned 13 of 92 tests red — the work-shape defaults, all three command-line tests, both suggestion
-tests and every pinned-vendor case — for a reason nothing in the diff explains.
+turned 13 of the 92 tests the file then held red — the work-shape defaults, all three command-line
+tests, both suggestion tests and every pinned-vendor case — for a reason nothing in the diff
+explains. (The file has grown since; the count is the reproduction as it stood, not a running
+total.)
 
 **Mechanism.** Continuous integration starts from a fresh clone, which has no overlay, so the
 suite was green everywhere it ran automatically and red only on a machine that had actually used

@@ -279,6 +279,11 @@ BARE_RETIRED_NAME = re.compile(
 # A bullet or numbered list item begins a new exemption unit.
 LIST_ITEM_START = re.compile(r"\s*(?:[-*+]|\d+\.)\s")
 
+# A markdown table row is its own unit for the same reason a list item is: a
+# table is a blank-line-free run, so one row carrying a history marker would
+# otherwise excuse every other row in the table.
+TABLE_ROW_START = re.compile(r"\s*\|")
+
 # Lines that legitimately discuss the retired vocabulary as history rather than
 # instructing anyone to use it. Each is a deliberate, reviewed exemption.
 HISTORY_MARKERS = (
@@ -382,7 +387,10 @@ def _history_exempt_lines(text: str) -> set[int]:
             starts_unit = (
                 not units
                 or (is_fence and not fenced)
-                or (not fenced and LIST_ITEM_START.match(text_line))
+                or (
+                    not fenced
+                    and (LIST_ITEM_START.match(text_line) or TABLE_ROW_START.match(text_line))
+                )
             )
             if is_fence and fenced:
                 units[-1].append((number, text_line))
@@ -574,3 +582,27 @@ class TestBareRetiredNamePattern:
         legitimate. It is still caught as a Status VALUE by the flag patterns."""
         assert not BARE_RETIRED_NAME.search("cards in the Active stage")
         assert _status_values("--status Active\n") == [(1, "Active")]
+
+
+def test_a_marked_table_row_does_not_excuse_the_other_rows() -> None:
+    """Third instance of one mechanism: a table is a blank-line-free run, so
+    without its own unit rule a single historical row covers the whole table."""
+    text = (
+        "| Board | Note |\n"
+        "|---|---|\n"
+        "| Olympus | the legacy ladder |\n"
+        "| Operations | move the card to Done |\n"
+    )
+    exempt = _history_exempt_lines(text)
+    assert 3 in exempt, "the row carrying the marker should be exempt"
+    assert 4 not in exempt, "a sibling row must not inherit the exemption"
+
+
+def test_the_match_stops_at_the_next_field_flag() -> None:
+    """Pins the `(?!--field)` lookahead, which was previously unfalsifiable.
+
+    Without it the scan runs from `--field Status` past a second `--field` and
+    reads the WRONG field's option as a Status, which would be a false positive.
+    """
+    text = "--field Status --project 3\n--field Objective --option defects-claude-plugins\n"
+    assert _status_values(text) == []

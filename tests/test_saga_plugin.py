@@ -46,7 +46,11 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.159.3"  # 0.159.3: plan_save_proof.py carries a
+    assert plugin_json["version"] == "0.160.0"  # 0.160.0: shaping_judgments.py asks the
+    # eleven advisory typed judgments inside /ideate, /brainstorm and /office-hours through the
+    # fleet-core TypeSafe client, batched one request per body of text. None is a gate, the dedupe
+    # judgment groups without removing a candidate, and every one fails open (issue #1037).
+    # Predecessor 0.159.3: plan_save_proof.py carries a
     # command-line entrypoint that names the proof and the command that runs it, serves it at
     # exit 0 for --help, and refuses every other direct invocation at exit 2 with an empty
     # stdout; PyYAML moved to its point of use so that --help works without it (issue #998).

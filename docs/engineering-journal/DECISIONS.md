@@ -2,6 +2,18 @@
 
 ## 2026-09-19
 
+### The proof's entrypoint describes and refuses; it does not become a second way to run the proof  {#998-describe-and-refuse-not-a-second-runner}
+
+**Decision.** `plugins/saga/scripts/plan_save_proof.py` gains a command-line entrypoint that names the proof and the command that runs it, serves that text at exit 0 for `--help`, and refuses every other direct invocation at exit 2 with usage on standard error and standard output left empty. It does not gain a way to run the proof standalone.
+
+**Rationale.** `verify(api, contract, candidate)` needs the contract module's globals, a loaded contract and a rendered candidate, none of which exist for a standalone run — producing them means doing what `plan_save_contract.py main()` already does. A `--root` runner here would therefore duplicate an existing command, add a dependency edge from the proof back to the contract tool that reverses the one-way direction the two files have today, and bypass the tool-revision check at `plan_save_contract.py:496` that exists so the renderer that writes is the one that was verified. A second, weaker way to verify the documentation is a liability. Exit 2 matches argparse's usage-error code and the sibling tool's refusal code, so a caller reading exit codes across the pair sees one vocabulary; the empty standard output is the load-bearing half, because the contract tool's callers parse standard output as JSON and nothing here may be mistaken for that envelope.
+
+**Alternatives rejected.** A standalone `--root` runner (above). Leaving the file alone because 27 other scripts under `plugins/saga/scripts/` also have no entrypoint (true, but they are imported by name rather than invoked by path, and this card is tracked work with a named acceptance). Exit 0 with guidance (that is the reported defect with prose added). Exit 1 (the contract tool reserves 1 for drift).
+
+**Revisit when.** A caller genuinely needs to run the proof against a checkout without the contract tool — at which point the right move is to give `plan_save_contract.py` the mode, not to grow a second runner here.
+
+**Refs.** Issue #998 (finding `agentusab06`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-998-plan-save-proof-cli-entrypoint-plan.md` KTD1, KTD2, KTD3, KTD4, KTD5; LEARNINGS `{#998-no-entrypoint-means-silent-success}`.
+
 ### PyYAML is imported at first use, and the missing-dependency refusal reuses the closed error-code set  {#997-defer-the-import-keep-the-code-set-closed}
 
 **Decision.** `plugins/saga/scripts/plan_save_contract.py` imports PyYAML inside `yaml_module()`, called from the parsing path, and builds its duplicate-key loader in `unique_loader()` against the module that call returns. Neither name exists at module scope. A missing PyYAML is reported through the existing refusal vocabulary — exit 2, `code: engine`, `entry: python dependency`, `file` naming this script, and an `error` naming PyYAML and the repair — and no new documented error code is introduced.

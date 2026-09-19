@@ -555,3 +555,90 @@ def test_contract_cli_envelopes_a_missing_pyyaml(contract_api: ModuleType, tmp_p
     clean = cli(api, checkout, "validate")
     assert clean.returncode == 0, clean.stdout + clean.stderr
     assert json.loads(clean.stdout)["outcome"] == "valid"
+
+
+def test_proof_cli_describes_itself_and_stays_inert_under_the_loader(
+    contract_api: ModuleType, tmp_path: Path
+) -> None:
+    """The proof names itself and its runnable command, and the loader never fires it (#998).
+
+    `plan_save_proof.py` had no entrypoint at all, so every direct invocation -- `--help` and a
+    guessed subcommand alike -- exited 0 and printed nothing. Silence at a success code is the
+    sharp edge: a mistyped invocation was indistinguishable from a passing run.
+
+    The proof is not runnable on its own (`verify()` needs the contract module's globals, a loaded
+    contract and a rendered candidate), so the entrypoint describes and refuses rather than
+    duplicating `plan_save_contract.py validate` and bypassing its tool-revision check.
+
+    Standard output stays empty on every refusal. The contract tool's callers parse standard
+    output as JSON, and this file must never emit anything they could mistake for that envelope.
+
+    The `--help` probe runs on an interpreter with no PyYAML at all: the import moved to its point
+    of use so the entrypoint this test creates is not born with issue #997's defect. The
+    interpreter's genuine lack of PyYAML is asserted before it proves anything.
+
+    The last probe is positive, not negative. `runpy.run_path` names the module it loads
+    `<run_path>`, so a `__main__` guard cannot fire under `plan_save_contract.py`'s loader -- and
+    if it ever did, issue #996's guard would convert the `SystemExit` into a tidy-looking refusal
+    blaming the engine, hiding the misfire rather than surfacing it.
+    """
+    api = contract_api
+    proof = ROOT / PROOF
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(proof), *args],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    # R1: --help says what the file is and names the command that actually runs it.
+    usage = run("--help")
+    assert usage.returncode == 0, usage.stdout + usage.stderr
+    assert usage.stdout.startswith("usage: plan_save_proof.py"), usage.stdout
+    assert str(SCRIPT) in usage.stdout, usage.stdout
+    assert "validate" in usage.stdout, usage.stdout
+    assert not usage.stderr, usage.stderr
+
+    # R2, bare invocation: the entrypoint's own guidance, naming the runnable command.
+    bare = run()
+    assert bare.returncode == 2, f"{bare.returncode}\n{bare.stdout}\n{bare.stderr}"
+    assert bare.stdout == "", bare.stdout
+    assert str(SCRIPT) in bare.stderr, bare.stderr
+
+    # R2, malformed arguments: argparse's own usage. Still exit 2, still silent on standard output.
+    for args in (("--not-a-flag",), ("validate", "--root", ".")):
+        refused = run(*args)
+        assert refused.returncode == 2, f"{args}: {refused.returncode}\n{refused.stderr}"
+        assert refused.stdout == "", f"{args}: {refused.stdout!r}"
+        assert "plan_save_proof.py" in refused.stderr, f"{args}: {refused.stderr!r}"
+
+    # R3: --help survives an interpreter that genuinely cannot import PyYAML.
+    environment = tmp_path / "python"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+    python = environment / "bin/python"
+    absent = subprocess.run(
+        [str(python), "-I", "-c", 'import importlib.util; assert importlib.util.find_spec("yaml")'],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert absent.returncode != 0, "this environment can import PyYAML; the guard proves nothing"
+    bare_interpreter = subprocess.run(
+        [str(python), "-I", str(proof), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bare_interpreter.returncode == 0, bare_interpreter.stdout + bare_interpreter.stderr
+    assert bare_interpreter.stdout.startswith("usage: plan_save_proof.py"), bare_interpreter.stdout
+
+    # R4: the loader still loads this file as a library, so a clean checkout validates unchanged.
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    clean = cli(api, checkout, "validate")
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    assert json.loads(clean.stdout)["outcome"] == "valid", clean.stdout

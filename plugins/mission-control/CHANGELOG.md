@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.18.0] - 2026-09-19
+
+### Fixed
+
+- **The recommended-tier-band comment names the merged staffing data (#1021).** The band map in
+  `scripts/sdlc_manager.py` said it mirrors `tier_policy.json`'s work-shape bands. Issue #1021
+  merged that file into `plugins/fleet-core/scripts/fleet_commons/staffing.json`, so the comment
+  now names its `work_shapes` block. The bands themselves are unchanged, and no behaviour moved.
+
 ## [2.17.0] - 2026-09-19
 
 ### Fixed

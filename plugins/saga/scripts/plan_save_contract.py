@@ -34,7 +34,7 @@ SCHEMA = "plan_save_contract.v3"
 RIDER = "plugins/fleet-core/scripts/fleet_commons/effort_rider.py"
 FLEET_CORE = "plugins/fleet-core"
 FLEET_ROOT_ENV = "FLEET_COMMONS_ROOT"
-EFFORT_REFERENCE = Path("plugins/fleet-core/references/effort-convention.md")
+EFFORT_REFERENCE = Path("plugins/fleet-core/references/staffing.md")
 
 
 class ContractError(ValueError):

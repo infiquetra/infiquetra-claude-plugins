@@ -5232,7 +5232,7 @@ def _contract_scaffold_body(
 # Issue-carried recommended tier band (#368 AC5): a coarse issue-time seed for
 # /plan's per-unit tier table (saga's tier_defaults.resolve_tier_for_plan reads
 # it; precedence there is repo overlay > this band > shared registry). The map
-# mirrors tier_policy.json's work-shape bands: judgment→opus/high,
+# mirrors the work_shapes block of fleet-core's staffing.json: judgment→opus/high,
 # mechanical→sonnet/medium, read-only-survey→sonnet/low.
 _TIER_BAND_HEADER = "Recommended Tier Band"
 _ISSUE_TYPE_TIER_BANDS: dict[str, tuple[str, str] | None] = {

@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).parent.parent
 SCRIPT_DIR = ROOT / "plugins" / "saga" / "scripts"
 
-# Registry defaults this suite pins against (tier_policy.json): mechanical -> sonnet/medium.
+# Registry defaults this suite pins against (staffing.json): mechanical -> sonnet/medium.
 MECHANICAL_REGISTRY = {"model": "sonnet", "effort": "medium"}
 
 

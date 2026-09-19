@@ -5,6 +5,108 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-09-19
+
+### Added
+
+- **One staffing component** (`scripts/fleet_commons/staffing.py` and `staffing.json`, issue 1021).
+  One data file and one resolver answer "role or work shape, and for review the lens, to vendor,
+  model and effort". `resolve --shape` gives the work-shape tier honouring the per-repository
+  overlay; `resolve --role` gives a vendor, model and effort; `resolve --role --lens` adds the
+  qualification status read from the software-development-lifecycle repository's
+  executor-verification ledger; `explain --role` lists the candidate executors in rating order with
+  their ratings. The default output is the short `model/effort` pair, with `--json` for the whole
+  decision record. A work shape prints the tier alone; a role prints its vendor first.
+- **`references/staffing.md`**, the one reference document for this knowledge. It supersedes
+  `tier-palette.md` and `effort-convention.md`, which are removed.
+
+### Fixed
+
+- **A vendor-pinned role now resolves to a pair that vendor can run (#1021, architecture review).**
+  A role's vendor came from its own row and its model from the Claude-only work-shape policy, with
+  no translation between them, so a role pinning `codex` answered `codex opus/high` — a model codex
+  has never heard of — and the suite passed. The model is now rendered through the portable
+  execution-class names the vendor palette is keyed on, the effort collapses through the same
+  per-vendor table a launch would use, and a pin naming a vendor whose `runtime_supported` is false
+  is refused rather than answered.
+- **A reviewing role asked without a lens is refused rather than answered (#1021).** It returned a
+  record with no `qualification` key at all — the gating field absent rather than present and
+  negative.
+- **An advisory suggestion above a model's effort ceiling is refused (#1021).** The overlay
+  rejected that pair and the suggestion validator accepted it.
+- **`resolve_shape` renders its vendor too (#1021, testing review).** The sibling entry point took
+  a `vendor` argument and neither validated nor translated it, so it reproduced the defect the
+  role path had just been fixed for: `resolve_shape("judgment", vendor="codex")` answered
+  `opus`. Both entry points now translate through one path, and an unknown vendor or an
+  unsupported runtime is refused on both.
+- **`role-tier:` aliases resolve again through saga's overlay chain (#1021, contract review).**
+  `resolve_shape` checked work-shape membership before delegating, and the alias mapper runs
+  inside the delegate — so `adversarial-review`, `contract-test` and `mechanical-scan`, which
+  twenty-five team-execution agent definitions carry in frontmatter, stopped resolving through
+  `tier_defaults.resolve_tier_with_overlay`. It canonicalises first now, through
+  `tier_resolver.canonical_work_shape`, which is public for that reason rather than copied.
+- **An unverifiable lens name is no longer reported as a policy answer (#1021, agent-usability
+  review).** A misspelled `--lens` came back byte-identical to a correct call, at exit zero,
+  whenever the lens catalogue could not be read — which is every host without the
+  software-development-lifecycle checkout. The reason blamed the missing checkout, so a caller
+  could not tell "no executor is qualified for this lens" from "I typed the name wrong", and would
+  persist a record naming a lens that does not exist. A third status, `lens-unverified`, now says
+  the name went unchecked. The repository's own lens roster is a strict subset of the catalogue, so
+  validating against it offline would have rejected a real lens; saying the name is untrusted is
+  the honest answer.
+- **`explain` says its list is alternatives, not a selection (#1021).** The resolved executor is
+  usually not among the rated candidates, and the subcommand named "explain" printed them with no
+  header — inviting a reader to take the top-rated row as the answer.
+- **An absent or malformed lens catalogue degrades instead of raising (#1021).** A falsiness test
+  let a missing catalogue fall through to the unknown-lens error, on the path whose whole contract
+  is that it never raises.
+
+- **The lens qualification decision fails closed (#1021, security review).** A ledger entry
+  carrying only the four identity fields — lens, vendor, model, effort — and none of the evidence
+  fields was granted `qualified`, because `entry.get("catalogue_version") != version` and
+  `passed != total` both compared two absent values. Zero fixtures out of zero granted for the same
+  reason. Every evidence field is now checked for presence and type before it is compared, and a
+  ledger entry, a catalogue entry or a file that is malformed in any of six ways now degrades to
+  the documented-policy outcome rather than raising through a path documented never to break a
+  spawn — including a file with non-UTF-8 bytes, whose `UnicodeDecodeError` is a `ValueError` and
+  so escaped a handler that caught only `OSError` and `JSONDecodeError`.
+- **The decision record no longer carries the operator's absolute home path (#1021).** The reason
+  string for an absent checkout named the default path, and the record is handed to a caller to
+  persist; it now names the environment variable instead.
+
+### Changed
+
+- **`root` names one thing and `checkout` names the other (#1021).** Three functions took a
+  repository root and two took a lifecycle checkout, all spelled `root`. Passing the wrong one
+  degraded silently to the documented-policy outcome rather than failing, because any directory
+  satisfies the checkout resolution. `lens_catalogue`, `verification_ledger` and `sdlc_root` now
+  take `checkout`.
+- **The staffing registry is read once per process rather than five times per call (#1021).** One
+  `resolve_role` call re-read and re-parsed the 26 KB registry five times, because every block
+  accessor reloaded it. The load is memoized on the file's size and modification time, so an edit
+  on disk is still picked up, and a size ceiling refuses a registry far larger than the real one.
+
+
+
+- **`staffing.json` absorbs `models.json` and `tier_policy.json`**, which are deleted. It carries
+  the model palette, the effort vocabulary, the scalar effort superset, the work-shape tier policy
+  under a new `work_shapes` key, the per-vendor palette, the capability ratings and trust tiers
+  migrated from saga's engine registry, the per-role staffing defaults, the execution classes and
+  the root orchestration profile. Its `schema_version` is 3.
+- **The per-vendor palette is data, not Python.** `tier_resolver.py` derives `SUPPORTED_RUNTIMES`,
+  its model translation, its accepted efforts, its effort collapse and its effort application from
+  the `vendors` block. Behaviour is unchanged for all six supported runtimes.
+- **The palette covers every vendor the agent-launcher can start**, which is seven. `opencode`
+  carries `runtime_supported: false` with its reason recorded: nobody has verified its launch-time
+  effort and model arguments, and its model identifier must be in `provider/model` form. It is
+  visible in the data without being silently launchable.
+- **`tier_palette.py`, `tier_resolver.py` and `render_tier_table.py` read the new file.** Their
+  public Python surface is unchanged, so importers do not move. `load_policy()` reads the
+  `work_shapes` block and fails loud when it is absent.
+- **The capability ratings are copied, not moved.** `plugins/saga/references/engine-registry.yaml`
+  stays on disk and a parity test in `tests/test_staffing.py` holds the copy to it while both
+  exist; issue 1030 deletes both.
+
 ## [0.26.0] - 2026-09-19
 
 ### Added

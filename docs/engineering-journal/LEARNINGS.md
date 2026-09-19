@@ -2,6 +2,147 @@
 
 ## 2026-09-19
 
+### A reference document can be load-bearing at runtime, and deleting one is a code change  {#1021-reference-documents-are-runtime}
+
+**Evidence.** Issue #1021, commit for U6. `plugins/saga/scripts/plan_save_contract.py:36` held
+`EFFORT_REFERENCE = Path("plugins/fleet-core/references/effort-convention.md")` and `:217` checked
+`(root / EFFORT_REFERENCE).is_file()`, failing the whole contract load when it did not exist.
+`plugins/saga/scripts/plan_save_proof.py:314` rendered the same path into operator prose, the plan
+skill carried it in a generated block, and `tests/test_saga_spec_consumer_row.py:72` copied it into
+its fixture tree.
+
+**Mechanism.** The plan's first draft listed the deletion of two reference documents under
+"documentation", which is what they look like: markdown under `references/`. Nothing in the file
+itself says it is checked for existence at import time by a sibling plugin. An implementer deleting
+it and running the fleet-core tests would have seen green, because the gate lives in saga; the
+failure surfaces only when a saga plan save runs. The adversarial review found it by grepping the
+document's *name* across the repository rather than reading the plan's file list.
+
+**Generalizable rule.** Before deleting any file, grep the repository for its path as a string, not
+just for links to it. A path held in a constant, asserted by a test fixture, or embedded in a
+generated block is code, and it moves in the same commit as the deletion — never after it.
+
+**And grep the whole repository, not the plugin you are working in.** This entry's own first sweep
+stopped at the saga plugin boundary and left two team-execution reference documents routing readers
+to the deleted `tier_policy.json`; a review lens found them two cycles later. The boundary is not a
+natural stopping point — it is just where attention ran out. Deleting a file across a repository of
+plugins means bumping every plugin whose files you then have to edit, and that cost is part of the
+deletion, not a reason to leave the pointers broken.
+
+### A validity check placed before a normalising step silently narrows the input class  {#1021-check-before-normalise}
+
+**Evidence.** Issue #1021, found by the contract review lens. `staffing.resolve_shape` rejected a
+work shape absent from the registry, then delegated to `tier_resolver.resolve`, which maps three
+`role-tier:` aliases onto registry keys before looking them up. The pre-check therefore fired
+first, and the aliases twenty-five team-execution agent definitions carry in frontmatter stopped
+resolving through saga's overlay chain:
+
+```
+resolve_tier_with_overlay("adversarial-review")  base: opus/high   after: TierDefaultsError
+```
+
+The saga changelog written in the same change asserted the five public functions kept "their
+behaviour". They kept their signatures; they lost an input class.
+
+**Mechanism.** The new module added a friendly error for an unknown work shape — a small,
+obviously good change — without noticing that the function it wrapped accepted a wider vocabulary
+than the registry it validated against. No test in either module mentioned an alias, so the suite
+stayed green. The aliases live in a Python constant and are consumed from Markdown frontmatter,
+which is why a grep for the failing input finds nothing in the test tree.
+
+**Generalizable rule.** When you add a validity check in front of an existing call, first read
+what that call accepts. Normalise before validating, never the reverse — and when a wrapper
+narrows an input class, the test that proves otherwise has to name the inputs the wrapper does not
+know about, because the existing suite by construction does not exercise them.
+
+### A test that reads a gitignored file is green on a fresh clone and red on a real machine  {#1021-gitignored-state-under-test}
+
+**Evidence.** Issue #1021, found by the testing review lens. `tests/test_staffing.py` called the
+resolver without a `root`, so it read `Path.cwd()/.saga/tier-defaults.json`. That path is
+gitignored and is exactly where saga writes an operator's confirmed tier overrides. Writing one
+turned 13 of the 92 tests the file then held red — the work-shape defaults, all three command-line
+tests, both suggestion tests and every pinned-vendor case — for a reason nothing in the diff
+explains. (The file has grown since; the count is the reproduction as it stood, not a running
+total.)
+
+**Mechanism.** Continuous integration starts from a fresh clone, which has no overlay, so the
+suite was green everywhere it ran automatically and red only on a machine that had actually used
+the feature. The author of the same change had already hit this class once and written a comment
+about it in a neighbouring test file, and still did not apply it to the new suite — knowing the
+rule is not the same as sweeping for it.
+
+**Generalizable rule.** A test that reads state from the working directory must select that
+directory itself, with an autouse `monkeypatch.chdir(tmp_path)` and a matching `cwd=` on any
+subprocess. Before trusting a green suite, write the ignored file the code under test reads and
+run it again: a fresh clone hiding the problem is the shape of the flake, not a defence against it.
+
+### Comparing two absent values with `!=` is how a permission check fails open  {#1021-absent-equals-absent-fails-open}
+
+**Evidence.** Issue #1021, found by the security review lens. `qualify_lens` decides whether an
+executor may establish a scoring threshold for a review lens — a privilege decision. It guarded with
+`entry.get("catalogue_version") != version` and `passed != total`. A ledger entry carrying only the
+four identity fields and none of the evidence fields made both sides `None` on both comparisons, so
+both guards passed and the entry was granted:
+
+```
+ledger entry: {"lens":"security","vendor":"claude","model":"opus","effort":"high"}
+result: qualified — "passed None of None fixtures at catalogue version None"
+```
+
+`fixtures_passed: 0, fixtures_total: 0` granted for the same reason: zero equals zero.
+
+**Mechanism.** Every test built its entry from a fixture helper that always supplied all three
+evidence fields, so no test could reach the branch. The code read as if it checked the evidence,
+and it did — it checked that two absent values matched each other. The failure direction was open
+on *incomplete* data, which is the likelier real-world shape than hostile data: a hand-edited or
+half-migrated ledger.
+
+**Generalizable rule.** In a permission or qualification check, assert presence and type before
+comparing, and write the test that omits each required field in turn. `a != b` passing is not
+evidence that `a` and `b` are right; it is only evidence they are the same, and two absences are
+always the same.
+
+### A version bump breaks every test that pinned the old version as a literal  {#1021-version-literals-in-tests}
+
+**Evidence.** Issue #1021. Bumping fleet-core from 0.25.3 to 0.26.0 failed three tests that had the
+old string hardcoded — `tests/test_liveness_events.py`, and two in `tests/test_team_execution_liveness.py`
+— none of which imports anything this change touched. Bumping saga from 0.159.0 to 0.160.0 then
+failed a fourth, `tests/test_saga_plugin.py:49`, which is the repository's own release-surface drift
+guard.
+
+**Mechanism.** Neither release-surface check catches this. `scripts/check_release_surface_parity.py`
+verifies the three-way version lock between manifest, marketplace entry and changelog;
+`tools/release_surface_diff_guard.py` verifies that a changed plugin bumped those three. A test
+asserting a version literal is a fourth surface neither one knows about, and the repository's own
+workflow rule already says so — "any version/metadata drift guard tests" move in the same change.
+
+**Generalizable rule.** After bumping a plugin version, `grep -rn` the old version string across
+**every** pytest root, and prefer reading the expected value from the manifest over pinning it, so
+the next bump cannot re-break the test. Both release-surface checks passing is not evidence the
+suite is green.
+
+**The rule as first written was itself too narrow, and cost a third round.** It said "grep across
+`tests/`". This repository's `pyproject.toml` sets `testpaths = ["tests", "plugins/*/tests"]`, and
+the third instance — `plugins/mission-control/tests/test_prompt_alignment.py:46` — lived in the
+root the rule did not name. Read `testpaths` before trusting a sweep; a rule that names one
+directory when the runner collects two is a rule that finds two thirds of the problem.
+
+### Every declared capability in the engine registry is rated, so a test asserting otherwise passes by accident  {#1021-unrated-capability-assertion}
+
+**Evidence.** Issue #1021, U4. A first version of
+`tests/test_staffing.py::test_an_unrated_capability_yields_an_empty_list_rather_than_an_exception`
+asserted `unrated, "expected at least one capability no engine row rates"` and failed immediately:
+all ten capabilities `plugins/saga/references/engine-registry.yaml` declares are rated by at least
+one of its thirteen engine rows.
+
+**Mechanism.** The behaviour worth pinning was the code path — a role whose capability nobody rates
+yields an empty tuple rather than raising — but the test tried to reach that path through the
+shipped data, which does not contain it. A test written that way either fails honestly, as this one
+did, or silently stops exercising anything the day the data changes.
+
+**Generalizable rule.** When the property under test is a code path the shipped data cannot reach,
+construct the input instead of asserting the data has a gap. Monkeypatching the one lookup is
+cheaper than a fixture registry and does not rot when the real data moves.
 ### A grep for the retired ladder cannot find a retired name used alone  {#1020-sweep-names-not-ladders}
 
 **Context.** Issue #1020 replaced the retired board vocabulary across the mission-control plugin's

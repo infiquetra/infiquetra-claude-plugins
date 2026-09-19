@@ -20,6 +20,19 @@ SAGA_ROOT = ROOT / "plugins" / "saga"
 FLEET_ROOT = ROOT / "plugins" / "fleet-core"
 ENGINE = FLEET_ROOT / "scripts" / "fleet_commons" / "liveness_engine.py"
 
+
+def _fleet_core_version() -> str:
+    """fleet-core's declared version, read from its manifest rather than pinned.
+
+    A string literal here made a routine version bump fail three unrelated tests (issue #1021).
+    The assertion's purpose is that the liveness protocol reports the *installed* version, and
+    reading the manifest proves exactly that without re-breaking on the next release.
+    """
+    manifest = ROOT / "plugins" / "fleet-core" / ".claude-plugin" / "plugin.json"
+    version: str = json.loads(manifest.read_text(encoding="utf-8"))["version"]
+    return version
+
+
 # Old field name for negative tests — intentionally split so the code-only grep
 # for the old name stays green. Search for OLD_LEASE_TTL_KEY to find all
 # uses (code-review P3-1).
@@ -155,7 +168,7 @@ def test_preflight_proves_installed_subject_and_decision_contract(tmp_path: Path
     assert result["subject_schema"] == "liveness.subject.v1"
     assert result["decision_schema"] == "liveness_decision.v1"
     assert result["engine_protocol_version"] == 1
-    assert result["fleet_core_version"] == "0.26.0"
+    assert result["fleet_core_version"] == _fleet_core_version()
     assert result["engine_sha256"] == hashlib.sha256(ENGINE.read_bytes()).hexdigest()
     assert result["max_definitive_not_sent_retries_per_attempt"] == 1
 
@@ -480,5 +493,5 @@ def test_cache_installed_layout_attests_exact_fleet_engine_bytes(tmp_path: Path)
     )
     result = json.loads(completed.stdout)
     assert result["resolution_name"] == "cache-sibling"
-    assert result["fleet_core_version"] == "0.26.0"
+    assert result["fleet_core_version"] == _fleet_core_version()
     assert result["engine_sha256"] == hashlib.sha256(ENGINE.read_bytes()).hexdigest()

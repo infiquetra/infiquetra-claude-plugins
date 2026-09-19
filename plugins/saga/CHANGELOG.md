@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.160.0] - 2026-09-19
+
+**Requires fleet-core 0.27.0 or later.** `scripts/tier_defaults.py` loads
+`fleet_commons.staffing`, which fleet-core gained in the release that became 0.27.0, at import time. Installing this saga
+without that fleet-core makes the module fail to import with a message naming both the required and
+the resolved version. This repository has two installed plugin roots and a release has updated one
+and not the other six times, so check both.
+
+
+- **The per-repository tier overlay reads through one implementation (#1021).**
+  `scripts/tier_defaults.py` keeps its five public functions and their behaviour but is now a thin
+  shim over `fleet_commons.staffing`: the overlay read, its validation and the registry lookup live
+  once, in fleet-core. `write_tier_default` validates through the same public check the read uses,
+  so a write can no longer accept a tier the read would refuse. `parse_tier_band` stays here,
+  because it parses a GitHub issue body. `TierDefaultsError` still reaches every caller that
+  catches it.
+- **The generated tier table and the effort-convention pointer follow the merged data file
+  (#1021).** `skills/plan/SKILL.md`'s generated tier-table block is re-rendered from
+  `staffing.json`, and `scripts/plan_save_contract.py`'s `EFFORT_REFERENCE` constant — which is
+  checked for existence at contract-load time, not merely linked — now names
+  `plugins/fleet-core/references/staffing.md`. `scripts/plan_save_proof.py` follows it, and so do the four
+  documents that named the deleted `tier_policy.json` — `references/sandbox-spawn-sites.md`,
+  `skills/work/references/execution-strategy.md`, `skills/work/SKILL.md` and
+  `skills/plan/SKILL.md` — together with two comments in `scripts/lifecycle_state.py`.
 ## [0.159.3] - 2026-09-19
 
 - **`plan_save_proof.py` says what it is and how it is run (#998).** The file had no command-line entrypoint at all, so every direct invocation exited 0 and printed nothing -- `--help` included, and a guessed subcommand too, which made a mistyped invocation indistinguishable from a passing run. It now carries an entrypoint that names the proof and the command that actually runs it (`plan_save_contract.py --root <checkout> validate`), serves that text at exit 0 for `--help`, and refuses every other direct invocation at exit 2 with usage on standard error and standard output left empty, so nothing it prints can be mistaken for the contract tool's JSON envelope. It deliberately does not make the proof runnable on its own: `verify()` needs the contract module's globals, a loaded contract and a rendered candidate, and a standalone runner would duplicate `validate` while bypassing its tool-revision check. PyYAML moved to its point of use in the same change, so the new `--help` works on an interpreter without PyYAML rather than being born with the defect #997 had just fixed next door. `runpy.run_path` names the module it loads `<run_path>`, so the contract tool's loader never reaches the entrypoint; a guard pins that positively, because #996's envelope would otherwise convert a misfire into a tidy refusal blaming the engine.

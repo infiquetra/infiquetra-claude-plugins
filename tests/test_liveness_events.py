@@ -16,6 +16,20 @@ from typing import Any, cast
 import pytest
 
 ROOT = Path(__file__).parent.parent
+
+
+def _fleet_core_version() -> str:
+    """fleet-core's declared version, read from its manifest rather than pinned.
+
+    A string literal here made a routine version bump fail three unrelated tests (issue #1021).
+    The assertion's purpose is that the liveness protocol reports the *installed* version, and
+    reading the manifest proves exactly that without re-breaking on the next release.
+    """
+    manifest = ROOT / "plugins" / "fleet-core" / ".claude-plugin" / "plugin.json"
+    version: str = json.loads(manifest.read_text(encoding="utf-8"))["version"]
+    return version
+
+
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
 
 
@@ -727,7 +741,7 @@ def test_cli_describes_closed_protocol(capsys: Any) -> None:
     assert result["subject_schema"] == "liveness.subject.v1"
     assert result["decision_schema"] == "liveness_decision.v1"
     assert result["engine_protocol_version"] == 1
-    assert result["fleet_core_version"] == "0.26.0"
+    assert result["fleet_core_version"] == _fleet_core_version()
     assert len(result["engine_sha256"]) == 64
     assert result["max_definitive_not_sent_retries_per_attempt"] == 1
 

@@ -29,6 +29,32 @@ natural stopping point — it is just where attention ran out. Deleting a file a
 plugins means bumping every plugin whose files you then have to edit, and that cost is part of the
 deletion, not a reason to leave the pointers broken.
 
+### Comparing two absent values with `!=` is how a permission check fails open  {#1021-absent-equals-absent-fails-open}
+
+**Evidence.** Issue #1021, found by the security review lens. `qualify_lens` decides whether an
+executor may establish a scoring threshold for a review lens — a privilege decision. It guarded with
+`entry.get("catalogue_version") != version` and `passed != total`. A ledger entry carrying only the
+four identity fields and none of the evidence fields made both sides `None` on both comparisons, so
+both guards passed and the entry was granted:
+
+```
+ledger entry: {"lens":"security","vendor":"claude","model":"opus","effort":"high"}
+result: qualified — "passed None of None fixtures at catalogue version None"
+```
+
+`fixtures_passed: 0, fixtures_total: 0` granted for the same reason: zero equals zero.
+
+**Mechanism.** Every test built its entry from a fixture helper that always supplied all three
+evidence fields, so no test could reach the branch. The code read as if it checked the evidence,
+and it did — it checked that two absent values matched each other. The failure direction was open
+on *incomplete* data, which is the likelier real-world shape than hostile data: a hand-edited or
+half-migrated ledger.
+
+**Generalizable rule.** In a permission or qualification check, assert presence and type before
+comparing, and write the test that omits each required field in turn. `a != b` passing is not
+evidence that `a` and `b` are right; it is only evidence they are the same, and two absences are
+always the same.
+
 ### A version bump breaks every test that pinned the old version as a literal  {#1021-version-literals-in-tests}
 
 **Evidence.** Issue #1021. Bumping fleet-core from 0.25.3 to 0.26.0 failed three tests that had the

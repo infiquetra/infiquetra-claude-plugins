@@ -144,12 +144,45 @@ class StaffingDecision:
 # --------------------------------------------------------------------------- registry
 
 
+#: A staffing registry far larger than the real one (26 KB) is a corrupted or hostile file, not
+#: a legitimate edit. Reading it whole into memory on a path meant for every spawn is the cost
+#: this ceiling avoids.
+MAX_REGISTRY_BYTES = 4 * 1024 * 1024
+
+_REGISTRY_CACHE: dict[Path, tuple[int, int, dict[str, Any]]] = {}
+
+
 def load_staffing(path: Path | None = None) -> dict[str, Any]:
-    """Load the whole staffing registry."""
+    """Load the whole staffing registry, memoized on the file's size and modification time.
+
+    One ``resolve_role`` call used to read and re-parse this file five times, because every
+    block accessor reloaded it. The cache key is ``(st_size, st_mtime_ns)``, so an edit on disk
+    is picked up on the next call and a test that rewrites the registry still sees its own bytes.
+    """
     registry_path = path if path is not None else STAFFING_PATH
-    document: Any = json.loads(registry_path.read_text(encoding="utf-8"))
+    try:
+        stat = registry_path.stat()
+    except OSError as exc:
+        raise StaffingError(f"staffing registry at {registry_path} is unreadable: {exc}") from exc
+    if stat.st_size > MAX_REGISTRY_BYTES:
+        raise StaffingError(
+            f"staffing registry at {registry_path} is {stat.st_size} bytes, above the "
+            f"{MAX_REGISTRY_BYTES}-byte ceiling"
+        )
+
+    cached = _REGISTRY_CACHE.get(registry_path)
+    if cached is not None and cached[0] == stat.st_size and cached[1] == stat.st_mtime_ns:
+        return cached[2]
+
+    try:
+        document: Any = json.loads(registry_path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise StaffingError(
+            f"staffing registry at {registry_path} is not valid JSON: {exc}"
+        ) from exc
     if not isinstance(document, dict):
         raise StaffingError(f"staffing registry at {registry_path} must be a JSON object")
+    _REGISTRY_CACHE[registry_path] = (stat.st_size, stat.st_mtime_ns, document)
     return document
 
 
@@ -441,10 +474,15 @@ def sdlc_root(explicit: Path | None = None) -> Path | None:
 
 
 def _read_json(path: Path) -> Any | None:
-    """Read a JSON document, or ``None`` when it is absent or unreadable."""
+    """Read a JSON document, or ``None`` when it is absent or unreadable.
+
+    ``ValueError`` rather than ``json.JSONDecodeError``: a file with non-UTF-8 bytes raises
+    ``UnicodeDecodeError``, which is a ``ValueError`` and neither an ``OSError`` nor a decode
+    error, so a narrower clause let a corrupted file escape the handler written to absorb it.
+    """
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None
 
 
@@ -459,7 +497,10 @@ def lens_catalogue(root: Path | None = None) -> tuple[dict[str, Any], str | None
     entries = document.get("lenses")
     if not isinstance(entries, list):
         return {}, None
-    return {str(entry["id"]): entry for entry in entries if "id" in entry}, document.get("version")
+    catalogue = {
+        str(entry["id"]): entry for entry in entries if isinstance(entry, dict) and "id" in entry
+    }
+    return catalogue, document.get("version")
 
 
 def verification_ledger(root: Path | None = None) -> list[dict[str, Any]]:
@@ -495,19 +536,23 @@ def qualify_lens(
     if checkout is None:
         return Qualification(
             DOCUMENTED_POLICY,
-            f"no software-development-lifecycle checkout ({SDLC_PATH_ENV} unset or not a "
-            f"directory, and {DEFAULT_SDLC_PATH} is absent)",
+            f"no software-development-lifecycle checkout ({SDLC_PATH_ENV} is unset or does not "
+            "name a directory, and the default checkout is absent)",
             lens,
         )
 
     catalogue, version = lens_catalogue(checkout)
     if not catalogue:
         return Qualification(
-            DOCUMENTED_POLICY, f"the lens catalogue at {checkout} is absent or unreadable", lens
+            DOCUMENTED_POLICY,
+            "the lens catalogue in the software-development-lifecycle checkout is absent or "
+            "unreadable",
+            lens,
         )
     if lens not in catalogue:
         raise StaffingError(f"unknown lens {lens!r}; expected one of {sorted(catalogue)}")
-    if not catalogue[lens].get("scorable"):
+    entry_for_lens = catalogue[lens]
+    if not isinstance(entry_for_lens, dict) or not entry_for_lens.get("scorable"):
         return Qualification(
             DOCUMENTED_POLICY,
             f"the catalogue marks {lens!r} unscorable, so there are no fixtures to qualify "
@@ -525,34 +570,63 @@ def qualify_lens(
         )
 
     for entry in entries:
-        if (
+        if not isinstance(entry, dict):
+            continue
+        if not (
             entry.get("lens") == lens
             and entry.get("vendor") == vendor
             and entry.get("model") == model
             and entry.get("effort") == effort
         ):
-            if entry.get("catalogue_version") != version:
-                return Qualification(
-                    DOCUMENTED_POLICY,
-                    f"the entry was recorded against catalogue version "
-                    f"{entry.get('catalogue_version')!r}, not the current {version!r}; "
-                    "qualification is re-run, never carried forward",
-                    lens,
-                )
-            passed, total = entry.get("fixtures_passed"), entry.get("fixtures_total")
-            if passed != total:
-                return Qualification(
-                    DOCUMENTED_POLICY,
-                    f"partial qualification ({passed} of {total} fixtures) is recorded and "
-                    "refused, not rounded up",
-                    lens,
-                )
+            continue
+
+        # Everything below must be present and well formed before the entry can grant. Comparing
+        # two absent values with != is how a partial entry used to qualify: None != None is false,
+        # so an entry with no evidence fields at all satisfied both guards. Each field is now
+        # checked for presence and type first, and the failure direction is closed.
+        recorded_version = entry.get("catalogue_version")
+        if version is None or recorded_version is None:
             return Qualification(
-                QUALIFIED,
-                f"{vendor} {model}/{effort} passed {passed} of {total} fixtures at catalogue "
-                f"version {version}",
+                DOCUMENTED_POLICY,
+                "the entry or the catalogue does not state a catalogue version, so the "
+                "qualification cannot be bound to the fixtures it ran against",
                 lens,
             )
+        if recorded_version != version:
+            return Qualification(
+                DOCUMENTED_POLICY,
+                f"the entry was recorded against catalogue version {recorded_version!r}, not "
+                f"the current {version!r}; qualification is re-run, never carried forward",
+                lens,
+            )
+
+        passed, total = entry.get("fixtures_passed"), entry.get("fixtures_total")
+        if not isinstance(passed, int) or not isinstance(total, int) or isinstance(passed, bool):
+            return Qualification(
+                DOCUMENTED_POLICY,
+                "the entry does not state integer fixture counts, so there is no evidence a "
+                "qualification run happened",
+                lens,
+            )
+        if total <= 0:
+            return Qualification(
+                DOCUMENTED_POLICY,
+                "the entry records no fixtures, and zero of zero is not a passing run",
+                lens,
+            )
+        if passed != total:
+            return Qualification(
+                DOCUMENTED_POLICY,
+                f"partial qualification ({passed} of {total} fixtures) is recorded and "
+                "refused, not rounded up",
+                lens,
+            )
+        return Qualification(
+            QUALIFIED,
+            f"{vendor} {model}/{effort} passed {passed} of {total} fixtures at catalogue "
+            f"version {version}",
+            lens,
+        )
 
     return Qualification(
         DOCUMENTED_POLICY,

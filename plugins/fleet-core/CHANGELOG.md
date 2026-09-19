@@ -20,7 +20,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`references/staffing.md`**, the one reference document for this knowledge. It supersedes
   `tier-palette.md` and `effort-convention.md`, which are removed.
 
+### Fixed
+
+- **The lens qualification decision fails closed (#1021, security review).** A ledger entry
+  carrying only the four identity fields — lens, vendor, model, effort — and none of the evidence
+  fields was granted `qualified`, because `entry.get("catalogue_version") != version` and
+  `passed != total` both compared two absent values. Zero fixtures out of zero granted for the same
+  reason. Every evidence field is now checked for presence and type before it is compared, and a
+  ledger entry, a catalogue entry or a file that is malformed in any of six ways now degrades to
+  the documented-policy outcome rather than raising through a path documented never to break a
+  spawn — including a file with non-UTF-8 bytes, whose `UnicodeDecodeError` is a `ValueError` and
+  so escaped a handler that caught only `OSError` and `JSONDecodeError`.
+- **The decision record no longer carries the operator's absolute home path (#1021).** The reason
+  string for an absent checkout named the default path, and the record is handed to a caller to
+  persist; it now names the environment variable instead.
+
 ### Changed
+
+- **The staffing registry is read once per process rather than five times per call (#1021).** One
+  `resolve_role` call re-read and re-parsed the 26 KB registry five times, because every block
+  accessor reloaded it. The load is memoized on the file's size and modification time, so an edit
+  on disk is still picked up, and a size ceiling refuses a registry far larger than the real one.
+
+
 
 - **`staffing.json` absorbs `models.json` and `tier_policy.json`**, which are deleted. It carries
   the model palette, the effort vocabulary, the scalar effort superset, the work-shape tier policy

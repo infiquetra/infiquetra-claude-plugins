@@ -486,8 +486,8 @@ CATALOGUE_VERSION = "1.0.0"
 def _fake_checkout(
     root: pathlib.Path,
     *,
-    entries: list[dict[str, object]] | None = None,
-    lenses: list[dict[str, object]] | None = None,
+    entries: list[object] | None = None,
+    lenses: list[object] | None = None,
     catalogue_version: str = CATALOGUE_VERSION,
 ) -> pathlib.Path:
     """A software-development-lifecycle checkout holding just the two files the resolver reads."""
@@ -712,3 +712,165 @@ def test_a_role_row_missing_its_capability_raises_the_modules_own_error(
     )
     with pytest.raises(StaffingError, match="missing a capability"):
         staffing.candidates_for("broken")
+
+
+# ---------------------------------------------------------------------------
+# The qualification decision fails closed (security lens, issue #1021).
+#
+# qualified is a privilege decision: it is what lets an executor establish a scoring threshold
+# for a review lens. Every one of these cases used to be reachable, and two of them granted.
+# ---------------------------------------------------------------------------
+
+
+def test_an_entry_with_no_evidence_fields_does_not_qualify(tmp_path: pathlib.Path) -> None:
+    """The fail-open: comparing two absent values with != is false, so a bare identity match
+    satisfied both evidence guards and was granted."""
+    bare = {"lens": "security", "vendor": "claude", "model": "opus", "effort": "high"}
+    checkout = _fake_checkout(tmp_path, entries=[bare])
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_zero_fixtures_out_of_zero_is_not_a_passing_run(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(
+        tmp_path, entries=[_qualified_entry(fixtures_passed=0, fixtures_total=0)]
+    )
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert "no fixtures" in qualification.reason
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        {"fixtures_passed": "12", "fixtures_total": "12"},
+        {"fixtures_passed": True, "fixtures_total": True},
+        {"fixtures_passed": 12.0, "fixtures_total": 12.0},
+    ],
+)
+def test_non_integer_fixture_counts_do_not_qualify(
+    tmp_path: pathlib.Path, counts: dict[str, object]
+) -> None:
+    """A string, a boolean and a float all compare equal to themselves; none is evidence."""
+    checkout = _fake_checkout(tmp_path, entries=[_qualified_entry(**counts)])
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_a_catalogue_with_no_version_cannot_qualify_anything(tmp_path: pathlib.Path) -> None:
+    """Without a version on both sides the qualification is not bound to the fixtures it ran on."""
+    checkout = _fake_checkout(tmp_path, entries=[_qualified_entry()])
+    catalogue = checkout / "config" / "lens-catalogue.json"
+    catalogue.write_text(
+        json.dumps({"lenses": [{"id": "security", "scorable": True}]}), encoding="utf-8"
+    )
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_a_ledger_entry_that_is_not_an_object_is_skipped(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(tmp_path, entries=["not-an-object", _qualified_entry()])
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.QUALIFIED
+
+
+def test_a_catalogue_lens_that_is_not_an_object_is_skipped(tmp_path: pathlib.Path) -> None:
+    """A bare string passes an `"id" in entry` substring test and then fails on the index."""
+    checkout = _fake_checkout(tmp_path, lenses=["id", {"id": "security", "scorable": True}])
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_a_ledger_with_non_utf8_bytes_degrades_rather_than_raising(
+    tmp_path: pathlib.Path,
+) -> None:
+    """UnicodeDecodeError is a ValueError, not a JSONDecodeError — the narrower clause let it
+    escape the handler written to absorb exactly this."""
+    checkout = _fake_checkout(tmp_path, entries=[_qualified_entry()])
+    (checkout / "config" / "executor-verifications.json").write_bytes(b'{"entries": [\xff\xfe]}')
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_no_absolute_home_path_reaches_a_persisted_reason(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The decision record is handed to a caller to persist, so the operator's username must not
+    ride along in it."""
+    monkeypatch.setenv(staffing.SDLC_PATH_ENV, str(tmp_path / "nowhere"))
+    monkeypatch.setattr(staffing, "DEFAULT_SDLC_PATH", tmp_path / "also-nowhere")
+    qualification = staffing.qualify_lens("security", vendor="claude", model="opus", effort="high")
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert str(pathlib.Path.home()) not in qualification.reason
+    assert staffing.SDLC_PATH_ENV in qualification.reason
+
+
+# ---------------------------------------------------------------------------
+# The memoized registry load (security lens, issue #1021).
+# ---------------------------------------------------------------------------
+
+
+def test_the_registry_load_is_memoized_within_a_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One resolve_role used to read and re-parse the registry five times."""
+    reads: list[str] = []
+    real_read = pathlib.Path.read_text
+
+    def counting(self: pathlib.Path, *args: object, **kwargs: object) -> str:
+        reads.append(self.name)
+        return real_read(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pathlib.Path, "read_text", counting)
+    staffing.resolve_role("worker")
+    assert reads.count("staffing.json") <= 2, f"too many registry reads: {reads}"
+
+
+def test_an_edited_registry_is_picked_up_rather_than_served_from_cache(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The cache keys on size and modification time, so a rewrite invalidates it."""
+    copy = tmp_path / "staffing.json"
+    copy.write_text(staffing.STAFFING_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    first = staffing.load_staffing(copy)
+    assert first["work_shapes"]["judgment"]["default_model"] == "opus"
+
+    edited = json.loads(copy.read_text(encoding="utf-8"))
+    edited["work_shapes"]["judgment"]["default_model"] = "haiku"
+    edited["_probe"] = "a value long enough to change the file size as well as its mtime"
+    copy.write_text(json.dumps(edited, indent=2), encoding="utf-8")
+
+    second = staffing.load_staffing(copy)
+    assert second["work_shapes"]["judgment"]["default_model"] == "haiku"
+
+
+def test_a_registry_above_the_size_ceiling_is_refused(tmp_path: pathlib.Path) -> None:
+    """A registry far larger than the real one is corruption, not an edit."""
+    oversized = tmp_path / "staffing.json"
+    oversized.write_text("{" + " " * (staffing.MAX_REGISTRY_BYTES + 1) + "}", encoding="utf-8")
+    with pytest.raises(StaffingError, match="ceiling"):
+        staffing.load_staffing(oversized)
+
+
+def test_an_unparseable_registry_raises_the_modules_own_error(tmp_path: pathlib.Path) -> None:
+    broken = tmp_path / "staffing.json"
+    broken.write_text("{not json", encoding="utf-8")
+    with pytest.raises(StaffingError, match="not valid JSON"):
+        staffing.load_staffing(broken)
+
+
+def test_an_absent_registry_raises_the_modules_own_error(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(StaffingError, match="unreadable"):
+        staffing.load_staffing(tmp_path / "nowhere.json")

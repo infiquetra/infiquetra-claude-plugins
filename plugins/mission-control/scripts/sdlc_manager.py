@@ -76,12 +76,20 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
+
+# This script's own directory, so the sibling modules beside it import whether
+# the file is run by path, imported by a test that inserted this directory, or
+# loaded from an installed plugin tree.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import triage_suggest  # noqa: E402 - must follow the sys.path line above
 
 # ===========================
 # CONFIGURATION
@@ -1727,8 +1735,72 @@ def _validate_label_taxonomy(label_defs: list[dict[str, Any]]) -> None:
         raise RuntimeError(f"Invalid SDLC label taxonomy:\n{details}")
 
 
-def labels_auto_label(repo: str, number: int, fmt: str) -> None:
-    """Apply auto-label rules based on issue title/content."""
+def _suggest_label_union(
+    text: str,
+    rule_labels: Sequence[str],
+    *,
+    configured_labels: Sequence[str] = (),
+    ask: Callable[..., Any] | None = None,
+    client: Any = None,
+) -> tuple[list[dict[str, str]], str | None]:
+    """The widen-only union of rule-matched and model-suggested labels (#1035).
+
+    Returns the union and, on a failed call, a note naming why the model added
+    nothing.  The regular expressions are the floor in both cases: a failure
+    degrades to exactly today's rule-derived set, never to nothing.
+    """
+    try:
+        client = client if client is not None else _fleet_commons("typesafe_client")
+        ask = ask if ask is not None else client.ask
+    except Exception as exc:  # noqa: BLE001 - a missing fleet-core is not a broken command
+        # An empty answer map never reaches the client's helpers, so the rule
+        # floor renders without one.
+        return (
+            triage_suggest.union_labels(rule_labels, {}, client=None),
+            f"the TypeSafe client could not be loaded ({exc})",
+        )
+
+    candidates = triage_suggest.candidate_labels(configured_labels)
+    questions = triage_suggest.label_questions(candidates)
+    state = triage_suggest.build_state(text)
+
+    try:
+        result = ask(state, questions)
+    except Exception as exc:  # noqa: BLE001 - never let a vendor exception escape the command
+        note = f"the request failed ({type(exc).__name__}: {exc})"
+        return (
+            triage_suggest.union_labels(rule_labels, {}, client=client),
+            note,
+        )
+
+    if getattr(result, "status", "error") != "ok":
+        note = getattr(result, "note", "") or "the request did not succeed"
+        return (
+            triage_suggest.union_labels(rule_labels, {}, client=client),
+            f"{getattr(result, 'status', 'error')}: {note}",
+        )
+
+    union = triage_suggest.union_labels(
+        rule_labels, dict(getattr(result, "answers", {}) or {}), client=client
+    )
+    return union, None
+
+
+def labels_auto_label(
+    repo: str,
+    number: int,
+    fmt: str,
+    suggest: bool = False,
+    ask: Callable[..., Any] | None = None,
+    suggest_client: Any = None,
+) -> None:
+    """Apply auto-label rules based on issue title/content.
+
+    `--suggest` (#1035) turns this into a read-only advisory: it prints the
+    union of the rule-matched labels and the labels a model judged applicable,
+    each tagged with its provenance, and applies NOTHING.  Without the flag the
+    command posts its regular-expression matches exactly as it always has.
+    """
     config = load_config()
     rules = config.get("labels", {}).get("auto_label_rules", {})
 
@@ -1743,12 +1815,39 @@ def labels_auto_label(repo: str, number: int, fmt: str) -> None:
 
     text = f"{title} {body}"
     labels_to_add = []
+    configured_labels: list[str] = []
     for _rule_name, rule in rules.items():
+        rule_labels = rule.get("add_labels", [])
+        configured_labels.extend(rule_labels)
         pattern = rule.get("pattern", "")
         if re.search(pattern, text, re.IGNORECASE):
-            labels_to_add.extend(rule.get("add_labels", []))
+            labels_to_add.extend(rule_labels)
 
     labels_to_add = list(set(labels_to_add))
+
+    if suggest:
+        union, note = _suggest_label_union(
+            text,
+            labels_to_add,
+            configured_labels=configured_labels,
+            ask=ask,
+            client=suggest_client,
+        )
+        payload: dict[str, Any] = {"repo": repo, "number": number, "union": union}
+        if note:
+            payload["note"] = note
+        if fmt == "json":
+            _out(payload, fmt)
+        else:
+            print(f"Suggested labels for {repo}#{number} (advisory — nothing was applied):")
+            for line in triage_suggest.render_union(union):
+                print(line)
+            if not union:
+                print("  (no rule matched and the model suggested none)")
+            if note:
+                print(f"  model suggestions unavailable: {note}")
+        return
+
     if not labels_to_add:
         print(f"No auto-label rules matched for {repo}#{number}")
         return
@@ -5882,13 +5981,212 @@ def planning_to_active_risk_ready(body: str) -> bool:
     return token in _RISK_TIER_VOCABULARY
 
 
+# --------------------------------------------------------------------------- #
+# Advisory triage suggestions (#1035)
+#
+# Every function below is opt-in behind `--suggest` and APPLIES NOTHING.  The
+# author's `--type` / `--risk` / `--status` flags stay the decision; a model
+# answer that differs from one of them is recorded as an override in the verdict
+# log and nowhere else (DECISIONS {#1035-flag-is-the-decision-difference-is-the-
+# override}).  A client failure leaves the draft exactly as it would have been.
+# --------------------------------------------------------------------------- #
+
+# The decision-id namespace the evaluation harness joins on.  Namespaced to this
+# consumer so `jev eval` can score the prepare path separately from every other
+# judgment point.
+_SUGGEST_DECISION_PREFIX = "mission-control/issue-prepare"
+_ISSUE_TYPES_REFERENCE = (
+    Path(__file__).resolve().parent.parent / "skills" / "issues" / "references" / "issue-types.md"
+)
+
+
+def _fleet_commons(module: str) -> Any:
+    """Load a fleet-core commons module through the vendored shim, lazily.
+
+    Lazy on purpose: a prepare without `--suggest` never imports the shim, so
+    the ordinary offline path keeps exactly the dependency graph it had before
+    this card (plan KTD4, KTD6).
+    """
+    import fleet_commons_shim
+
+    return fleet_commons_shim.load(module)
+
+
+def _issue_types_policy_text() -> str:
+    """This repository's own issue-type criteria, passed to the model as policy.
+
+    Passing it lifted the research's probe from 17 to 19 of 30.  An unreadable
+    reference is not an error: the question is still asked, just with the
+    generic criteria the question set carries on its own.
+    """
+    try:
+        return _ISSUE_TYPES_REFERENCE.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _suggestion_status_options(stage: str | None) -> list[str]:
+    """Board Status candidates, read offline from the vendored schema.
+
+    A stage narrows the list to its own options; with no stage the candidates
+    are the ordered, de-duplicated union of every stage's list.  `issue prepare`
+    has no `--stage` flag, so the union is what a command-line prepare gets --
+    the narrowing branch serves the Python callers that do pass one.
+    """
+    rules = _stage_flow_rules().get("stage_statuses", {})
+    if stage and stage in rules:
+        return list(rules[stage])
+    ordered: list[str] = []
+    for options in rules.values():
+        for option in options:
+            if option not in ordered:
+                ordered.append(option)
+    return ordered
+
+
+def _record_suggestion_verdicts(
+    log: Any,
+    client: Any,
+    *,
+    answers: dict[str, Any],
+    suggestions: dict[str, Any],
+    state: Any,
+    questions: dict[str, Any],
+    resolved_model: str,
+    floor: float,
+    log_dir: Path | None,
+) -> None:
+    """Append one verdict per answer, plus an override where the author differed.
+
+    The author's own value rides along as the record's `label`: it is the best
+    ground truth available at prepare time, and without it the evaluation
+    harness cannot score accumulated history at all (plan R10a).
+
+    An unwritable log never fails a prepare.  The draft is the product; the
+    verdict is evidence about a suggestion that changed nothing.
+    """
+    for key, answer in answers.items():
+        entry = suggestions.get(key) or {}
+        try:
+            record = log.record_verdict(
+                decision_id=f"{_SUGGEST_DECISION_PREFIX}:{key}",
+                state=state,
+                questions=questions,
+                answer=answer,
+                confidence=client.answer_confidence(answer),
+                threshold=floor,
+                resolved_model=resolved_model,
+                label=entry.get("chosen"),
+                directory=log_dir,
+            )
+            if entry.get("overridden"):
+                log.record_override(
+                    verdict_hash=record["verdict_hash"],
+                    chosen=entry.get("chosen"),
+                    rationale=(
+                        f"the author's prepare flag for {key} named "
+                        f"{entry.get('chosen')!r}; the suggestion was "
+                        f"{entry.get('suggested')!r}"
+                    ),
+                    directory=log_dir,
+                )
+        except Exception:  # noqa: BLE001 - evidence is never worth failing a draft for
+            return
+
+
+def _collect_suggestions(
+    issue: PreparedIssue,
+    *,
+    objective_options: Sequence[str] = (),
+    ask: Callable[..., Any] | None = None,
+    client: Any = None,
+    log: Any = None,
+    log_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Ask every triage question about one draft in one request, and shape the answers.
+
+    Returns the `suggestions` block for the sidecar.  On any failure -- a client
+    error, a timeout, a malformed body, or an unexpected exception from the
+    vendor library -- it returns a block carrying the status and a note and
+    nothing else, so the draft is written exactly as it would have been without
+    `--suggest` (plan KTD5, R16).
+    """
+    try:
+        client = client if client is not None else _fleet_commons("typesafe_client")
+        ask = ask if ask is not None else client.ask
+        log = log if log is not None else _fleet_commons("jev_log")
+    except Exception as exc:  # noqa: BLE001 - a missing fleet-core is not a broken draft
+        return {"status": "error", "note": f"the TypeSafe client could not be loaded ({exc})"}
+
+    floor = triage_suggest.DEFAULT_CONFIDENCE_FLOOR
+    questions = triage_suggest.build_questions(
+        issue_types=_ISSUE_TYPES,
+        risk_levels=_RISK_TIER_VOCABULARY,
+        status_options=_suggestion_status_options(issue.stage),
+        objective_options=objective_options,
+        policy_text=_issue_types_policy_text(),
+    )
+    state = triage_suggest.build_state(issue.body, _issue_types_policy_text())
+
+    try:
+        result = ask(state, questions)
+    except Exception as exc:  # noqa: BLE001 - never let a vendor exception escape a prepare
+        return {"status": "error", "note": f"the request failed ({type(exc).__name__}: {exc})"}
+
+    status = getattr(result, "status", "error")
+    if status != "ok":
+        return {
+            "status": status,
+            "note": getattr(result, "note", "") or "the request did not succeed",
+        }
+
+    answers = dict(getattr(result, "answers", {}) or {})
+    suggestions = triage_suggest.shape_suggestions(
+        answers,
+        client=client,
+        chosen_type=issue.issue_type,
+        chosen_risk=issue.risk,
+        chosen_status=issue.status,
+        chosen_objective=(issue.project_fields or {}).get(_PREPARED_FIELD_OBJECTIVE),
+        risk_levels=_RISK_TIER_VOCABULARY,
+        floor=floor,
+    )
+
+    _record_suggestion_verdicts(
+        log,
+        client,
+        answers=answers,
+        suggestions=suggestions,
+        state=state,
+        questions=questions,
+        resolved_model=getattr(result, "model", ""),
+        floor=floor,
+        log_dir=log_dir,
+    )
+
+    return {
+        "status": "ok",
+        "resolved_model": getattr(result, "model", ""),
+        # Which truncation stages fired on the way out.  A shortened policy
+        # document is the quiet way this judgment degrades, so it is recorded
+        # rather than left invisible.
+        "truncation": list(getattr(result, "truncation", ()) or ()),
+        "floor": floor,
+        # Nested rather than spread across this block: the board-status question
+        # is keyed `status`, which would otherwise overwrite the client outcome
+        # above and make a successful call read as a suggestion object.
+        "judgments": suggestions,
+    }
+
+
 def _sidecar_payload(
     issue: PreparedIssue,
     readiness: PreparedReadiness,
     state: str,
     approval_state: str | None,
+    suggestions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": "1.0",
         "state": state,
         # The U11 human gate (None when blocked — a blocked draft never reaches
@@ -5912,6 +6210,19 @@ def _sidecar_payload(
         "readiness": asdict(readiness),
         "updated_at": datetime.now(UTC).isoformat(),
     }
+    if suggestions is not None:
+        payload["suggestions"] = suggestions
+        # The card's acceptance criterion names these two at the TOP level, so
+        # they are mirrored there as well as carried inside the block.  A
+        # failed call has neither: there is no suggestion to mirror.
+        judgments = suggestions.get("judgments") or {}
+        for key, sidecar_key in (
+            (triage_suggest.QUESTION_TYPE, "type_suggestion"),
+            (triage_suggest.QUESTION_RISK, "risk_suggestion"),
+        ):
+            if key in judgments:
+                payload[sidecar_key] = judgments[key]
+    return payload
 
 
 def issue_prepare(
@@ -5929,6 +6240,14 @@ def issue_prepare(
     draft_dir: Path | None = None,
     fmt: str = "text",
     stage: str | None = None,
+    # #1035: advisory triage suggestions.  Opt-in, apply nothing, and every one
+    # of these defaults keeps the command exactly as offline as it was.
+    suggest: bool = False,
+    objective_options: Sequence[str] = (),
+    ask: Callable[..., Any] | None = None,
+    suggest_client: Any = None,
+    suggest_log: Any = None,
+    suggest_log_dir: Path | None = None,
 ) -> Path:
     if not source.strip():
         raise RuntimeError("issue prepare requires non-empty source text")
@@ -6054,26 +6373,46 @@ def issue_prepare(
     # no approval gate to enter.
     state = _PREPARE_STATE_READY if readiness.passed else _PREPARE_STATE_BLOCKED
     approval_state = _APPROVAL_NEEDS_OPERATOR if readiness.passed else None
+
+    # #1035: the suggestions are collected AFTER the draft's every field and its
+    # readiness verdict are settled, so no answer can reach a field, a gap, or a
+    # label. The call is the last thing before serialization and the first thing
+    # dropped on failure.
+    suggestions = (
+        _collect_suggestions(
+            issue,
+            objective_options=objective_options,
+            ask=ask,
+            client=suggest_client,
+            log=suggest_log,
+            log_dir=suggest_log_dir,
+        )
+        if suggest
+        else None
+    )
+
     draft_path.write_text(
         _render_draft_markdown(issue, approval_state=approval_state), encoding="utf-8"
     )
     sidecar_path.write_text(
         json.dumps(
-            _sidecar_payload(issue, readiness, state, approval_state), indent=2, sort_keys=True
+            _sidecar_payload(issue, readiness, state, approval_state, suggestions),
+            indent=2,
+            sort_keys=True,
         )
         + "\n",
         encoding="utf-8",
     )
 
     if fmt == "json":
-        _out(
-            {
-                "draft": str(draft_path),
-                "sidecar": str(sidecar_path),
-                "readiness": asdict(readiness),
-            },
-            fmt,
-        )
+        output: dict[str, Any] = {
+            "draft": str(draft_path),
+            "sidecar": str(sidecar_path),
+            "readiness": asdict(readiness),
+        }
+        if suggestions is not None:
+            output["suggestions"] = suggestions
+        _out(output, fmt)
     else:
         print(f"Prepared draft: {draft_path}")
         print(f"Readiness: {'passed' if readiness.passed else 'blocked'}")
@@ -6081,6 +6420,16 @@ def issue_prepare(
             print(f"  - BLOCKING: {gap}")
         for warning in readiness.warnings:
             print(f"  - WARNING: {warning}")
+        if suggestions is not None:
+            if suggestions.get("status") == "ok":
+                print("Suggestions (advisory — nothing was applied):")
+                for line in triage_suggest.render_suggestions(suggestions.get("judgments") or {}):
+                    print(line)
+            else:
+                print(
+                    f"Suggestions: unavailable ({suggestions.get('status')}) — "
+                    f"{suggestions.get('note', '')}"
+                )
     return draft_path
 
 
@@ -7385,6 +7734,21 @@ def main() -> None:
         help="Override inferred handoff maturity (classified by the Saga owner; "
         "accepts pending-confirmation and deferred-context)",
     )
+    issue_prepare_p.add_argument(
+        "--suggest",
+        action="store_true",
+        help="Record advisory issue-type, risk, status and objective suggestions in the "
+        "sidecar. Applies nothing: --type/--risk/--status stay the decision, and a "
+        "differing suggestion is logged as an override. Requires TYPESAFE_API_KEY.",
+    )
+    issue_prepare_p.add_argument(
+        "--objective-option",
+        dest="objective_options",
+        action="append",
+        default=[],
+        help="An Objective candidate the --suggest judgment may choose among (repeatable). "
+        "With none supplied the objective question is not asked.",
+    )
     issue_prepare_p.add_argument("source", nargs="*")
 
     issue_create_prepared_p = issue_sp.add_parser(
@@ -7489,6 +7853,13 @@ def main() -> None:
     labels_deploy_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     labels_auto_p = labels_sp.add_parser("auto-label", help="Apply auto-label rules to issue")
+    labels_auto_p.add_argument(
+        "--suggest",
+        action="store_true",
+        help="Print the widen-only union of rule-matched and model-suggested labels and "
+        "apply NOTHING. The regular-expression rules stay the floor; the model may only "
+        "add. Requires TYPESAFE_API_KEY.",
+    )
     labels_auto_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     labels_auto_p.add_argument("--number", required=True, type=int)
 
@@ -7825,6 +8196,8 @@ def main() -> None:
                     handoff_maturity=args.handoff_maturity,
                     source_artifact=source_artifact,
                     fmt=fmt,
+                    suggest=args.suggest,
+                    objective_options=args.objective_options,
                 )
             elif args.action == "create-prepared":
                 issue_create_prepared(
@@ -7864,7 +8237,7 @@ def main() -> None:
             elif args.action == "deploy":
                 labels_deploy(args.repo, fmt)
             elif args.action == "auto-label":
-                labels_auto_label(args.repo, args.number, fmt)
+                labels_auto_label(args.repo, args.number, fmt, suggest=args.suggest)
 
         elif args.resource == "fields":
             if args.action == "create-option":

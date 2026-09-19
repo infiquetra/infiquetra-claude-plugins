@@ -2,6 +2,27 @@
 
 ## 2026-09-19
 
+### A Jev score answer's distribution is keyed by level INDEX, so a recorded fixture hides it  {#1035-score-distribution-keyed-by-index}
+
+**Evidence.** Issue #1035; `plugins/mission-control/scripts/triage_suggest.py`
+(`relabel_score_distribution`); guard `plugins/mission-control/tests/test_triage_suggest.py::test_a_score_distribution_is_relabelled_from_indices_onto_level_names`. Found by running
+`sdlc_manager.py issue prepare --suggest` against a real card body on 2026-09-19, not by any test.
+
+**Mechanism.** A `choice` answer returns `probabilities` keyed by the option names the question
+supplied, so a choice renders itself. A `score` answer returns `probabilities` keyed by the
+**index** of the level: a four-level risk rubric came back as `{"1": 0.58, "0": 0.25, "2": 0.16,
+"3": 0.01}`. Rendering that beside three name-keyed questions printed `risk: 1 0.58, 0 0.25` — a
+line that looks like data and means nothing to the reader. The recorded body in
+`tests/test_typesafe_client.py:56` is `{"type": "score", "score": 1.2, "confidence": 0.8}` with no
+`probabilities` key at all, so every test written from that fixture passed while the real output
+was unreadable. The fleet-core reference documents the score primitive's `score` and `confidence`
+and is silent on the key shape of its distribution, so there was nothing to read either.
+
+**Generalizable rule.** A fixture copied from another card's recorded response proves the fields
+that card used, not the fields yours will use. Before trusting a typed answer's shape, run the
+command once against real input and read the output as a person would — the fields a fixture
+omits are exactly the ones no test can miss.
+
 ### A plugin version bump breaks three tests that restate the version as a literal  {#fleet-core-version-pins-1032}
 
 **Evidence.** Issue #1032, pull request #1045. Bumping fleet-core 0.25.3 to 0.26.0 turned the

@@ -66,6 +66,7 @@ def test_a_verdict_appends_one_line_with_the_full_record_contract(tmp_path) -> N
         "confidence",
         "threshold",
         "resolved_model",
+        "label",
         "at",
         "verdict_hash",
     }

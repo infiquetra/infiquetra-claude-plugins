@@ -128,6 +128,7 @@ def record_verdict(
     confidence: float | None,
     threshold: float | None,
     resolved_model: str,
+    label: Any = None,
     directory: Path | None = None,
     clock: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
@@ -145,6 +146,10 @@ def record_verdict(
         "confidence": confidence,
         "threshold": threshold,
         "resolved_model": resolved_model,
+        # The known-correct value, when one is known at write time.  Without it
+        # the evaluation harness cannot score accumulated history at all: it
+        # joins answers to labels on this record's decision_id and finds none.
+        "label": label,
         "at": _timestamp(clock),
     }
     record["verdict_hash"] = digest(

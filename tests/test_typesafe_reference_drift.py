@@ -64,6 +64,7 @@ def test_every_verdict_field_is_documented() -> None:
         "confidence",
         "threshold",
         "resolved_model",
+        "label",
         "at",
         "verdict_hash",
     }
@@ -91,6 +92,7 @@ def test_the_verdict_record_carries_exactly_the_documented_fields(tmp_path) -> N
         "confidence",
         "threshold",
         "resolved_model",
+        "label",
         "at",
         "verdict_hash",
     }

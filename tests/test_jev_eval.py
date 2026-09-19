@@ -143,13 +143,27 @@ def test_unlabeled_records_are_named_not_silently_dropped() -> None:
 
 
 def test_a_conflicting_label_is_reported_not_resolved() -> None:
+    """Reported AND excluded.
+
+    Scoring the first occurrence resolves the conflict by picking one, which is
+    exactly what "reported, not resolved" rules out -- and it silently counted
+    as agreement.
+    """
     records = [
         _record("same", "haiku", "haiku", 0.9),
         _record("same", "haiku", "opus", 0.9),
     ]
     report = ev.evaluate(records)
     assert "same" in report.conflicts
-    assert report.scored == 1, "a conflicting duplicate must not be scored as agreement"
+    assert report.scored == 0, "a conflicting identifier must not be scored at all"
+
+
+def test_a_repeated_identifier_is_scored_once() -> None:
+    """A duplicate scored twice inflates both numerator and denominator."""
+    records = [_record("dup", "haiku", "haiku", 0.9), _record("dup", "haiku", "haiku", 0.9)]
+    report = ev.evaluate(records)
+    assert report.scored == 1
+    assert report.agreed == 1
 
 
 def test_a_missing_path_is_named() -> None:

@@ -35,8 +35,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `references/typesafe.md` — the data rule, the verdict-record contract, and the house rules,
     bound to the code by a drift guard.
 
+### Security
+
+- **The redaction guarantee is enforced at the exit, with a token that cannot be forged.** An
+  adversarial review falsified the "no path skips redaction" claim three ways: the marker was a
+  string default on a dataclass field, so a hand-built request passed; the check sat in
+  `build_body` rather than in the transports, which take a plain dictionary; and question text --
+  taken verbatim from the command-line flags -- was never redacted at all. The token is now a
+  private sentinel object, both transports re-run the check at the last point before bytes leave,
+  and questions are redacted alongside state.
+- **Redaction catches the shapes a credential actually takes in a diff.** A content hash anywhere
+  on a line previously switched the high-entropy rule off for that whole line, so a token beside a
+  commit identifier rode through; the exemption now tests the candidate run itself. Added
+  JSON-quoted assignments, connection strings, basic-auth URLs, JSON Web Tokens and Slack tokens.
+  Long repository paths are no longer destroyed as high-entropy -- the data rule explicitly permits
+  sending them -- and this API's own `input_tokens`/`output_tokens` vocabulary is no longer
+  mistaken for a credential.
+- **The endpoint base must be `https`, and a cross-host redirect drops the credential.** The base
+  is environment-controlled, so it is not a fixed endpoint; Python's default redirect handler
+  forwards `Authorization` to any host.
+- **A large state cannot hang the redaction path.** An unanchored prefix repeat made the
+  credential pattern backtrack quadratically; a regression test fails on the blow-up.
+
 ### Changed
 
+- **The vendor SDK's own retry policy is disabled so this client owns retry on both transports.**
+  Its defaults nested inside ours: up to nine requests where three are promised, 5xx retried though
+  the policy deliberately excludes it, and one attempt able to outlast the wall-clock deadline. A
+  single request is now bounded by whatever remains of that deadline, and an elapsed deadline
+  reports `timeout` rather than `error`.
+- **The answer cache is wired into `ask` rather than shipped unreachable.** The alias pin
+  invalidates the bucket at the one moment the resolution becomes knowable -- when a live call
+  returns a version different from the pin.
+- **A verdict record carries an optional `label`,** without which the evaluation harness could
+  never score accumulated history: it joins answers to labels on `decision_id` and found none.
+- **The truncation ladder reports only the stages that changed something,** reaches nested tool
+  outputs, and collapses large mappings as well as lists.
+- **The harness scores a repeated identifier once and excludes a conflicting one entirely,** rather
+  than inflating the sample and resolving the conflict by picking the first occurrence.
 - **`typesafe-sdk` is a new declared dependency, pinned to `>=0.7,<0.8` with a guard test.** The
   package is pre-1.0 and shipped breaking changes in 0.6.0 and 0.7.0 four days apart, so the
   guard reds when the installed version leaves the range — a breaking vendor release is caught

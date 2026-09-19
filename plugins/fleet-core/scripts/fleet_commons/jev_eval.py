@@ -109,26 +109,52 @@ class EvalReport:
         }
 
 
+def _client() -> Any:
+    """Load the client module for its answer accessors, the house way.
+
+    The banding rule lives in exactly one place -- ``typesafe_client`` -- because
+    a second copy here would silently change what the harness measures relative
+    to what the verdict log records.  The client imports nothing at module scope
+    beyond the standard library, so the offline guarantee is preserved.
+    """
+    try:
+        import fleet_commons_shim
+
+        return fleet_commons_shim.load("typesafe_client")
+    except Exception:  # noqa: BLE001 - direct load for in-repo runs
+        import importlib.util
+        import sys as _sys
+
+        name = "_fleet_commons_typesafe_client_for_eval"
+        cached = _sys.modules.get(name)
+        if cached is not None:
+            return cached
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).with_name("typesafe_client.py")
+        )
+        if spec is None or spec.loader is None:  # pragma: no cover
+            raise
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+
+
 def _answer_value(answer: Mapping[str, Any]) -> Any:
-    kind = answer.get("type")
-    if kind == "noul":
-        return answer.get("noul")
-    if kind == "choice":
-        return answer.get("choice")
-    if kind == "score":
-        return answer.get("score")
-    return None
+    return _client().answer_value(answer)
 
 
 def _answer_confidence(answer: Mapping[str, Any]) -> float | None:
-    """A yes/no answer has no confidence field; its distance from 0.5 stands in."""
-    if answer.get("type") == "noul":
-        probability = answer.get("noul")
-        if isinstance(probability, (int, float)):
-            return abs(float(probability) - 0.5) * 2.0
-        return None
-    value = answer.get("confidence")
-    return float(value) if isinstance(value, (int, float)) else None
+    return _client().answer_confidence(answer)
+
+
+def _hashable(value: Any) -> Any:
+    """A hashable stand-in, so an unhashable label still compares for equality."""
+    try:
+        hash(value)
+    except TypeError:
+        return repr(value)
+    return value
 
 
 def load_records(path: Path) -> tuple[list[dict[str, Any]], int]:
@@ -164,7 +190,11 @@ def load_records(path: Path) -> tuple[list[dict[str, Any]], int]:
             except json.JSONDecodeError:
                 skipped += 1
                 continue
-            if isinstance(parsed, dict) and parsed.get("kind") != "override":
+            if isinstance(parsed, dict) and parsed.get("kind") == "override":
+                # Read fine, simply not a verdict to score.  Counting it as
+                # unreadable would report a corrupt log that is not corrupt.
+                continue
+            if isinstance(parsed, dict):
                 records.append(_from_verdict(parsed))
             else:
                 skipped += 1
@@ -203,16 +233,35 @@ def evaluate(
         question_key=question_key or "",
     )
 
-    seen_labels: dict[str, Any] = {}
+    # First pass: find identifiers carrying more than one distinct label, and
+    # identifiers that simply repeat.  A duplicate scored twice inflates both
+    # numerator and denominator, so the sample looks larger than it is; a
+    # conflicting label scored once resolves the conflict by picking the first,
+    # which is precisely what "reported, not resolved" rules out.
+    labels_by_id: dict[str, list[Any]] = {}
+    for record in records:
+        identifier = str(record.get("id", ""))
+        if identifier:
+            labels_by_id.setdefault(identifier, []).append(record.get("label"))
+
+    conflicted = {
+        identifier
+        for identifier, labels in labels_by_id.items()
+        if len({_hashable(label) for label in labels}) > 1
+    }
+    report.conflicts.extend(sorted(conflicted))
+
+    scored_ids: set[str] = set()
     for record in records:
         identifier = str(record.get("id", ""))
         label = record.get("label")
 
-        if identifier and identifier in seen_labels and seen_labels[identifier] != label:
-            report.conflicts.append(identifier)
+        if identifier and identifier in conflicted:
+            continue
+        if identifier and identifier in scored_ids:
             continue
         if identifier:
-            seen_labels[identifier] = label
+            scored_ids.add(identifier)
 
         if label is None:
             report.unlabeled.append(identifier or "<unidentified>")

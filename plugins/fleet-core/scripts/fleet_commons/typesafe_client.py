@@ -33,6 +33,7 @@ import re
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -105,10 +106,12 @@ CHARS_PER_TOKEN = 3
 REDACTION_PLACEHOLDER = "[REDACTED]"  # noqa: S105 - a placeholder, not a credential
 ELISION_MARKER = "[... elided ...]"
 
-# The marker prepare_state stamps onto its output.  A transport refuses state
-# without it, so no caller -- not even one inside this module -- can route
-# around redaction.
-PREPARED_MARKER = "__infiquetra_prepared__"
+# The token prepare_state stamps onto its output.  It is a private module-level
+# object, not a string constant: a string default on the dataclass field is
+# forgeable -- anyone can construct PreparedRequest(state=<raw secret>) and the
+# check passes -- which made the "no path skips redaction" claim false. Identity
+# against this object cannot be reproduced from outside the module.
+_PREPARED_TOKEN = object()
 
 # Minimum run length and Shannon entropy for the high-entropy rule.  Without a
 # stated threshold this rule either misses secrets or shreds ordinary diffs:
@@ -117,28 +120,58 @@ PREPARED_MARKER = "__infiquetra_prepared__"
 ENTROPY_MIN_RUN = 40
 ENTROPY_MIN_BITS = 4.0
 
+# nosec B105 - a regex alternation naming credential words, not a credential
+_SECRET_WORD = r"(?:api[_-]?key|secret|token|password|passwd|access[_-]?key)"  # nosec B105
+
 _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"),
+    # A named assignment.  The optional quote before the separator matters: a
+    # JSON-shaped line ("api_key": "...") is the commonest way a credential
+    # appears inside a diff or a pasted config, and requiring the separator to
+    # follow the word directly misses every one of them.
+    # The leading boundary and the bounded repeat are load-bearing, not style:
+    # an unanchored `[A-Z0-9_-]*` prefix backtracks over the whole string at
+    # every position, which turned a 500 kB state into a quadratic scan that
+    # never returned.
     re.compile(
-        r"(?i)\b[A-Z0-9_]*(?:api[_-]?key|secret|token|password|passwd)[A-Z0-9_]*\s*[=:]\s*"
-        r"['\"]?[^\s'\"]{6,}"
+        rf"(?i)\b[A-Z0-9_\-]{{0,32}}{_SECRET_WORD}[A-Z0-9_\-]{{0,32}}"
+        rf"['\"]?\s*[=:]\s*['\"]?[^\s'\",;}}]{{6,}}"
     ),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+    # Credentials embedded in a connection string or a basic-auth URL.
+    re.compile(r"(?i)\b[a-z][a-z0-9+.\-]*://[^/\s:@]+:[^/\s@]+@"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b"),
+    # A JSON Web Token: three base64url segments separated by dots.
+    re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b"),
 )
 
-# Lock-file integrity hashes and similar: long, high-entropy, and entirely
-# ordinary.  A line matching one of these is exempt from the entropy rule.
-_HASH_FORM = re.compile(r"(?i)(sha\d{3}-|sha\d{3}:|md5-|integrity|checksum|[0-9a-f]{40,}\b)")
-_ENTROPY_RUN = re.compile(rf"[A-Za-z0-9+/=_\-]{{{ENTROPY_MIN_RUN},}}")
+# A run that is itself a content hash -- a lock-file integrity value, a commit
+# identifier -- is high-entropy and entirely ordinary.  The exemption is tested
+# against the CANDIDATE RUN, never the surrounding line: a line-wide test means
+# one commit identifier anywhere on a line switches redaction off for every
+# other token on it, which is exactly what a diff or a changelog entry looks
+# like.  The word "integrity" is not evidence about the run beside it, so it is
+# not part of this test at all.
+_HASH_RUN = re.compile(r"(?i)\A(?:(?:sha\d{3}|md5|sha)[-:])?[0-9a-f]{32,}=*\Z")
+# `/` is deliberately absent from the alphabet: a long repository path is
+# high-entropy by this measure, and the data rule explicitly permits sending
+# file paths, so including it shredded exactly the content the tool is for.
+_ENTROPY_RUN = re.compile(rf"[A-Za-z0-9+=_\-]{{{ENTROPY_MIN_RUN},}}")
 
 # A mapping key whose value is a credential by virtue of what the key is called.
 # Structured state has no "key=value" text for the patterns above to match.
+# Anchored to whole segments so `input_tokens` and `token_count` -- this API's
+# own usage vocabulary -- are not mistaken for credentials.
 _SECRET_KEY_NAME = re.compile(
-    r"(?i)(api[_-]?key|secret|token|password|passwd|credential|private[_-]?key|authorization)"
+    r"(?i)\A(?:[a-z0-9]+[_\-])*"
+    r"(?:api[_-]?key|secret|token|password|passwd|credential|private[_-]?key|authorization)"
+    r"(?:[_\-][a-z0-9]+)*\Z"
 )
+# Keys that match the shape above but name a count or a tool, not a credential.
+_SECRET_KEY_EXEMPT = re.compile(r"(?i)\A[a-z0-9_\-]*token(?:s|_count|izer|ize|izing)\Z")
 
 
 class TypeSafeClientError(RuntimeError):
@@ -167,6 +200,10 @@ class _StatusError(Exception):
 
 class _TimeoutError(Exception):
     """A transport-level timeout, distinct from an HTTP error."""
+
+
+class _DeadlineError(_TimeoutError):
+    """The wall-clock retry deadline elapsed.  A timeout, not a generic error."""
 
 
 @dataclass(frozen=True)
@@ -226,10 +263,10 @@ def redact_text(text: str) -> str:
 
     def _maybe_redact(match: re.Match[str]) -> str:
         run = match.group(0)
-        line_start = text.rfind("\n", 0, match.start()) + 1
-        line_end = text.find("\n", match.end())
-        line = text[line_start : line_end if line_end != -1 else len(text)]
-        if _HASH_FORM.search(line):
+        # The exemption is about THIS run, not the line it sits on.  A commit
+        # identifier elsewhere on the line says nothing about whether this run
+        # is a secret.
+        if _HASH_RUN.match(run):
             return run
         if _shannon_bits(run) >= ENTROPY_MIN_BITS:
             return REDACTION_PLACEHOLDER
@@ -245,8 +282,16 @@ def names_a_secret(key: Any) -> bool:
     ``key=value`` for a pattern to match, just a field named ``api_key`` whose
     value is the secret itself.  The text patterns cannot see that shape, so the
     key name is checked separately.
+
+    Matched on whole underscore- or hyphen-separated segments, and exempting the
+    count and tool shapes, so this API's own ``input_tokens`` and
+    ``output_tokens`` are not mistaken for credentials -- a previous result is a
+    natural thing to pass back in as state.
     """
-    return bool(_SECRET_KEY_NAME.search(str(key)))
+    name = str(key)
+    if _SECRET_KEY_EXEMPT.match(name):
+        return False
+    return bool(_SECRET_KEY_NAME.match(name))
 
 
 def redact(value: Any) -> Any:
@@ -287,12 +332,19 @@ def _abridge(text: str, keep: int) -> str:
 
 
 def _drop_tool_outputs(state: Any) -> Any:
+    """Drop tool-output fields at every depth.
+
+    Filtering only the top level meant the stage that exists to remove tool
+    output missed it wherever it actually sits, which is nested.
+    """
     if isinstance(state, Mapping):
         return {
-            key: value
+            key: _drop_tool_outputs(value)
             for key, value in state.items()
-            if "tool_output" not in str(key) and "tool_outputs" not in str(key)
+            if "tool_output" not in str(key)
         }
+    if isinstance(state, (list, tuple)):
+        return [_drop_tool_outputs(item) for item in state]
     return state
 
 
@@ -306,8 +358,19 @@ def _abridge_long_strings(state: Any, keep: int) -> Any:
     return state
 
 
+COLLAPSE_MAPPING_KEYS = 50
+
+
 def _collapse_collections(state: Any) -> Any:
+    """Collapse lists, and mappings past a key-count threshold, to counts.
+
+    Recursing through every mapping without ever collapsing one meant a large
+    flat mapping could not be reduced at all, so the ladder refused rather than
+    truncating it.
+    """
     if isinstance(state, Mapping):
+        if len(state) > COLLAPSE_MAPPING_KEYS:
+            return f"[{len(state)} keys elided]"
         return {key: _collapse_collections(value) for key, value in state.items()}
     if isinstance(state, (list, tuple)):
         return f"[{len(state)} items elided]"
@@ -328,7 +391,16 @@ class PreparedRequest:
     state: Any
     questions: dict[str, Any]
     truncation: tuple[str, ...]
-    marker: str = PREPARED_MARKER
+    # Defaults to None on purpose: only prepare_state passes the real token, so
+    # a hand-constructed PreparedRequest is refused by every transport.
+    token: Any = None
+
+
+def _prepared(state: Any, questions: dict[str, Any], stages: tuple[str, ...]) -> PreparedRequest:
+    """The only construction that stamps the private token."""
+    return PreparedRequest(
+        state=state, questions=questions, truncation=stages, token=_PREPARED_TOKEN
+    )
 
 
 def prepare_state(state: Any, questions: Mapping[str, Any]) -> PreparedRequest:
@@ -338,7 +410,11 @@ def prepare_state(state: Any, questions: Mapping[str, Any]) -> PreparedRequest:
     a segment the ladder kept.  Nothing here consults a clock, a random source,
     or the environment, so the same input prepares identically on every machine.
     """
-    questions = dict(questions)
+    # Questions are redacted as well as state.  A question's free text is
+    # operator-supplied -- the command-line tool takes it straight from
+    # --noul/--choice/--score -- so it is exactly as capable of carrying a
+    # credential as the state is, and it goes to the vendor either way.
+    questions = redact(dict(questions))
     if _estimate_tokens(questions) > TOTAL_TOKEN_BUDGET:
         raise TypeSafeClientError(
             "the question set alone exceeds the request budget; the state ladder "
@@ -349,24 +425,29 @@ def prepare_state(state: Any, questions: Mapping[str, Any]) -> PreparedRequest:
     stages: list[str] = []
 
     if _within_budget(working, questions):
-        return PreparedRequest(state=working, questions=questions, truncation=())
+        return _prepared(working, questions, ())
 
-    working = _drop_tool_outputs(working)
-    stages.append("drop_tool_outputs")
+    reduced = _drop_tool_outputs(working)
+    if reduced != working:
+        stages.append("drop_tool_outputs")
+    working = reduced
     if _within_budget(working, questions):
-        return PreparedRequest(state=working, questions=questions, truncation=tuple(stages))
+        return _prepared(working, questions, tuple(stages))
 
     for keep in (4000, 1000, 250):
-        working = _abridge_long_strings(working, keep)
-        if "abridge_long_strings" not in stages:
+        reduced = _abridge_long_strings(working, keep)
+        if reduced != working and "abridge_long_strings" not in stages:
             stages.append("abridge_long_strings")
+        working = reduced
         if _within_budget(working, questions):
-            return PreparedRequest(state=working, questions=questions, truncation=tuple(stages))
+            return _prepared(working, questions, tuple(stages))
 
-    working = _collapse_collections(working)
-    stages.append("collapse_collections")
+    reduced = _collapse_collections(working)
+    if reduced != working:
+        stages.append("collapse_collections")
+    working = reduced
     if _within_budget(working, questions):
-        return PreparedRequest(state=working, questions=questions, truncation=tuple(stages))
+        return _prepared(working, questions, tuple(stages))
 
     raise TypeSafeClientError(
         "state remains over the request budget after every truncation stage "
@@ -431,16 +512,26 @@ def resolve_transport(
 # --------------------------------------------------------------------------- #
 
 
+def _require_prepared(prepared: Any) -> None:
+    """Refuse anything prepare_state did not build.
+
+    Called by ``build_body`` *and* by both transports.  Keeping the check only
+    in ``build_body`` left two other doors open, because a transport takes a
+    plain dictionary and ``ask`` is not the only way to reach one.
+    """
+    if getattr(prepared, "token", None) is not _PREPARED_TOKEN:
+        raise TypeSafeClientError(
+            "state was not prepared; call prepare_state() so redaction cannot be bypassed"
+        )
+
+
 def build_body(prepared: PreparedRequest, model: str) -> dict[str, Any]:
     """The request body, which is also exactly what ``--dry-run`` prints.
 
     No key is present here, by construction: the credential lives only in the
     header, which is why the dry run is safe to print.
     """
-    if getattr(prepared, "marker", None) != PREPARED_MARKER:
-        raise TypeSafeClientError(
-            "state was not prepared; call prepare_state() so redaction cannot be bypassed"
-        )
+    _require_prepared(prepared)
     return {"state": prepared.state, "model": model, "questions": prepared.questions}
 
 
@@ -457,7 +548,49 @@ def _resolve_key(getenv: Callable[[str], str | None]) -> str:
 
 
 def _base_url(getenv: Callable[[str], str | None]) -> str:
-    return (getenv(BASE_URL_ENV) or DEFAULT_BASE_URL).rstrip("/")
+    """Resolve the endpoint base, refusing a scheme that would expose the key.
+
+    The base is environment-controlled, so it is not a fixed endpoint and cannot
+    be treated as one: an ``http://`` override would put the bearer credential
+    on the wire in cleartext.
+    """
+    base = (getenv(BASE_URL_ENV) or DEFAULT_BASE_URL).rstrip("/")
+    parsed = urllib.parse.urlsplit(base)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "https":
+        return base
+    if parsed.scheme == "http" and host in {"localhost", "127.0.0.1", "::1"}:
+        return base
+    raise TypeSafeClientError(
+        f"{BASE_URL_ENV} must use https (or http on localhost); refusing to send the "
+        f"credential over {parsed.scheme or 'an unknown scheme'}"
+    )
+
+
+class _NoCrossHostAuthRedirect(urllib.request.HTTPRedirectHandler):
+    """Drop the Authorization header when a redirect changes host.
+
+    Python's default redirect handler copies every header but content-length and
+    content-type onto the new request, so a 302 to another host would forward
+    the bearer credential there.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        if urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            for name in list(new.headers):
+                if name.lower() == "authorization":
+                    del new.headers[name]
+            new.unredirected_hdrs.pop("Authorization", None)
+        return new
+
+
+def _default_urlopen(request: Any, timeout: float | None = None) -> Any:
+    """The real opener, with the redirect handler above installed."""
+    opener = urllib.request.build_opener(_NoCrossHostAuthRedirect)
+    return opener.open(request, timeout=timeout)
 
 
 # --------------------------------------------------------------------------- #
@@ -468,13 +601,17 @@ def _base_url(getenv: Callable[[str], str | None]) -> str:
 def _urllib_call(
     body: dict[str, Any],
     *,
+    prepared: Any,
     urlopen: Callable[..., Any],
     getenv: Callable[[str], str | None],
     timeout: float,
 ) -> dict[str, Any]:
+    # The guard lives here, in the transport, not only in build_body: this is
+    # the last point before the bytes leave the machine.
+    _require_prepared(prepared)
     key = _resolve_key(getenv)
     payload = json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(  # noqa: S310 - fixed https endpoint
+    request = urllib.request.Request(  # noqa: S310 - scheme validated by _base_url
         f"{_base_url(getenv)}{SYSTEM_ONE_PATH}",
         data=payload,
         method="POST",
@@ -524,6 +661,7 @@ class _MalformedBodyError(Exception):
 def _sdk_call(
     body: dict[str, Any],
     *,
+    prepared: Any,
     getenv: Callable[[str], str | None],
     timeout: float,
     client_factory: Callable[..., Any] | None = None,
@@ -536,12 +674,24 @@ def _sdk_call(
     """
     import typesafe_sdk
 
+    _require_prepared(prepared)
     key = _resolve_key(getenv)
     factory = client_factory if client_factory is not None else typesafe_sdk.TypeSafeClient
     base_url = _base_url(getenv)
 
+    # Disable the vendor's own retry policy.  Its defaults are 2 retries over
+    # {408, 429, 5xx} plus timeouts, which would nest inside this client's loop:
+    # up to nine requests where MAX_ATTEMPTS promises three, 5xx retried though
+    # RETRYABLE_STATUSES deliberately excludes it, and a single attempt able to
+    # outlast the whole wall-clock deadline.  This client owns retry on both
+    # transports or the two are not interchangeable.
+    retry_kwargs: dict[str, Any] = {}
+    no_retry = _sdk_no_retry_policy()
+    if no_retry is not None:
+        retry_kwargs["retry"] = no_retry
+
     try:
-        client = factory(api_key=key, base_url=base_url, timeout=timeout)
+        client = factory(api_key=key, base_url=base_url, timeout=timeout, **retry_kwargs)
     except Exception as exc:  # noqa: BLE001 - normalized below
         raise _StatusError(
             0, f"the SDK client could not be constructed ({type(exc).__name__})"
@@ -556,10 +706,34 @@ def _sdk_call(
     return _normalize_sdk_response(response)
 
 
+def _sdk_no_retry_policy() -> Any:
+    """A vendor RetryPolicy with retries disabled, or None if unavailable."""
+    try:
+        import typesafe_sdk
+
+        return typesafe_sdk.RetryPolicy(max_retries=0)
+    except Exception:  # noqa: BLE001 - an older or newer SDK may not expose it
+        return None
+
+
+def _sdk_retry_after(exc: BaseException) -> str | None:
+    """Pull a Retry-After hint off a vendor exception's response, if it has one."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    try:
+        value = headers.get("Retry-After") or headers.get("retry-after")
+    except Exception:  # noqa: BLE001 - a header bag we cannot read is simply no hint
+        return None
+    return str(value) if value is not None else None
+
+
 def _from_sdk_exception(exc: BaseException) -> Exception:
     """Map a vendor exception onto our own, composing our own message text."""
     name = type(exc).__name__
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    hint = _sdk_retry_after(exc)
     if "Timeout" in name:
         return _TimeoutError("the request timed out")
     if "Connection" in name:
@@ -567,9 +741,9 @@ def _from_sdk_exception(exc: BaseException) -> Exception:
     if "ResponseValidation" in name:
         return _MalformedBodyError("the response body did not validate against the SDK schema")
     if isinstance(status, int) and status:
-        return _StatusError(status, f"HTTP {status} from the evaluation endpoint")
+        return _StatusError(status, f"HTTP {status} from the evaluation endpoint", hint)
     if "RateLimit" in name:
-        return _StatusError(429, "HTTP 429 from the evaluation endpoint")
+        return _StatusError(429, "HTTP 429 from the evaluation endpoint", hint)
     if "Authentication" in name:
         return _StatusError(401, "HTTP 401 from the evaluation endpoint")
     if "UnprocessableEntity" in name:
@@ -619,6 +793,30 @@ def _normalize_sdk_response(response: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
+def _load_log_module() -> Any:
+    """Load the verdict-log module the house way, falling back to a path load."""
+    try:
+        import fleet_commons_shim
+
+        return fleet_commons_shim.load("jev_log")
+    except Exception:  # noqa: BLE001 - direct load for in-repo runs
+        import importlib.util
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        name = "_fleet_commons_jev_log_direct"
+        cached = _sys.modules.get(name)
+        if cached is not None:
+            return cached
+        spec = importlib.util.spec_from_file_location(name, _Path(__file__).with_name("jev_log.py"))
+        if spec is None or spec.loader is None:  # pragma: no cover
+            raise
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+
+
 def _is_retryable(exc: BaseException) -> bool:
     # The helper's default predicate covers 429 only; 529 is the vendor's
     # overload signal and must be named explicitly or it falls straight through.
@@ -635,7 +833,7 @@ def ask(
     *,
     model: str = DEFAULT_MODEL,
     transport: str | None = None,
-    urlopen: Callable[..., Any] = urllib.request.urlopen,
+    urlopen: Callable[..., Any] = _default_urlopen,
     getenv: Callable[[str], str | None] | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
@@ -643,6 +841,7 @@ def ask(
     max_attempts: int = MAX_ATTEMPTS,
     total_deadline: float = TOTAL_DEADLINE_SECONDS,
     sdk_client_factory: Callable[..., Any] | None = None,
+    cache_dir: Any = None,
 ) -> AskResult:
     """Ask the model a set of typed questions about ``state``.
 
@@ -660,15 +859,50 @@ def ask(
     except TypeSafeClientError as exc:
         return AskResult(status=STATUS_ERROR, transport=transport or "", note=str(exc))
 
+    # The cache, when the caller asks for one.  Keyed on the REQUESTED alias,
+    # because the resolved version only arrives with the response while a lookup
+    # necessarily happens before the call.  Loaded lazily so the import graph
+    # stays clean for callers that do not cache.
+    store = _load_log_module() if cache_dir is not None else None
+    key = None
+    if store is not None:
+        key = store.cache_key(prepared.state, prepared.questions, model)
+        hit = store.cache_lookup(key, directory=cache_dir)
+        if hit is not None:
+            cached = dict(hit)
+            cached["transport"] = "cache"
+            return AskResult(
+                status=str(cached.get("status", STATUS_OK)),
+                answers=dict(cached.get("answers") or {}),
+                model=str(cached.get("model") or ""),
+                transport="cache",
+                truncation=prepared.truncation,
+                usage=dict(cached.get("usage") or {}),
+                latency_ms=0,
+            )
+
     started = clock()
     deadline = started + total_deadline
 
     def _attempt() -> dict[str, Any]:
-        if clock() > deadline:
-            raise _StatusError(0, "the total retry deadline elapsed before this attempt")
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise _DeadlineError("the total retry deadline elapsed")
+        # Bound the single request by whatever is left of the deadline, not by
+        # the standalone request timeout: a per-request timeout larger than the
+        # deadline means one hanging attempt sails straight past it.
+        attempt_timeout = min(timeout, remaining)
         if chosen == TRANSPORT_SDK:
-            return _sdk_call(body, getenv=read, timeout=timeout, client_factory=sdk_client_factory)
-        return _urllib_call(body, urlopen=urlopen, getenv=read, timeout=timeout)
+            return _sdk_call(
+                body,
+                prepared=prepared,
+                getenv=read,
+                timeout=attempt_timeout,
+                client_factory=sdk_client_factory,
+            )
+        return _urllib_call(
+            body, prepared=prepared, urlopen=urlopen, getenv=read, timeout=attempt_timeout
+        )
 
     def _finish(status: str, note: str) -> AskResult:
         return AskResult(
@@ -702,15 +936,27 @@ def ask(
     if not isinstance(answers, dict):
         return _finish(STATUS_MALFORMED, "the response body has no 'answers' mapping")
 
-    return AskResult(
+    resolved = str(parsed.get("model") or "")
+    result = AskResult(
         status=STATUS_OK,
         answers=answers,
-        model=str(parsed.get("model") or ""),
+        model=resolved,
         transport=chosen,
         truncation=prepared.truncation,
         usage=dict(parsed.get("usage") or {}),
         latency_ms=int((clock() - started) * 1000),
     )
+
+    if store is not None and key is not None:
+        # This is the moment the alias's resolution becomes knowable.  If it
+        # moved since the pin, every answer cached under the alias was produced
+        # by a different model: drop the bucket before storing the new one.
+        pinned = store.read_pins(cache_dir).get(model)
+        if pinned is not None and resolved and pinned != resolved:
+            store.invalidate_alias(model, cache_dir)
+        store.cache_store(key, result.to_dict(), resolved_model=resolved, directory=cache_dir)
+
+    return result
 
 
 def answer_confidence(answer: Mapping[str, Any]) -> float | None:

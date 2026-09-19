@@ -483,6 +483,108 @@ def test_ordinary_prose_and_a_diff_pass_through_untouched() -> None:
     assert tc.redact_text(diff) == diff
 
 
+SECRET_RUN = "zK9mQ2vX7pL4nR8sT1wY6bC3dF5gH0jKaEuI9oPqZ"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"the data integrity report: {SECRET_RUN}",
+        f"sha256-abc: {SECRET_RUN}",
+        f"rec 2044c363aabbccddeeff00112233445566778899 tok {SECRET_RUN}",
+    ],
+)
+def test_a_hash_elsewhere_on_the_line_does_not_switch_redaction_off(line: str) -> None:
+    """The exemption is about the candidate run, never the line it sits on.
+
+    A commit identifier beside a token is what a diff or a changelog entry looks
+    like, so a line-wide exemption let real secrets ride through.
+    """
+    assert SECRET_RUN not in tc.redact_text(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '  "api_key": "AKIAsupersecretvalue1234567890abcd",',
+        '{"token": "hunter2secretvalue"}',
+        "postgres://admin:S3cr3tP4ss@db.internal:5432/app",
+        "https://user:hunter2@example.com/path",
+        # Deliberately not token-shaped enough for a scanner to flag, while
+        # still exercising the pattern: a realistic-looking fixture trips
+        # GitHub push protection and blocks the push.
+        "slack=xoxb-NOT-A-REAL-TOKEN-FIXTURE",
+    ],
+)
+def test_quoted_and_embedded_credentials_are_redacted(line: str) -> None:
+    """A JSON-shaped assignment is the commonest way a key appears in a diff."""
+    redacted = tc.redact_text(line)
+    assert tc.REDACTION_PLACEHOLDER in redacted
+    for secret in (
+        "AKIAsupersecret",
+        "hunter2secretvalue",
+        "S3cr3tP4ss",
+        "hunter2@",
+        "xoxb-NOT",
+    ):
+        assert secret not in redacted
+
+
+def test_a_json_web_token_is_redacted() -> None:
+    token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r"
+    assert token not in tc.redact_text(f"cookie: {token}")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "plugins/fleet-core/scripts/fleet_commons/typesafe_client.py",
+        "docs/analysis/2026-09-18-typesafe-jev-research-inputs/tier_probe.py.txt",
+        "tests/test_typesafe_reference_drift.py",
+    ],
+)
+def test_a_long_repository_path_survives_redaction(path: str) -> None:
+    """The data rule explicitly permits sending file paths.
+
+    With the path separator in the entropy alphabet a long path scored above the
+    threshold and was replaced, silently destroying exactly the content the tool
+    exists to reason about.
+    """
+    assert tc.redact_text(path) == path
+    assert tc.redact_text(f"see {path} for the seam") == f"see {path} for the seam"
+
+
+@pytest.mark.parametrize(
+    "key", ["input_tokens", "output_tokens", "max_tokens", "token_count", "tokenizer"]
+)
+def test_usage_vocabulary_is_not_mistaken_for_a_credential(key: str) -> None:
+    """A previous result is a natural state to pass back in."""
+    assert not tc.names_a_secret(key)
+    assert tc.redact({key: 331})[key] == 331
+
+
+@pytest.mark.parametrize("key", ["api_key", "secret", "auth_token", "db_password", "private_key"])
+def test_genuine_secret_key_names_are_still_caught(key: str) -> None:
+    assert tc.names_a_secret(key)
+    assert tc.redact({key: "supersecretvalue"})[key] == tc.REDACTION_PLACEHOLDER
+
+
+def test_redaction_of_a_large_state_completes_promptly() -> None:
+    """A guard against catastrophic backtracking in the credential patterns.
+
+    An unanchored prefix repeat in the named-assignment pattern backtracked over
+    the whole string at every position, turning a half-megabyte state into a
+    scan that never returned.  The bound is generous: the point is to catch a
+    quadratic blow-up, not to measure performance.
+    """
+    import time as _time
+
+    payload = {"a": "q" * 500_000, "b": ["r" * 900 for _ in range(2000)]}
+    started = _time.monotonic()
+    tc.redact(payload)
+    assert _time.monotonic() - started < 10.0
+
+
 def test_a_real_lock_file_hunk_is_not_shredded() -> None:
     """The fixture that stops the entropy rule turning every diff into placeholders."""
     hunk = "\n".join((REPO_ROOT / "uv.lock").read_text(encoding="utf-8").splitlines()[:200])
@@ -504,14 +606,73 @@ def test_redaction_is_on_the_only_path_to_a_transport() -> None:
     assert tc.REDACTION_PLACEHOLDER in sent
 
 
-def test_a_transport_refuses_unprepared_state() -> None:
+def test_build_body_refuses_unprepared_state() -> None:
     class _NotPrepared:
         state = {"x": "hello"}
         questions: dict[str, Any] = {}
-        marker = "nope"
+        token = None
 
     with pytest.raises(tc.TypeSafeClientError, match="not prepared"):
         tc.build_body(_NotPrepared(), "jev-latest")
+
+
+def test_the_prepared_token_cannot_be_forged_from_outside() -> None:
+    """A string default on the dataclass made the whole guarantee bypassable."""
+    forged = tc.PreparedRequest(
+        state={"note": "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIKEXAMPLEKEY"},
+        questions={},
+        truncation=(),
+    )
+    with pytest.raises(tc.TypeSafeClientError, match="not prepared"):
+        tc.build_body(forged, "jev-latest")
+
+
+def test_both_transports_refuse_unprepared_state_themselves() -> None:
+    """The guard must live in the transports, not only in build_body.
+
+    A transport takes a plain dictionary and ``ask`` is not the only way to
+    reach one, so checking in ``build_body`` alone left two doors open.
+    """
+    raw_body = {"state": {"note": "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIKEXAMPLEKEY"}, "model": "m"}
+    forged = tc.PreparedRequest(state=raw_body["state"], questions={}, truncation=())
+
+    calls: list[dict[str, Any]] = []
+    with pytest.raises(tc.TypeSafeClientError, match="not prepared"):
+        tc._urllib_call(
+            raw_body,
+            prepared=forged,
+            urlopen=_capturing_urlopen(calls=calls),
+            getenv=_env(),
+            timeout=5,
+        )
+    assert calls == [], "the urllib transport sent bytes despite refusing the state"
+
+    sdk_calls: list[dict[str, Any]] = []
+    with pytest.raises(tc.TypeSafeClientError, match="not prepared"):
+        tc._sdk_call(
+            raw_body,
+            prepared=forged,
+            getenv=_env(),
+            timeout=5,
+            client_factory=_sdk_factory(sdk_calls),
+        )
+    assert sdk_calls == [], "the SDK transport called out despite refusing the state"
+
+
+def test_a_secret_in_a_question_is_redacted_too() -> None:
+    """Question text is operator-supplied and goes to the vendor like state does."""
+    calls: list[dict[str, Any]] = []
+    tc.ask(
+        {"x": "hello"},
+        {"q": {"type": "noul", "instructions": "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIKEXAMPLEKEY"}},
+        transport="urllib",
+        getenv=_env(),
+        urlopen=_capturing_urlopen(calls=calls),
+        sleep=lambda _s: None,
+    )
+    sent = calls[0]["data"].decode()
+    assert "wJalrXUtnFEMIKEXAMPLEKEY" not in sent
+    assert tc.REDACTION_PLACEHOLDER in sent
 
 
 # --------------------------------------------------------------------------- #

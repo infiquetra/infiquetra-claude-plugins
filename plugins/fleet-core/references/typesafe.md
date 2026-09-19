@@ -69,6 +69,7 @@ One JSON object per line, appended, never rewritten.
 | `confidence` | the answer's confidence, or `null` — see below |
 | `threshold` | the confidence floor in force when the answer was taken |
 | `resolved_model` | the version that answered, such as `jev-1.13.0`, never the alias |
+| `label` | the known-correct value when one is known, else null; the harness scores against it |
 | `at` | an ISO 8601 timestamp |
 | `verdict_hash` | the identity an override points back to |
 

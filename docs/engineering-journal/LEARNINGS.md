@@ -33,6 +33,60 @@
 **Generalizable rule.** When a handler's job is to be a boundary around code you do not control, it must name `BaseException` — and the boundary belongs at every place that code executes, which is usually more places than the bug report names. A deliberately narrow handler elsewhere in the same file is a fact to preserve, not an oversight to tidy up.
 
 **Refs.** Issue #996; parent grouping #1005; `plugins/saga/scripts/plan_save_contract.py`; `tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_baseexception_from_checkout_code`; DECISIONS `{#996-envelope-seam-not-top-handler}`.
+### A "no path skips this" guarantee needs an unforgeable token and a check at the exit  {#unforgeable-prepared-token-1032}
+
+**Evidence.** Issue #1032, adversarial code review of the implementation. The module claimed in its
+docstring, in `plugins/fleet-core/references/typesafe.md`, and in plan decision KTD5 that redaction
+was on the only path to a transport. The reviewer falsified it three ways in one sitting.
+
+**Mechanism.** Three separate holes, each individually plausible. (1) The marker was a string with a
+default value on a dataclass field, so `PreparedRequest(state=<raw secret>)` constructed by hand
+passed the check -- a default is not a guarantee, it is a convenience. (2) The check lived in
+`build_body`, but a transport takes a plain dictionary and the public `ask` is not the only way to
+reach one, so the guard sat one call away from the exit. (3) Only state was redacted; the question
+text, which the command-line tool takes verbatim from operator flags, went to the vendor untouched.
+The repair was a private module-level sentinel object whose identity cannot be reproduced from
+outside the module, the same check re-run inside both transports at the last point before bytes
+leave, and redaction applied to questions as well as state.
+
+**Generalizable rule.** Put the check at the exit, not one frame above it, and make the token
+something an outsider cannot construct. Then ask what else crosses the same boundary: a guarantee
+about "state" said nothing about the questions travelling in the same request.
+
+### A test named for a safety property proved nothing, because it called the wrong function  {#vacuous-guard-test-1032}
+
+**Evidence.** Issue #1032. `test_a_transport_refuses_unprepared_state` called `build_body`, not a
+transport, with a hand-made object whose marker was a wrong string. It passed throughout, and would
+have passed unchanged while both transports accepted arbitrary raw bodies -- which they did.
+
+**Mechanism.** The test asserted the thing the code already did rather than the thing its name
+claimed. Several others in the same suite had the same defect: a transport-equivalence test that
+compared two fakes the test itself built from one dict literal, an offline guarantee that diffed
+`sys.modules` after an earlier test file had already imported the module in question, and a verb
+round-trip whose expected answers were derived from the stub's own input.
+
+**Generalizable rule.** For any test guarding a safety property, ask: if the dangerous thing
+happened, would this fail? If the assertion is reachable without exercising the boundary the name
+refers to, it is documentation, not a guard. Write it to call the function that would actually be
+bypassed.
+
+### Removing a word-boundary anchor from a credential pattern turned redaction quadratic  {#regex-backtracking-in-redaction-1032}
+
+**Evidence.** Issue #1032, during repair of the review's findings. Widening the named-assignment
+pattern to catch JSON-quoted secrets meant dropping its leading `\b`, leaving an unanchored
+`[A-Z0-9_-]*` prefix. The full client test file stopped completing: a 500 kB state ran for minutes
+where the whole file had taken 1.3 seconds.
+
+**Mechanism.** With `(?i)` the prefix class matches ordinary lowercase text, so at every one of half
+a million positions the engine matched greedily to the end, failed to find the keyword, and
+backtracked all the way -- a quadratic scan. This is a denial of service in a redaction path, which
+is the worst place for one, because the alternative to waiting is sending unredacted content.
+
+**Generalizable rule.** An unbounded repeat in front of a literal is a backtracking trap, and
+`(?i)` makes a character class far wider than it reads. Anchor the prefix and bound its repeat, and
+keep a test that fails on the blow-up rather than on the output -- the symptom is a hang, which no
+assertion about correctness will ever catch.
+
 ### A yes/no answer from Jev carries no confidence field, and the docs do not say so  {#jev-noul-has-no-confidence-1032}
 
 **Evidence.** Issue #1032; one live request to `https://api.typesafe.ai/v1/systemone` on

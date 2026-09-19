@@ -40,11 +40,15 @@ R2. The client supports two transports behind one calling interface: the officia
 
 R3. The API key is read from the environment variable `TYPESAFE_API_KEY` once per request build, placed only in the `Authorization` header, and never written to a log, an exception message, a verdict-log record, a dry-run print, or a repr.
 
+R3a. This holds on both transports, which takes deliberate work on the SDK path: the vendor's own quickstart constructs `TypeSafeClient()` with no argument and lets the package read the environment itself, through its code and its exception text. This client passes the key explicitly from the injected environment reader instead, and re-raises the SDK's exception types as errors whose message this repository composes. The implementer verifies the constructor accepts an explicit key before writing the transport; if it does not, that is a finding to surface, not a reason to let the vendor read the environment unobserved.
+
 R4. Every outcome maps to one of a closed status vocabulary — `ok`, `error`, `timeout`, `malformed` — mirroring `plugins/saga/scripts/engine_bridge_http.py:47-50`. An HTTP error, a timeout, or an unparseable body never reports `ok`.
 
 R5. HTTP 429 (rate limited) and HTTP 529 (overloaded) are retried with exponential backoff, bounded by a maximum attempt count and a total deadline; 400, 401, and 422 are not retried.
 
 R6. Every result records the model version the API resolved (the response's `model` field, for example `jev-1.13.0`), not the alias that was requested (`jev-latest`).
+
+R6a. A single `jev ask` invocation, measured end to end as a cold process on the default transport, completes within the card's two-second bound. Unit U5 owns this measurement and states which transport it was taken on.
 
 ### State handling
 
@@ -62,7 +66,9 @@ R10a. Because a yes/no (`noul`) answer carries a probability and no confidence f
 
 R11. An operator override of a suggestion is recorded in the same log, linked to the verdict it overrode.
 
-R12. Answers are cached keyed by the triple (state hash, question-set hash, resolved model) so a replay costs nothing and a change to any of the three misses the cache.
+R12. Answers are cached keyed by the triple (state hash, question-set hash, **requested** model — the alias as asked for, such as `jev-latest`), because the resolved version is not known until the response arrives and a lookup happens before the call. The resolved version is stored in the cached record, not in the key.
+
+R12a. A pin file records which resolved version each alias last produced. When a lookup finds the alias now resolving to a different version than the pin records, the whole bucket for that alias is invalidated rather than served. This is what stops a cached `jev-1.13.0` answer being replayed after the alias moves to a later model, which keying on the alias alone would otherwise do silently.
 
 ### The command-line tool
 
@@ -82,7 +88,9 @@ R18. `jev eval --cached docs/analysis/2026-09-18-typesafe-jev-research-inputs/` 
 
 R18a. Because that folder today contains the probe scripts and the labels but no recorded answers, the work seeds the cache once: the ten tier-probe tasks are re-run live, and the responses are committed as a recorded answer file beside the existing inputs. Every later run of R18 replays that file and makes no network call.
 
-R18b. The evaluation harness's input format is specified, not inferred: a JSON file whose top level is a list of records, each carrying `id`, `state`, `questions`, `answer` (the recorded response), `label` (the known-correct value), and `resolved_model`. The verdict log's own records are accepted as a second input format, so a run against real accumulated verdicts needs no conversion step.
+R18b. The evaluation harness's input format is specified, not inferred: a JSON file whose top level is a list of records, each carrying `id`, `state`, `questions`, `answer` (the recorded response), `label` (the known-correct value), and `resolved_model`. Answers join to labels on `id`, which is the same identifier the verdict log calls `decision_id`. The verdict log's own records are accepted as a second input format, so a run against real accumulated verdicts needs no conversion step.
+
+R18c. The default confidence bands are literal and stated: below 0.6, 0.6 to below 0.8, and 0.8 and above. They are a command-line parameter with these defaults, not a constant buried in code, because the research's explicit finding is that thresholds come from measurement rather than from a cookbook — and because a default nobody can see is a threshold nobody can revise.
 
 ### The data rule
 
@@ -107,6 +115,8 @@ The operator's steer asks for the SDK where a dependency is acceptable and the d
 The evidence supports the split rather than either extreme. In the SDK's favor: it is the vendor's own contract, MIT licensed, free, marked Production/Stable, and it carries typed responses and a retry policy this plan would otherwise hand-write. Against relying on it alone: `typesafe-sdk` is at version 0.7.0, published 2026-09-18, the fourth release in ten days, and two of the last three releases were breaking (0.6.0 changed how `Score` criteria are passed; 0.7.0 swapped the serialization library). It also pulls in `httpx2`, a package from the pydantic organization at version 2.13.0, which this repository does not have today.
 
 The out-of-project case is real and not hypothetical: the research measured a cold Python process at 1.07 to 1.94 seconds, and named hooks that must run without this project's virtual environment. A hook cannot assume `typesafe-sdk` is importable; `urllib` is always there.
+
+**Does the SDK default threaten the two-second acceptance criterion?** It was worth checking, because the SDK imports pydantic and `httpx2` at startup where `urllib` imports almost nothing, and the research document's section 7.3 cites a cold process at 1.07 to 1.94 seconds. Measured on this machine on 2026-09-19: importing pydantic and httpx costs 0.13 to 0.26 seconds cold, against 0.05 seconds for `urllib` and `json`. Added to the 0.44-second live call measured the same day, the SDK path lands near 0.7 seconds — comfortably inside the bound, and the research's higher figure belongs to a different harness, not to this one. The SDK default stands, and R6a keeps the measurement honest rather than assumed.
 
 Rejected alternative, SDK only: it would leave every out-of-project caller with no path, contradicting the second half of the operator's steer. Rejected alternative, `urllib` only (the research document's original position at section 7.2): it contradicts the first half of the steer, and it means hand-writing retry and response typing the vendor already ships.
 
@@ -138,6 +148,8 @@ The plan therefore ships `plugins/fleet-core/scripts/jev.py` and treats the thre
 
 State preparation is one ordered pipeline — redact, then truncate, then serialize — and the transports accept only prepared state. Redacting after truncation would let a secret survive in a segment the ladder kept, and redacting in the caller would make the data rule a convention rather than a mechanism (R20). The cost is that a redaction placeholder consumes budget in the truncation step, which is the correct direction to fail.
 
+**The enforcement must exist before the client works, not one unit later.** Unit U2 delivers a complete `ask()` over both transports while unit U3 delivers redaction, so on the ordering as first written there is a revision of this module that sends raw state to a third party, and U2's own secret-containment test could not catch it because it inspects results, logs, and exception text rather than the outbound body. The transports therefore refuse any state that does not carry the marker `prepare_state` sets, from U2 onward, with a test asserting that an unprepared state raises rather than sends. In U2 the marker is set by a pass-through preparer; U3 fills that preparer in. At no revision can a caller reach a transport unredacted.
+
 ### KTD6. The truncation ladder's stages are fixed, ordered, and reported
 
 The ladder follows the research's staged design: cut tool outputs, then abridge long values head and tail, then collapse structures to counts. It never samples, never reorders, and never makes a size-dependent choice that a rerun could make differently (R9). Each fired stage is named on the result, because the research's diff probe showed truncation changing an answer from one plugin to another — an unreported truncation is an unexplainable verdict.
@@ -145,6 +157,8 @@ The ladder follows the research's staged design: cut tool outputs, then abridge 
 ### KTD7. The verdict log is append-only JSON Lines under the git-ignored `.claude/` tree
 
 One record per line, opened in append mode, never rewritten. This matches how the delegation audit store already keeps machine-local durable state (DECISIONS `{#delegation-audit-store-ktds-396}`) and keeps the log out of the repository and out of any model's context (R10). An override record carries the hash of the verdict it overrode rather than repeating it.
+
+**The path is the home directory, not the repository, and that distinction is load-bearing.** This repository runs agents in worktrees under `.claude/worktrees/`, and `.gitignore:56` ignores `.claude/`. A log at the repository root's `.claude/` would therefore be per-worktree and would vanish with the worktree — which destroys the durability R10 asks for and leaves the evaluation harness with nothing accumulated to score. The default is `~/.claude/typesafe/verdicts.jsonl`, matching `audit_store.py:53`, which already defaults to `Path.home() / ".claude" / "delegation-audit"`. An environment variable overrides it for tests. A unit test asserts the default resolves outside the repository tree, because this is exactly the kind of mistake that looks fine until a worktree is removed.
 
 ### KTD8. The named verbs are declarative policy data, not code branches
 
@@ -170,6 +184,24 @@ A single request was sent to the endpoint from this worktree on 2026-09-19 to ch
 
 Two consequences the implementer must not have to discover: a `noul` has no `confidence`, which is why R10a exists; and because no rate-limit headers arrive on a success, the client cannot pace itself pre-emptively and must react to a 429 status, tolerating a missing `Retry-After` header (which `parse_retry_after` already reports as "no usable hint").
 
+### The wire contract, written down
+
+The plan states these rather than leaving the implementer to find them in a probe script.
+
+Endpoint: `POST https://api.typesafe.ai/v1/systemone`, with `Authorization: Bearer <key>` and `Content-Type: application/json`. The base may be overridden by `TYPESAFE_BASE_URL`.
+
+Request body: `{"state": <string | object | array of strings>, "model": "<alias or version>", "questions": {"<id>": <question>, ...}}`. A question is one of three shapes — `{"type": "noul", "instructions": ...}`, `{"type": "choice", "instructions": ..., "criteria": {"<option>": "<description>"}}`, or `{"type": "score", "instructions": ..., "criteria": ["<level>", ...]}` — and `instructions` may itself be an object carrying `question` and `policy`, which is how the tier probe passes policy text.
+
+Response body: `{"answers": {"<id>": <answer>}, "model": "<resolved version>", "usage": {"input_tokens": N, "output_tokens": N}}`, with the answer shapes recorded in the table above.
+
+### The two transports return different shapes, and normalizing them is design work
+
+This is the part of KTD1 that costs something. The raw endpoint returns one `answers` mapping keyed by question identifier. The SDK does not: it returns per-type buckets, read as `response.nouls[key].noul`, `response.choices[key].choice`, and `response.scores[key].score`. It also builds questions as `Noul(...)`, `Choice(...)`, and `Score(...)` objects rather than dictionaries, and the vendor's example passes choice criteria with `None` values where this repository's tier probe passes descriptive strings.
+
+Unit U2 therefore carries an explicit field-by-field normalization table — every SDK attribute to its result field, for all three question types, plus `model` and `usage` — written before the transport code. Two facts must be confirmed against the installed package rather than assumed: whether the SDK surfaces `usage` at all, and whether it surfaces the resolved model, since R6 depends on the second. If either is missing, the SDK transport reports the field as absent rather than inventing a value.
+
+The equivalence test must not compare two hand-written fakes, which would agree by construction and prove nothing. It drives both transports from one recorded HTTP payload, replaying the same bytes through the SDK's own transport seam.
+
 ### The pipeline
 
 The module is one pipeline with a pluggable tail.
@@ -184,7 +216,9 @@ caller (jev.py CLI, or a plugin importing through fleet_commons_shim)
   state preparation:  redact()  ->  truncate()  ->  serialize()
         |
         v
-  cache lookup  (state hash, question hash, model)  -- hit? return, no transport
+  cache lookup  (state hash, question hash, REQUESTED model alias)
+                 + alias pin check -- stale pin? invalidate the bucket
+                 -- hit? return, no transport
         |  miss
         v
   transport seam
@@ -200,9 +234,11 @@ caller (jev.py CLI, or a plugin importing through fleet_commons_shim)
        verdict log (append-only JSON Lines)  +  cache write
 ```
 
-Transport selection resolves in this order: an explicit argument, then the environment variable `INFIQUETRA_TYPESAFE_TRANSPORT` (`sdk` or `urllib`), then the SDK if importable, then `urllib`. Tests exercise both transports with fakes; neither reaches the network.
+Transport selection resolves in this order: an explicit argument, then the environment variable `INFIQUETRA_TYPESAFE_TRANSPORT` (`sdk` or `urllib`), then the SDK if importable, then `urllib`. Because the two transports differ in how the key is handled and in the shape they return, a silent fall-through would be a behavior change an operator cannot see — so an unrecognized value for that variable fails loudly naming it, and a request for `sdk` when the package is not importable fails loudly too, rather than quietly auto-detecting. Tests exercise both transports with fakes; neither reaches the network.
 
-The `urllib` transport mirrors `plugins/saga/scripts/engine_bridge_http.py` deliberately: the same injection seam names (`urlopen`, `getenv`, `clock`, `timeout`) at `engine_bridge_http.py:58-74`, and the same closed status vocabulary at `engine_bridge_http.py:47-50`. A reviewer who knows one knows the other.
+Every cross-module load goes through the house mechanism, not a plain import: `typesafe_client.py` reaches the backoff helper as `fleet_commons_shim.load("retry_backoff")` and `jev.py` reaches the client as `fleet_commons_shim.load("typesafe_client")`, matching `cost_weights.py:37`. Fleet-commons modules are loaded by file path under synthetic module names (`fleet_commons_shim.py:151-165`), so a plain `import retry_backoff` does not work from an installed plugin tree.
+
+The `urllib` transport mirrors `plugins/saga/scripts/engine_bridge_http.py` deliberately: the same injection seam names (`urlopen`, `getenv`, `clock`, `timeout`) at `engine_bridge_http.py:58-79`, and the same closed status vocabulary at `engine_bridge_http.py:47-50`. A reviewer who knows one knows the other.
 
 ---
 
@@ -241,7 +277,7 @@ The heart of the card: one calling interface, two transports, a closed status vo
 
 **Goal:** `typesafe_client.py` sends a prepared request over either transport and returns a typed result.
 
-**Requirements:** R1, R2, R3, R4, R5, R6.
+**Requirements:** R1, R2, R3, R3a, R4, R5, R6.
 
 **Dependencies:** U1.
 
@@ -249,7 +285,15 @@ The heart of the card: one calling interface, two transports, a closed status vo
 
 **Approach:** A module-level `ask(state, questions, *, model="jev-latest", transport=None, ...)` returning a frozen `dataclass` named `AskResult` — a dataclass rather than a bare dictionary, so a typo in a field name fails at the call site instead of silently reading `None`, and so the two transports are forced to produce the same shape. Its fields are `status` (one of the four constants), `answers`, `model` (the resolved version, never the alias), `transport` (`"sdk"` or `"urllib"`), `truncation` (the stages that fired), `usage`, `latency_ms`, and `note` (the failure reason, empty on success). It carries no field that could hold the key. The `urllib` transport is a close sibling of `engine_bridge_http.py`'s `runner` factory: `urlopen`, `getenv`, and `clock` are keyword-injected with real defaults bound at call time so tests pass fakes. The SDK transport wraps `typesafe_sdk.TypeSafeClient` and normalizes its exception classes onto the same closed status vocabulary, so a caller cannot tell the transports apart from the result's shape. The key is read through the injected `getenv` at request-build time and written only into the `Authorization` header.
 
-Retry uses the existing `retry_with_backoff` in `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:137-186` rather than a second backoff implementation — but note its default `is_retryable` fires on status 429 only (`retry_backoff.py:38-40`). This client must pass an explicit `is_retryable` covering both 429 and 529, or 529 will fall straight through as a non-retryable error. That is the single most likely way this unit ships subtly wrong, which is why it has its own test scenario below. `parse_retry_after` in the same module handles both `Retry-After` header forms and should be passed through.
+Retry uses the existing `retry_with_backoff` in `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:137-186` rather than a second backoff implementation. Three things about that helper constrain this unit and are easy to get wrong.
+
+Its default retry predicate fires on status 429 only — `on_status: int = 429` at `retry_backoff.py:140`, used by the fallback lambda at `:166-168`. This client must pass an explicit `is_retryable` covering both 429 and 529, or 529 falls straight through as a non-retryable error. That is the single most likely way this unit ships subtly wrong.
+
+It retries on a **raised** exception, while the `engine_bridge_http.py` pattern this client otherwise mirrors *catches* `HTTPError` and returns a failure dictionary. The boundary is therefore explicit: the inner callable each transport hands to `retry_with_backoff` raises a status-carrying error, and the mapping onto the four status constants happens outside the retry, on whatever the retry finally returns or raises.
+
+It delays through an injected `sleep` callable, not through `clock`. The declared injection seams for this client are therefore `urlopen`, `getenv`, `clock`, **and `sleep`**, and every backoff assertion is made against a recording fake `sleep` rather than against the clock.
+
+One requirement is not satisfiable by the helper as it stands: `retry_with_backoff` has `max_attempts` but no total-deadline parameter, so R5's wall-clock bound is work this unit writes — a deadline checked around the retry call, using the injected `clock` — not a parameter it passes. `parse_retry_after` handles both `Retry-After` header forms and is passed through.
 
 **Patterns to follow:** `plugins/saga/scripts/engine_bridge_http.py:47-50` (status constants), `:58-79` (injection seams and the lazy `getenv` default), `:112-120` (the "SECRET BOUNDARY" comment block and the resolve-once-into-the-header discipline), `:128-140` (mapping `HTTPError` and `URLError` onto statuses); `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:69-186` for backoff and `Retry-After` parsing; the two UniFi clients (`plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py:187-197`) as the only existing callers of that helper.
 
@@ -261,10 +305,10 @@ Retry uses the existing `retry_with_backoff` in `plugins/fleet-core/scripts/flee
 - Authentication header: the bearer token is taken from the injected `getenv` for `TYPESAFE_API_KEY` and appears only in the `Authorization` header.
 - Error path, 400: a fake `urlopen` raising `HTTPError` with status 400 yields status `error`, is not retried, and the note names the status.
 - Error path, 401 and 422: same as 400 — mapped to `error`, not retried.
-- Error path, 429: the first two attempts raise 429, the third returns 200; the result is `ok` after exactly three attempts, and the fake clock shows backoff grew between attempts.
+- Error path, 429: the first two attempts raise 429, the third returns 200; the result is `ok` after exactly three attempts, and the recording fake `sleep` shows the delay grew between attempts.
 - Error path, 529: same retry behavior as 429. This scenario is mandatory and must be written against the real `retry_with_backoff` rather than a stub, because the helper's default retry predicate covers 429 only — a client that forgets its own `is_retryable` passes every other test in this unit and fails only here.
 
-- Error path, `Retry-After` honored: a 429 carrying a `Retry-After` header of two seconds produces a wait of at least that long on the fake clock, proving `parse_retry_after` is wired in rather than ignored.
+- Error path, `Retry-After` honored: a 429 carrying a `Retry-After` header of two seconds produces a `sleep` call of at least that long on the recording fake, proving `parse_retry_after` is wired in rather than ignored.
 
 - Error path, `Retry-After` absent: a 429 with no `Retry-After` header still retries on the plain exponential schedule rather than raising or waiting forever. A live success returns no rate-limit headers at all, so absence is the normal case, not the exception.
 
@@ -275,6 +319,12 @@ Retry uses the existing `retry_with_backoff` in `plugins/fleet-core/scripts/flee
 - Secret containment: with the environment key set to a recognizable sentinel, every string in the result, every log record emitted, and the text of every exception raised across all of the failure scenarios above contains no substring of the sentinel.
 - Edge case, missing key: `TYPESAFE_API_KEY` unset yields a clear `error` naming the missing variable, and makes no network call.
 - Edge case, transport selection: with the SDK importable and no override, the SDK transport is chosen; with `INFIQUETRA_TYPESAFE_TRANSPORT=urllib`, the `urllib` transport is chosen; with the SDK not importable, the `urllib` transport is chosen and the result says so.
+
+- Error path, bad transport override: `INFIQUETRA_TYPESAFE_TRANSPORT=grpc` fails loudly naming the variable, rather than falling through to auto-detection.
+
+- Error path, unsatisfiable transport override: `INFIQUETRA_TYPESAFE_TRANSPORT=sdk` with the package not importable fails loudly, rather than silently using `urllib` — the two differ in key handling, so a quiet substitution is a behavior change the operator cannot see.
+
+- Unprepared state is refused: calling a transport directly with state that does not carry the preparation marker raises, proving the redaction step cannot be bypassed even by a caller inside this module.
 - Edge case, called twice: two identical calls with the cache disabled produce two transport calls with byte-identical request bodies.
 
 **Verification:** both transports return equivalent results for a recorded response; no test touches the network; the sentinel key appears in no test output.
@@ -291,7 +341,11 @@ The step that makes the data rule a mechanism rather than a promise.
 
 **Files:** `plugins/fleet-core/scripts/fleet_commons/typesafe_client.py` (the `prepare_state` pipeline and the redactor), `tests/test_typesafe_client.py`.
 
-**Approach:** `prepare_state(state, questions)` returns the prepared state plus a record of the ladder stages that fired. Redaction replaces matches of a fixed pattern set — bearer tokens, common cloud and vendor key shapes, `*_API_KEY`-style assignments, private-key headers, and long high-entropy strings — with a fixed placeholder. Truncation then applies the fixed ladder in order until the budget is met: drop recorded tool outputs, abridge long string values head-and-tail with an explicit elision marker, then collapse lists and mappings to counts. Budget is measured against the documented 32,000-token state-plus-longest-question limit and the 64,000-token total, using a conservative character-to-token estimate that errs toward cutting more rather than less. Nothing in the pipeline consults a clock, a random source, or an environment value.
+**Approach:** `prepare_state(state, questions)` returns the prepared state plus a record of the ladder stages that fired. Redaction replaces matches of a fixed pattern set — bearer tokens, common cloud and vendor key shapes, `*_API_KEY`-style assignments, private-key headers, and long high-entropy strings — with a fixed placeholder. Truncation then applies the fixed ladder in order until the budget is met: drop recorded tool outputs, abridge long string values head-and-tail with an explicit elision marker, then collapse lists and mappings to counts. Budget is measured against the documented 32,000-token state-plus-longest-question limit and the 64,000-token total. The estimate is **three characters per token**, a deliberately conservative divisor that over-counts tokens for ordinary English and therefore cuts earlier than strictly needed; it is a named module constant with its rationale in a comment, not a number chosen at the keyboard, because R9's determinism promise is only meaningful if the constant is written down. Nothing in the pipeline consults a clock, a random source, or an environment value.
+
+The ladder truncates state, so it cannot rescue a request whose **questions alone** exceed budget. That case refuses, names the offending verb, and does not send — stated here because the two documented budgets both count questions, and a ladder that only shortens state would otherwise loop or silently overshoot.
+
+**The high-entropy rule needs a stated threshold, and it is the riskiest part of this unit.** Redacting "long high-entropy strings" with no number will either miss secrets or shred ordinary input: a real diff carries base64 blobs, lock-file hashes, and minified lines, and this repository's own `uv.lock` is full of them. The rule is therefore: a run of at least 40 characters from the base64 or hexadecimal alphabet with a Shannon entropy of at least 4.0 bits per character, and it does not fire inside a line matching a lock-file hash form. Neither `_sanitize_argv` nor the site-profile detector supplies a threshold to borrow, so this one is chosen here and proven by the fixture test below rather than assumed.
 
 **Patterns to follow:** the staged ladder described in `docs/analysis/2026-09-18-typesafe-jev-integration-research.md` section 7.4. There is no general-purpose text scrubber in the repository to reuse — a survey found only `_sanitize_argv`, duplicated in `plugins/codex/scripts/codex_delegate.py:409-426` and `plugins/agy/scripts/agy_delegate.py:1851-1868`, which redacts command-line arguments rather than arbitrary text, and the credential *detector* in `plugins/unifi/skills/unifi-network/scripts/site_profile_loader.py:192-211`, which rejects documents rather than scrubbing them. Borrow the pattern vocabulary from both; write the general scrubber here.
 
@@ -301,6 +355,10 @@ The step that makes the data rule a mechanism rather than a promise.
 - Redaction: a state containing a bearer token, an `AWS_SECRET_ACCESS_KEY=` assignment, a private-key header block, and a sixty-character high-entropy string emerges with each replaced by the placeholder and none of the originals present anywhere in the output.
 - Redaction, nested: secrets inside nested mappings and inside list elements are redacted at every depth.
 - Redaction, no false positive on ordinary prose: a plan paragraph and a unified diff hunk with no credentials pass through byte-identical.
+
+- Redaction, no false positive on a real hash-dense file: a genuine hunk of this repository's `uv.lock`, which is dense with long base64 integrity hashes, passes through with the entropy rule not firing. Without this fixture the first real diff sent would arrive mostly placeholders and the answer would be wrong in a way no other test catches.
+
+- Edge case, questions over budget: a question set that alone exceeds the documented budget refuses and names the verb, rather than truncating state fruitlessly.
 - Ladder stage 1: a state whose tool-output field alone exceeds the budget is reduced by dropping that field, and the reported stages name only stage 1.
 - Ladder stage 2: a state still over budget after stage 1 has its long strings abridged head and tail, and the elision marker is present.
 - Ladder stage 3: a state still over budget after stage 2 has its collections collapsed to counts.
@@ -318,7 +376,7 @@ Durable memory outside model context, so the harness in U6 has something to scor
 
 **Goal:** every answer and every override is recorded, and a replay costs nothing.
 
-**Requirements:** R10, R11, R12.
+**Requirements:** R10, R10a, R11, R12, R12a.
 
 **Dependencies:** U2.
 
@@ -335,7 +393,11 @@ Durable memory outside model context, so the harness in U6 has something to scor
 - Cache hit: a second call with the identical state, question set, and resolved model returns the cached result and makes no transport call.
 - Cache miss on state: the same questions with a one-character state change misses.
 - Cache miss on questions: the same state with a reordered criteria value misses, because the hash is of the canonical form of the content, not of the dictionary's iteration order.
-- Cache miss on model: the same state and questions recorded under `jev-1.13.0` miss when the resolved model reads `jev-1.14.0`.
+- Cache hit across a resolved-version change is prevented, not permitted: an entry cached under the alias `jev-latest` while the pin recorded `jev-1.13.0` is invalidated, not served, once the pin is updated to a later version. This is the scenario that proves R12a; without it, keying on the alias would silently serve a stale answer.
+
+- Cache key uses the requested alias: two calls that both ask for `jev-latest` hit each other's cache entry, which keying on the resolved version could never do because the lookup precedes the response.
+
+- Cache miss on an explicitly requested version: a call asking for `jev-1.13.0` by exact version does not hit an entry stored under the alias `jev-latest`, even when the alias currently resolves to that same version.
 - Edge case, hash stability: two logically identical question sets built with keys inserted in different orders produce the same hash.
 - Edge case, called twice: appending the same verdict twice yields two lines, not a rewrite or a silent deduplication, and the reader tolerates both.
 - Error path, unwritable log directory: the write fails loudly with a message naming the path, and never swallows the error into a silent no-op.
@@ -350,7 +412,7 @@ The surface any harness can call with a shell command, without the plugin being 
 
 **Goal:** `jev.py` exposes `ask` and the twelve named verbs, with a dry run that proves the request body.
 
-**Requirements:** R13, R14, R15, R16, and KTD4's path correction.
+**Requirements:** R6a, R13, R14, R15, R16, and KTD4's path correction.
 
 **Dependencies:** U2, U3, U4.
 
@@ -374,7 +436,7 @@ The surface any harness can call with a shell command, without the plugin being 
 - Edge case, both `--state` and `--state-file`: the tool exits non-zero rather than silently preferring one.
 - Integration: running the tool as a subprocess with a fake transport configured through the environment produces the documented JSON on standard output and nothing on standard error.
 
-**Verification:** each acceptance criterion in the card runs against the `jev.py` path; the dry run prints a body with no key; the tool is importable, linted, and type-checked like every other plugin script.
+**Verification:** each acceptance criterion in the card runs against the `jev.py` path, including the live two-second bound of R6a, measured as a cold process and reported with the transport it was taken on; the dry run prints a body with no key; the tool is importable and linted like every other plugin script. It is deliberately not said to be type-checked: `pyproject.toml:80-85` excludes `plugins/.*/scripts/` from mypy, which covers all four new modules in this card, so the type hints here are documentation rather than a gate.
 
 ### U6. The evaluation harness
 
@@ -382,13 +444,13 @@ Turns "the suggestion seems good" into agreement per confidence band.
 
 **Goal:** `jev eval` scores recorded answers against labels and reproduces the recorded tier probe.
 
-**Requirements:** R17, R18, R18a, R18b.
+**Requirements:** R17, R18, R18a, R18b, R18c.
 
 **Dependencies:** U4, U5.
 
 **Files:** `plugins/fleet-core/scripts/fleet_commons/jev_eval.py`, `tests/test_jev_eval.py`, `docs/analysis/2026-09-18-typesafe-jev-research-inputs/tier_probe_answers.json` (new, the seeded cache).
 
-**Approach:** The harness reads an input file or a verdict log, pairs each recorded answer with its label, and reports overall agreement plus agreement within each confidence band. Bands are a parameter with a documented default, not a constant buried in code, because the research's explicit finding is that thresholds must come from the harness and never from a cookbook. A yes/no answer's distance from 0.5 stands in for its confidence when banding, per R10a.
+**Approach:** The harness reads an input file or a verdict log, pairs each recorded answer with its label, and reports overall agreement plus agreement within each confidence band. Bands come from R18c with literal defaults, and a yes/no answer's distance from 0.5 stands in for its confidence when banding, per R10a. Answers join to labels on `id`, per R18b.
 
 **The cache must be seeded first, and this is the unit's first step.** A check on 2026-09-19 found that `docs/analysis/2026-09-18-typesafe-jev-research-inputs/` contains the probe scripts, the thirty-two candidate ideas, the rendered ranking table, and the five research briefs — and no recorded API responses at all. The ten tier-probe tasks and their expected labels exist only as literals inside `tier_probe.py.txt:9-20`. Taken literally, the card's third acceptance criterion therefore cannot pass, because there is nothing cached to replay.
 
@@ -432,9 +494,9 @@ Writes down what may leave the machine and what a verdict record looks like.
 
 **Patterns to follow:** `plugins/fleet-core/references/effort-convention.md` and `tier-palette.md` for the reference-document shape in this plugin.
 
-**Test expectation:** none — this unit is documentation, and the behavior it describes is tested in U3 and U4.
+**Test scenarios:** one drift guard, which is why this unit is not test-free after all. A test asserts that the redaction placeholder string and the verdict-record field names quoted in `typesafe.md` match the constants in the code. Without it, U3's pattern set can change and leave the document describing a rule the code no longer enforces — the same failure the version pin in KTD2 is guarded against, and the reason R19 and R20 are two requirements rather than one.
 
-**Verification:** a reader can answer "may I send this?" and "what does a verdict record contain?" without reading the code.
+**Verification:** a reader can answer "may I send this?" and "what does a verdict record contain?" without reading the code, and the guard proves the document still describes the code.
 
 ### U8. Release surfaces and the engineering journal
 
@@ -464,7 +526,7 @@ Makes the installed plugin's metadata tell the same story as the diff.
 
 No judgment point is wired into any skill, hook, or command. This card ships the library, the tool, the log, and the policy; issue 1033 and the cards after it consume them.
 
-No answer is cached across a state change. The cache key includes the state hash, so a changed state is a miss by construction — freshness is a property of the key, not a separate check.
+No answer is cached across a state change. The cache key includes the state hash, so a changed state is a miss by construction. Note that this reads the card's wording — "freshness is checked before reuse" — as satisfied by the key rather than by a separate check, which is a reinterpretation of the operator's text and is raised in Open Questions rather than assumed.
 
 No persistent local daemon or socket client. The research identified one for per-tool-call hooks; nothing in this card fires per tool call.
 
@@ -540,6 +602,8 @@ The interactive question tool was not available in this session, so every questi
 
 ---
 
+**The card's second evaluation benchmark is not planned, and that is a deliberate omission.** The card's test section asks `jev eval` to reproduce "the 30-issue benchmark from cached answers" alongside the tier probe. This plan carries only the tier probe. The reason is the same missing-data problem, and worse here: the thirty-issue probe scored 17 of 30 with generic criteria and 19 of 30 with the repository's issue-type policy passed as state, neither of which is a figure to "reproduce" in the way 10 of 10 is, and the research document's own reading is that the ceiling is label noise rather than model quality. Reproducing a number that measures the labels rather than the judgment would be a test that passes without meaning. The operator should decide whether to drop it, or to add it as a labeled fixture scored for agreement per band without a target figure.
+
 **The card's third acceptance criterion assumes cached answers that do not exist.** The research inputs folder holds the probe scripts and their labels but no recorded API responses, so `jev eval --cached` has nothing to replay until the cache is seeded. U6 seeds it by re-running the ten tier-probe tasks once and committing the responses, which preserves the criterion's intent — an offline, reproducible benchmark — at the cost of one live run. If the reseeded run does not reproduce 10 of 10, that result is reported rather than engineered away, and the operator decides whether the criterion stands.
 
 ---
@@ -550,7 +614,7 @@ The interactive question tool was not available in this session, so every questi
 - `docs/analysis/2026-09-18-typesafe-jev-integration-research.md` — sections 2 (the measurements), 5 (requirements R1 to R4), 7 (delivery mechanics, the truncation ladder, logging and pinning), 8 (the house rules), 9 (risks), and 11 (the plan inputs).
 - `docs/analysis/2026-09-19-improve-claude-plugins-objective-plan.md` — section 2 (how the simplification changes the TypeSafe plan) and section 8 (the card body).
 - `docs/analysis/2026-09-18-typesafe-jev-research-inputs/jev.py.txt` and `tier_probe.py.txt` — the probe client and the recorded tier benchmark.
-- `plugins/saga/scripts/engine_bridge_http.py:47-50` (status vocabulary) and `:58-74` (the injection seams this client mirrors).
+- `plugins/saga/scripts/engine_bridge_http.py:47-50` (status vocabulary) and `:58-79` (the `runner` factory's injection seams this client mirrors).
 - `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py` — the existing backoff helper.
 - `pyproject.toml:13-20` (dependencies), `:89` (coverage options); `uv.lock` (pydantic 2.13.3, tenacity 9.1.4, httpx 0.28.1).
 - `plugins/fleet-core/.claude-plugin/plugin.json` (version 0.25.3), the matching `.claude-plugin/marketplace.json:201-204` entry, `plugins/fleet-core/CHANGELOG.md:8` (latest entry `## [0.25.3] - 2026-08-24`), and `tests/test_release_triad.py` (the guard that holds the three in agreement).

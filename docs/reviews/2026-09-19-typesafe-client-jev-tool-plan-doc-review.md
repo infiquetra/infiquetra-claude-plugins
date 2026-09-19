@@ -5,67 +5,86 @@
 | Field | Value |
 |---|---|
 | Target | `docs/plans/2026-09-19-typesafe-client-jev-tool-plan.md` |
-| Reviewed revision | working tree, uncommitted, on branch `issue/1032` (base commit 2044c363) |
+| Reviewed revision | working tree on branch `issue/1032`; round 1 reviewed the pre-commit draft, round 2 reviewed commit 8f865a3c |
 | Linked issue | infiquetra/infiquetra-claude-plugins#1032 |
 | Linked plan saga | `issue-1032`, plan tick recorded 2026-09-19 |
 | Classification | plan document — not an idea, issue, or spec artifact, so no rubric-engine phase applies |
 | Triggered lens | security and external integration (an API credential, and repository content sent to a third-party vendor) |
+| Rounds | 2 |
 | Blocked | no |
-| Findings remaining | 0 at P0, 0 at P1, 3 at P2, 2 at P3 |
-| Safe fixes applied | 7 |
+| Findings after round 2 | 0 at P0, 0 at P1, 0 at P2, 2 at P3 |
+| Safe fixes applied | 7 in round 1, 18 in round 2 |
 
 ## How this review was run
 
-The plan's author also ran the review, so the pass was split. An independent adversarial reviewer was dispatched on a disposable read-only worktree to attempt to refute the plan's factual claims, its requirement mapping, and its security posture. In parallel the author ran the readiness-skeptic pass and checked the plan's external assumptions against live sources rather than against the documentation the plan cites.
+The plan's author also ran the review, so the pass was split two ways and run twice.
 
-The second check is what produced the two substantive findings below. Both were repaired in place, which is why they appear as applied fixes rather than as open findings.
+Round 1 was the author's own readiness-skeptic pass, checking the plan's external assumptions against live sources rather than against the documentation it cites. It produced seven fixes and left three P2 and two P3 findings.
 
-## Safe fixes applied
+Round 2 was an independent adversarial reviewer on a disposable read-only worktree, asked to refute the plan's factual claims, its requirement mapping, and its security posture. It returned two P0 and seven P1 findings, plus nine P2 and three P3. Three of those had already been fixed in round 1, because the reviewer read the pre-repair draft. The rest were real, and all are now repaired. The reviewer independently re-verified every repository citation in the plan and found them accurate.
 
-Each is supported by evidence gathered during the review, not by preference.
+Every finding at P0, P1, and P2 is closed. Nothing was downgraded to make the review pass.
 
-1. **The evaluation harness had nothing to replay.** The card's third acceptance criterion asks `jev eval --cached docs/analysis/2026-09-18-typesafe-jev-research-inputs/` to reproduce the tier probe's 10 of 10. A search of that folder for recorded responses found none: it holds five research briefs, five probe scripts, the thirty-two candidate ideas, and a rendered ranking table, and the ten tasks with their expected tiers exist only as literals inside `tier_probe.py.txt:9-20`. As written the criterion was unsatisfiable. Added requirements R18a and R18b, rewrote unit U6 to seed the cache once from a live run and commit the answers, and recorded the gap in Open Questions.
+## Round 1 — fixes from the author's pass
 
-2. **A yes/no answer carries no confidence field.** A live request on 2026-09-19 returned `{"type": "noul", "noul": 0.97}` with no `confidence`, while a choice answer returned `choice`, `confidence`, and `probabilities`. The plan's verdict record (R10) assumed a confidence on every answer. Added R10a fixing how a yes/no answer is recorded and banded.
+1. **The evaluation harness had nothing to replay.** The card's third acceptance criterion asks `jev eval --cached` to reproduce the tier probe's 10 of 10, but the research inputs folder holds five research briefs, five probe scripts, the candidate ideas, and a rendered ranking table — and no recorded API responses. The ten tasks and their expected tiers exist only as literals inside `tier_probe.py.txt:9-20`. Added R18a and R18b, rewrote U6 to seed the cache from one live run, recorded the gap in Open Questions.
 
-3. **The retry helper does not cover HTTP 529 by default.** `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:38-40` retries on status 429 only, but requirement R5 needs 429 and 529. The plan named the helper without naming that gap. Added the constraint and a mandatory test scenario to unit U2.
+2. **A yes/no answer carries no confidence field.** A live request returned `{"type": "noul", "noul": 0.97}` with no confidence, while a choice answer returned choice, confidence, and probabilities. Added R10a.
 
-4. **A wrong claim about type checking.** The plan argued that shipping the tool as `jev.py.txt` would cost linting, type checking, and importability. Type checking is lost either way: `pyproject.toml:84` already excludes `plugins/.*/scripts/` from mypy. Corrected KTD4 to claim only what is true, and added that `fleet_commons_shim.load()` could in fact load a `.txt` file by path.
+3. **The retry helper does not cover HTTP 529 by default.** `retry_backoff.py` retries on 429 only. Added the constraint and a mandatory test scenario to U2.
 
-5. **The result object was never specified.** "A result object carrying status, answers, model…" left the implementer to choose between a dictionary and a class. Pinned it to a frozen dataclass in unit U2, with the field list and the reason.
+4. **A wrong claim about type checking**, corrected in KTD4: `pyproject.toml:84` already excludes `plugins/.*/scripts/` from mypy, so the suffix question does not turn on type checking.
 
-6. **The evaluation harness's input format was never specified.** Added R18b naming the record shape and accepting the verdict log as a second input.
+5. **The result object was unspecified** — pinned to a frozen dataclass with its field list.
 
-7. **Rate-limit behavior was assumed, not observed.** The live response returned no rate-limit headers at all, so the client cannot pace itself pre-emptively. Recorded the observation in the design section and added a test scenario for a 429 with no `Retry-After` header.
+6. **The harness input format was unspecified** — added R18b.
+
+7. **Rate-limit behavior was assumed** — the live response returned no rate-limit headers, recorded in the design section with a test scenario for a missing `Retry-After`.
+
+## Round 2 — the two P0 findings, both repaired
+
+**P0-1, the missing benchmark data.** Already closed by round 1 fix 1; the reviewer read the earlier draft.
+
+**P0-2, the cache key was uncomputable at lookup time.** R12 keyed the cache on the *resolved* model version, but the resolved version only arrives with the response, and the design's own diagram puts the lookup before the transport. Every resolution available to an implementer silently lost a stated property: keying on the alias would serve a stale `jev-1.13.0` answer after the alias moved, and keying on the resolved version could never hit at all for the documented default. Repaired by rewriting R12 to key on the requested alias, adding R12a for an alias-to-version pin that invalidates the bucket when the resolution changes, correcting the diagram, and replacing one cache test scenario with three.
+
+## Round 2 — the seven P1 findings, all repaired
+
+**P1-3, no unit owned the live latency criterion, and the chosen default might have broken it.** The card requires a live call under two seconds; no requirement mentioned latency and no unit ran it, while KTD1 made the heavier SDK the default transport. Measured on this machine rather than argued: importing pydantic and httpx costs 0.13 to 0.26 seconds cold against 0.05 for `urllib`, and the live call measured 0.44 seconds, so the SDK path lands near 0.7 seconds and the default stands. Added R6a, assigned it to U5, and recorded the measurement in KTD1.
+
+**P1-4, the key requirement was unenforceable on the SDK path.** The vendor's quickstart lets the package read `TYPESAFE_API_KEY` itself, through its code and its exception text, so R3's "read through the injected environment reader, placed only in the header" described the `urllib` path alone — and the containment test used a fake SDK client, so it would have passed regardless. Added R3a requiring the key be passed explicitly and the SDK's exceptions re-raised with messages this repository composes.
+
+**P1-5, redaction landed one unit after a working client.** U2 delivered a complete client over both transports and U3 delivered redaction, so an intermediate revision would send raw state to a third party, and U2's own containment test inspects results and logs rather than the outbound body. Repaired by requiring the transports to refuse any state lacking the preparation marker from U2 onward, with a test asserting an unprepared state raises.
+
+**P1-6, three retry details were wrong or missing.** The default predicate lives at `retry_backoff.py:140` and `:166-168`, not the lines cited; the delay goes through an injected `sleep`, not `clock`, so two test scenarios were unwritable as phrased; the helper retries on a raised exception while the mirrored pattern catches and returns, a boundary the plan never named; and the helper has no total-deadline parameter, so R5's wall-clock bound is work this unit writes rather than an argument it passes. All four stated in U2, and `sleep` added to the declared seams.
+
+**P1-7, the two transports return different shapes.** The raw endpoint returns one `answers` mapping; the SDK returns per-type buckets read as `response.nouls[key].noul`. The plan asserted interchangeability and planned to prove it by comparing two hand-written fakes, which would agree by construction. Added a design section requiring a field-by-field normalization table, naming the two facts to confirm against the installed package, and requiring the equivalence test to drive both transports from one recorded payload.
+
+**P1-8, the verdict log would have died with the worktree.** Agents here run in worktrees under `.claude/`, which is git-ignored, so a repository-root log is per-worktree and destroys the durability R10 asks for. Pinned the default to `~/.claude/typesafe/verdicts.jsonl`, matching `audit_store.py:53`, with a test asserting it resolves outside the repository tree.
+
+**P1-9, the harness input format.** Closed by round 1 fix 6, and strengthened: `id` named as the join key and matched to the verdict log's `decision_id`, and R18c added with literal default confidence bands.
+
+## Round 2 — the nine P2 findings, all repaired
+
+The wire contract (endpoint, request body, all three question shapes, response body) is now written into the plan instead of living only in a probe script. U5's verification no longer claims type checking, and the scope boundaries state that all four new modules sit outside the mypy scope. The truncation estimate is pinned at three characters per token as a named constant, with the questions-over-budget case stated. The high-entropy redaction rule has a literal threshold — 40 characters, entropy 4.0 bits per character, not firing on lock-file hash forms — plus a fixture test over a real hunk of `uv.lock`, since a rule without a threshold would have shredded the first real diff. Transport selection now fails loudly on an unrecognized or unsatisfiable override rather than falling through silently. Cross-module loading goes through `fleet_commons_shim.load` with the `cost_weights.py:37` precedent cited. The dropped thirty-issue benchmark is now named in Open Questions with the reason. The reinterpretation of the card's freshness clause is flagged rather than assumed. The data-rule document gained a drift guard, so U7 is no longer test-free.
 
 ## Remaining findings
 
-### P0
+### P0, P1, P2
 
 None.
-
-### P1
-
-None.
-
-### P2
-
-**P2-1 — The two transports are asserted to be interchangeable, but only one test proves it.** Unit U2 has a scenario comparing the SDK and `urllib` results for one recorded response. One example is thin for a claim the whole design rests on; a shared parameterized suite running every applicable scenario against both transports would prove it properly. Suggested fix: make the transport a test parameter across the unit rather than a single comparison case.
-
-**P2-2 — The truncation ladder's token estimate is described but not pinned.** Unit U3 says the budget uses "a conservative character-to-token estimate that errs toward cutting more rather than less" without naming the ratio. Two implementers would pick different numbers, and the ladder's determinism requirement (R9) is about reproducibility across machines, which a hand-chosen constant satisfies only if it is written down. Suggested fix: name the ratio in the plan or require it to be a named module constant with its rationale in a comment.
-
-**P2-3 — The confidence floor in the verb registry has no consumer in this card.** Unit U5 stores a confidence floor per verb (requirement R14), but nothing in this card reads it; the first consumer is issue 1033. That is defensible as foundation work, but the plan should say so explicitly so a reviewer does not read it as dead code. Suggested fix: one line in the scope boundaries naming the floor as a field populated here and consumed downstream.
 
 ### P3
 
-**P3-1 — Unit U7 lists the ten house rules by reference.** It points at the research document's section 8 rather than restating them, so the reference document's content depends on a document under `docs/analysis/` staying put. Minor, but a reference file that cannot be read standalone is less useful than one that can.
+**P3-1 — U7's data-rule document lists the ten house rules by reference** to the research document's section 8 rather than restating them, so it depends on a file under `docs/analysis/` staying put.
 
-**P3-2 — The plan does not say where the `jev` tool is invoked from.** The acceptance criteria run it as `uv run python plugins/fleet-core/scripts/jev.py …` from the repository root. Callers outside the repository, which the whole `urllib` transport exists to serve, would need an absolute path or an installed entry point. Worth a sentence, though it does not block the work.
+**P3-2 — The plan does not say how a caller outside the repository invokes the tool.** The acceptance criteria run it from the repository root; the `urllib` transport exists precisely to serve callers that are not there, and they would need an absolute path or an installed entry point.
 
 ## Notes carried to the operator
 
-Two items in the plan need the operator's eye and are not review findings, because a reviewer cannot settle them:
+Three items need the operator and are not review findings, because a reviewer cannot settle them.
 
-The plan ships the command-line tool as `plugins/fleet-core/scripts/jev.py`, while three of the card's four acceptance criteria name `jev.py.txt`. The evidence that the suffix is a copy artifact is strong, but the criteria are the operator's text.
+The plan ships the tool as `plugins/fleet-core/scripts/jev.py` while three of the card's four acceptance criteria name `jev.py.txt`.
 
-The seeding run in unit U6 produces fresh answers, not the originals. If it scores below 10 of 10, that is a reproducibility result to report, not a number to engineer toward.
+The card's thirty-issue evaluation benchmark is not planned. It scored 17 of 30 and 19 of 30 in the research, figures the research itself attributes to label noise, so there is no meaningful number to reproduce.
+
+The cache-seeding run in U6 produces fresh answers, not the originals. If it scores below 10 of 10, that is a reproducibility result to report, not a number to engineer toward.

@@ -39,7 +39,7 @@ ROLES_DIR = REPO_ROOT / "plugins" / "agent-launcher" / "roles"
 
 #: The ``infiquetra-sdlc`` revision the pinned fallbacks and the prompts' ``source:`` were taken
 #: from. Asserted against every prompt, so a prompt cannot drift to another revision unnoticed.
-SDLC_PIN = "67845cdd"
+SDLC_PIN = "5efc869f"
 
 #: The one file exempt from the per-prompt rules, by name. The README is the directory's contract
 #: document: it carries no stop rule and it is the only file allowed to name the retired plugin,
@@ -1117,8 +1117,8 @@ def test_seeded_parser_accepts_both_empty_list_spellings() -> None:
 
 
 def test_seeded_parser_keeps_colons_in_values() -> None:
-    parsed = parse_frontmatter("---\nsource: sdlc@67845cdd docs/a.md: the thing\n---\nb\n")
-    assert parsed["source"] == "sdlc@67845cdd docs/a.md: the thing"
+    parsed = parse_frontmatter("---\nsource: sdlc@5efc869f docs/a.md: the thing\n---\nb\n")
+    assert parsed["source"] == "sdlc@5efc869f docs/a.md: the thing"
 
 
 def test_seeded_parser_returns_empty_for_no_frontmatter() -> None:

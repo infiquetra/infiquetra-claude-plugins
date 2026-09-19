@@ -3,7 +3,7 @@ role: Architect
 role_id: orchestrator
 emits:
   - technical-context
-source: infiquetra-sdlc@67845cdd docs/roles/run-roles.md, docs/process/run-contracts.md
+source: infiquetra-sdlc@5efc869f docs/roles/run-roles.md, docs/process/run-contracts.md
 ---
 
 # Architect

@@ -2,7 +2,7 @@
 role: Lens Reviewer
 role_id: lens_reviewer
 emits: []
-source: infiquetra-sdlc@67845cdd docs/roles/run-roles.md, config/lens-catalogue.json
+source: infiquetra-sdlc@5efc869f docs/roles/run-roles.md, config/lens-catalogue.json
 ---
 
 # Lens Reviewer
@@ -53,14 +53,14 @@ commits; if you find either, verify what is there and report, rather than redoin
 names it; the section below tells you what it covers.
 
 **The dimensions and anchors for that lens.** Read them from the lifecycle's lens catalogue:
-`config/lens-catalogue.json` in the `infiquetra-sdlc` repository, at revision `67845cdd`. They are
+`config/lens-catalogue.json` in the `infiquetra-sdlc` repository, at revision `5efc869f`. They are
 not reproduced in this file on purpose — a copy here would be a second place to change them, and the
 catalogue is the only place policy lives.
 
 Find that checkout in this order, and stop at the first that resolves: the path your dispatch names;
 the environment variable `INFIQUETRA_SDLC_ROOT`; a directory named `infiquetra-sdlc` beside the
 repository you are reviewing or beside any of its parents; a fresh clone of the repository at
-revision `67845cdd`. You are an autonomous session with nobody to ask, so the ladder is the answer
+revision `5efc869f`. You are an autonomous session with nobody to ask, so the ladder is the answer
 rather than a question.
 
 **If you cannot reach the catalogue, stop and say so.** Do not score from the dimension names listed

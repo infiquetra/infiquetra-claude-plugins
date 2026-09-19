@@ -3,7 +3,7 @@ role: Functional Tester
 role_id: functional_tester
 emits:
   - functional-qa-result
-source: infiquetra-sdlc@67845cdd docs/roles/run-roles.md, docs/process/functional-qa.md
+source: infiquetra-sdlc@5efc869f docs/roles/run-roles.md, docs/process/functional-qa.md
 ---
 
 # Functional Tester

@@ -29,6 +29,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 
 import pytest
 
@@ -53,9 +54,13 @@ AGGREGATED_PROMPT = "lens-reviewer.md"
 #: prompt or slice a lens section.
 INDEX_NAME = "index.json"
 
-#: Where the Lens Reviewer's shared half ends. Everything above this line is sent to every lens
-#: session; exactly one ``#### <lens-id>`` section is appended.
-LENS_SHARED_HALF_ENDS_BEFORE = "# The lenses"
+#: The slicing rule is read from ``index.json`` rather than restated here. A consumer cuts by the
+#: index; if the test cut by its own copy, the two would agree only by coincidence and the suite
+#: would stay green while every lens session received a prompt nothing had checked.
+LENS_INDEX = json.loads((ROLES_DIR / "index.json").read_text(encoding="utf-8"))["lens_reviewer"]
+LENS_SHARED_HALF_ENDS_BEFORE = LENS_INDEX["shared_half_ends_before"]
+LENS_SECTION_PREFIX = LENS_INDEX["section_heading_prefix"]
+LENS_SECTION_TERMINATOR = re.compile(LENS_INDEX["section_terminator_pattern"])
 
 #: The two roles the lifecycle licenses to reuse another role's contract. The
 #: ``implementation-result`` contract's own ``sender_note`` says a repair implementer produces the
@@ -258,17 +263,27 @@ def _live_contract_fields(root: pathlib.Path) -> dict[str, frozenset[str]] | Non
 
 
 def _sibling_head(root: pathlib.Path) -> str | None:
-    """The sibling checkout's current commit, read from its git metadata without running git."""
-    head_file = root / ".git" / "HEAD"
-    if not head_file.is_file():
+    """The sibling checkout's current commit.
+
+    Asks git rather than reading ``.git`` by hand. The hand-rolled reader returned None -- and the
+    test that uses it then skipped, which is green -- whenever ``.git`` was a file rather than a
+    directory (a worktree or a submodule) or the branch ref was packed. The one condition the
+    revision gate exists to catch was the one it quietly declined to evaluate, and this repository
+    is itself developed from a worktree.
+    """
+    try:
+        result = subprocess.run(
+            ["/usr/bin/git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
         return None
-    head = head_file.read_text(encoding="utf-8").strip()
-    if head.startswith("ref: "):
-        ref = root / ".git" / head[5:]
-        if not ref.is_file():
-            return None
-        return ref.read_text(encoding="utf-8").strip()
-    return head
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
 
 
 def _resolve() -> tuple[
@@ -292,18 +307,29 @@ def _resolve() -> tuple[
             None,
             False,
         )
-    lenses = _live_lens_ids(root) or FALLBACK_LENS_IDS
-    senders = _live_contract_senders(root) or FALLBACK_CONTRACT_SENDERS
-    roles = _live_role_ids(root) or FALLBACK_ROLE_IDS
-    return (
-        lenses,
-        senders,
-        roles,
-        _live_contract_fields(root),
-        _live_contract_names(root),
-        _live_role_names(root),
-        True,
-    )
+    lenses = _live_lens_ids(root)
+    senders = _live_contract_senders(root)
+    roles = _live_role_ids(root)
+    fields = _live_contract_fields(root)
+    names = _live_contract_names(root)
+    role_names = _live_role_names(root)
+
+    # Live only when EVERY reader succeeded. Falling back per reader while still reporting "live"
+    # is how a renamed key in the lifecycle's schema silently reverts a check to this repository's
+    # own vendored copy -- the prompts then get compared to their own source and pass.
+    live = all(x is not None for x in (lenses, senders, roles, fields, names, role_names))
+    if not live:
+        return (
+            FALLBACK_LENS_IDS,
+            FALLBACK_CONTRACT_SENDERS,
+            FALLBACK_ROLE_IDS,
+            None,
+            None,
+            None,
+            False,
+        )
+    assert lenses is not None and senders is not None and roles is not None
+    return (lenses, senders, roles, fields, names, role_names, True)
 
 
 (
@@ -452,7 +478,9 @@ def strip_fenced_blocks(text: str) -> str:
     out: list[str] = []
     in_fence = False
     for line in text.splitlines():
-        if line.lstrip().startswith("```"):
+        # Both fence spellings. Recognising only backticks left a heading inside a tilde-fenced
+        # block counting as a real one.
+        if line.lstrip().startswith(("```", "~~~")):
             in_fence = not in_fence
             out.append("")
             continue
@@ -611,6 +639,14 @@ def test_index_agrees_with_the_files_and_the_readme() -> None:
 
     lens = index["lens_reviewer"]
     assert lens["lens_ids"] == list(LENS_IDS), "index lens ids disagree with the catalogue"
+    assert lens["file"] == AGGREGATED_PROMPT
+
+    # The slicing rule the index publishes must be the one this suite validates slices with.
+    # Otherwise a consumer cuts by the index, the tests cut by their own copy, the two agree only
+    # by coincidence, and changing either leaves the suite green over a prompt nothing checked.
+    assert lens["shared_half_ends_before"] == LENS_SHARED_HALF_ENDS_BEFORE
+    assert lens["section_heading_prefix"] == LENS_SECTION_PREFIX
+    assert lens["section_terminator_pattern"] == LENS_SECTION_TERMINATOR.pattern
 
 
 def test_release_surfaces_agree_and_advanced() -> None:
@@ -758,8 +794,10 @@ def test_live_checkout_is_at_the_pinned_revision() -> None:
     if root is None:
         pytest.skip("no sibling checkout to compare")
     head = _sibling_head(root)
-    if head is None:
-        pytest.skip(f"could not read the checkout's HEAD at {root}")
+    assert head is not None, (
+        f"a sibling checkout resolved at {root} but its HEAD could not be read; that is a failure,"
+        " not a skip -- the identifiers are being read from a revision nobody verified"
+    )
     assert head.startswith(SDLC_PIN), (
         f"the sibling checkout is at {head[:12]}, the prompts and pinned lists name {SDLC_PIN};"
         " refresh the pin and the prompts together, or check the sibling out at the pin"
@@ -784,15 +822,25 @@ def test_prompt_names_every_required_contract_field(path: pathlib.Path) -> None:
 
     required: set[str] = set()
     for contract in emits:
-        required |= set(CONTRACT_FIELDS[contract])
+        fields = CONTRACT_FIELDS[contract]
+        # An empty required set would make this check pass for every prompt while proving nothing.
+        # The lifecycle spelling its status field differently is all it would take.
+        assert fields, (
+            f"the lifecycle reports no required fields for {contract!r}; the transcription check"
+            " would be vacuous, so this is a failure rather than a pass"
+        )
+        required |= set(fields)
 
-    # Scoped to the output-contract section, not the whole file. Over the whole file any backticked
+    # Scoped to the output-contract section, not the whole file, and anchored so the bounds cannot
+    # be found inside a fenced example or a cross-reference. Over the whole file any backticked
     # snake_case token satisfied the check -- including one appearing only in a prohibition or a
-    # rationale, and including the `stop_condition` every prompt mentions in its stop rule.
-    text = path.read_text(encoding="utf-8")
-    start = text.index("## Output contract")
-    end = text.index("### Stop rule", start)
-    named = set(re.findall(r"`([a-z][a-z0-9_]{3,})`", text[start:end]))
+    # rationale, and including the `stop_condition` every prompt mentions in its stop rule. A
+    # mis-found bound can only widen the window, and a wider window can only make this greener.
+    body = strip_fenced_blocks(path.read_text(encoding="utf-8"))
+    opened = re.search(r"^## Output contract\s*$", body, re.MULTILINE)
+    closed = re.search(r"^### Stop rule\s*$", body, re.MULTILINE)
+    assert opened is not None and closed is not None, f"{path.name}: cannot bound output contract"
+    named = set(re.findall(r"`([a-z][a-z0-9_]{3,})`", body[opened.end() : closed.start()]))
 
     missing = sorted(required - named)
     assert not missing, (
@@ -852,12 +900,22 @@ def test_prompt_shows_the_handoff_comment_shape(path: pathlib.Path) -> None:
     if not emits:
         pytest.skip(f"{path.name} posts no handoff comment of its own")
 
+    # Per handoff block, not per file. A single well-formed example anywhere used to satisfy this,
+    # so four of the Delivery Manager's five handoffs could have omitted every common field and the
+    # suite stayed green -- while a session posting one without `next_action` is exactly the
+    # malformed handoff this library exists to prevent.
     text = path.read_text(encoding="utf-8")
-    assert re.search(r"^### Handoff: .+ \([a-z-]+\)$", text, re.MULTILINE), (
-        f"{path.name} has no '### Handoff: <name> (<contract-id>)' header line"
+    headers = list(re.finditer(r"^### Handoff: .+ \([a-z-]+\)$", text, re.MULTILINE))
+    assert len(headers) == len(emits), (
+        f"{path.name} emits {len(emits)} contracts but shows {len(headers)} handoff headers"
     )
-    for label in COMMON_HANDOFF_LABELS:
-        assert label in text, f"{path.name} omits the common handoff field {label}"
+    for index, header in enumerate(headers):
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        block = text[header.start() : end]
+        for label in COMMON_HANDOFF_LABELS:
+            assert label in block, (
+                f"{path.name}: the handoff block {header.group(0)!r} omits {label}"
+            )
 
 
 def test_lens_reviewer_covers_every_catalogue_lens() -> None:
@@ -879,13 +937,13 @@ def lens_slice(lens_id: str) -> str:
     shared = text[: text.index(LENS_SHARED_HALF_ENDS_BEFORE)]
 
     lines = text.splitlines()
-    heading = f"#### {lens_id}"
+    heading = f"{LENS_SECTION_PREFIX}{lens_id}"
     start = next((i for i, line in enumerate(lines) if line.strip() == heading), None)
     assert start is not None, f"no section for {lens_id}"
 
     end = len(lines)
     for offset in range(start + 1, len(lines)):
-        if re.match(r"^#{1,4} ", lines[offset]):
+        if LENS_SECTION_TERMINATOR.match(lines[offset]):
             end = offset
             break
 

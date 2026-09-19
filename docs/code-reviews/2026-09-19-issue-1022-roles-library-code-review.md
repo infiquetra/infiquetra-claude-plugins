@@ -1,159 +1,115 @@
 ---
 title: Code review — issue 1022, roles library
-reviewed_revision: 71f967c48c5b0e0e8e6f3d5f4a5e0a4f00000000
+reviewed_revision: a3832a26
 status: incomplete
 date: 2026-09-19
 ---
 
 # Code review — issue 1022, roles library
 
-**Outcome: `review_incomplete`.** No lens refuted the deliverable, and every finding raised was
-repaired. The review is nonetheless incomplete: of the seven lenses approved for this change, four
-returned and three did not run. Under this repository's own rule that an outcome computed over a
-partial roster reads exactly like a real one, that is not an acceptance, and it blocks. Only the
-operator can override it.
+**Outcome: `review_incomplete`.** Six of the seven approved lenses returned. Between them they
+raised twelve gating findings, including one P0, and every one is repaired across four cycles. The
+seventh lens — `adversarial` — was launched against the current head and has not returned. Under the
+rule that an outcome computed over a partial roster reads exactly like a real one, that is not an
+acceptance, and it blocks. Only the operator can override.
 
-The reviewed revision is `71f967c4` on branch `issue/1022`, against merge base `2044c363`.
+Base `2044c363`. Head at the time of writing `a3832a26`.
 
-> The frontmatter above names an abbreviated revision padded to forty characters because the review
-> was written before a final commit existed. Treat `71f967c4` as the authoritative short revision
-> and re-stamp this field when the review artifact is committed.
+## Lens roster
 
-## What was reviewed
-
-| Field | Value |
-|---|---|
-| Target | branch `issue/1022`, no pull request |
-| Merge base | `2044c363` (also `main` and the integration branch today) |
-| Reviewed revision | `71f967c4` |
-| Diff | 2,579 insertions across 24 files at first review; one repair commit since |
-| Criteria frozen | `docs/evidence/issue-1022/criteria-code-review-b67701c1...json` |
-| Backend | inline |
-| Cycles | 1 review cycle, 1 repair cycle |
-
-## Lens roster and what each returned
-
-| Lens | Class | Ran | Gating findings | Result |
+| Lens | Class | Revision reviewed | Gating findings | Outcome |
 |---|---|---|---|---|
-| `correctness` | always-on | yes, twice independently | none | findings repaired |
-| `testing` | always-on | yes | 3 × P1 | all repaired |
-| `security` | always-on | yes | none | 1 × P3 advisory, accepted |
-| `architecture-maintainability` | always-on | **no** | — | did not return in time |
-| `documentation-clarity` | conditional | **no** | — | recommended, not run |
-| `agent-usability` | conditional | **no** | — | recommended, not run |
-| `adversarial` | conditional | **no** | — | recommended, not run |
+| `correctness` | always-on | `b67701c1` (twice, independently) | none | advisory findings repaired |
+| `testing` | always-on | `b67701c1` | 3 × P1 | all repaired, cycle 1 |
+| `security` | always-on | `71f967c4` | none | 1 × P3 accepted; its one open item closed by hand |
+| `architecture-maintainability` | always-on | `71f967c4` | 3 × P1 | all repaired, cycle 2 |
+| `documentation-clarity` | conditional | `9680b8a1` | 5 × P1 | all repaired, cycle 3 |
+| `agent-usability` | conditional | `8b565638` | 1 × P0, 6 × P1 | all repaired, cycle 4 |
+| `adversarial` | conditional | `a3832a26` | — | **did not return** |
 
-The four conditionals I did **not** recommend, and why each has no applicable dimension against this
-change: `deployment-infrastructure`, `reliability`, `performance`, `api-contract`, `privacy`,
-`previous-comments` (no prior cycle), `accessibility-human-usability`, `experience`.
+The eight conditional lenses not selected have no applicable dimension against a change that is
+prose plus one test module: `deployment-infrastructure`, `reliability`, `performance`,
+`api-contract`, `privacy`, `previous-comments`, `accessibility-human-usability`, `experience`.
 
-## Findings, by priority
+## The P0
 
-### P1 — gating, all repaired
+**A lens slice dropped the instruction that lets eleven of fifteen lenses finish.** The block giving
+a conditional lens permission to report findings without scoring sat between the `# The lenses`
+heading and the first grouping heading — in neither the shared half nor any `#### <lens-id>` section,
+so the documented cut discarded it. A session staffing any of the eleven conditional lenses would
+have received an output contract demanding a score for every applicable dimension, a stop rule
+satisfied only by those scores, and no permission to report unscored: it would either fabricate
+scores or never terminate.
 
-**T1. The seeded fixtures proved a property of the regular-expression library, not that the rules
-fire.** The heading rule, the lens-section rule and the forbidden-vocabulary rule existed only as
-inline expressions inside the parametrized tests, so a fixture could not call them and instead
-re-typed the literal. Changing the rule left every fixture green. *Repaired:* each rule is now a
-named checker function that the real test and its fixture both call.
+It was introduced by the cycle-3 repair that first wrote the slicing rule down, and found by the
+lens whose consumer is an agent. *Repaired:* the permission moved into the shared half under its own
+heading, the stop rule names it, and a new test rebuilds the actual slice for each of the fifteen
+lenses and runs the whole structural contract over it. Checking the file as a whole is what hid it;
+checking the artifact a consumer really sends is what catches it.
 
-**T2. The live-versus-pinned identifier source degraded silently, and never fired where the gate
-runs.** The sibling-checkout resolution looked one level above the repository root; in a git
-worktree that is the `worktrees` directory, so the live read never resolved and the suite silently
-used the pinned lists — making the drift the design exists to catch invisible exactly where it
-matters. *Repaired:* the resolution walks ancestors, and the resolved source is named in every
-assertion message so a verdict that differs between machines says why.
+## Gating findings by cycle, and how each was resolved
 
-**T3. Three plan requirements had no enforcing test.** R7 (no role the lifecycle does not name, and
-no scanner, validator or monitor shape), R9 (the three release surfaces agreeing and advancing) and
-R10 (the retired-prompt accounting) were asserted in prose and by nothing else. *Repaired:* three
-new tests, including a both-directions identity check between the role identifiers the prompts
-declare and the lifecycle's staffable set, which is what stops a scanner file passing by reusing a
-legitimate identifier.
+**Cycle 1, from `testing`.** Seeded fixtures re-typed the production regex, so they proved a property
+of the regular-expression library rather than that a rule fires — every rule is now a named checker
+both the real test and its fixture call. The live-versus-pinned identifier source degraded silently
+and, because a worktree's parent is the `worktrees` directory, never resolved where the gate runs —
+the resolution walks ancestors and names the resolved source in assertion messages. Three plan
+requirements had no enforcing test — R7, R9 and R10 now have one each.
 
-### P2 — repaired
+**Cycle 2, from `architecture-maintainability`.** Contract field lists were transcribed from the
+lifecycle with nothing able to detect drift — a test now reads each contract's fields from the run
+model and asserts the prompt names every required one. Pinned mode could pass vacuously by comparing
+this repository's prompts to its own vendored copy — it now fails unless an environment variable
+opts out. The prompts' revision pin and the identifiers' source could disagree — the checkout's head
+is asserted equal to the pin.
 
-**C1. The frontmatter parser silently emptied a list.** A mis-indented list item fell through and
-vanished, turning a role that emits two contracts into one that appeared to emit none — which the
-contract loop then accepted by iterating zero times, indistinguishable from the Lens Reviewer's
-legitimate empty list. *Repaired:* items parse at any indent; duplicate keys, indented keys and junk
-lines raise instead of being swallowed; empty values no longer satisfy the presence check; and only
-the one aggregated prompt may have an empty list.
+**Cycle 3, from `documentation-clarity`.** The Delivery Manager listed the fields of four contracts
+but never their names, so a session would write four malformed headers. Two inputs had no resolvable
+location. The README claimed the directory holds no policy while every prompt transcribes a field
+list. Its frontmatter table claimed a spelling the lifecycle contradicts — the lifecycle disagrees
+with itself, its run model in sentence case and its role catalogue in Title Case. Its section table
+claimed every role posts a handoff, which the Lens Reviewer refutes.
 
-**C2. `emits` was checked for membership but not producership.** Any of the sixteen contract
-identifiers satisfied the check, so `product.md` claiming `run-record` would have passed.
-*Repaired:* the emitting role must be the contract's sender of record, with the two repair roles
-licensed to reuse the initial worker's contract exactly as the lifecycle's own sender note allows.
+**Cycle 4, from `agent-usability`.** The P0 above, plus: inputs headed "from the run record" with no
+prompt saying what the run record is; selection requiring a Markdown parse, now answered by
+`index.json`; an unstated slice terminator and a slicing instruction addressed to the agent rather
+than the consumer; a Lens Reviewer told to ask a question it has nobody to ask, now given a
+resolution ladder; a field check matching any backticked token anywhere in a file, now scoped to the
+output-contract section; and an unrenderable field convention, now stated with an example.
 
-**C3. Two prompts omitted required contract fields.** The Delivery Manager declared
-`investigation-request` and `release-handoff` without naming any of their eight required fields, and
-the Functional Tester dropped `grouped_failures` and reduced `per_target_conditions` to a phrase.
-Both matter because the README states a prompt is the whole of a fresh session's briefing.
-*Repaired:* both enumerate their fields, and the Functional Tester restores the grouping discipline
-together with its epistemic hedge — group by suspected cause without claiming the cause is
-established.
+## What the returned lenses upheld
 
-**C4. The Functional Tester named its contract differently from the lifecycle.** The only one of the
-fifteen handoff headings that disagreed. *Repaired.*
+`correctness` verified element by element that all three pinned identifier lists match the live
+configuration and that every prompt's `role_id` and `emits` agree with the lifecycle — all sixteen
+contracts have exactly one producing prompt.
 
-**C5. The file count was counted over the whole directory, including the README**, so deleting a
-prompt still satisfied the floor. *Repaired:* counted over prompts, plus an exact set-equality check
-between the files and the README's map.
+`security` checked every prompt's authority boundary against the role catalogue and found no
+widening: no self-approval, no self-granted merge turn, no production promotion, no scope widening,
+no threshold override. No secret, no egress instruction, no directive to obey untrusted content.
 
-### P3 — repaired or accepted
-
-Repaired: the repair prompts now cite the lifecycle's sender note that licenses their contract reuse
-rather than presenting it as an inference; the plugin README points at the new directory, which
-nothing referenced; an unmapped file now fails with a message rather than a bare `KeyError`; the
-strictness-value check matches a pattern rather than three exact spellings; the retired-vocabulary
-list covers more than two tokens; heading order and non-empty sections are enforced, and headings
-inside fenced examples no longer count.
-
-Accepted without change: the test reads an environment variable and walks parent directories. The
-security lens judged this noise rather than risk — anyone who can set that variable already has
-local execution — and the determinism concern it raises is now mitigated by naming the resolved
-source in assertion messages.
-
-## What the lenses upheld
-
-The correctness lens verified, element by element, that all three pinned identifier lists match the
-lifecycle's live configuration, and that every one of the fourteen prompts declares a `role_id` and
-an `emits` the lifecycle agrees with — all sixteen contracts have exactly one producing prompt, and
-the Human Operator correctly has none.
-
-The security lens checked every prompt's authority boundary against the lifecycle's role catalogue
-and found no widening: no self-approval, no self-granted merge turn, no production promotion, no
-scope widening beyond operator grant, no threshold override. It found no secret, no egress
-instruction, and no directive telling a session to obey content from an untrusted source.
-
-I closed the one item the security lens could not reach: the marketplace and manifest diffs are one
-version line each, introducing no source, dependency or install-location change.
+`agent-usability` confirmed prompt sizing is appropriate, stop rules are self-checkable, and the
+refusal to copy dimensions, anchors and thresholds holds with no violation.
 
 ## Why this is not an acceptance
 
-Three approved lenses did not run, and one of them —`architecture-maintainability` — is one of the
-four the roster always selects. The most valuable unrun lens for a change of this shape is
-`documentation-clarity`, because the change is almost entirely documentation, followed by
-`agent-usability`, because these files are consumed by agents rather than read by people.
-
-Finishing them is bounded work: each returned lens took between one and seven minutes. The reason
-they did not run is a concurrency limit of one subagent in flight combined with the wall time each
-lens costs, not anything about the change.
-
-## A mechanism finding worth carrying
-
-A lens spawned with worktree isolation received a worktree at the **base** commit rather than at the
-branch head, so it could read the changed files only by reaching into the sibling worktree and could
-not run `git diff` at all. It said so plainly, which is why its unverified item was visible and
-could be closed by hand. A lens less careful about naming what it did not examine would have
-returned a confident review of the wrong revision.
+One approved lens has not reported. `adversarial` is the lens most likely to find what the other six
+missed, because its dimensions are exactly the class of defect this review kept turning up:
+load-bearing assumptions and silent green. Two such defects were already found and fixed — a search
+for files lacking a heading that returned empty because the contract document quotes the heading,
+and a slice that dropped an instruction because the test examined the file rather than the artifact.
+A third is plausible and unlooked-for.
 
 ## Residual risk
 
-Prompt quality is not provable by a structural test. The suite proves headings, frontmatter,
-identifiers and coverage; whether a role prompt actually briefs a fresh session well is proven by
-the first roster run that consumes it.
+Nothing validates a posted handoff. The suite reads the prompts and asserts they mention each
+required field; it says nothing about what a session actually emits, so a malformed handoff reaches
+the next role undetected. That validator belongs with whatever first consumes these handoffs, and is
+recorded in the README rather than silently omitted.
 
-The lifecycle may move. Every prompt, the README and the test's pinned lists stamp revision
-`67845cdd`, and a new test asserts each prompt's `source:` names it, so divergence is visible rather
-than silent — but nothing prevents it.
+Prompt quality is not provable structurally. The suite proves headings, frontmatter, identifiers,
+coverage and now slice completeness; whether a role prompt briefs a session well is proven by the
+first roster run.
+
+The lifecycle may move. Every prompt, the README, `index.json` and the test's pinned lists stamp
+revision `67845cdd`, and tests assert both the prompts' `source:` and the checkout's head against
+it, so divergence is loud rather than silent.

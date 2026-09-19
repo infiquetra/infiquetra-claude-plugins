@@ -93,6 +93,11 @@ Every time you put a role to work, post a dispatch:
 
 ```markdown
 ### Handoff: Delivery Manager's dispatch to a role (dispatch)
+
+**Revision.** <the commit this handoff applies to>
+**Artifact.** <path@revision>
+**Assigned.** <the role you are dispatching>
+**Next.** <the step it is to take>
 ```
 
 with `role`, `step`, `durable_inputs`, `allocated_authority`,
@@ -104,6 +109,11 @@ To send the Investigator a factual question:
 
 ```markdown
 ### Handoff: Investigation request (investigation-request)
+
+**Revision.** <the commit this handoff applies to>
+**Artifact.** <path@revision>
+**Assigned.** Investigator
+**Next.** Establish this mechanism as a fact.
 ```
 
 with `originating_role` — the role that needs the answer; `factual_question` — one question, stated
@@ -115,6 +125,11 @@ To authorise the Release Worker:
 
 ```markdown
 ### Handoff: Release handoff (release-handoff)
+
+**Revision.** <the commit this handoff applies to>
+**Artifact.** <path@revision>
+**Assigned.** Release Worker
+**Next.** Merge and deploy to the named destination.
 ```
 
 with `revision_to_merge`, `destination`, `authority_allocated`.
@@ -123,6 +138,11 @@ For the operator at the close:
 
 ```markdown
 ### Handoff: Run record (run-record)
+
+**Revision.** <the commit this handoff applies to>
+**Artifact.** <path@revision>
+**Assigned.** Human operator
+**Next.** Decide what the run record names.
 ```
 
 with `cycles_used_per_loop`, `extensions`, `escalations`, `residual_issues`, `closing_version`,

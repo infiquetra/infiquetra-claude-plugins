@@ -316,6 +316,63 @@ property, and prove the new guard red before you accept it green.
 
 **Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
 [[#1020-census-keyed-by-field-name]].
+### A persistent local client removes half a hook's cost and still cannot beat one API round trip  {#persistent-client-cannot-beat-the-round-trip-1038}
+
+**Evidence.** Issue #1038, `docs/analysis/2026-09-19-prompt-suggestion-latency.md`, measured with
+`tools/prompt_suggestion_latency.py` against the fleet-core TypeSafe client. A cold hook making one
+request: 741.6 ms median, 781.0 ms at the 95th percentile over 20 trials. The same request against a
+resident process: 398.9 ms median, 428.4 ms at the 95th. A process that starts and immediately exits:
+46.9 ms median. Two sequential requests cold: 1044.3 ms median.
+
+**Mechanism.** Subtract the floor from the warm single-request figure and about 352 ms is left, which
+is one API round trip and matches the 332–428 ms the 2026-09-18 research measured for a standalone
+call. A resident process removes interpreter start, module import and process spawn — 343 ms, 46% of
+the cold cost, a genuinely large saving. It removes nothing else. The shipped client closes its
+session per call (`typesafe_client.py`, `with client as session:`), so even holding a client resident
+does not keep a connection warm, and the round trip is paid in full every time.
+
+**Generalizable rule.** For any per-turn hook, budget the floor plus one round trip before choosing a
+client design: if the target is under about 450 ms on this machine, no local client shape can reach
+it and the only remaining move is to take the call off the critical path.
+
+### Timing a shape against a fail-open deadline measures the deadline, and scores the timeout as a decision  {#fail-open-deadline-corrupts-the-measurement-1038}
+
+**Evidence.** Issue #1038, first measurement run. The warm two-request shape reported a 547 ms median
+— suspiciously close to the harness's own 500 ms client deadline plus process start — and an accuracy
+of 0 correct out of 15, while the *identical* logic in a cold process scored 13 of 15. The second run,
+with the measurement deadline separated from the policy deadline, reported 694.5 ms and 13 of 15.
+
+**Mechanism.** The thin client gives up after 500 ms and prints nothing, which is the correct
+fail-open policy for a hook that fires every turn. Timing the shape against that policy meant every
+trial returned at the deadline, so the recorded latency was the deadline rather than the work. The
+second, worse half: an empty answer from a timeout is byte-identical to an empty answer from a
+suggester that deliberately stayed quiet, and the harness scored it as the latter — a timeout counted
+as a fast, correct silence. Both the latency and the accuracy were wrong, and they were wrong in the
+flattering direction.
+
+**Generalizable rule.** A measurement deadline and a production deadline are different numbers; never
+reuse one as the other. And whenever "no result" and "a negative result" share a representation,
+classify them apart at the point of collection, or the failure will be counted as the success.
+
+### Both plugin trees resolve fleet-core through one registry file, so registry skew is a hard blocker, not a nuisance  {#both-trees-resolve-through-one-registry-1038}
+
+**Evidence.** Issue #1038's resolution probe, run with `FLEET_COMMONS_DEBUG=1` against each tree's own
+copy of the shim. Both `~/.claude/plugins/cache/infiquetra-plugins` and
+`~/.claude-company/plugins/cache/infiquetra-plugins` reported
+`rung=3 (installed-plugins) root=/Users/jefcox/.claude/plugins/cache/infiquetra-plugins/fleet-core/0.25.3`.
+Both trees carry only 0.25.3, and 0.25.3 has no `fleet_commons/typesafe_client.py` — the client shipped
+in 0.26.0, merged to `main` in pull request #1045.
+
+**Mechanism.** Rung 3 of the resolution ladder reads `~/.claude/plugins/installed_plugins.json`, a
+single file under the personal tree. Whichever tree's shim runs, it consults that one registry and
+lands on whatever it names — so the two trees do not merely drift apart, they converge on one
+possibly-stale root. The standing "verify both trees after a release" rule reads as though the trees
+are independent; for anything resolving through rung 3 they are not.
+
+**Generalizable rule.** A feature depending on a newly-shipped fleet-core module cannot run from an
+installed tree until the registry points at a version carrying it — check the resolved root's
+contents, not the repository's, before believing a hook or script will work when installed.
+
 ### A plugin version bump breaks three tests that restate the version as a literal  {#fleet-core-version-pins-1032}
 
 **Evidence.** Issue #1032, pull request #1045. Bumping fleet-core 0.25.3 to 0.26.0 turned the

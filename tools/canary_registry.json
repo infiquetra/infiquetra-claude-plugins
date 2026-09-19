@@ -305,5 +305,17 @@
       "replace": "import yaml"
     },
     "mutation_description": "Hoist the PyYAML import back to module scope, outside every handler this tool owns, so a missing PyYAML crashes before argparse runs."
+  },
+  {
+    "id": "plan-save-contract-proof-cli",
+    "guard": "tests/test_saga_plan_contract_boundaries.py::test_proof_cli_describes_itself_and_stays_inert_under_the_loader",
+    "invariant": "plan_save_proof.py names itself and the command that runs it, refuses every other direct invocation at exit 2 with an empty stdout, answers --help on an interpreter without PyYAML, and stays inert under plan_save_contract.py's runpy loader (#998).",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/plan_save_proof.py",
+      "find": "    parser.print_usage(sys.stderr)",
+      "replace": "    return 0"
+    },
+    "mutation_description": "Return the success code from a direct invocation, which is the reported defect: the file answered every invocation with exit 0, so a mistyped one was indistinguishable from a passing run. The unconditional-entrypoint mutation was tried first and rejected: it fires while pytest imports this module, so the run dies with an INTERNALERROR and the canary reports 'error' rather than the clean guard failure 'caught' requires."
   }
 ]

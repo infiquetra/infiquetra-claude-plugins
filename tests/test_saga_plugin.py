@@ -46,7 +46,11 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.159.2"  # 0.159.2: plan_save_contract.py imports
+    assert plugin_json["version"] == "0.159.3"  # 0.159.3: plan_save_proof.py carries a
+    # command-line entrypoint that names the proof and the command that runs it, serves it at
+    # exit 0 for --help, and refuses every other direct invocation at exit 2 with an empty
+    # stdout; PyYAML moved to its point of use so that --help works without it (issue #998).
+    # Predecessor 0.159.2: plan_save_contract.py imports
     # PyYAML at first use instead of at module scope, so an interpreter without it gets the
     # documented refusal rather than a traceback at the drift exit code, and --help still
     # works (issue #997). Predecessor 0.159.1: a BaseException raised by the

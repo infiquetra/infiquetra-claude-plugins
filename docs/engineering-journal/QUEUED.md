@@ -206,6 +206,39 @@ primitive. Ids named in issue #463 itself are marked ★.
 
 ## P2 — important
 
+### Two widen-only unions now exist: fleet-core's `jev_widen` and mission-control's `union_labels`  {#two-widen-only-unions-1035-1036}
+
+**Priority.** P2. Neither is wrong and neither is unused, so nothing is broken today; the cost is
+that a future change to the widen-only contract has two places to land and only one of them is the
+shared one.
+
+**Effort.** Half a day, and it is gated on a fleet-core edit rather than on the work itself.
+
+**Worth it when.** A third caller needs a widen-only union, or the contract itself changes — a
+different threshold rule, a different fail-open note, a different provenance vocabulary. Either of
+those turns "two implementations that happen to agree" into "two implementations that can disagree
+silently."
+
+**Context.** Issues #1035 and #1036 were built in parallel and both solved the same problem.
+Issue #1036 shipped `plugins/fleet-core/scripts/fleet_commons/jev_widen.py`, a shared helper whose
+stated properties are exactly the three #1035's labels path needed: widen-only, fail open to the
+floor, and an injectable `ask`. Issue #1035 shipped `union_labels` in
+`plugins/mission-control/scripts/triage_suggest.py`, which implements the same contract by hand.
+
+Encouragingly, the two agreed independently on the detail that is easiest to get wrong: both
+threshold the answer's yes-**probability** rather than its banding confidence, so neither can admit
+a label the model rejected.
+
+**Why it was not collapsed when the two branches met.** `jev_widen.widen()` takes a `verb` name and
+resolves its question set from `jev_verbs.VERBS`; mission-control's label question set is dynamic,
+built from the documented content labels unioned with whatever the repository's configured
+`auto_label_rules` carry, minus the issue-type names. Expressing that through `widen()` means adding
+a verb to fleet-core's registry — the cross-plugin edit DECISIONS
+[#1035-triage-questions-live-in-mission-control](DECISIONS.md#1035-triage-questions-live-in-mission-control)
+deliberately avoided, and a contended version surface besides. Collapsing them is therefore a real
+design decision about where a dynamic question set lives, not a mechanical de-duplication, and it
+did not belong in a post-review merge commit on an already-accepted pull request.
+
 ### Two real defects in the subagent presentation preamble, found by the delegation that paid for the agy 0.6.1 bump  {#preamble-findings-from-the-0-6-1-delegation}
 
 **Priority.** P2 (P1 if a subagent is observed swallowing a failure trajectory in the field — finding 2 below is the one with an operational cost).

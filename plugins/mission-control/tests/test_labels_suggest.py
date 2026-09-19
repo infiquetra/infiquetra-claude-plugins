@@ -224,6 +224,91 @@ def test_an_exception_from_the_client_is_caught_and_the_floor_still_prints(wired
     assert wired == []
 
 
+def test_an_unloadable_fleet_core_still_prints_the_rule_floor(wired, capsys, monkeypatch) -> None:
+    """The documented failure when the shim cannot resolve fleet-core."""
+
+    def _explode(_module: str):
+        raise RuntimeError("fleet-core did not resolve")
+
+    monkeypatch.setattr(sdlc_manager, "_fleet_commons", _explode)
+
+    sdlc_manager.labels_auto_label("infiquetra-claude-plugins", 42, "text", suggest=True)
+    out = capsys.readouterr().out
+
+    assert "security (rule)" in out
+    assert "could not be loaded" in out
+    assert wired == []
+
+
+def test_the_model_is_never_asked_about_an_issue_type_label(monkeypatch, capsys) -> None:
+    """R14a at the command level: the type labels the rules carry are excluded."""
+    monkeypatch.setattr(
+        sdlc_manager,
+        "load_config",
+        lambda: {
+            "labels": {
+                "auto_label_rules": {
+                    "title_contains_capability": {
+                        "pattern": r"\[CAPABILITY\]",
+                        "add_labels": ["capability", "needs-analysis"],
+                    },
+                    "mentions_security": {
+                        "pattern": r"security|vulnerability|CVE",
+                        "add_labels": ["security"],
+                    },
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(sdlc_manager, "_rest_get", lambda _path: dict(ISSUE))
+    calls: list = []
+
+    sdlc_manager.labels_auto_label(
+        "infiquetra-claude-plugins",
+        42,
+        "text",
+        suggest=True,
+        ask=_ask({}, calls=calls),
+        suggest_client=client,
+    )
+
+    asked = set(calls[0]["questions"])
+    assert "capability" not in asked
+    assert "needs-analysis" not in asked
+    assert set(ts.CONTENT_LABELS) <= asked
+
+
+def test_a_rule_matched_type_label_still_survives_the_union(monkeypatch, capsys) -> None:
+    """Excluded from the QUESTION, never from the floor: widen-only still holds."""
+    monkeypatch.setattr(
+        sdlc_manager,
+        "load_config",
+        lambda: {
+            "labels": {
+                "auto_label_rules": {
+                    "title_contains_capability": {
+                        "pattern": r"Security",
+                        "add_labels": ["capability"],
+                    }
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(sdlc_manager, "_rest_get", lambda _path: dict(ISSUE))
+
+    sdlc_manager.labels_auto_label(
+        "infiquetra-claude-plugins",
+        42,
+        "text",
+        suggest=True,
+        ask=_ask({}),
+        suggest_client=client,
+    )
+    out = capsys.readouterr().out
+
+    assert "capability (rule)" in out
+
+
 def test_nothing_matched_and_nothing_suggested_says_so(monkeypatch, capsys) -> None:
     monkeypatch.setattr(sdlc_manager, "load_config", lambda: {"labels": {"auto_label_rules": {}}})
     monkeypatch.setattr(

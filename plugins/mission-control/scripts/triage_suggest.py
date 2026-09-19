@@ -28,7 +28,7 @@ Status vocabulary, the Objective candidates -- is mission-control's own data
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 # The confidence floor every judgment in this module records (plan KTD7).  It
@@ -186,7 +186,9 @@ def label_questions(labels: Sequence[str]) -> dict[str, Any]:
     return {label: _noul(f"Does `issue` warrant the `{label}` label?") for label in labels}
 
 
-def candidate_labels(rule_labels: Iterable[str] = ()) -> tuple[str, ...]:
+def candidate_labels(
+    rule_labels: Iterable[str] = (), *, exclude: Iterable[str] = ()
+) -> tuple[str, ...]:
     """The labels the model is asked about (plan R14a).
 
     The documented content labels, widened by any label the configured rules
@@ -194,10 +196,19 @@ def candidate_labels(rule_labels: Iterable[str] = ()) -> tuple[str, ...]:
     in the vendored schema and the external ``labels.json`` may be absent, so a
     rules-only derivation would ask about nothing at all on a machine with no
     external checkout.
+
+    ``exclude`` keeps the widening honest.  The configured rules also carry
+    issue-TYPE labels (`title_contains_capability` adds `capability` and
+    `needs-plan`), and widening with those would make the labels path ask the
+    question the prepare path owns -- the split R14a states.  The caller passes
+    the type and routing names; `documentation` is deliberately NOT among them,
+    because it is a content label in its own right even though the taxonomy also
+    pairs it with `context-update`.
     """
-    ordered = list(CONTENT_LABELS)
+    blocked = set(exclude)
+    ordered = [label for label in CONTENT_LABELS if label not in blocked]
     for label in rule_labels:
-        if label not in ordered:
+        if label not in ordered and label not in blocked:
             ordered.append(label)
     return tuple(ordered)
 
@@ -410,9 +421,22 @@ def render_suggestions(suggestions: Mapping[str, Mapping[str, Any]]) -> list[str
         )
         distribution = entry.get("distribution") or {}
         if distribution:
-            ranked = sorted(distribution.items(), key=lambda pair: pair[1], reverse=True)
-            spread = ", ".join(f"{name} {value:.2f}" for name, value in ranked)
-            lines.append(f"      distribution: {spread}")
+            # Drop options the model gave no weight at all.  The board-status
+            # question offers twenty-five options, and printing every one put
+            # twenty `0.00` entries on screen for one real answer -- observed
+            # running the command against a real card.  A distribution is shown
+            # so the reader can see the competition; an option with no
+            # probability is not competing.
+            ranked = sorted(
+                ((name, value) for name, value in distribution.items() if round(value, 2) > 0),
+                key=lambda pair: pair[1],
+                reverse=True,
+            )
+            hidden = len(distribution) - len(ranked)
+            if ranked:
+                spread = ", ".join(f"{name} {value:.2f}" for name, value in ranked)
+                tail = f" (+{hidden} at 0.00)" if hidden else ""
+                lines.append(f"      distribution: {spread}{tail}")
     return lines
 
 
@@ -444,9 +468,3 @@ __all__: Sequence[str] = (
     "shape_suggestions",
     "union_labels",
 )
-
-
-# ``Callable`` is imported for the type of the ``ask`` seam callers thread
-# through to this module's consumers; it is re-exported so those callers can
-# annotate without importing it twice.
-AskCallable = Callable[..., Any]

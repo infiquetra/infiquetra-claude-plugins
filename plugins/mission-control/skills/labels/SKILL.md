@@ -130,9 +130,14 @@ Two properties worth knowing before you trust the output:
 - **A rejection cannot add a label.** The threshold is the answer's probability that the label
   applies, not its confidence. A confident "no" is a low probability and stays out.
 
-The judgment calls the TypeSafe endpoint and needs `TYPESAFE_API_KEY` in the environment. If the
-call fails for any reason, the command prints the rule-derived labels alone with a note naming
-the failure — it degrades to today's behavior, never to nothing.
+**Where the text goes.** The judgment sends the issue's title and body to TypeSafe, a third-party
+endpoint, and needs `TYPESAFE_API_KEY` in the environment. Credentials and high-entropy strings are
+redacted before anything leaves the machine, and the fleet's data rule
+(`plugins/fleet-core/references/typesafe.md`) governs what may be sent at all: issue text is
+permitted, transcripts and customer content are not.
+
+If the call fails for any reason, the command prints the rule-derived labels alone with a note
+naming the failure — it degrades to today's behavior, never to nothing.
 
 ### Create a New Field Option
 

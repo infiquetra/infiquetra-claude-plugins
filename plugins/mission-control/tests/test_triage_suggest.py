@@ -430,6 +430,38 @@ def test_a_configured_rule_widens_the_candidate_set_without_duplicating() -> Non
     assert widened.count("security") == 1
 
 
+def test_the_widening_never_asks_about_an_issue_type_label() -> None:
+    """R14a: the labels path must not re-decide the issue type.
+
+    The documented rules add type labels alongside content ones —
+    `title_contains_capability` adds `capability` and `needs-analysis` — so a
+    rules-only widening would hand the prepare path's judgment to the labels
+    path.
+    """
+    exclude = sdlc_manager._label_widening_exclusions()
+    widened = ts.candidate_labels(
+        ["capability", "needs-analysis", "security", "flaky-test"], exclude=exclude
+    )
+
+    assert "capability" not in widened
+    assert "needs-analysis" not in widened
+    assert "security" in widened
+    assert "flaky-test" in widened
+
+
+def test_documentation_survives_the_exclusion_although_the_taxonomy_claims_it() -> None:
+    """`documentation` is a content label in its own right, not a type label."""
+    exclude = sdlc_manager._label_widening_exclusions()
+
+    assert "documentation" not in exclude
+    assert "documentation" in ts.candidate_labels((), exclude=exclude)
+
+
+def test_every_issue_type_name_is_excluded_from_the_widening() -> None:
+    exclude = sdlc_manager._label_widening_exclusions()
+    assert set(sdlc_manager._ISSUE_TYPES) <= exclude
+
+
 def test_label_questions_are_one_yes_no_each() -> None:
     questions = ts.label_questions(("security", "performance"))
     assert set(questions) == {"security", "performance"}
@@ -448,6 +480,21 @@ def test_rendering_names_the_override_and_the_distribution() -> None:
 
     assert "OVERRIDDEN" in lines
     assert "enhancement 0.82" in lines
+
+
+def test_rendering_drops_zero_probability_options_and_counts_them() -> None:
+    """A twenty-five-option status question printed twenty `0.00` entries live."""
+    answer = _choice_answer(
+        "Designing",
+        0.9,
+        {"Designing": 0.9, "Implementing": 0.1, "Closeout": 0.0, "Triage": 0.0},
+    )
+    shaped = ts.shape_suggestions({ts.QUESTION_STATUS: answer}, client=client, risk_levels=LEVELS)
+    line = "\n".join(ts.render_suggestions(shaped))
+
+    assert "Designing 0.90" in line
+    assert "Closeout" not in line
+    assert "(+2 at 0.00)" in line
 
 
 def test_rendering_an_unasked_question_says_it_was_not_asked() -> None:

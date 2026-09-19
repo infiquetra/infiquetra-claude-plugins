@@ -1735,6 +1735,30 @@ def _validate_label_taxonomy(label_defs: list[dict[str, Any]]) -> None:
         raise RuntimeError(f"Invalid SDLC label taxonomy:\n{details}")
 
 
+# Routing labels the auto-label rules carry alongside their content ones.
+# Kept beside the issue-type names in `_label_widening_exclusions()` below.
+_LABEL_ROUTING_NAMES = frozenset({"needs-plan", "needs-analysis", "needs-triage", "research"})
+
+
+def _label_widening_exclusions() -> frozenset[str]:
+    """Labels the model must NOT be asked about in the labels path (#1035, R14a).
+
+    The configured rules add issue-TYPE labels alongside the content ones --
+    `title_contains_capability` adds `capability` and `needs-plan` -- and
+    widening the label question with those would make the labels path re-decide
+    the issue type, which is the prepare path's judgment.
+
+    A function rather than a module constant because `_ISSUE_TYPES` is defined
+    far below this point in the file; evaluating it here at import time would
+    raise `NameError`.
+
+    `documentation` is deliberately NOT excluded: the taxonomy pairs it with
+    `context-update`, but it is a content label in its own right and one of the
+    four the labels reference documents.
+    """
+    return frozenset(_ISSUE_TYPES) | _LABEL_ROUTING_NAMES
+
+
 def _suggest_label_union(
     text: str,
     rule_labels: Sequence[str],
@@ -1760,7 +1784,9 @@ def _suggest_label_union(
             f"the TypeSafe client could not be loaded ({exc})",
         )
 
-    candidates = triage_suggest.candidate_labels(configured_labels)
+    candidates = triage_suggest.candidate_labels(
+        configured_labels, exclude=_label_widening_exclusions()
+    )
     questions = triage_suggest.label_questions(candidates)
     state = triage_suggest.build_state(text)
 
@@ -6119,14 +6145,17 @@ def _collect_suggestions(
         return {"status": "error", "note": f"the TypeSafe client could not be loaded ({exc})"}
 
     floor = triage_suggest.DEFAULT_CONFIDENCE_FLOOR
+    # Read once: the reference is 309 lines and both the question's policy and
+    # the state carry it.
+    policy_text = _issue_types_policy_text()
     questions = triage_suggest.build_questions(
         issue_types=_ISSUE_TYPES,
         risk_levels=_RISK_TIER_VOCABULARY,
         status_options=_suggestion_status_options(issue.stage),
         objective_options=objective_options,
-        policy_text=_issue_types_policy_text(),
+        policy_text=policy_text,
     )
-    state = triage_suggest.build_state(issue.body, _issue_types_policy_text())
+    state = triage_suggest.build_state(issue.body, policy_text)
 
     try:
         result = ask(state, questions)

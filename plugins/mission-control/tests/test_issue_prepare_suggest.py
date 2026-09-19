@@ -388,6 +388,29 @@ def test_an_unexpected_exception_is_caught_rather_than_escaping_the_prepare(tmp_
     assert sidecar["readiness"]["passed"] is True
 
 
+def test_an_unloadable_fleet_core_is_reported_and_the_draft_is_still_written(
+    tmp_path, monkeypatch
+) -> None:
+    """The documented failure when the shim cannot resolve fleet-core.
+
+    Exercised by making the shim loader raise, which is what an installed tree
+    missing fleet-core does.
+    """
+
+    def _explode(_module: str):
+        raise RuntimeError("fleet-core did not resolve")
+
+    monkeypatch.setattr(sdlc_manager, "_fleet_commons", _explode)
+
+    plain = _prepare(tmp_path / "plain")
+    draft = _prepare(tmp_path / "unloadable", suggest=True)
+    sidecar = _sidecar(draft)
+
+    assert draft.read_bytes() == plain.read_bytes()
+    assert sidecar["suggestions"]["status"] == "error"
+    assert "could not be loaded" in sidecar["suggestions"]["note"]
+
+
 def test_a_failure_never_adds_a_blocking_gap_to_readiness(tmp_path) -> None:
     plain = _sidecar(_prepare(tmp_path / "plain"))
     failed = _sidecar(
@@ -617,6 +640,84 @@ def test_both_new_flags_are_registered_on_the_prepare_subcommand() -> None:
     assert "--objective-option" in result.stdout
     # The help text has to say the thing the card says twice.
     assert "Applies nothing" in result.stdout
+
+
+def test_the_command_line_flags_reach_issue_prepare(monkeypatch) -> None:
+    """Registration is not wiring: this proves the dispatch passes both through.
+
+    `--help` shows a flag exists; it does not show that `main()` forwards it.
+    A dispatch arm that dropped `suggest=` would leave every other test green.
+    """
+    seen: dict[str, Any] = {}
+
+    def _capture(**kwargs: Any) -> Path:
+        seen.update(kwargs)
+        return Path("drafts/fake.md")
+
+    monkeypatch.setattr(sdlc_manager, "issue_prepare", _capture)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sdlc_manager.py",
+            "issue",
+            "prepare",
+            "--repo",
+            "infiquetra-claude-plugins",
+            "--type",
+            "defect",
+            "--team",
+            "asgard",
+            "--project",
+            "operations",
+            "--title",
+            "t",
+            "--suggest",
+            "--objective-option",
+            "alpha",
+            "a body",
+        ],
+    )
+
+    sdlc_manager.main()
+
+    assert seen["suggest"] is True
+    assert seen["objective_options"] == ["alpha"]
+
+
+def test_the_command_line_defaults_reach_issue_prepare_as_off(monkeypatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def _capture(**kwargs: Any) -> Path:
+        seen.update(kwargs)
+        return Path("drafts/fake.md")
+
+    monkeypatch.setattr(sdlc_manager, "issue_prepare", _capture)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sdlc_manager.py",
+            "issue",
+            "prepare",
+            "--repo",
+            "infiquetra-claude-plugins",
+            "--type",
+            "defect",
+            "--team",
+            "asgard",
+            "--project",
+            "operations",
+            "--title",
+            "t",
+            "a body",
+        ],
+    )
+
+    sdlc_manager.main()
+
+    assert seen["suggest"] is False
+    assert seen["objective_options"] == []
 
 
 def test_the_suggest_flag_is_registered_on_the_auto_label_subcommand() -> None:

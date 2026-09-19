@@ -191,11 +191,16 @@ later makes it possible to ask whether the judgment is worth trusting. The sugge
 reach the issue body, and the risk suggestion never touches the card's Risk — the body still owns
 that.
 
-The flag is opt-in and off by default, so an ordinary prepare makes no model call at all. With
-the flag, the judgment calls the TypeSafe endpoint and needs `TYPESAFE_API_KEY` in the
-environment. If the call fails, the draft is written exactly as it would have been and the
-sidecar carries a note saying why there are no suggestions; a prepare never fails because a
-suggestion did.
+The flag is opt-in and off by default, so an ordinary prepare makes no model call at all.
+
+**Where the text goes.** With the flag, the draft body and this repository's own issue-types
+reference are sent to TypeSafe, a third-party endpoint, and `TYPESAFE_API_KEY` must be in the
+environment. Credentials and high-entropy strings are redacted before anything leaves the machine,
+and the fleet's data rule (`plugins/fleet-core/references/typesafe.md`) governs what may be sent at
+all: issue and plan text is permitted, transcripts and customer content are not.
+
+If the call fails, the draft is written exactly as it would have been and the sidecar carries a
+note saying why there are no suggestions; a prepare never fails because a suggestion did.
 
 ### Ship-policy intent envelope on the issue (#380)
 

@@ -5,6 +5,45 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-09-19
+
+### Added
+
+- **The TypeSafe client, the `jev` command-line tool, the evaluation harness, the verdict log,
+  and the data rule (issue #1032).** The foundation every later TypeSafe judgment point builds
+  on. Nothing here decides anything on its own: this release ships a library, a command, a log,
+  and a policy.
+  - `fleet_commons/typesafe_client.py` — one calling interface over two transports. The official
+    `typesafe-sdk` package is used where it can be imported; a dependency-free `urllib` transport
+    serves hooks and scripts that run outside this project's environment. Both return the same
+    frozen `AskResult`, proven by driving both from one recorded payload. Outcomes map onto the
+    closed vocabulary `ok` / `error` / `timeout` / `malformed`, mirroring
+    `saga/scripts/engine_bridge_http.py`; HTTP 429 and 529 retry with backoff behind a wall-clock
+    deadline; every result records the version that answered rather than the alias requested.
+  - **Redaction is a mechanism, not a convention.** `prepare_state()` redacts, then truncates,
+    then stamps a marker, and `build_body()` refuses state without it — so no caller, including
+    one inside the module, can reach a transport unredacted. The truncation ladder is fixed,
+    ordered, and reports the stages that fired.
+  - `fleet_commons/jev_log.py` — an append-only verdict log and answer cache under
+    `~/.claude/typesafe/`, outside the repository so a worktree's removal cannot take the
+    evidence with it. The cache keys on the requested model alias with a pin file that
+    invalidates the bucket when the alias resolves somewhere new.
+  - `fleet_commons/jev_eval.py` and `fleet_commons/jev_verbs.py` — agreement scoring per
+    confidence band, and the declarative registry behind the named verbs.
+  - `scripts/jev.py` — `ask` plus eleven named verbs and `eval`. `--dry-run` prints the request
+    body, which never carries the credential.
+  - `references/typesafe.md` — the data rule, the verdict-record contract, and the house rules,
+    bound to the code by a drift guard.
+
+### Changed
+
+- **`typesafe-sdk` is a new declared dependency, pinned to `>=0.7,<0.8` with a guard test.** The
+  package is pre-1.0 and shipped breaking changes in 0.6.0 and 0.7.0 four days apart, so the
+  guard reds when the installed version leaves the range — a breaking vendor release is caught
+  by continuous integration rather than by a live judgment point. The declared `pydantic` floor
+  rises from `>=2.5` to `>=2.12` to match what the package actually requires, so the constraint
+  is visible rather than implied by a transitive requirement.
+
 ## [0.25.3] - 2026-08-24
 
 ### Fixed

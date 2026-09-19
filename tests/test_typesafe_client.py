@@ -1,0 +1,575 @@
+"""Tests for the TypeSafe client, its transports, redaction and truncation.
+
+No test here touches the network.  The ``urllib`` transport is driven through a
+fake ``urlopen`` in the shape ``tests/test_engine_bridge_http.py`` established;
+the SDK transport is driven through a fake client factory.  The key is always a
+recognizable sentinel so every failure path can assert it did not leak.
+"""
+
+from __future__ import annotations
+
+import email.message
+import importlib.util
+import json
+import sys
+import urllib.error
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = REPO_ROOT / "plugins/fleet-core/scripts/fleet_commons/typesafe_client.py"
+
+SENTINEL_KEY = "SENTINEL-do-not-leak-4f9a2b7c"  # noqa: S105 - a test fixture, not a credential
+
+
+def _load() -> Any:
+    spec = importlib.util.spec_from_file_location("typesafe_client_under_test", MODULE_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+tc = _load()
+
+QUESTIONS = {
+    "greeting": {"type": "noul", "instructions": "Is `x` a greeting?"},
+    "tone": {
+        "type": "choice",
+        "instructions": "Tone of `x`?",
+        "criteria": {"warm": "friendly", "cold": "distant"},
+    },
+}
+
+RECORDED_BODY = {
+    "answers": {
+        "greeting": {"type": "noul", "noul": 0.97},
+        "tone": {
+            "type": "choice",
+            "choice": "warm",
+            "confidence": 0.99,
+            "probabilities": {"warm": 1.0, "cold": 0.0},
+        },
+        "risk": {"type": "score", "score": 1.2, "confidence": 0.8},
+    },
+    "model": "jev-1.13.0",
+    "usage": {"input_tokens": 331, "output_tokens": 49},
+}
+
+
+def _env(**overrides: str | None):
+    values: dict[str, str | None] = {tc.KEY_ENV: SENTINEL_KEY}
+    values.update(overrides)
+    return values.get
+
+
+class _FakeResponse:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+def _capturing_urlopen(body: dict[str, Any] | bytes = RECORDED_BODY, calls: list | None = None):
+    """A fake ``urlopen`` that records the request and returns a recorded body."""
+    payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+
+    def _urlopen(request, timeout=None):  # noqa: ANN001
+        if calls is not None:
+            calls.append(
+                {
+                    "url": request.full_url,
+                    "headers": dict(request.headers),
+                    "method": request.get_method(),
+                    "data": request.data,
+                    "timeout": timeout,
+                }
+            )
+        return _FakeResponse(payload)
+
+    return _urlopen
+
+
+def _raising_urlopen(*errors: BaseException, then: dict[str, Any] | None = None):
+    """Raise each error in turn, then return ``then`` (or keep raising the last)."""
+    queue = list(errors)
+
+    def _urlopen(request, timeout=None):  # noqa: ANN001
+        if queue:
+            raise queue.pop(0)
+        if then is None:
+            raise errors[-1]
+        return _FakeResponse(json.dumps(then).encode())
+
+    return _urlopen
+
+
+def _http_error(status: int, retry_after: str | None = None) -> urllib.error.HTTPError:
+    headers = email.message.Message()
+    if retry_after:
+        headers["Retry-After"] = retry_after
+    return urllib.error.HTTPError(
+        "https://api.typesafe.ai/v1/systemone", status, "err", headers, None
+    )
+
+
+def _recording_sleep() -> tuple[list[float], Any]:
+    delays: list[float] = []
+    return delays, delays.append
+
+
+def _ask(**kwargs: Any):
+    defaults: dict[str, Any] = {
+        "transport": "urllib",
+        "getenv": _env(),
+        "urlopen": _capturing_urlopen(),
+        "sleep": lambda _seconds: None,
+    }
+    defaults.update(kwargs)
+    return tc.ask({"x": "hello"}, QUESTIONS, **defaults)
+
+
+# --------------------------------------------------------------------------- #
+# Happy paths and request shape
+# --------------------------------------------------------------------------- #
+
+
+def test_urllib_transport_returns_ok_with_the_resolved_model() -> None:
+    result = _ask()
+    assert result.status == tc.STATUS_OK
+    assert result.transport == "urllib"
+    # The alias was requested; the version that answered is what is recorded.
+    assert result.model == "jev-1.13.0"
+    assert result.answers["greeting"]["noul"] == 0.97
+    assert result.usage == {"input_tokens": 331, "output_tokens": 49}
+
+
+def test_request_shape_and_endpoint() -> None:
+    calls: list[dict[str, Any]] = []
+    _ask(urlopen=_capturing_urlopen(calls=calls))
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["url"] == "https://api.typesafe.ai/v1/systemone"
+    assert call["method"] == "POST"
+    body = json.loads(call["data"])
+    assert set(body) == {"state", "model", "questions"}
+    assert isinstance(body["questions"], dict)
+    assert set(body["questions"]) == {"greeting", "tone"}
+    assert body["model"] == "jev-latest"
+
+
+def test_the_key_appears_only_in_the_authorization_header() -> None:
+    calls: list[dict[str, Any]] = []
+    _ask(urlopen=_capturing_urlopen(calls=calls))
+    headers = calls[0]["headers"]
+    authorization = headers.get("Authorization") or headers.get("authorization")
+    assert authorization == f"Bearer {SENTINEL_KEY}"
+    assert SENTINEL_KEY not in calls[0]["data"].decode()
+    assert SENTINEL_KEY not in calls[0]["url"]
+
+
+def test_answer_shapes_all_three_types_parse() -> None:
+    result = _ask()
+    assert tc.answer_value(result.answers["greeting"]) == 0.97
+    assert tc.answer_value(result.answers["tone"]) == "warm"
+    assert tc.answer_value(result.answers["risk"]) == 1.2
+    # A yes/no answer carries no confidence field; its distance from 0.5 stands in.
+    assert "confidence" not in result.answers["greeting"]
+    assert tc.answer_confidence(result.answers["greeting"]) == pytest.approx(0.94)
+    assert tc.answer_confidence(result.answers["tone"]) == 0.99
+
+
+def test_called_twice_sends_byte_identical_bodies() -> None:
+    calls: list[dict[str, Any]] = []
+    urlopen = _capturing_urlopen(calls=calls)
+    _ask(urlopen=urlopen)
+    _ask(urlopen=urlopen)
+    assert len(calls) == 2
+    assert calls[0]["data"] == calls[1]["data"]
+
+
+# --------------------------------------------------------------------------- #
+# The SDK transport, and transport equivalence
+# --------------------------------------------------------------------------- #
+
+
+class _FakeSdkAnswer:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def model_dump(self) -> dict[str, Any]:
+        return dict(self._payload)
+
+
+class _FakeSdkUsage:
+    def __init__(self, payload: dict[str, int]) -> None:
+        self._payload = payload
+
+    def model_dump(self) -> dict[str, int]:
+        return dict(self._payload)
+
+
+class _FakeSdkResponse:
+    def __init__(self, body: dict[str, Any]) -> None:
+        self.answers = {k: _FakeSdkAnswer(v) for k, v in body["answers"].items()}
+        self.model = body["model"]
+        self.usage = _FakeSdkUsage(body["usage"])
+
+
+class _FakeSdkClient:
+    def __init__(self, calls: list[dict[str, Any]], body: dict[str, Any], **kwargs: Any) -> None:
+        self._calls = calls
+        self._body = body
+        self._kwargs = kwargs
+
+    def __enter__(self) -> _FakeSdkClient:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def system_one(self, state, questions, *, model=None):  # noqa: ANN001
+        self._calls.append(
+            {"state": state, "questions": questions, "model": model, "init": self._kwargs}
+        )
+        return _FakeSdkResponse(self._body)
+
+
+def _sdk_factory(calls: list[dict[str, Any]], body: dict[str, Any] = RECORDED_BODY):
+    def _factory(**kwargs: Any) -> _FakeSdkClient:
+        return _FakeSdkClient(calls, body, **kwargs)
+
+    return _factory
+
+
+def test_sdk_transport_returns_the_same_shape_as_urllib() -> None:
+    """Both transports are driven from the same recorded payload, not two fakes."""
+    sdk_calls: list[dict[str, Any]] = []
+    over_sdk = _ask(transport="sdk", sdk_client_factory=_sdk_factory(sdk_calls))
+    over_urllib = _ask(transport="urllib")
+
+    assert over_sdk.status == over_urllib.status == tc.STATUS_OK
+    assert over_sdk.answers == over_urllib.answers
+    assert over_sdk.model == over_urllib.model
+    assert over_sdk.usage == over_urllib.usage
+    assert over_sdk.transport == "sdk"
+    assert over_urllib.transport == "urllib"
+
+
+def test_sdk_transport_receives_the_key_explicitly() -> None:
+    """R3a: the key is passed in, never left for the package to read itself."""
+    calls: list[dict[str, Any]] = []
+    _ask(transport="sdk", sdk_client_factory=_sdk_factory(calls))
+    assert calls[0]["init"]["api_key"] == SENTINEL_KEY
+
+
+def test_sdk_exception_text_is_composed_here_not_by_the_vendor() -> None:
+    class _VendorRateLimitError(Exception):
+        def __init__(self) -> None:
+            super().__init__(f"vendor detail quoting {SENTINEL_KEY}")
+            self.status_code = 429
+
+    def _factory(**_kwargs: Any):
+        class _Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                return None
+
+            def system_one(self, *_a: Any, **_k: Any):
+                raise _VendorRateLimitError
+
+        return _Client()
+
+    result = _ask(transport="sdk", sdk_client_factory=_factory)
+    assert result.status == tc.STATUS_ERROR
+    assert "429" in result.note
+    assert SENTINEL_KEY not in result.note
+
+
+# --------------------------------------------------------------------------- #
+# Error paths
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("status", [400, 401, 422])
+def test_client_errors_are_not_retried(status: int) -> None:
+    calls: list[int] = []
+
+    def _urlopen(request, timeout=None):  # noqa: ANN001
+        calls.append(1)
+        raise _http_error(status)
+
+    result = _ask(urlopen=_urlopen)
+    assert result.status == tc.STATUS_ERROR
+    assert str(status) in result.note
+    assert len(calls) == 1, "a 4xx must not be retried"
+
+
+@pytest.mark.parametrize("status", [429, 529])
+def test_rate_limit_and_overload_are_retried_then_succeed(status: int) -> None:
+    """529 is mandatory here: the shared helper's default predicate covers 429 only."""
+    delays, sleep = _recording_sleep()
+    urlopen = _raising_urlopen(_http_error(status), _http_error(status), then=RECORDED_BODY)
+    result = _ask(urlopen=urlopen, sleep=sleep)
+    assert result.status == tc.STATUS_OK
+    assert len(delays) == 2, "two failures should produce two backoff waits"
+    assert delays[1] > delays[0], "backoff should grow between attempts"
+
+
+def test_retry_after_header_is_honored() -> None:
+    delays, sleep = _recording_sleep()
+    urlopen = _raising_urlopen(_http_error(429, retry_after="2"), then=RECORDED_BODY)
+    result = _ask(urlopen=urlopen, sleep=sleep)
+    assert result.status == tc.STATUS_OK
+    assert delays[0] >= 2.0, "a Retry-After hint of two seconds must be waited out"
+
+
+def test_missing_retry_after_still_retries_on_the_plain_schedule() -> None:
+    delays, sleep = _recording_sleep()
+    urlopen = _raising_urlopen(_http_error(429), then=RECORDED_BODY)
+    result = _ask(urlopen=urlopen, sleep=sleep)
+    assert result.status == tc.STATUS_OK
+    assert len(delays) == 1 and delays[0] > 0
+
+
+def test_retry_exhaustion_is_bounded() -> None:
+    attempts: list[int] = []
+
+    def _urlopen(request, timeout=None):  # noqa: ANN001
+        attempts.append(1)
+        raise _http_error(429)
+
+    result = _ask(urlopen=_urlopen, max_attempts=3)
+    assert result.status == tc.STATUS_ERROR
+    assert len(attempts) == 3, "the loop must be bounded by max_attempts"
+
+
+def test_timeout_is_distinct_from_error() -> None:
+    result = _ask(urlopen=_raising_urlopen(TimeoutError("slow")))
+    assert result.status == tc.STATUS_TIMEOUT
+    assert result.status != tc.STATUS_ERROR
+
+
+def test_url_error_wrapping_a_timeout_maps_to_timeout() -> None:
+    result = _ask(urlopen=_raising_urlopen(urllib.error.URLError(TimeoutError())))
+    assert result.status == tc.STATUS_TIMEOUT
+
+
+def test_unreachable_endpoint_is_an_error() -> None:
+    result = _ask(urlopen=_raising_urlopen(urllib.error.URLError("no route")))
+    assert result.status == tc.STATUS_ERROR
+
+
+@pytest.mark.parametrize(
+    "payload", [b"this is not json", json.dumps({"model": "jev-1.13.0"}).encode()]
+)
+def test_malformed_bodies_never_report_ok(payload: bytes) -> None:
+    result = _ask(urlopen=_capturing_urlopen(body=payload))
+    assert result.status == tc.STATUS_MALFORMED
+    assert result.status != tc.STATUS_OK
+
+
+def test_missing_key_reports_by_name_and_makes_no_call() -> None:
+    calls: list[int] = []
+
+    def _urlopen(request, timeout=None):  # noqa: ANN001
+        calls.append(1)
+        return _FakeResponse(b"{}")
+
+    result = _ask(getenv=lambda _name: None, urlopen=_urlopen)
+    assert result.status == tc.STATUS_ERROR
+    assert tc.KEY_ENV in result.note
+    assert calls == [], "no request may be attempted without a key"
+
+
+def test_no_failure_path_leaks_the_key() -> None:
+    """The containment sweep, across every failure this module can produce."""
+    cases = [
+        _raising_urlopen(_http_error(400)),
+        _raising_urlopen(_http_error(429)),
+        _raising_urlopen(_http_error(529)),
+        _raising_urlopen(TimeoutError()),
+        _raising_urlopen(urllib.error.URLError("no route")),
+        _capturing_urlopen(body=b"not json"),
+    ]
+    for urlopen in cases:
+        result = _ask(urlopen=urlopen, max_attempts=2)
+        rendered = json.dumps(result.to_dict(), default=str)
+        assert SENTINEL_KEY not in rendered
+        assert SENTINEL_KEY not in repr(result)
+
+
+# --------------------------------------------------------------------------- #
+# Transport selection
+# --------------------------------------------------------------------------- #
+
+
+def test_transport_selection_prefers_the_sdk_when_available(monkeypatch) -> None:
+    monkeypatch.setattr(tc, "sdk_available", lambda: True)
+    assert tc.resolve_transport(getenv=lambda _n: None) == "sdk"
+
+
+def test_transport_selection_falls_back_to_urllib_without_the_sdk(monkeypatch) -> None:
+    monkeypatch.setattr(tc, "sdk_available", lambda: False)
+    assert tc.resolve_transport(getenv=lambda _n: None) == "urllib"
+
+
+def test_environment_override_selects_urllib(monkeypatch) -> None:
+    monkeypatch.setattr(tc, "sdk_available", lambda: True)
+    assert tc.resolve_transport(getenv=_env(**{tc.TRANSPORT_ENV: "urllib"})) == "urllib"
+
+
+def test_unrecognized_override_fails_loudly() -> None:
+    with pytest.raises(tc.TypeSafeClientError, match=tc.TRANSPORT_ENV):
+        tc.resolve_transport(getenv=_env(**{tc.TRANSPORT_ENV: "grpc"}))
+
+
+def test_unsatisfiable_sdk_override_fails_loudly(monkeypatch) -> None:
+    """A silent substitution would change key handling invisibly."""
+    monkeypatch.setattr(tc, "sdk_available", lambda: False)
+    with pytest.raises(tc.TypeSafeClientError, match="not importable"):
+        tc.resolve_transport(getenv=_env(**{tc.TRANSPORT_ENV: "sdk"}))
+
+
+# --------------------------------------------------------------------------- #
+# Redaction
+# --------------------------------------------------------------------------- #
+
+
+def test_redacts_credential_shapes() -> None:
+    text = (
+        "Authorization: Bearer abcdefghijklmnop\n"
+        "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIKEXAMPLEKEY\n"
+        "token: ghp_0123456789abcdefghijklmnopqrstuvwx\n"
+    )
+    redacted = tc.redact_text(text)
+    assert "abcdefghijklmnop" not in redacted
+    assert "wJalrXUtnFEMIKEXAMPLEKEY" not in redacted
+    assert "ghp_0123456789abcdefghijklmnopqrstuvwx" not in redacted
+    assert tc.REDACTION_PLACEHOLDER in redacted
+
+
+def test_redacts_a_private_key_block() -> None:
+    block = "-----BEGIN RSA PRIVATE KEY-----\nMIIabc123\n-----END RSA PRIVATE KEY-----"
+    assert "MIIabc123" not in tc.redact_text(block)
+
+
+def test_redacts_at_every_depth() -> None:
+    state = {
+        "outer": {"inner": {"api_key": "supersecretvalue123"}},
+        "items": [{"token": "anothersecretvalue456"}],
+    }
+    redacted = json.dumps(tc.redact(state))
+    assert "supersecretvalue123" not in redacted
+    assert "anothersecretvalue456" not in redacted
+
+
+def test_ordinary_prose_and_a_diff_pass_through_untouched() -> None:
+    prose = "The endpoint returns 500 because the role cannot write to the table."
+    diff = "@@ -1,3 +1,4 @@\n-old line\n+new line\n context\n"
+    assert tc.redact_text(prose) == prose
+    assert tc.redact_text(diff) == diff
+
+
+def test_a_real_lock_file_hunk_is_not_shredded() -> None:
+    """The fixture that stops the entropy rule turning every diff into placeholders."""
+    hunk = "\n".join((REPO_ROOT / "uv.lock").read_text(encoding="utf-8").splitlines()[:200])
+    assert tc.redact_text(hunk) == hunk
+
+
+def test_redaction_is_on_the_only_path_to_a_transport() -> None:
+    calls: list[dict[str, Any]] = []
+    tc.ask(
+        {"note": "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIKEXAMPLEKEY"},
+        QUESTIONS,
+        transport="urllib",
+        getenv=_env(),
+        urlopen=_capturing_urlopen(calls=calls),
+        sleep=lambda _s: None,
+    )
+    sent = calls[0]["data"].decode()
+    assert "wJalrXUtnFEMIKEXAMPLEKEY" not in sent
+    assert tc.REDACTION_PLACEHOLDER in sent
+
+
+def test_a_transport_refuses_unprepared_state() -> None:
+    class _NotPrepared:
+        state = {"x": "hello"}
+        questions: dict[str, Any] = {}
+        marker = "nope"
+
+    with pytest.raises(tc.TypeSafeClientError, match="not prepared"):
+        tc.build_body(_NotPrepared(), "jev-latest")
+
+
+# --------------------------------------------------------------------------- #
+# Truncation ladder
+# --------------------------------------------------------------------------- #
+
+
+def test_small_state_fires_no_ladder_stage() -> None:
+    prepared = tc.prepare_state({"x": "hello"}, QUESTIONS)
+    assert prepared.truncation == ()
+
+
+def test_stage_one_drops_tool_outputs() -> None:
+    state = {"keep": "short", "tool_output": "x" * (tc.STATE_TOKEN_BUDGET * 4)}
+    prepared = tc.prepare_state(state, QUESTIONS)
+    assert "drop_tool_outputs" in prepared.truncation
+    assert "tool_output" not in prepared.state
+    assert prepared.state["keep"] == "short"
+
+
+def test_stage_two_abridges_long_strings() -> None:
+    state = {"body": "y" * (tc.STATE_TOKEN_BUDGET * 4)}
+    prepared = tc.prepare_state(state, QUESTIONS)
+    assert "abridge_long_strings" in prepared.truncation
+    assert tc.ELISION_MARKER in prepared.state["body"]
+
+
+def test_stage_three_collapses_collections() -> None:
+    state = {"items": ["z" * 400 for _ in range(4000)]}
+    prepared = tc.prepare_state(state, QUESTIONS)
+    assert "collapse_collections" in prepared.truncation
+
+
+def test_truncation_is_deterministic() -> None:
+    state = {"body": "y" * (tc.STATE_TOKEN_BUDGET * 4), "items": list(range(5000))}
+    first = tc.prepare_state(state, QUESTIONS)
+    for _ in range(25):
+        again = tc.prepare_state(state, QUESTIONS)
+        assert again.state == first.state
+        assert again.truncation == first.truncation
+
+
+@pytest.mark.parametrize("state", [{}, "", [], {"a": None}])
+def test_empty_states_prepare_without_raising(state: Any) -> None:
+    assert tc.prepare_state(state, QUESTIONS).state is not None
+
+
+def test_empty_question_set_prepares() -> None:
+    assert tc.prepare_state({"x": "hello"}, {}).truncation == ()
+
+
+def test_oversized_questions_refuse_rather_than_truncate_state() -> None:
+    huge = {"q": {"type": "noul", "instructions": "w" * (tc.TOTAL_TOKEN_BUDGET * 4)}}
+    with pytest.raises(tc.TypeSafeClientError, match="question set"):
+        tc.prepare_state({"x": "hello"}, huge)
+
+
+def test_a_huge_state_terminates_within_budget() -> None:
+    state = {"a": "q" * 500_000, "b": ["r" * 900 for _ in range(3000)]}
+    prepared = tc.prepare_state(state, QUESTIONS)
+    assert tc._within_budget(prepared.state, QUESTIONS)

@@ -33,6 +33,64 @@
 **Generalizable rule.** When a handler's job is to be a boundary around code you do not control, it must name `BaseException` — and the boundary belongs at every place that code executes, which is usually more places than the bug report names. A deliberately narrow handler elsewhere in the same file is a fact to preserve, not an oversight to tidy up.
 
 **Refs.** Issue #996; parent grouping #1005; `plugins/saga/scripts/plan_save_contract.py`; `tests/test_saga_plan_contract_boundaries.py::test_contract_cli_envelopes_baseexception_from_checkout_code`; DECISIONS `{#996-envelope-seam-not-top-handler}`.
+### A yes/no answer from Jev carries no confidence field, and the docs do not say so  {#jev-noul-has-no-confidence-1032}
+
+**Evidence.** Issue #1032; one live request to `https://api.typesafe.ai/v1/systemone` on
+2026-09-19 returned `{"type": "noul", "noul": 0.97}` for a yes/no question, while the choice
+question in the same response returned `choice`, `confidence` and `probabilities`. The vendor
+documentation describes confidence generally and does not name the asymmetry.
+
+**Mechanism.** The plan's verdict record assumed a confidence on every answer, because that is
+what the documentation implies. A yes/no answer instead carries only its probability, so a record
+built from the documentation would have stored `None` silently and the harness would have banded
+every yes/no verdict into nothing. The repair is to record `confidence` as null for that type and
+band it by the probability's distance from one half, doubled, in one shared helper
+(`typesafe_client.answer_confidence`) rather than in each caller.
+
+**Generalizable rule.** When a plan's data contract is derived from a vendor's prose, send one
+real request before writing the contract down. The same request also showed that no rate-limit
+headers are returned on success, which means the client cannot pace itself and must react to a
+429 — a second thing the documentation did not say.
+
+### Redaction that lands one unit after a working client has a window where it does not exist  {#redaction-ordering-window-1032}
+
+**Evidence.** Issue #1032, adversarial plan review, finding P1-5. The plan ordered a complete
+two-transport client in unit U2 and the redaction step in U3.
+
+**Mechanism.** On that ordering there is a revision of the module that sends raw repository
+content to a third-party vendor, and the unit's own secret-containment test could not have caught
+it: that test inspects results, logs and exception text, none of which is the outbound request
+body. The gap is invisible to exactly the test written to close it. The repair was to make the
+transports refuse any state lacking the marker `prepare_state()` stamps, from the first unit
+onward — in U2 the preparer is a pass-through, and U3 fills it in, so no revision can reach a
+transport unredacted.
+
+**Generalizable rule.** When a safety step and the thing it protects ship in different units,
+the protection must be enforced structurally from the first unit, not scheduled for the second.
+Ask of any containment test: would this fail if the dangerous thing happened? If it inspects a
+different surface than the one the data crosses, it would not.
+
+### The research inputs folder held no recorded answers, so an acceptance criterion could not pass  {#eval-cache-was-never-seeded-1032}
+
+**Evidence.** Issue #1032. The card's third acceptance criterion asked
+`jev eval --cached docs/analysis/2026-09-18-typesafe-jev-research-inputs/` to reproduce the tier
+probe's 10 of 10. That folder holds five research briefs, five probe scripts, the candidate ideas
+and a rendered ranking table — and zero API responses. The ten tasks and their expected tiers
+exist only as literals inside `tier_probe.py.txt`.
+
+**Mechanism.** The probe printed its answers and never saved them, so "replay the cached answers"
+had nothing to replay. An implementer following the criterion literally had three options and all
+three were wrong: fabricate a fixture and assert 10 of 10 against it (a test that passes while
+proving nothing), parse Python source out of a text file, or make the offline harness call the
+network. The repair was to re-run the ten tasks once through the shipped client and commit the
+responses as `tier_probe_answers.json`. The reseeded run reproduced 10 of 10 on model tier and
+7 of 10 on effort — matching the original figures exactly, which is a reproducibility result
+worth having rather than an assumption.
+
+**Generalizable rule.** An acceptance criterion that says "reproduce X from cached data" is only
+satisfiable if the cached data is committed. Before accepting such a criterion, open the directory
+it names and confirm the data is there; a criterion that cannot fail honestly will be made to pass
+dishonestly.
 
 ## 2026-09-16
 

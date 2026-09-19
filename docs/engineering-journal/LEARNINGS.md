@@ -1,5 +1,35 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-09-19
+
+### A contract document quoting its own rule defeats the unanchored grep that checks it  {#1022-anchored-stop-rule}
+
+**Context.** Issue #1022's acceptance criterion reads `grep -L "### Stop rule" plugins/agent-launcher/roles/*.md` prints nothing except the README — the README being the one file exempt from carrying a stop rule. The directory has fourteen role prompts plus that README.
+
+**Evidence.** With all fifteen files written, `grep -L "### Stop rule" plugins/agent-launcher/roles/*.md` printed nothing at all, including not the README. Anchored — `grep -L "^### Stop rule"` — it printed exactly `plugins/agent-launcher/roles/README.md`.
+
+**Mechanism.** The README is the directory's contract document, so it necessarily quotes the heading it mandates; it names `### Stop rule` three times, in a table row and twice in prose. An unanchored `-L` search therefore finds the substring in the README too and reports no file as lacking it. The check does not fail — it passes vacuously, and it would go on passing if every role prompt lost its stop rule, because the README alone would still carry the string. A criterion whose intended output is "the README" silently became a criterion whose output is empty.
+
+**Fix.** `tests/test_roles_library.py` anchors the check to a line start, so it distinguishes a heading from a mention, and asserts the README carries no stop-rule heading rather than inferring it from an empty result. A seeded fixture holds a file that quotes the heading without having one, proving the anchoring discriminates. The README states why the anchoring is load-bearing.
+
+**Generalizable rule.** When a directory contains the document that specifies its own contract, any structural check over that directory matches the specification as well as the instances — anchor the pattern to the structure it is really about, and assert the exemption positively instead of reading it off an empty result.
+
+**Refs.** Issue #1022; plan `docs/plans/2026-09-19-issue-1022-roles-library-plan.md` U6; `tests/test_roles_library.py::test_readme_carries_no_stop_rule_heading`.
+
+### A scalar frontmatter parser reads an inline empty list as the string "[]"  {#1022-inline-empty-list}
+
+**Context.** Role prompts carry `emits`, a YAML list of the handoff contracts the role posts. The Lens Reviewer posts none of its own — its result is aggregated into the Review Controller's contract — so its frontmatter reads `emits: []`.
+
+**Evidence.** Two tests failed on first run: `test_prompt_frontmatter[lens-reviewer.md]` and `test_lens_reviewer_emits_nothing_of_its_own`. The parser had returned the string `"[]"`, which is not a list, so the role that legitimately emits nothing looked like a malformed scalar.
+
+**Mechanism.** The repository's existing frontmatter helpers are scalar-only, splitting on the first colon and keeping the remainder as text. A block list is handled by treating an empty value as the start of an indented list, but an inline `[]` has a non-empty value, so it fell through to the scalar branch. The two forms mean the same thing in YAML and differ only in how they are written.
+
+**Fix.** The parser recognises `[]` as an empty list before the scalar branch, with a seeded fixture for the inline form beside the existing one for the block form.
+
+**Generalizable rule.** A hand-rolled frontmatter parser has to handle both spellings of an empty collection, or the one case that is semantically empty becomes indistinguishable from a syntax error — and it will be the case that is rarest and therefore least tested.
+
+**Refs.** Issue #1022; `tests/test_roles_library.py::parse_frontmatter`, `::test_seeded_inline_empty_list_parses`.
+
 ## 2026-09-16
 
 ### A key flip without a copy orphans the only authority  {#908-slot-key-flip-orphans}

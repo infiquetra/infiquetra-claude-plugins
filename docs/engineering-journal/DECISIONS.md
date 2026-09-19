@@ -1,5 +1,55 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-19
+
+### The roles library ships fourteen prompts, not the card's thirteen  {#1022-fourteen-roles}
+
+**Decision.** `plugins/agent-launcher/roles/` holds one prompt for each of the fourteen lifecycle roles that can be staffed as an agent session — the catalogue's fifteen minus the Human Operator, who is a person. Issue #1022 enumerates thirteen; the one it omits is the Initial Implementation Worker, role identifier `implementer`.
+
+**Rationale.** The card's non-goal forbids inventing a role the lifecycle does not name, and the lifecycle names this one at `docs/roles/run-roles.md:185`. The card's acceptance criterion is a floor — "at least 14" files — not a cap. Shipping thirteen would leave the build loop as the one step still needing a hand-written prompt, which is the problem the library exists to remove: the roster helper stands up one session per role, and the build loop's worker is a role.
+
+**Alternatives rejected.** Thirteen prompts, literal to the card's list — accurate to the letter and useless to the roster helper. A fourteenth prompt for the Human Operator — a person receives a briefing, not a prompt file, and the lifecycle's own text treats the operator as the authority the run escalates to.
+
+**Revisit when.** The operator says the enumeration was deliberate. The reversal is one file and one row in the README's map.
+
+**Refs.** Issue #1022; plan KTD1; `docs/reviews/doc-review-issue-1022-2026-09-19.md`.
+
+### One Lens Reviewer prompt with per-lens sections, not one file per lens  {#1022-one-lens-file}
+
+**Decision.** `roles/lens-reviewer.md` is a single file: a shared reviewer half stating the role's read-only boundary, then fifteen sections keyed `#### <lens-id>` to the lifecycle's lens catalogue. A consumer sends the shared half plus the one section for the lens it is staffing.
+
+**Rationale.** The rewritten code-review work already names `plugins/agent-launcher/roles/lens-reviewer.md`, singular, as the artifact it consumes. The shared half — score one lens, read dimensions and anchors from the catalogue, report evidence and never decide acceptance — is identical for every lens, and fifteen copies of it is fifteen chances to drift.
+
+**Alternatives rejected.** One file per lens, which would break the named consumer and duplicate the shared half. Putting the dimensions and anchors into the prompt, which would make this repository a second source of policy the architecture decision record ADR-001 in `infiquetra-sdlc` reserves to the lifecycle.
+
+**Revisit when.** A lens needs a reviewer boundary genuinely different from the shared one, rather than different subject matter.
+
+**Refs.** Issue #1022; plan KTD3; `config/lens-catalogue.json` in `infiquetra-sdlc` at `67845cdd`.
+
+### Role prompts reference the shared presentation preamble instead of copying it  {#1022-preamble-by-reference}
+
+**Decision.** Each role prompt carries a one-line pointer to `plugins/house-style/references/subagent-presentation-preamble.md` rather than an inline copy of that text.
+
+**Rationale.** The 25 `team-execution` agent prompts this library replaces each opened with a byte-identical forty-line copy of the same block — 25 copies to keep in step, which is a substantial share of the 2,570 lines the migration is subtracting. The repository already keeps one canonical copy.
+
+**Alternatives rejected.** Copying the block into each prompt, which is self-contained at the cost of recreating the drift being removed. Generating the prompts from a template at build time, which adds a build step to a directory of fourteen Markdown files.
+
+**Revisit when.** A roster helper ships that cannot resolve a repository-relative path when it sends a prompt, in which case the pointer has to become an inlined block at send time — in the helper, not in these files.
+
+**Refs.** Issue #1022; plan KTD6.
+
+### Role prompts carry no model or effort field  {#1022-no-tier-in-prompts}
+
+**Decision.** The frontmatter of a role prompt is exactly `role`, `role_id`, `emits` and `source`. No `model:` and no `effort:`.
+
+**Rationale.** Choosing a role's vendor, model and effort belongs to the staffing component, and a tier written here would be a second place to change it. It also keeps these files outside the repository's agent-definition lints, which glob `plugins/*/agents/*.md` and apply an Agent-tool contract these prompts are not — they are text sent to a terminal session, not Claude Code agent definitions.
+
+**Alternatives rejected.** A default tier per role in frontmatter, overridable by the staffing component — two sources for one decision, and the file's default would be the one nobody updates.
+
+**Revisit when.** The staffing component needs a per-role hint it cannot derive, and there is no better home for it.
+
+**Refs.** Issue #1022; plan KTD7; `tests/test_roles_library.py::test_no_prompt_declares_a_tier`.
+
 ## 2026-09-16
 
 ### Named review slots migrate run-global state, then become the authority  {#908-review-slot-migration}

@@ -1,9 +1,86 @@
 ---
 title: Code review — issue 1022, roles library
-reviewed_revision: 67172d53
-status: cycle-cap
+reviewed_revision: a9eeded7
+status: round-two-incomplete
 date: 2026-09-19
 ---
+
+# Round two
+
+**Outcome: does not accept.** Four of the seven approved lenses ran against the head they were
+told to review, and each confirmed that revision before reading. They raised one P0 and three P1s,
+all repaired. Three lenses — documentation-clarity, agent-usability, adversarial — have not run, and
+the repair allowance is spent. An incomplete roster is not an acceptance, and a further round is the
+operator's call.
+
+| Lens | Revision reviewed | Gating findings | Resolution |
+|---|---|---|---|
+| correctness | `1cee1bde` | 1 × P0 | repaired, `a9674a3f` |
+| testing | `a9674a3f` | 2 × P1 | repaired, `59f05286` |
+| security | `59f05286` | none | 5 advisories repaired, `502480d1` |
+| architecture-maintainability | `502480d1` | 1 × P1, 2 × P2 | P1 repaired, `a9eeded7`; two P2s open |
+| documentation-clarity | — | — | **not run** |
+| agent-usability | — | — | **not run** |
+| adversarial | — | — | **not run** |
+
+## What round two found that round one did not
+
+**P0 — the suite could not pass in continuous integration.** A round-one repair required a sibling
+lifecycle checkout no workflow provides, so the suite was green on a developer machine and red on
+every runner, with five per-prompt checks degrading to skips. The environment doing the least
+verification was the one gating the merge. Repaired by vendoring a pinned lifecycle snapshot that
+the prompts are checked against everywhere, with drift as one explicit parity check.
+
+**P1 — the stop-rule body was never checked.** Sections were bounded by the next *required* heading,
+so the last one ran to end of file; in the Lens Reviewer, with 170 lines after it, the stop rule
+could be deleted entirely and the check stayed clean. The one instruction that makes an autonomous
+session terminate was the one section unenforced.
+
+**P1 — a per-lens test asserted a shared-half fact eleven times**, claiming coverage it did not have.
+
+**P1 — the change did the thing the journal recorded rejecting.** Twenty-five lines are byte-identical
+across all fourteen prompts, roughly 266 duplicated lines, while the decision entry rejected copying
+a shared block on drift grounds — and nothing enforced the copies. The decision is now superseded on
+its merits rather than quietly contradicted, and a test holds the blocks identical.
+
+**Five security advisories**, including the prompt-injection surface an earlier lens had flagged as
+unexamined: the shared inputs block taught every session that issue comments are the channel work
+arrives on without saying that content there is evidence rather than direction.
+
+**Seven of round two's findings are defects introduced by earlier repairs in this same change.**
+That is the case for a fresh round after repairs, made concrete seven times.
+
+## Open findings, not repaired
+
+**AM-2 (P2) — the dependency direction is inverted.** `tests/data/lifecycle-snapshot.json` holds
+product-shape truth under a directory whose job is verification, and
+`test_prompts_cover_every_staffable_lifecycle_role` asserts set equality against it — so adding a
+fifteenth role requires editing test data, and the obvious repair for the resulting failure is to
+relax the check that stops invented roles. Resolution: move the snapshot out of `tests/`, and add an
+"adding a role" checklist to the directory README naming every file that must change.
+
+**AM-3 (P2) — two load-bearing decisions have no journal entry.** The choice to vendor a pinned
+snapshot and demote the live comparison to a skipping parity check is recorded only as a defect
+narrative in `LEARNINGS.md`; it determines what continuous integration actually verifies and
+deserves a decision with its rejected alternatives. And `roles/index.json` now carries a regex that
+is a second expression of the lens-slicing rule, with no entry saying who owns it.
+
+**AM-6 (P3)** — the slicing rule's only executable implementation lives in the test suite, so the
+first real consumer will write a second one. **AM-7 (P3)** — the test module now has two jobs, the
+prompt assertions and a bespoke Markdown and YAML toolkit with 21 seeded tests of its own; a
+maintainer adding a role reads 1,240 lines to find the four that concern them.
+
+## Coverage this review does not have
+
+The three unrun lenses are not interchangeable with the four that ran. `documentation-clarity` is the
+one whose subject is what this change mostly is. `agent-usability` found the P0 of round one.
+`adversarial` found six silent-green routes in round one and named, as unexamined, the prose of
+twelve prompts and the prompt-injection surface — half of which the security lens has since covered,
+and half of which nobody has.
+
+Across both rounds, no lens has read the prose of more than four of the fourteen prompts against the
+lifecycle's role definitions. The structural contract is well enforced; whether each prompt is a
+faithful and sufficient briefing is still unverified by anything but its author.
 
 # Code review — issue 1022, roles library
 

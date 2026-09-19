@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Target | branch `issue/1035` against base commit 866d3670 |
-| Reviewed revision | working tree at the second cycle; committed as the repair commit below |
+| Reviewed revision | the tree committed as `89488284` (the repair commit). Any commit after it touches this artifact only and changes no reviewed code. |
 | Linked issue | infiquetra/infiquetra-claude-plugins#1035, child of #1019 |
 | Linked plan | `docs/plans/2026-09-19-mission-control-triage-suggestions-plan.md` |
 | Linked work session | `docs/work-sessions/2026-09-19-mission-control-triage-suggestions.md` |

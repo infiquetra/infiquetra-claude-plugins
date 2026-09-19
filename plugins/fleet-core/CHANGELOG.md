@@ -22,6 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A vendor-pinned role now resolves to a pair that vendor can run (#1021, architecture review).**
+  A role's vendor came from its own row and its model from the Claude-only work-shape policy, with
+  no translation between them, so a role pinning `codex` answered `codex opus/high` — a model codex
+  has never heard of — and the suite passed. The model is now rendered through the portable
+  execution-class names the vendor palette is keyed on, the effort collapses through the same
+  per-vendor table a launch would use, and a pin naming a vendor whose `runtime_supported` is false
+  is refused rather than answered.
+- **A reviewing role asked without a lens is refused rather than answered (#1021).** It returned a
+  record with no `qualification` key at all — the gating field absent rather than present and
+  negative.
+- **An advisory suggestion above a model's effort ceiling is refused (#1021).** The overlay
+  rejected that pair and the suggestion validator accepted it.
+
 - **The lens qualification decision fails closed (#1021, security review).** A ledger entry
   carrying only the four identity fields — lens, vendor, model, effort — and none of the evidence
   fields was granted `qualified`, because `entry.get("catalogue_version") != version` and

@@ -4,10 +4,13 @@ The fleet's answer to "role or work shape, and for review the lens, to vendor, m
 This document supersedes `tier-palette.md` and `effort-convention.md`, which it absorbed in issue
 1021 along with the data they described.
 
-Everything below reads from one file,
-[`scripts/fleet_commons/staffing.json`](../scripts/fleet_commons/staffing.json), through one
-resolver, [`scripts/fleet_commons/staffing.py`](../scripts/fleet_commons/staffing.py). Grow the
-vocabulary **there**, never with a second bare literal elsewhere — a repository-wide guard,
+Everything below is authored in one file,
+[`scripts/fleet_commons/staffing.json`](../scripts/fleet_commons/staffing.json).
+[`scripts/fleet_commons/staffing.py`](../scripts/fleet_commons/staffing.py) is the resolver to ask
+a staffing question of; `tier_palette.py` and `tier_resolver.py` read the same file directly for
+the vocabulary and the work-shape and runtime resolution their existing importers already use.
+Grow the vocabulary **there**, never with a second bare literal elsewhere — a repository-wide
+guard,
 `tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module`, fails the
 build if a second vocabulary source appears in production Python.
 
@@ -52,6 +55,12 @@ The default output is the short pair, `opus/high`. Pass `--json` for the whole d
 vendor, model and effort, the layer that supplied them, the lens qualification where one was asked
 for, and the advisory suggestion where one was passed in. The short form is a projection of that
 record, never a separately computed answer.
+
+**A pinned vendor is rendered for that vendor.** A role's tier resolves through the Claude-only
+work-shape policy, so a role that pins another vendor has its model translated through the portable
+execution-class names the vendor palette is keyed on, and its effort collapsed through the same
+per-vendor table a launch would use. A pin naming a vendor whose `runtime_supported` is false is
+refused rather than answered, because the answer would be a tier nobody can launch.
 
 **Precedence.** For a work shape: the per-repository overlay at `.saga/tier-defaults.json` first,
 then the shared `work_shapes` policy. For a role: the role's own entry, which names a work shape and
@@ -179,9 +188,11 @@ runtimes. `SCALAR_EFFORTS` derives from `scalar_efforts` the same way `EFFORTS` 
   `tests/test_tier_vocab_single_source.py`. Change the registry, not the tables.
 - `effort_ceiling` for engine-owned chaperone-dispatch workers — those stay pinned to their
   chaperone tiers and are excluded from the per-teammate ceiling halt.
-- The capability ratings are **copied** from `plugins/saga/references/engine-registry.yaml` and a
-  parity test holds the two together while both exist. Edit the registry; the copy follows. Issue
-  1030 deletes the registry and that test with it.
+- The capability ratings are **copied** from `plugins/saga/references/engine-registry.yaml`, and a
+  parity test holds the two together while both exist. Nothing propagates automatically: edit the
+  registry and the test goes red until someone re-copies. Issue 1030 deletes the registry and that
+  test with it, at which point these ratings become the only copy and their `last_validated` dates
+  have nothing left to check them against.
 
 ## Where to look
 

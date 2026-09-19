@@ -30,7 +30,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -289,6 +289,11 @@ def _validate_suggestion(suggestion: dict[str, str] | None) -> dict[str, str] | 
         raise StaffingError(f"suggestion model {model!r} not in {MODELS}")
     if effort not in EFFORTS:
         raise StaffingError(f"suggestion effort {effort!r} not in {EFFORTS}")
+    if not _tier_palette.supports_effort(model, effort):
+        raise StaffingError(
+            f"suggestion {model}/{effort} is unrunnable ({model}'s ceiling is "
+            f"{_tier_palette.effort_ceiling(model)!r})"
+        )
     return {"model": model, "effort": effort}
 
 
@@ -314,7 +319,9 @@ def resolve_shape(
         tier = overlay[work_shape]
         source = "overlay"
     else:
-        resolution = _tier_resolver.resolve(None, work_shape)
+        # Pass the already-loaded block: tier_resolver.load_policy() re-reads and re-parses the
+        # whole registry on every call, which is the read the memoized loader exists to avoid.
+        resolution = _tier_resolver.resolve(None, work_shape, policy=registry)
         tier = {"model": resolution.model, "effort": resolution.effort}
         source = "policy"
     return StaffingDecision(
@@ -325,6 +332,50 @@ def resolve_shape(
         work_shape=work_shape,
         suggestion=recorded,
     )
+
+
+def translate_for_vendor(vendor: str, model: str, effort: str) -> tuple[str, str]:
+    """Render a Claude-palette tier as a model and effort the given vendor can actually run.
+
+    The route is the portable execution-class vocabulary the vendor palette is already keyed on:
+    Claude's own row maps each portable name to a Claude model, so inverting it turns ``opus``
+    into ``gpt-5.6-terra``, which every other vendor's row then maps to its own model. The effort
+    collapses through the same per-vendor table a launch would use.
+
+    ``claude`` passes through unchanged. A vendor whose launch arguments are unverified
+    (``runtime_supported`` false) is refused rather than answered, because an answer naming it
+    would be a tier nobody can launch.
+    """
+    palette = vendors()
+    if vendor not in palette:
+        raise StaffingError(f"unknown vendor {vendor!r}; expected one of {sorted(palette)}")
+    if vendor == DEFAULT_VENDOR:
+        return model, effort
+    row = palette[vendor]
+    if not row.get("runtime_supported"):
+        raise StaffingError(
+            f"vendor {vendor!r} is in the palette but not a supported runtime "
+            f"({row.get('unsupported_reason', 'no reason recorded')})"
+        )
+
+    claude_models = palette[DEFAULT_VENDOR]["models"]
+    portable = {target: name for name, target in claude_models.items()}
+    if model not in portable:
+        raise StaffingError(
+            f"no portable execution-class name maps to {model!r}, so it cannot be rendered for "
+            f"{vendor!r}; {DEFAULT_VENDOR}'s palette covers {sorted(portable)}"
+        )
+    vendor_model = row["models"].get(portable[model])
+    if not vendor_model:
+        raise StaffingError(f"vendor {vendor!r} has no model for {portable[model]!r}")
+
+    accepted = row["accepted_efforts"]
+    collapsed = row.get("effort_collapse", {}).get(effort, effort)
+    if collapsed not in accepted:
+        raise StaffingError(
+            f"vendor {vendor!r} accepts {accepted}, and {effort!r} collapses to {collapsed!r}"
+        )
+    return str(vendor_model), str(collapsed)
 
 
 # --------------------------------------------------------------------------- role
@@ -415,22 +466,29 @@ def resolve_role(
     if vendor not in vendors():
         raise StaffingError(f"role {role!r} pins unknown vendor {vendor!r}")
     base = resolve_shape(work_shape, root=root, suggestion=suggestion, vendor=vendor)
+    model, effort = translate_for_vendor(vendor, base.model, base.effort)
 
     qualification: Qualification | None = None
-    if lens is not None:
+    if lens is None:
+        if _is_reviewing_role(role):
+            raise StaffingError(
+                f"role {role!r} reviews, so it needs a lens: pass one to learn whether this "
+                "executor may establish a threshold for it"
+            )
+    else:
         if not _is_reviewing_role(role):
             raise StaffingError(
                 f"a lens applies to a reviewing role; {role!r} reviews nothing "
                 f"(its capability is {row['capability']!r})"
             )
         qualification = qualify_lens(
-            lens, vendor=vendor, model=base.model, effort=base.effort, checkout=checkout
+            lens, vendor=vendor, model=model, effort=effort, checkout=checkout
         )
 
     return StaffingDecision(
         vendor=vendor,
-        model=base.model,
-        effort=base.effort,
+        model=model,
+        effort=effort,
         source=base.source,
         work_shape=work_shape,
         role=role,
@@ -712,9 +770,8 @@ def _cli_explain(args: argparse.Namespace) -> int:
     rows = candidates_for(args.role)
     decision = resolve_role(args.role, lens=args.lens)
     if args.json:
-        payload = decision.as_dict()
-        payload["candidates"] = list(rows)
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        listed = replace(decision, candidates=rows)
+        print(json.dumps(listed.as_dict(), indent=2, sort_keys=True))
         return 0
 
     print(f"{args.role}: {_short_form(decision)} (work shape {decision.work_shape})")

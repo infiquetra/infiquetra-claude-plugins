@@ -364,8 +364,10 @@ def test_the_seven_roles_and_their_capabilities_are_the_ones_the_plan_fixed() ->
 
 
 def test_every_role_resolves_to_a_vendor_model_and_effort() -> None:
+    """A reviewing role needs its lens named; every other role resolves on its own."""
     for role in staffing.roles():
-        decision = staffing.resolve_role(role)
+        lens = "security" if staffing._is_reviewing_role(role) else None
+        decision = staffing.resolve_role(role, lens=lens)
         assert decision.vendor in staffing.vendors()
         assert decision.model in staffing.MODELS
         assert decision.effort in staffing.EFFORTS
@@ -696,11 +698,14 @@ def test_a_vendor_pinned_role_reports_the_pin_without_changing_tier_provenance(
             }
         },
     )
-    decision = staffing.resolve_role("pinned")
+    decision = staffing.resolve_role("pinned", lens="security")
     assert decision.vendor == "codex"
     assert decision.vendor_pinned_by_role is True
     assert decision.source == "policy"
     assert decision.as_dict()["vendor_pinned_by_role"] is True
+    # The pin changes the vendor, so the model must be rendered for that vendor, not left as the
+    # Claude-palette name the work shape resolved to.
+    assert decision.model == "gpt-5.6-terra"
 
 
 def test_a_role_row_missing_its_capability_raises_the_modules_own_error(
@@ -874,3 +879,122 @@ def test_an_unparseable_registry_raises_the_modules_own_error(tmp_path: pathlib.
 def test_an_absent_registry_raises_the_modules_own_error(tmp_path: pathlib.Path) -> None:
     with pytest.raises(StaffingError, match="unreadable"):
         staffing.load_staffing(tmp_path / "nowhere.json")
+
+
+# ---------------------------------------------------------------------------
+# A vendor-pinned role resolves to a pair that vendor can run (architecture lens, #1021).
+#
+# The vendor came from the role row and the model from the Claude-only work-shape palette, with
+# nothing between them, so a pinned codex role answered "codex opus/high" — a model codex has
+# never heard of, with a passing suite.
+# ---------------------------------------------------------------------------
+
+
+def _pinned(vendor: str) -> dict[str, dict[str, str]]:
+    return {
+        "pinned": {
+            "work_shape": "judgment",
+            "capability": "adversarial-review",
+            "vendor": vendor,
+        }
+    }
+
+
+@pytest.mark.parametrize("vendor", ["codex", "grok", "muse", "qwen", "agy"])
+def test_a_pinned_vendor_resolves_to_a_model_that_vendor_actually_runs(
+    monkeypatch: pytest.MonkeyPatch, vendor: str
+) -> None:
+    from fleet_commons import tier_resolver
+
+    monkeypatch.setattr(staffing, "roles", lambda registry=None: _pinned(vendor))
+    decision = staffing.resolve_role("pinned", lens="security")
+    assert decision.vendor == vendor
+    assert decision.model in tier_resolver._RUNTIME_MODELS[vendor].values()
+    assert decision.effort in staffing.vendors()[vendor]["accepted_efforts"]
+
+
+def test_a_pinned_vendor_collapses_the_effort_it_cannot_represent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """agy accepts nothing above high, so an xhigh work shape must not answer xhigh."""
+    monkeypatch.setattr(
+        staffing,
+        "roles",
+        lambda registry=None: {
+            "pinned": {
+                "work_shape": "judgment",
+                "capability": "adversarial-review",
+                "vendor": "agy",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        staffing,
+        "resolve_shape",
+        lambda shape, **kw: staffing.StaffingDecision(
+            vendor=kw.get("vendor", "claude"),
+            model="opus",
+            effort="xhigh",
+            source="policy",
+            work_shape=shape,
+        ),
+    )
+    decision = staffing.resolve_role("pinned", lens="security")
+    assert decision.effort == "high"
+
+
+def test_claude_passes_through_the_translation_unchanged() -> None:
+    decision = staffing.resolve_role("worker")
+    assert decision.vendor == "claude"
+    assert decision.model in staffing.MODELS
+
+
+def test_a_role_pinning_an_unsupported_runtime_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """opencode is in the palette and deliberately not launchable; an answer naming it would be
+    a tier nobody can run."""
+    monkeypatch.setattr(staffing, "roles", lambda registry=None: _pinned("opencode"))
+    with pytest.raises(StaffingError, match="not a supported runtime"):
+        staffing.resolve_role("pinned")
+
+
+def test_translate_for_vendor_refuses_an_unknown_vendor() -> None:
+    with pytest.raises(StaffingError, match="not-a-vendor"):
+        staffing.translate_for_vendor("not-a-vendor", "opus", "high")
+
+
+# ---------------------------------------------------------------------------
+# The smaller architecture repairs.
+# ---------------------------------------------------------------------------
+
+
+def test_a_reviewing_role_asked_without_a_lens_is_refused() -> None:
+    """The gating field absent is the fail-open shape; ask for the lens instead."""
+    with pytest.raises(StaffingError, match="needs a lens"):
+        staffing.resolve_role("lens-reviewer")
+
+
+def test_cli_resolve_of_a_reviewing_role_without_a_lens_exits_non_zero() -> None:
+    result = _run("resolve", "--role", "lens-reviewer")
+    assert result.returncode == 2
+    assert "needs a lens" in result.stderr
+
+
+def test_a_non_reviewing_role_still_resolves_without_a_lens() -> None:
+    assert staffing.resolve_role("worker").qualification is None
+
+
+def test_a_suggestion_above_the_models_ceiling_is_refused() -> None:
+    """The overlay rejected this pair; the suggestion validator accepted it."""
+    with pytest.raises(StaffingError, match="unrunnable"):
+        staffing.resolve_shape("judgment", suggestion={"model": "haiku", "effort": "xhigh"})
+
+
+def test_explain_json_carries_candidates_on_the_record_itself() -> None:
+    """The dataclass field existed and no producer set it; explain mutated the dict instead."""
+    result = _run("explain", "--role", "functional-tester", "--json")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["candidates"]
+    assert payload["candidates"][0]["rating"] in staffing.RATINGS

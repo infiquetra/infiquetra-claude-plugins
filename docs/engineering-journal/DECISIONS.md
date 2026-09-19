@@ -1,5 +1,19 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-19
+
+### The JSON envelope is repaired at the checkout-execution seam, not at the top-level handler  {#996-envelope-seam-not-top-handler}
+
+**Decision.** `plugins/saga/scripts/plan_save_contract.py` converts a `BaseException` raised by the repository checkout it executes through `runpy` into its documented refusal envelope at the two places that checkout code actually runs — the `module()` loader and the `proof.verify(...)` call in `verify_saved_examples()` — through one shared conversion that re-raises `ContractError` unchanged. The top-level handler in `main()` stays `except Exception`. An interrupt arriving inside that window is converted rather than re-raised.
+
+**Rationale.** `except Exception` does not cover `SystemExit` or `KeyboardInterrupt`, so checkout code raising either left the tool with no JSON on standard output and an exit code outside the documented `{0, 1, 2}`. The handler in `main()` cannot be widened: argparse raises `SystemExit(0)` for `--help` from inside that same `try`, and the narrow handler is the only reason `--help` prints usage and exits 0. A `KeyboardInterrupt` raised by the checkout's own code is indistinguishable at the seam from one delivered by the terminal, so converting is the only treatment that closes the defect.
+
+**Alternatives rejected.** Widening `main()` to `except BaseException` (turns `--help` into a JSON refusal at exit 2). Special-casing `SystemExit(0)` in a broad top-level handler (makes the envelope contract depend on an exit-code value rather than on provenance). Re-raising `KeyboardInterrupt` while converting everything else (leaves the reported reproduction unfixed). Duplicating the handler at both seams (they drift on the next edit).
+
+**Revisit when.** `plan_save_contract.py` gains a third place where checkout code executes, or the tool stops promising JSON for every invocation but `--help`.
+
+**Refs.** Issue #996 (finding `adv09`, issue #926 code review cycle 6); parent grouping issue #1005; plan `docs/plans/2026-09-19-issue-996-plan-save-contract-baseexception-plan.md` KTD1, KTD2, KTD3.
+
 ## 2026-09-16
 
 ### Named review slots migrate run-global state, then become the authority  {#908-review-slot-migration}

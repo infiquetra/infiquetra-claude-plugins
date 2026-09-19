@@ -1,0 +1,226 @@
+{
+  "schema": "lifecycle_snapshot.v1",
+  "sdlc_revision": "5efc869f",
+  "note": "Vendored from infiquetra-sdlc at the revision above. This is the data the suite checks the prompts against when no sibling checkout is reachable, which is the normal case in continuous integration. When a checkout IS reachable, test_vendored_snapshot_matches_the_live_lifecycle compares every field here against it and fails on any drift. Regenerate deliberately when the pin moves; never hand-edit.",
+  "roles": {
+    "product": "Product",
+    "issue_reviewer": "Issue Reviewer",
+    "planner": "Planner",
+    "orchestrator": "Architect",
+    "controller": "Delivery Manager",
+    "implementer": "Initial implementation worker",
+    "plan_reviewer": "Plan reviewer",
+    "review_controller": "Review controller",
+    "lens_reviewer": "Lens reviewer",
+    "standard_repair_implementer": "Standard repair implementer",
+    "expert_repair_implementer": "Expert repair implementer",
+    "release_worker": "Release worker",
+    "functional_tester": "Functional tester",
+    "investigator": "Investigator",
+    "operator": "Human operator"
+  },
+  "contracts": {
+    "technical-context": {
+      "name": "The Architect's technical context for a shaped issue",
+      "sender_role": "orchestrator",
+      "required_fields": [
+        "body_revision",
+        "component",
+        "fields_written",
+        "open_technical_questions",
+        "risk_value_and_justification"
+      ]
+    },
+    "issue-review-result": {
+      "name": "The Issue Reviewer's result at the Shaping exit",
+      "sender_role": "issue_reviewer",
+      "required_fields": [
+        "checks_with_outcome",
+        "findings",
+        "verdict"
+      ]
+    },
+    "planner-to-orchestrator": {
+      "name": "Planner's handoff to the Architect",
+      "sender_role": "planner",
+      "required_fields": [
+        "applicability_declaration",
+        "child_scoped_checks",
+        "deferred_checks",
+        "possible_lanes",
+        "preflight_results",
+        "testing_expectations",
+        "work_unit_checklist",
+        "work_units"
+      ]
+    },
+    "plan-review-result": {
+      "name": "Plan review result",
+      "sender_role": "plan_reviewer",
+      "required_fields": [
+        "checklist_answers",
+        "findings",
+        "readiness_conditions",
+        "run_model_questions",
+        "verdict"
+      ]
+    },
+    "orchestrator-to-controller": {
+      "name": "Delivery Manager's run setup record",
+      "sender_role": "controller",
+      "required_fields": [
+        "approval_scope",
+        "concurrency_allocation",
+        "cycle_allowances",
+        "destination",
+        "exception_decisions",
+        "executors_and_topology",
+        "investigator_triggers",
+        "models_and_efforts",
+        "recovery_rules",
+        "roster_hash",
+        "session_reset_authority",
+        "staffing_per_role",
+        "unfinished_testing_response"
+      ]
+    },
+    "dispatch": {
+      "name": "Delivery Manager's dispatch to a role",
+      "sender_role": "controller",
+      "required_fields": [
+        "allocated_authority",
+        "cycle_number_and_remaining_allowance",
+        "durable_inputs",
+        "role",
+        "step",
+        "stop_condition"
+      ]
+    },
+    "implementation-result": {
+      "name": "Implementation result",
+      "sender_role": "implementer",
+      "required_fields": [
+        "branch_and_revision",
+        "mechanical_check_results",
+        "recheck_results",
+        "unexplained_behaviour",
+        "unit_and_child_check_results",
+        "work_unit"
+      ]
+    },
+    "code-review-result": {
+      "name": "Code review result contract",
+      "sender_role": "review_controller",
+      "required_fields": [
+        "advisory_findings",
+        "checks_and_coverage_gaps",
+        "findings",
+        "outcome",
+        "per_lens_results",
+        "repair_accounting",
+        "reviewed_scope_and_revision",
+        "roster_hash"
+      ]
+    },
+    "repair-amendment": {
+      "name": "Repair amendment",
+      "sender_role": "planner",
+      "required_fields": [
+        "authoritative_plan_and_revision",
+        "diagnosis_reference",
+        "disputes_and_counterevidence",
+        "finding_history",
+        "ordered_batch"
+      ]
+    },
+    "investigation-request": {
+      "name": "Investigation request",
+      "sender_role": "controller",
+      "required_fields": [
+        "factual_question",
+        "grouped_symptoms",
+        "originating_role",
+        "scope_and_read_only_bounds",
+        "three_part_test"
+      ]
+    },
+    "diagnosis": {
+      "name": "Diagnosis",
+      "sender_role": "investigator",
+      "required_fields": [
+        "affected_units",
+        "evidence",
+        "mechanism",
+        "no_ruling"
+      ]
+    },
+    "release-handoff": {
+      "name": "Release handoff",
+      "sender_role": "controller",
+      "required_fields": [
+        "authority_allocated",
+        "destination",
+        "revision_to_merge"
+      ]
+    },
+    "release-result": {
+      "name": "Release result",
+      "sender_role": "release_worker",
+      "required_fields": [
+        "conflicts_routed_by_kind",
+        "deployment_record",
+        "merge_commit",
+        "recheck_results"
+      ]
+    },
+    "functional-qa-result": {
+      "name": "Functional testing result contract",
+      "sender_role": "functional_tester",
+      "required_fields": [
+        "grouped_failures",
+        "per_scenario_outcome",
+        "per_target_conditions",
+        "version_tested"
+      ]
+    },
+    "product-ruling": {
+      "name": "Product ruling",
+      "sender_role": "product",
+      "required_fields": [
+        "dissent",
+        "question",
+        "recorded_intent",
+        "ruling"
+      ]
+    },
+    "run-record": {
+      "name": "Run record",
+      "sender_role": "controller",
+      "required_fields": [
+        "closing_version",
+        "cycles_used_per_loop",
+        "decision_required",
+        "escalations",
+        "extensions",
+        "residual_issues"
+      ]
+    }
+  },
+  "lenses": {
+    "architecture-maintainability": "standard",
+    "correctness": "standard",
+    "security": "standard",
+    "testing": "standard",
+    "deployment-infrastructure": "baseline",
+    "reliability": "baseline",
+    "performance": "baseline",
+    "api-contract": "baseline",
+    "adversarial": "baseline",
+    "privacy": "baseline",
+    "documentation-clarity": "baseline",
+    "agent-usability": "baseline",
+    "previous-comments": "baseline",
+    "accessibility-human-usability": "baseline",
+    "experience": "baseline"
+  }
+}

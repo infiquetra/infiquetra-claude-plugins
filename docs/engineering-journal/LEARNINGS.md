@@ -2,6 +2,22 @@
 
 ## 2026-09-19
 
+### A test that demands a sibling checkout is green on a developer machine and red on the runner  {#1022-sibling-checkout-asymmetry}
+
+**Context.** `tests/test_roles_library.py` checks fourteen role prompts against lifecycle data owned by the sibling repository `infiquetra-sdlc`. An earlier repair made the suite fail when that data came from a copy vendored in this repository rather than from a live checkout, on the reasoning that comparing the prompts to this repository's own copy proves little.
+
+**Evidence.** A review lens found it by inspection: no workflow in `.github/` checks out `infiquetra-sdlc`, none sets `INFIQUETRA_SDLC_ROOT`, and none sets the opt-out variable. On a runner the checkout has no sibling, so the resolver returns nothing, the live-mode assertion fails, and five per-prompt checks degrade to skips. Every local run was green, including the full inner loop, because this machine happens to have the sibling cloned.
+
+**Mechanism.** The asymmetry runs the dangerous way. A check that is strict locally and absent remotely merely under-tests; a check that is strict locally and *failing* remotely blocks every pull request while every author sees green, and the author's instinct is to weaken the check. Worse, the same design made continuous integration assert strictly less than a developer machine in the skipping cases — the environment with the least verification was the one gating the merge.
+
+**Fix.** Follow the pattern this repository already uses for lifecycle-generated data, the one behind the "issue-contract vendored parity" gate: vendor a pinned snapshot, check the prompts against it everywhere, and make drift between the snapshot and the lifecycle a separate parity check that skips when no checkout is reachable. The same assertions now run in both places; only the parity check is environment-dependent, and its skip costs nothing because the snapshot is fixed, reviewed data.
+
+**A second defect surfaced while proving the first.** The test written to simulate the runner called the parity function and wrapped it in `pytest.raises(Exception)`. `pytest.skip` raises a `BaseException` subclass, so the skip escaped the guard and marked the simulating test itself skipped — it reported green while proving nothing, which is the very class of defect it was written to catch. Catch `BaseException` and assert the outcome's type name.
+
+**Generalizable rule.** Before adding an assertion that depends on the environment, ask which environments can satisfy it and what each one does when it cannot. If the answer differs between a developer machine and the gate, prefer vendored data checked everywhere plus one explicit parity check, and never let the gate be the environment that verifies least.
+
+**Refs.** Issue #1022; `tests/data/lifecycle-snapshot.json`; `.github/workflows/ci.yml` ("Issue-contract vendored parity"); `docs/code-reviews/2026-09-19-issue-1022-roles-library-code-review.md`.
+
 ### A worktree-isolated review agent lands on the base commit, so it reviews the wrong revision unless told otherwise  {#1022-isolated-worktree-base}
 
 **Context.** The code review for issue #1022 fanned out to seven lenses, each spawned with `isolation: "worktree"` as the sandbox contract requires for review-class work. The change under review was on branch `issue/1022`, several commits ahead of the base.

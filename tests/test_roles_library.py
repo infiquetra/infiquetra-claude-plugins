@@ -19,8 +19,13 @@ mandates, so an unanchored substring search matches the README too and a search 
 ``product.md`` claiming ``run-record``. The lifecycle carries ``sender_role`` per contract, so the
 test asserts the emitting role is the contract's sender of record.
 
-Lens, contract and role identifiers are read live from the sibling ``infiquetra-sdlc`` checkout
-when one is resolvable, and fall back to lists pinned at ``SDLC_PIN`` otherwise.
+**The prompts are always checked against a vendored snapshot of the lifecycle**, so the same
+assertions run everywhere -- on a continuous-integration runner, which has no sibling checkout, and
+on a developer machine, which does. An earlier form required the identifiers to have been read live
+and was therefore green here and red on a runner, which is the worst direction for that asymmetry.
+Drift between the snapshot and the lifecycle is a separate parity check that skips when no checkout
+is reachable. This mirrors the pattern this repository already uses for lifecycle-generated data:
+vendor a copy, pin it, and gate it, rather than checking the sibling repository out on a runner.
 """
 
 from __future__ import annotations
@@ -83,10 +88,12 @@ REQUIRED_FRONTMATTER_KEYS = ("role", "role_id", "emits", "source")
 COMMON_HANDOFF_FIELDS = ("revision", "artifact_link", "assigned", "next_action")
 COMMON_HANDOFF_LABELS = ("**Revision.**", "**Artifact.**", "**Assigned.**", "**Next.**")
 
-#: Set to any non-empty value to allow the suite to run against the pinned identifier lists when no
-#: sibling lifecycle checkout is reachable. Without it, a run that cannot see the lifecycle fails
-#: rather than passing by comparing this repository's prompts to this repository's own copy.
-ALLOW_PINNED_ENV = "INFIQUETRA_ROLES_ALLOW_PINNED"
+#: The vendored lifecycle snapshot: the data the prompts are checked against when no sibling
+#: checkout is reachable, which is the normal case in continuous integration. This follows the
+#: pattern this repository already uses for lifecycle-generated data -- vendor a copy, pin it, and
+#: gate it with a parity check -- rather than checking the sibling repository out on a runner.
+SNAPSHOT_PATH = TESTS_ROOT / "data" / "lifecycle-snapshot.json"
+SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
 
 #: Vocabulary the retired plugin invented, as discriminating tokens. "pass", "warn" and "blocked"
 #: are deliberately absent -- they are ordinary English and would produce false failures.
@@ -108,65 +115,27 @@ NON_STAFFABLE_ROLE = "operator"
 #: lifecycle ships scoring fixtures for them, report findings without scoring.
 ALWAYS_ON_LENSES = ("architecture-maintainability", "correctness", "security", "testing")
 
+#: What may be a frontmatter key. A colon alone is not enough: prose inside the block that happens
+#: to contain one would otherwise parse as a key.
+KEY_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+
 #: A strictness value from the catalogue's ladder, in any spelling. The catalogue owns the ladder;
 #: a copy in a prompt would be a second source.
 THRESHOLD_PATTERN = re.compile(r"\b(?:8|8\.0|8\.5|9|9\.0|9\.5|0\.8|0\.9)\b")
 
-FALLBACK_LENS_IDS = (
-    "architecture-maintainability",
-    "correctness",
-    "security",
-    "testing",
-    "deployment-infrastructure",
-    "reliability",
-    "performance",
-    "api-contract",
-    "adversarial",
-    "privacy",
-    "documentation-clarity",
-    "agent-usability",
-    "previous-comments",
-    "accessibility-human-usability",
-    "experience",
-)
-
-#: contract id -> the role id the lifecycle names as its sender of record.
-FALLBACK_CONTRACT_SENDERS = {
-    "technical-context": "orchestrator",
-    "issue-review-result": "issue_reviewer",
-    "planner-to-orchestrator": "planner",
-    "plan-review-result": "plan_reviewer",
-    "orchestrator-to-controller": "controller",
-    "dispatch": "controller",
-    "implementation-result": "implementer",
-    "code-review-result": "review_controller",
-    "repair-amendment": "planner",
-    "investigation-request": "controller",
-    "diagnosis": "investigator",
-    "release-handoff": "controller",
-    "release-result": "release_worker",
-    "functional-qa-result": "functional_tester",
-    "product-ruling": "product",
-    "run-record": "controller",
+VENDORED_LENS_FLOORS: dict[str, str] = SNAPSHOT["lenses"]
+VENDORED_LENS_IDS: tuple[str, ...] = tuple(VENDORED_LENS_FLOORS)
+VENDORED_ROLE_NAMES: dict[str, str] = SNAPSHOT["roles"]
+VENDORED_ROLE_IDS: tuple[str, ...] = tuple(VENDORED_ROLE_NAMES)
+VENDORED_CONTRACT_SENDERS: dict[str, str] = {
+    cid: row["sender_role"] for cid, row in SNAPSHOT["contracts"].items()
 }
-
-FALLBACK_ROLE_IDS = (
-    "product",
-    "issue_reviewer",
-    "planner",
-    "orchestrator",
-    "controller",
-    "implementer",
-    "plan_reviewer",
-    "review_controller",
-    "lens_reviewer",
-    "standard_repair_implementer",
-    "expert_repair_implementer",
-    "release_worker",
-    "functional_tester",
-    "investigator",
-    "operator",
-)
+VENDORED_CONTRACT_NAMES: dict[str, str] = {
+    cid: row["name"] for cid, row in SNAPSHOT["contracts"].items()
+}
+VENDORED_CONTRACT_FIELDS: dict[str, frozenset[str]] = {
+    cid: frozenset(row["required_fields"]) for cid, row in SNAPSHOT["contracts"].items()
+}
 
 
 class FrontmatterError(ValueError):
@@ -286,66 +255,53 @@ def _sibling_head(root: pathlib.Path) -> str | None:
     return result.stdout.strip() or None
 
 
-def _resolve() -> tuple[
-    tuple[str, ...],
-    dict[str, str],
-    tuple[str, ...],
-    dict[str, frozenset[str]] | None,
-    dict[str, str] | None,
-    dict[str, str] | None,
-    bool,
-]:
-    """Lens ids, contract senders, role ids, fields, contract names, role names -- live if able."""
-    root = _sdlc_root()
-    if root is None:
-        return (
-            FALLBACK_LENS_IDS,
-            FALLBACK_CONTRACT_SENDERS,
-            FALLBACK_ROLE_IDS,
-            None,
-            None,
-            None,
-            False,
-        )
+def _live_snapshot(root: pathlib.Path) -> dict | None:
+    """The same shape as the vendored snapshot, read from a reachable checkout.
+
+    Returns None when any reader fails -- a renamed key in the lifecycle's schema, or a moved
+    file. That is reported as a parity failure rather than swallowed, because a per-reader
+    fallback is how a check silently reverts to comparing the prompts against their own source.
+    """
     lenses = _live_lens_ids(root)
     senders = _live_contract_senders(root)
     roles = _live_role_ids(root)
     fields = _live_contract_fields(root)
     names = _live_contract_names(root)
     role_names = _live_role_names(root)
+    if any(x is None for x in (lenses, senders, roles, fields, names, role_names)):
+        return None
+    assert senders is not None and fields is not None
+    assert names is not None and role_names is not None
+    catalogue = json.loads((root / "config" / "lens-catalogue.json").read_text(encoding="utf-8"))
+    return {
+        "roles": dict(role_names),
+        "contracts": {
+            cid: {
+                "name": names[cid],
+                "sender_role": senders[cid],
+                "required_fields": sorted(fields[cid]),
+            }
+            for cid in senders
+        },
+        "lenses": {x["id"]: x["floor_level"] for x in catalogue["lenses"]},
+    }
 
-    # Live only when EVERY reader succeeded. Falling back per reader while still reporting "live"
-    # is how a renamed key in the lifecycle's schema silently reverts a check to this repository's
-    # own vendored copy -- the prompts then get compared to their own source and pass.
-    live = all(x is not None for x in (lenses, senders, roles, fields, names, role_names))
-    if not live:
-        return (
-            FALLBACK_LENS_IDS,
-            FALLBACK_CONTRACT_SENDERS,
-            FALLBACK_ROLE_IDS,
-            None,
-            None,
-            None,
-            False,
-        )
-    assert lenses is not None and senders is not None and roles is not None
-    return (lenses, senders, roles, fields, names, role_names, True)
 
-
-(
-    LENS_IDS,
-    CONTRACT_SENDERS,
-    ROLE_IDS,
-    CONTRACT_FIELDS,
-    CONTRACT_NAMES,
-    ROLE_NAMES,
-    READ_LIVE,
-) = _resolve()
+#: The prompts are always checked against the vendored snapshot, so the suite asserts the same
+#: things everywhere -- on a runner with no sibling checkout and on a machine with one. Drift
+#: between the snapshot and the lifecycle is a separate, explicit parity check, which is the
+#: pattern this repository already uses for lifecycle-generated data.
+LENS_IDS = VENDORED_LENS_IDS
+CONTRACT_SENDERS = VENDORED_CONTRACT_SENDERS
+ROLE_IDS = VENDORED_ROLE_IDS
+CONTRACT_FIELDS = VENDORED_CONTRACT_FIELDS
+CONTRACT_NAMES = VENDORED_CONTRACT_NAMES
+ROLE_NAMES = VENDORED_ROLE_NAMES
 CONTRACT_IDS = tuple(CONTRACT_SENDERS)
 
 #: Named in every assertion message, because a verdict that differs between a developer machine
 #: and a continuous-integration runner has to say which source produced it.
-ID_SOURCE = f"live@{_sdlc_root()}" if READ_LIVE else f"pinned@{SDLC_PIN}"
+ID_SOURCE = f"vendored snapshot @ {SDLC_PIN}"
 
 ALL_ROLE_FILES: list[pathlib.Path] = sorted(ROLES_DIR.glob("*.md"))
 PROMPT_FILES: list[pathlib.Path] = [p for p in ALL_ROLE_FILES if p.name != README_NAME]
@@ -405,6 +361,11 @@ def parse_frontmatter(path_or_text: pathlib.Path | str) -> dict[str, str | list[
         key, _, value = raw.partition(":")
         key = key.strip()
         value = value.strip()
+        # A colon is not enough to make a line a key. Prose inside the block that happens to
+        # contain one -- "note: see run-roles.md: the catalogue" -- otherwise became a key, and
+        # nothing downstream objected because only `model` and `effort` were ever forbidden.
+        if not KEY_PATTERN.fullmatch(key):
+            raise FrontmatterError(f"{label}:{lineno}: not a key: {key!r}")
         if key in parsed:
             raise FrontmatterError(f"{label}:{lineno}: duplicate key {key!r}")
 
@@ -766,42 +727,55 @@ def test_prompt_declares_no_tier(path: pathlib.Path) -> None:
     assert "effort" not in frontmatter, f"{path.name} declares an effort"
 
 
-def test_identifiers_were_read_live_not_pinned() -> None:
-    """A run that cannot see the lifecycle must say so, not pass on this repository's own copy.
-
-    In pinned mode every "does the prompt match the lifecycle" check compares this repository's
-    prompts against lists vendored in this repository -- tautologically green. Set
-    ``INFIQUETRA_ROLES_ALLOW_PINNED`` to opt out deliberately.
-    """
-    if os.environ.get(ALLOW_PINNED_ENV):
-        pytest.skip(f"{ALLOW_PINNED_ENV} is set; running against the pinned lists by request")
-    assert READ_LIVE, (
-        "no sibling infiquetra-sdlc checkout was reachable, so the lifecycle identifiers came from"
-        f" this repository's own pinned copy and prove nothing. Set {ALLOW_PINNED_ENV} to accept"
-        " that, or set INFIQUETRA_SDLC_ROOT to the checkout."
+def test_vendored_snapshot_is_stamped_with_the_pin() -> None:
+    """The snapshot says which revision it was taken from, and it is the one everything else names."""
+    assert SNAPSHOT["schema"] == "lifecycle_snapshot.v1"
+    assert SNAPSHOT["sdlc_revision"] == SDLC_PIN, (
+        f"{SNAPSHOT_PATH.name} was taken from {SNAPSHOT['sdlc_revision']}, the prompts name"
+        f" {SDLC_PIN}"
+    )
+    assert SNAPSHOT["roles"] and SNAPSHOT["contracts"] and SNAPSHOT["lenses"], (
+        "an empty snapshot would make every check against it vacuous"
     )
 
 
-def test_live_checkout_is_at_the_pinned_revision() -> None:
-    """The two halves of the gate must reference one revision of the lifecycle.
+def test_vendored_snapshot_matches_the_live_lifecycle() -> None:
+    """The parity gate: vendored data against the lifecycle, wherever the lifecycle is reachable.
 
-    The prompts' ``source:`` is asserted against ``SDLC_PIN`` while the identifiers are read from
-    whatever the sibling has checked out. If those differ, the suite either fails on identifiers
-    the prompts were never meant to match, or passes while the pin names a revision nothing
-    checked.
+    This repository already vendors lifecycle-generated data and gates it with a pinned parity
+    check rather than checking the sibling repository out on a runner. The prompts are therefore
+    always checked against the snapshot -- the same assertions run in continuous integration and on
+    a developer machine -- and drift between the snapshot and the lifecycle is caught here instead.
+
+    Skipping when no checkout is reachable is correct and is not a hole: the snapshot is pinned
+    data, so a run without the sibling still checks the prompts against a fixed, reviewed source.
+    What it cannot do is notice that the source moved, which is what this test is for.
     """
     root = _sdlc_root()
     if root is None:
-        pytest.skip("no sibling checkout to compare")
+        pytest.skip("no sibling infiquetra-sdlc checkout reachable; parity not checkable here")
+
     head = _sibling_head(root)
     assert head is not None, (
-        f"a sibling checkout resolved at {root} but its HEAD could not be read; that is a failure,"
-        " not a skip -- the identifiers are being read from a revision nobody verified"
+        f"a checkout resolved at {root} but its HEAD could not be read; that is a failure, not a"
+        " skip -- parity would otherwise be claimed against a revision nobody identified"
     )
     assert head.startswith(SDLC_PIN), (
-        f"the sibling checkout is at {head[:12]}, the prompts and pinned lists name {SDLC_PIN};"
-        " refresh the pin and the prompts together, or check the sibling out at the pin"
+        f"the checkout is at {head[:12]} and the snapshot is pinned at {SDLC_PIN}; regenerate the"
+        " snapshot and re-pin the prompts together, or check the sibling out at the pin"
     )
+
+    live = _live_snapshot(root)
+    assert live is not None, (
+        f"the lifecycle at {root} no longer exposes the keys this snapshot was built from; the"
+        " schema moved, and the snapshot must be regenerated against the new shape"
+    )
+
+    for section in ("roles", "contracts", "lenses"):
+        assert live[section] == SNAPSHOT[section], (
+            f"vendored {section} differ from the lifecycle at {head[:12]};"
+            f" regenerate {SNAPSHOT_PATH.name} and re-check the prompts against it"
+        )
 
 
 @pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])
@@ -812,8 +786,6 @@ def test_prompt_names_every_required_contract_field(path: pathlib.Path) -> None:
     complete handoff. That is a copy of lifecycle-owned data, and the README's promise that the
     lifecycle wins where the two disagree is unenforceable unless something can tell they disagree.
     """
-    if CONTRACT_FIELDS is None:
-        pytest.skip("no live lifecycle checkout; contract fields cannot be checked")
     frontmatter = parse_frontmatter(path)
     emits = frontmatter["emits"]
     assert isinstance(emits, list)
@@ -856,8 +828,6 @@ def test_prompt_role_name_matches_the_lifecycle(path: pathlib.Path) -> None:
     eight of the fifteen in sentence case, its role catalogue in Title Case. These files follow the
     catalogue; the check is that the *words* match, not the capitalisation.
     """
-    if ROLE_NAMES is None:
-        pytest.skip("no live lifecycle checkout; role names cannot be checked")
     frontmatter = parse_frontmatter(path)
     role, role_id = frontmatter["role"], frontmatter["role_id"]
     assert isinstance(role, str) and isinstance(role_id, str)
@@ -874,8 +844,6 @@ def test_prompt_names_every_contract_it_emits(path: pathlib.Path) -> None:
     A prompt that lists a contract's fields but never its name leaves a session unable to write a
     valid header, which is a malformed handoff -- and the prompt is the whole of its briefing.
     """
-    if CONTRACT_NAMES is None:
-        pytest.skip("no live lifecycle checkout; contract names cannot be checked")
     emits = parse_frontmatter(path)["emits"]
     assert isinstance(emits, list)
     if not emits:
@@ -934,21 +902,32 @@ def lens_slice(lens_id: str) -> str:
     fifteen sessions with a stop rule demanding a score and no way to satisfy it.
     """
     text = (ROLES_DIR / AGGREGATED_PROMPT).read_text(encoding="utf-8")
-    shared = text[: text.index(LENS_SHARED_HALF_ENDS_BEFORE)]
-
     lines = text.splitlines()
+
+    # Line-anchored, like the other two rules. An unanchored substring search would match the
+    # phrase quoted anywhere earlier in the shared half and silently shorten it -- and a shared
+    # half truncated after the stop rule still satisfies every heading check.
+    cut = next(
+        (i for i, line in enumerate(lines) if line.strip() == LENS_SHARED_HALF_ENDS_BEFORE), None
+    )
+    assert cut is not None, f"no {LENS_SHARED_HALF_ENDS_BEFORE!r} line to cut the shared half at"
+    shared = "\n".join(lines[:cut]).rstrip("\n")
+
     heading = f"{LENS_SECTION_PREFIX}{lens_id}"
     start = next((i for i, line in enumerate(lines) if line.strip() == heading), None)
     assert start is not None, f"no section for {lens_id}"
 
+    # The terminator scan runs over fence-stripped lines, so a heading-shaped line inside a fenced
+    # example cannot end a section early and silently drop the rest of what a session receives.
+    stripped = strip_fenced_blocks(text).splitlines()
     end = len(lines)
     for offset in range(start + 1, len(lines)):
-        if LENS_SECTION_TERMINATOR.match(lines[offset]):
+        if LENS_SECTION_TERMINATOR.match(stripped[offset]):
             end = offset
             break
 
-    section = "\n".join(lines[start:end])
-    return f"{shared}\n{section}\n"
+    section = "\n".join(lines[start:end]).rstrip("\n")
+    return f"{shared}\n\n{section}\n"
 
 
 @pytest.mark.parametrize("lens_id", LENS_IDS)
@@ -961,9 +940,20 @@ def test_lens_slice_is_a_complete_prompt(lens_id: str) -> None:
     assert has_stop_rule_heading(sliced), f"the {lens_id} slice has no stop-rule heading"
     assert not retired_vocabulary(sliced), f"the {lens_id} slice carries retired vocabulary"
 
-    assert f"#### {lens_id}" in sliced, f"the {lens_id} slice does not carry its own section"
-    others = [other for other in LENS_IDS if other != lens_id and f"#### {other}" in sliced]
+    # Anchored, so a lens id that is a prefix of another cannot read as a leak.
+    assert re.search(rf"^#### {re.escape(lens_id)}\s*$", sliced, re.MULTILINE), (
+        f"the {lens_id} slice does not carry its own section"
+    )
+    others = [
+        other
+        for other in LENS_IDS
+        if other != lens_id and re.search(rf"^#### {re.escape(other)}\s*$", sliced, re.MULTILINE)
+    ]
     assert not others, f"the {lens_id} slice leaked other lens sections: {others}"
+
+    # A section that lost its body to an early terminator would still pass every check above.
+    body = sliced[sliced.index(f"#### {lens_id}") :]
+    assert len(body.strip()) > 120, f"the {lens_id} section is too short to be a real brief"
 
     for grouping in ("## Always on", "## Conditional"):
         assert grouping not in sliced, (
@@ -1109,6 +1099,54 @@ def test_seeded_parser_rejects_duplicate_key() -> None:
 def test_seeded_parser_rejects_junk_line() -> None:
     with pytest.raises(FrontmatterError):
         parse_frontmatter("---\nrole: X\njust some prose\n---\nbody\n")
+
+
+def test_seeded_parser_rejects_prose_containing_a_colon() -> None:
+    """A colon does not make a line a key -- the shape the old guard could not see."""
+    with pytest.raises(FrontmatterError):
+        parse_frontmatter("---\nrole: X\nsee run-roles.md: the catalogue\n---\nbody\n")
+
+
+def test_only_the_parity_test_needs_a_sibling_checkout() -> None:
+    """Continuous integration has no sibling lifecycle checkout, so nothing else may require one.
+
+    An earlier form asserted the identifiers had been read live, which no runner can satisfy: the
+    suite was green on a developer machine and red in continuous integration, which is the worst
+    direction for that asymmetry. The prompts are now always checked against the vendored
+    snapshot, and exactly one test reaches for the lifecycle itself.
+    """
+    assert LENS_IDS is VENDORED_LENS_IDS
+    assert CONTRACT_SENDERS is VENDORED_CONTRACT_SENDERS
+    assert ROLE_IDS is VENDORED_ROLE_IDS
+    assert CONTRACT_FIELDS is VENDORED_CONTRACT_FIELDS
+    assert CONTRACT_NAMES is VENDORED_CONTRACT_NAMES
+    assert ROLE_NAMES is VENDORED_ROLE_NAMES
+
+
+def test_parity_test_skips_rather_than_fails_without_a_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Simulate the runner: no sibling checkout anywhere, and no environment variable.
+
+    This is the condition that made an earlier form of the suite red in continuous integration
+    while green on a developer machine. Proven by simulation rather than argued.
+    """
+    monkeypatch.delenv("INFIQUETRA_SDLC_ROOT", raising=False)
+    monkeypatch.setattr(pathlib.Path, "is_file", lambda self: False)
+    assert _sdlc_root() is None
+
+    # `pytest.skip` raises a BaseException subclass, so a bare `pytest.raises(Exception)` does not
+    # catch it -- the skip escapes and marks THIS test skipped, which reads as green while proving
+    # nothing. Catch BaseException and name the outcome.
+    outcome = "returned normally"
+    try:
+        test_vendored_snapshot_matches_the_live_lifecycle()
+    except BaseException as exc:  # noqa: BLE001 - the outcome type is the assertion
+        outcome = type(exc).__name__
+    assert outcome == "Skipped", (
+        f"with no checkout reachable the parity test {outcome}; anything but a skip is a red"
+        " continuous-integration run"
+    )
 
 
 def test_seeded_parser_accepts_both_empty_list_spellings() -> None:

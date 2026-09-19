@@ -52,7 +52,7 @@ uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve --rol
 # by role and review lens
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve \
   --role lens-reviewer --lens security
-# why a candidate was chosen
+# the rated alternatives for a role
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py explain --role lens-reviewer
 ```
 
@@ -63,6 +63,12 @@ The default output is short and human, and its shape depends on what you asked:
 | `resolve --shape judgment` | `opus/high` |
 | `resolve --role functional-tester` | `claude opus/high` |
 | `resolve --role lens-reviewer --lens security` | `claude opus/high documented-policy` |
+
+The third token is the qualification status, and it is one of three: `qualified`,
+`documented-policy` (the lens is real and establishes no threshold), or `lens-unverified` (the
+catalogue was unreadable, so the name itself was never checked). A host without the
+software-development-lifecycle checkout sees the third, which is why the example above prints
+`documented-policy` only where that checkout exists.
 
 A work shape answers with the tier alone; a role answers with its vendor first, because a role's
 tier is meaningless without knowing which vendor it was rendered for; a lens appends the
@@ -84,7 +90,11 @@ to translate through. Two work shapes resolve to `haiku` — `purely-mechanical`
 than guessing. Giving the vendor palettes a fourth execution class is what closes it.
 
 **Precedence.** For a work shape: the per-repository overlay at `.saga/tier-defaults.json` first,
-then the shared `work_shapes` policy. For a role: the role's own entry, which names a work shape and
+then the shared `work_shapes` policy. On the command line "per-repository" means *relative to the
+working directory* — there is no upward walk, so running from a subdirectory silently skips an
+overlay that exists at the repository root. The `source` field in `--json` is how you tell: it
+reads `overlay` or `policy`. A Python caller should pass `root=` explicitly rather than rely on the
+working directory. For a role: the role's own entry, which names a work shape and
 may pin a vendor; where it names only a work shape the work-shape precedence applies. A lens only
 ever narrows the answer — it attaches a qualification status that can downgrade a scoring executor
 to the documented-policy outcome, and can never promote one.
@@ -238,9 +248,11 @@ The resolution order is deliberately **not** a fall-through: an explicit path, o
 trying the next rung. A caller that names a wrong path gets the documented-policy outcome, never
 the operator's real checkout.
 
-`qualified` requires all of it: an entry matching the lens, that exact vendor, model and effort, the
-current lens-catalogue version, and every fixture passed. Everything else is the catalogue's
-documented-policy outcome with its reason named — an unscorable lens, an empty ledger, a partial
+There are three outcomes, not two. `qualified` requires all of it: an entry matching the lens, that
+exact vendor, model and effort, the current lens-catalogue version, and every fixture passed. `lens-unverified` means the catalogue could not be read, so the lens
+*name* was never checked — treat the name as untrusted rather than as a policy answer, because a
+misspelling reaches you this way. Everything else is the catalogue's documented-policy outcome with
+its reason named — an unscorable lens, an empty ledger, a partial
 fixture pass, an entry against an older catalogue version, an unreadable ledger, and an absent
 checkout. **Absence is data, not an exception**: the shipped ledger is empty on purpose, so raising
 would fail every lens resolution on day one.
@@ -282,7 +294,15 @@ checkout and breaks under the installed-plugin layout, where fleet-core lives in
 directory:
 
 ```python
-import fleet_commons_shim
+import sys
+from pathlib import Path
+
+# The shim is a per-plugin file, not an installed package: put your plugin's own scripts/
+# directory on the path first. Every real consumer does this; see
+# plugins/saga/scripts/tier_defaults.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import fleet_commons_shim  # noqa: E402  (after the sys.path insert, by design)
 
 staffing = fleet_commons_shim.load("staffing")
 decision = staffing.resolve_shape("judgment")

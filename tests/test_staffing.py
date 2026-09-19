@@ -680,7 +680,9 @@ def test_an_absent_checkout_reads_documented_policy_and_never_raises(
     monkeypatch.setenv(staffing.SDLC_PATH_ENV, str(tmp_path / "nowhere"))
     monkeypatch.setattr(staffing, "DEFAULT_SDLC_PATH", tmp_path / "also-nowhere")
     qualification = staffing.qualify_lens("security", vendor="claude", model="opus", effort="high")
-    assert qualification.status == staffing.DOCUMENTED_POLICY
+    # Not documented-policy: with no catalogue the lens name was never checked, and saying
+    # otherwise is what let a misspelling pass as a real lens.
+    assert qualification.status == staffing.LENS_UNVERIFIED
     assert staffing.SDLC_PATH_ENV in qualification.reason
 
 
@@ -716,7 +718,11 @@ def test_cli_resolve_role_with_a_lens_prints_vendor_tier_and_status() -> None:
     parts = result.stdout.split()
     assert parts[0] in staffing.vendors()
     assert "/" in parts[1]
-    assert parts[2] in {staffing.QUALIFIED, staffing.DOCUMENTED_POLICY}
+    assert parts[2] in {
+        staffing.QUALIFIED,
+        staffing.DOCUMENTED_POLICY,
+        staffing.LENS_UNVERIFIED,
+    }
 
 
 def test_cli_explain_accepts_the_lens_the_card_verification_block_uses() -> None:
@@ -872,7 +878,7 @@ def test_no_absolute_home_path_reaches_a_persisted_reason(
     monkeypatch.setenv(staffing.SDLC_PATH_ENV, str(tmp_path / "nowhere"))
     monkeypatch.setattr(staffing, "DEFAULT_SDLC_PATH", tmp_path / "also-nowhere")
     qualification = staffing.qualify_lens("security", vendor="claude", model="opus", effort="high")
-    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert qualification.status == staffing.LENS_UNVERIFIED
     assert str(pathlib.Path.home()) not in qualification.reason
     assert staffing.SDLC_PATH_ENV in qualification.reason
 
@@ -1115,7 +1121,9 @@ def test_an_absent_lens_catalogue_degrades_rather_than_raising(tmp_path: pathlib
     qualification = staffing.qualify_lens(
         "security", vendor="claude", model="opus", effort="high", checkout=tmp_path
     )
-    assert qualification.status == staffing.DOCUMENTED_POLICY
+    # The subject is that it does not raise; an unreadable catalogue means the name went
+    # unchecked, which is the honest status for it.
+    assert qualification.status == staffing.LENS_UNVERIFIED
 
 
 def test_a_catalogue_whose_lenses_is_not_a_list_degrades(tmp_path: pathlib.Path) -> None:
@@ -1126,7 +1134,7 @@ def test_a_catalogue_whose_lenses_is_not_a_list_degrades(tmp_path: pathlib.Path)
     qualification = staffing.qualify_lens(
         "security", vendor="claude", model="opus", effort="high", checkout=checkout
     )
-    assert qualification.status == staffing.DOCUMENTED_POLICY
+    assert qualification.status == staffing.LENS_UNVERIFIED
 
 
 def test_a_non_claude_executor_qualifies_against_its_own_ledger_entry(
@@ -1333,10 +1341,10 @@ def test_the_short_output_shape_is_the_one_the_reference_document_states() -> No
     """The document claimed one shape for all three forms; three of its examples produced another."""
     assert _run("resolve", "--shape", "judgment").stdout.strip() == "opus/high"
     assert _run("resolve", "--role", "functional-tester").stdout.strip() == "claude opus/high"
-    assert (
-        _run("resolve", "--role", "lens-reviewer", "--lens", "security").stdout.strip()
-        == "claude opus/high documented-policy"
-    )
+    # The suite runs with no lifecycle checkout, so the third token is the unchecked-name
+    # status rather than the policy one. Both shapes are vendor, tier, status.
+    role_lens = _run("resolve", "--role", "lens-reviewer", "--lens", "security").stdout.strip()
+    assert role_lens == f"claude opus/high {staffing.LENS_UNVERIFIED}"
 
 
 def test_the_reference_document_states_each_of_those_three_shapes() -> None:
@@ -1353,4 +1361,81 @@ def test_the_reference_document_carries_the_shim_import_idiom() -> None:
     reference = (REPO_ROOT / "plugins" / "fleet-core" / "references" / "staffing.md").read_text(
         encoding="utf-8"
     )
+    assert 'fleet_commons_shim.load("staffing")' in reference
+
+
+# ---------------------------------------------------------------------------
+# An unverifiable lens name is not a policy answer (agent usability lens, #1021).
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_catalogue_reports_the_name_as_unchecked_not_as_policy(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A misspelled lens used to come back byte-identical to a correct call, at exit zero.
+
+    The two situations are genuinely different: documented-policy means the lens is real and
+    establishes no threshold; lens-unverified means the vocabulary was unreadable, so the name
+    itself is untrusted. Folding the second into the first let a typo be persisted as a lens.
+    """
+    qualification = staffing.qualify_lens(
+        "securty", vendor="claude", model="opus", effort="high", checkout=tmp_path / "nowhere"
+    )
+    assert qualification.status == staffing.LENS_UNVERIFIED
+    assert qualification.status != staffing.DOCUMENTED_POLICY
+    assert "securty" in qualification.reason
+
+
+def test_an_absent_checkout_reports_the_lens_as_unchecked(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(staffing.SDLC_PATH_ENV, str(tmp_path / "nowhere"))
+    monkeypatch.setattr(staffing, "DEFAULT_SDLC_PATH", tmp_path / "also-nowhere")
+    qualification = staffing.qualify_lens("security", vendor="claude", model="opus", effort="high")
+    assert qualification.status == staffing.LENS_UNVERIFIED
+
+
+def test_a_readable_catalogue_still_answers_documented_policy(tmp_path: pathlib.Path) -> None:
+    """The distinction must not swallow the legitimate outcome it was carved out of."""
+    checkout = _fake_checkout(tmp_path, entries=[])
+    qualification = staffing.qualify_lens(
+        "security", vendor="claude", model="opus", effort="high", checkout=checkout
+    )
+    assert qualification.status == staffing.DOCUMENTED_POLICY
+
+
+def test_a_readable_catalogue_still_refuses_an_unknown_lens(tmp_path: pathlib.Path) -> None:
+    checkout = _fake_checkout(tmp_path)
+    with pytest.raises(StaffingError, match="securty"):
+        staffing.qualify_lens(
+            "securty", vendor="claude", model="opus", effort="high", checkout=checkout
+        )
+
+
+def test_the_three_statuses_are_distinct_strings() -> None:
+    statuses = {staffing.QUALIFIED, staffing.DOCUMENTED_POLICY, staffing.LENS_UNVERIFIED}
+    assert len(statuses) == 3
+
+
+def test_explain_says_the_candidates_are_alternatives_not_the_chosen_executor() -> None:
+    """The list is a rating table; the resolved executor is usually not in it."""
+    result = _run("explain", "--role", "functional-tester")
+    assert result.returncode == 0
+    assert "rated alternatives" in result.stdout
+    assert "none of them the resolved executor" in result.stdout
+
+
+def test_the_reference_document_no_longer_calls_the_list_a_chosen_candidate() -> None:
+    reference = (REPO_ROOT / "plugins" / "fleet-core" / "references" / "staffing.md").read_text(
+        encoding="utf-8"
+    )
+    assert "why a candidate was chosen" not in reference
+
+
+def test_the_documented_wiring_snippet_carries_the_path_insert() -> None:
+    """The shim is a per-plugin file, not an installed package; the snippet ran as written before."""
+    reference = (REPO_ROOT / "plugins" / "fleet-core" / "references" / "staffing.md").read_text(
+        encoding="utf-8"
+    )
+    assert "sys.path.insert" in reference
     assert 'fleet_commons_shim.load("staffing")' in reference

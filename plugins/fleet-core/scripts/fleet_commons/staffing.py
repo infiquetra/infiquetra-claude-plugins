@@ -67,6 +67,12 @@ LENS_CATALOGUE_RELATIVE_PATH = Path("config/lens-catalogue.json")
 DOCUMENTED_POLICY = "documented-policy"
 QUALIFIED = "qualified"
 
+#: The lens name could not be checked, because the catalogue that defines the vocabulary was not
+#: readable. Distinct from ``documented-policy`` on purpose: that one means "this lens establishes
+#: no threshold", a legitimate answer, and folding an unverifiable name into it let a typo pass as
+#: a real lens at exit zero. A caller seeing this has a name it cannot trust, not a policy outcome.
+LENS_UNVERIFIED = "lens-unverified"
+
 #: Rating strength, strongest first. The registry's own three-value vocabulary.
 RATINGS: tuple[str, ...] = ("STRONG", "MODERATE", "WEAK")
 
@@ -626,20 +632,23 @@ def qualify_lens(
     checkout = sdlc_root(checkout)
     if checkout is None:
         return Qualification(
-            DOCUMENTED_POLICY,
+            LENS_UNVERIFIED,
             f"no software-development-lifecycle checkout ({SDLC_PATH_ENV} is unset or does not "
-            "name a directory, and the default checkout is absent)",
+            "name a directory, and the default checkout is absent), so the lens name could not "
+            f"be checked and no threshold can be established for {lens!r}",
             lens,
         )
 
     catalogue, version = lens_catalogue(checkout)
     if len(catalogue) == 0:
         # Explicitly the empty case, not a falsiness test: falling through from here reaches the
-        # unknown-lens raise below, on a path whose whole contract is that it never raises.
+        # unknown-lens raise below, on a path whose whole contract is that it never raises. The
+        # status says the name went unchecked rather than implying the lens exists and qualifies
+        # nobody.
         return Qualification(
-            DOCUMENTED_POLICY,
+            LENS_UNVERIFIED,
             "the lens catalogue in the software-development-lifecycle checkout is absent, "
-            "unreadable or holds no lenses",
+            f"unreadable or holds no lenses, so {lens!r} could not be checked",
             lens,
         )
     if lens not in catalogue:
@@ -823,6 +832,13 @@ def _cli_explain(args: argparse.Namespace) -> int:
             "with no rated alternative"
         )
         return 0
+    resolved = f"{decision.vendor} {decision.model}/{decision.effort}"
+    listed_resolved = any(row["executor"].startswith(f"{decision.vendor}/") for row in rows)
+    print(
+        f"  rated alternatives for {_role_row(args.role)['capability']!r}"
+        + ("" if listed_resolved else f" — none of them the resolved executor, {resolved}")
+        + ":"
+    )
     for row in rows:
         print(
             f"  {row['rating']:<9} {row['executor']:<28} "

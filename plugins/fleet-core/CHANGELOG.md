@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   twenty-five team-execution agent definitions carry in frontmatter, stopped resolving through
   `tier_defaults.resolve_tier_with_overlay`. It canonicalises first now, through
   `tier_resolver.canonical_work_shape`, which is public for that reason rather than copied.
+- **An unverifiable lens name is no longer reported as a policy answer (#1021, agent-usability
+  review).** A misspelled `--lens` came back byte-identical to a correct call, at exit zero,
+  whenever the lens catalogue could not be read — which is every host without the
+  software-development-lifecycle checkout. The reason blamed the missing checkout, so a caller
+  could not tell "no executor is qualified for this lens" from "I typed the name wrong", and would
+  persist a record naming a lens that does not exist. A third status, `lens-unverified`, now says
+  the name went unchecked. The repository's own lens roster is a strict subset of the catalogue, so
+  validating against it offline would have rejected a real lens; saying the name is untrusted is
+  the honest answer.
+- **`explain` says its list is alternatives, not a selection (#1021).** The resolved executor is
+  usually not among the rated candidates, and the subcommand named "explain" printed them with no
+  header — inviting a reader to take the top-rated row as the answer.
 - **An absent or malformed lens catalogue degrades instead of raising (#1021).** A falsiness test
   let a missing catalogue fall through to the unknown-lens error, on the path whose whole contract
   is that it never raises.

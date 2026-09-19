@@ -112,8 +112,9 @@ python3 $SCRIPT board view --project operations
 
 # Add or move issue on a specific board
 python3 $SCRIPT board add --project asgard --repo infiquetra-sdlc --number 42
-python3 $SCRIPT board move --project asgard --repo infiquetra-sdlc --number 42 --status "Active"
-python3 $SCRIPT board move --project campps --repo athena-service --number 42 --status "In Progress"
+# board move writes Status; all three boards share the one stage_flow vocabulary
+python3 $SCRIPT board move --project asgard --repo infiquetra-sdlc --number 42 --status "Implementing"
+python3 $SCRIPT board move --project campps --repo athena-service --number 42 --status "Implementing"
 
 # Archive terminal workflow items (use --dry-run first)
 python3 $SCRIPT board archive --project asgard --dry-run

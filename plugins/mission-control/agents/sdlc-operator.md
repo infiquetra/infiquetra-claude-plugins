@@ -408,8 +408,12 @@ gh issue edit <N> --repo infiquetra/<repo> \
 # 3. Add to project board if not already
 python3 "$SCRIPT" board add --repo <repo> --number <N>
 
-# 4. Move to Ready if context complete; else keep in Backlog or Shaping
-python3 "$SCRIPT" board move --repo <repo> --number <N> --status Ready
+# 4. Move to Ready for Planning if context complete; else keep in Backlog or Discovering.
+#    board move writes Status only. Ready for Planning is a Shaping-stage Status, so set
+#    the Stage alongside it or the card is left out-of-Stage.
+python3 "$SCRIPT" board move --repo <repo> --number <N> --status "Ready for Planning"
+python3 "$SCRIPT" flow set-field --project <board> --repo <repo> --number <N> \
+    --field Stage --option Shaping
 ```
 
 ## Key Configuration

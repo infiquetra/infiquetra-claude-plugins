@@ -2,6 +2,179 @@
 
 ## 2026-09-19
 
+### A grep for the retired ladder cannot find a retired name used alone  {#1020-sweep-names-not-ladders}
+
+**Context.** Issue #1020 replaced the retired board vocabulary across the mission-control plugin's
+prose. The plan recorded a completeness sweep to prove nothing was left behind.
+
+**Evidence.** The sweep matched the ladder as an arrow chain:
+`grep -rn "Idea ->\|-> Ready ->" plugins/mission-control/skills/ ...`. It returned one legitimate
+hit and was read as clean. Two later review cycles found retired Status names still shipping in
+files that sweep had covered: four examples in `skills/board/SKILL.md` passing `--status "Active"`
+or `--status "Shaping"`, then `README.md:115-116` and `commands/triage.md:74` doing the same. Each
+is a single name on a command line. None contains an arrow.
+
+**Mechanism.** The sweep pattern encoded the shape the vocabulary took in *tables* — a ladder with
+arrows between stages — not the shape it takes in *instructions*, where one name appears alone as a
+flag value. A pattern derived from how a thing is written in one place silently fails to cover how
+it is written elsewhere, and returns a short clean answer rather than an error, which is what made
+it persuasive twice.
+
+**Why it mattered more than a typo.** These files are read by agents as instruction. `board move
+--status "Active"` names a Stage, and the command writes Status, so an agent following the example
+emits an option the board rejects. `LIVE_LEGACY_STATUS_ALIASES` carries no entry for `Active`, so no
+migration hint fires either.
+
+**Fix.** Replaced the grep with an executable guard that parses every `--status "..."` value out of
+every Markdown surface under the plugin's `skills/`, `commands/` and `agents/` directories plus its
+README, and checks each against `workflows.stage_flow.statuses` in `sdlc-schema.json`
+(`tests/test_board_schema_drift.py`). It was proven by seeding one invalid value and watching it go
+red, then restoring. It carries its own vacuity guard, because a file-discovery bug would otherwise
+make it pass by scanning nothing.
+
+**Generalizable rule.** When sweeping for a retired name, match the NAME, and check each hit against
+the authoritative list — do not match the syntax the name happened to appear in when you last saw
+it. A sweep whose pattern encodes a layout rather than a value is a sweep that will miss the next
+place the value is used. And prefer a test over a one-off grep: the grep proves today, the test
+keeps proving.
+
+**The first guard written from this rule broke it, which is the sharpest evidence for it.**
+That guard matched `--status\s+"([^"]+)"` -- one flag, quotes required. The plugin also writes
+Status unquoted, through `--field Status --option <value>`, and as a bare name in an English
+sentence, so ten offenders across four files survived a review cycle that believed the class was
+closed; the changelog said so in as many words. The rule above was committed in the same commit
+as the guard that violated it. Writing a rule down does not apply it: the guard now enumerates
+the retired NAMES and checks every syntax, and it was confirmed red against the unfixed tree
+before being trusted. When it was widened it immediately found four more offenders nobody had
+reported -- which is what a guard built on the rule finds and a guard built on a syntax cannot.
+
+**State a guard's boundary, or the next reader assumes it has none.** This guard covers the
+names the board-stage migration renamed, plus `Done`, written in the syntaxes the plugin's
+Markdown actually uses. It does NOT cover the older Mount Olympus vocabulary (`Assigned`,
+`In Review`, `Needs Question`), argparse help strings in the Python sources, or exotic flag
+spellings such as `--status=X` and `--field=Status --option=X`. A later review found live
+instances of the first two classes. An earlier draft of this entry claimed the guard "checks
+every syntax", which was the same overclaim this entry exists to warn about, made about the
+remedy instead of the defect.
+
+**Corollary on exemptions.** A name-level sweep needs a history exemption or it drowns in false
+positives: a legacy ladder, a retirement note and a changelog all legitimately name retired
+values. Scope the exemption to a section marked as history, and leave the changelog out of the
+sweep entirely -- a record of what a release retired must be free to name it. An exemption that
+is per-line rather than per-section silently stops covering the line below it.
+
+**Refs.** Issue #1020 unit 4; `tests/test_board_schema_drift.py`;
+`plugins/mission-control/config/sdlc-schema.json` `workflows.stage_flow`.
+
+### A shape change's blast radius is found by searching for the producer's callers, not the artifact's name  {#1020-blast-radius-search-the-producer}
+
+**Context.** Issue #1020 changed `board_census.py` to emit the board census `fields` as a mapping
+keyed by field name instead of a list. Planning had to establish who consumes that shape.
+
+**Evidence.** The plan searched the repository for `board-schema` and `board_schema` and reported a
+blast radius of two files: `plugins/mission-control/scripts/board_census.py` and
+`plugins/mission-control/tests/test_board_census.py`. That claim was wrong, and shipped in the plan
+document and a decision record before review caught it. Searching instead for callers of the
+producing function found
+`plugins/mission-control/config/generated/check_issue_contract_parity.py:121,129,152`, which imports
+`board_census.fetch_project_fields_census` and at line 158 did
+`next((f for f in census["fields"] if f["name"] == "Status"), None)`. Under a mapping that iterates
+field-name strings, so `f["name"]` raises `TypeError`. Three fixtures in
+`plugins/mission-control/tests/test_issue_contract_parity.py` built the same list shape.
+
+**Mechanism.** The consumer never names the artifact. It receives the census by calling the
+function, and the file it writes to disk is irrelevant to it. A grep for the artifact's name is
+therefore structurally incapable of finding it — and returns a short, confident, wrong answer rather
+than nothing, which is what made it persuasive.
+
+**Why it nearly shipped green.** The broken path is live-gated: `check_issue_contract_parity.py`'s
+third leg needs a `project`-scoped token and raises `LiveParityUnavailableError` into a SKIP without
+one. The repository gate and continuous integration would both have skipped it, and the whole
+mission-control suite passed with the bug present, because the parity tests injected their own
+list-shaped fixture rather than the real producer's output.
+
+**Fix.** Index the mapping directly; update the three fixtures. Verified by running the live leg
+against the real boards: `check_issue_contract_parity.py --live` prints "live parity leg passed".
+
+**Generalizable rule.** When changing the shape of a value a function returns, enumerate callers of
+the *function*. Searching for the name of the file it serializes to finds only the consumers that
+happen to mention it. And when a test injects a fixture in place of the real producer, the fixture
+is now a second copy of the contract — change both, or the suite will agree with itself while
+production disagrees.
+
+**Refs.** Issue #1020; DECISIONS [[#1020-census-keyed-by-field-name]].
+
+### A precedence ladder hides a stale shipped file from the only person who could notice  {#1020-vendored-rung-masked-by-local-checkout}
+
+**Context.** Issue #1020 regenerated mission-control's cached board census. While grounding the
+plan, the vendored `plugins/mission-control/config/project-mappings.json` was found pinning
+`"workflow": "intent_flow"` for Operations and Asgard and `"campps_initiative"` for CAMPPS.
+`sdlc-schema.json` contains no `intent_flow` workflow at all, and marks `campps_initiative`
+`retired_historical` with `"active_routing": false`.
+
+**Evidence.** The first write-up of this called it a live defect. Running the resolver refuted
+that: `_status_order` through `load_config()` returned the correct 26-status stage-flow order for
+all three boards. `_resolve_project_mappings` (`sdlc_manager.py:305-317`) tries
+`$INFIQUETRA_SDLC_PATH/config/project-mappings.json` before the vendored copy, and
+`get_sdlc_path()` falls back to `~/workspace/infiquetra/infiquetra-sdlc` — a checkout that exists
+on the developer machine and is current. Driving `_project_workflow_name` and `_status_order` from
+the vendored file directly printed what shipped environments actually get: `['No Status']` for
+Operations and Asgard, and `['Idea', 'Committed', 'In Progress', 'Done', 'Parked', 'No Status']`
+for CAMPPS.
+
+**Mechanism.** Two independent facts compound. First, the mapping duplicates a name the schema
+owns, so the duplicate outlived the thing it named — `_project_workflow_name` prefers the mapping's
+label over the board's own declaration, and a label naming a deleted workflow resolves to an empty
+dictionary rather than raising. Second, the resolution ladder consults a developer's local checkout
+before the file that ships. The developer machine is therefore the one machine that cannot observe
+the bug, and it is the machine where anyone would look.
+
+**Fix.** Delete the three `workflow` keys so resolution falls through to each board's declared
+`stage_flow` — the branch the function already implements. The test added with the fix
+(`plugins/mission-control/tests/test_project_mappings_resolution.py`,
+`TestVendoredMappingsDoNotOverrideTheBoardWorkflow`) deliberately reads the real vendored file
+rather than going through `load_config()`; written the other way it would have passed before the
+fix and proved nothing.
+
+**Generalizable rule.** When a loader has a precedence ladder, test the rung that ships, not the
+rung your machine lands on — and treat a config key that restates a name another file owns as a
+latent staleness bug, because the restatement can outlive the name without anything failing.
+
+**Refs.** Issue #1020 unit 5; `sdlc_manager.py:305-317`, `:417-426`, `:436-441`.
+
+---
+
+### A drift check that skips without credentials reports success on every run that cannot check  {#1020-skip-on-no-credential-reports-green}
+
+**Context.** `board_census.py --check` compares the committed board census against the live
+GitHub Projects API and is wired into both `.github/workflows/ci.yml:115-116` and
+`scripts/gate.sh:195`. It has been in place since #424.
+
+**Evidence.** The committed `config/board-schema.json` was last regenerated on 2026-07-14
+(commit `5aa95e5c`) and by 2026-09-19 was two board migrations stale — no `Stage` field on any
+board, the retired six-value ladder on Operations and Asgard, `Todo / In Progress / Done` on
+CAMPPS. The check ran on every continuous-integration run throughout and never once complained.
+
+**Mechanism.** The check is deliberately live-gated: with no `project`-scoped token it prints
+`SKIPPED` and exits 0, a decision recorded in DECISIONS
+[[#board-census-shape-only-live-skip-424]] and still correct, because failing on credential
+absence would block unrelated work. The consequence is that in the environment where it always
+runs, it can never fail — so its green is evidence of nothing, and reads identically to a real
+pass. An operator seeing a passing pipeline has no signal distinguishing "checked and clean" from
+"could not check".
+
+**Fix.** Add a second guard that asserts an invariant needing no credentials, beside the live one
+rather than instead of it: `tests/test_board_schema_drift.py` compares the committed census to the
+vocabulary `sdlc-schema.json` declares. It was confirmed to fail against the pre-regeneration
+census — 12 failures — before being trusted, because a guard only ever seen green is not known to
+guard anything.
+
+**Generalizable rule.** A check that can skip needs a companion that cannot. When a gate's failure
+mode is "unavailable, therefore silent", pair it with an offline invariant covering the same
+property, and prove the new guard red before you accept it green.
+
+**Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
+[[#1020-census-keyed-by-field-name]].
 ### `except Exception` is not a boundary; a tool that runs someone else's code needs `BaseException`  {#996-envelope-needs-baseexception}
 
 **Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. It keeps that promise through two `except Exception` handlers. It also executes the repository checkout named by `--root` in-process through `runpy`, which makes that checkout's code an input the tool does not control.

@@ -43,8 +43,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.16.0"
-    )  # 2.16.0: schema resync, Risk body field, Saga readiness delegation (issues 999/1000/942)
+        plugin_json["version"] == "2.17.0"
+    )  # 2.17.0: board census regenerated and keyed by field name, stage-flow prose, drift guard (issue 1020)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]
@@ -158,7 +158,7 @@ def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
     assert "Create an issue from the brainstorm" in skill
     assert "handoff_maturity" in skill
     assert "If team or project is ambiguous, ask" in skill
-    assert "Never auto-move a prepared issue to `Ready`" in skill
+    assert "Never auto-move a prepared issue to `Ready for Planning`" in skill
     assert "from the brainstorm" in create_command
     assert "handoff the plan" in create_command
     assert "/loop <issue>" not in create_command

@@ -61,9 +61,10 @@ Then the contract's own required fields: `work_unit`, `branch_and_revision`,
 `mechanical_check_results`, `unit_and_child_check_results`, `recheck_results`,
 `unexplained_behaviour`.
 
-The lifecycle's contract catalogue names this contract's producer as the initial implementation
-worker and defines no separate repair-result contract; the repair roles use this one. If a distinct
-contract is added later, follow it.
+The lifecycle licenses this reuse outright rather than leaving it to inference: the
+`implementation-result` contract's own sender note reads "the initial implementation worker is the
+sender in the ordinary case; a repair implementer produces the same contract for the batch it
+finishes." There is no separate repair-result contract to look for.
 
 Return the completed batch with verification evidence, or an explicit unresolved blocker naming what
 it would take to resolve it.

@@ -73,10 +73,20 @@ Every time you put a role to work, post a dispatch — `role`, `step`, `durable_
 are repository paths and revisions, never a copy of the content, so a fresh session reads the same
 thing everyone else did.
 
-You also produce the `investigation-request` that sends the Investigator a factual question, the
-`release-handoff` that authorises the Release Worker, and at the close the `run-record` for the
-operator — `cycles_used_per_loop`, `extensions`, `escalations`, `residual_issues`,
-`closing_version`, `decision_required`.
+You produce three more contracts, each with its own required fields. A session that has to file one
+of these has the field list here, because this prompt is the whole of its briefing.
+
+`investigation-request`, which sends the Investigator a factual question: `originating_role` — the
+role that needs the answer; `factual_question` — one question, stated as a question of fact;
+`three_part_test` — what would count as establishing it; `grouped_symptoms` — the observations,
+already grouped by suspected cause, one inquiry per cause; `scope_and_read_only_bounds` — how far
+the Investigator may look, and that it may change nothing.
+
+`release-handoff`, which authorises the Release Worker: `revision_to_merge`, `destination`,
+`authority_allocated`.
+
+`run-record`, for the operator at the close: `cycles_used_per_loop`, `extensions`, `escalations`,
+`residual_issues`, `closing_version`, `decision_required`.
 
 ### Stop rule
 

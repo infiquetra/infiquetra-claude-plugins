@@ -85,7 +85,7 @@ breaking change.
 Post one handoff comment on the issue record:
 
 ```markdown
-### Handoff: Functional QA result (functional-qa-result)
+### Handoff: Functional testing result contract (functional-qa-result)
 
 **Revision.** <the deployed revision you tested>
 **Artifact.** <the testing ledger path@revision>
@@ -93,12 +93,22 @@ Post one handoff comment on the issue record:
 **Next.** <repair, or close>
 ```
 
-Then the contract's own fields: the testing ledger with every prescribed scenario in a terminal
-state and its evidence, the environment tested, the failures with reproduction detail, and the
-residual issues you filed for anything outside this run's scope.
+Then the contract's own required fields:
 
-Every prescribed scenario ends in a terminal state. A scenario you could not run is terminal too —
-record it as not run, with the reason, rather than leaving it blank.
+`version_tested` — the revision actually running in the environment, which you checked rather than
+assumed.
+
+`per_target_conditions` — for each target: the environment, the client, and the prerequisites you
+re-checked before testing it. Per target, not once for the run: the targets differ, and a
+prerequisite true for one is not thereby true for the next.
+
+`per_scenario_outcome` — every prescribed scenario in a terminal state with its evidence. A
+scenario you could not run is terminal too: record it as not run, with the reason, rather than
+leaving it blank.
+
+`grouped_failures` — failures grouped by the cause they are suspected to share, **without claiming
+the shared cause is established**. Grouping is a hypothesis that speeds up repair; asserting it is
+the Investigator's job, on a request, and not yours.
 
 ### Stop rule
 

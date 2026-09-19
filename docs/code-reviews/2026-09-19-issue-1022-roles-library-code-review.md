@@ -1,9 +1,84 @@
 ---
 title: Code review — issue 1022, roles library
-reviewed_revision: a9eeded7
-status: round-two-incomplete
+reviewed_revision: afa5dad7
+status: round-three-stopped-at-re-review
 date: 2026-09-19
 ---
+
+# Round three — stopped
+
+**Outcome: does not accept. Stopped at the re-review, per the repair rule.**
+
+The documentation-clarity lens read all fourteen prompts and both lifecycle documents in full at
+`bac820e3` and raised nine P1 findings — the first findings in this whole review about the product
+rather than the test harness. They were repaired at `afa5dad7`. The lens re-ran at that head and
+**still gates**: five of the nine repairs are wrong or incomplete, and two of them are wrong in the
+same way the defects they were fixing were wrong.
+
+The repair allowance for this lens is spent. A further attempt is the operator's call.
+
+## What the re-review found, and why it matters
+
+**D1 — I answered "no source for this input" by inventing a source.** `implementer.md` now says
+"Your dispatch names whether the repository declares a branch preview." The `dispatch` contract has
+six fields and none of them is that; no lifecycle document says where a repository declares a
+preview at all. I also routed the smoke result into `unit_and_child_check_results`, which the
+lifecycle defines as something else. The original finding was that the prompt had no source for the
+declaration; it now states a false one as fact. Every prompt in this library tells its session that
+an invented input is indistinguishable downstream from a given one — and I did exactly that while
+fixing that class of defect.
+
+**D2 — I fixed the inversion and left its contradiction standing.** The Functional Tester's stop
+rule now correctly marks a scenario blocked and carries on, but the output-contract section above it
+still says to record a scenario you could not run as "not run", which the new paragraph and the
+contract both forbid. One prompt, two opposite instructions on the same field. This is the
+Issue Reviewer's self-contradiction — finding 8 — reproduced in another file by the repair pass.
+
+**D3 — I pointed at two documents that explicitly disclaim holding what I sent the reader for.**
+`planning-readiness.md` says in terms that it does not hold the plan-review checklist and redirects
+elsewhere; `run-model.md` says the reviewer asks four things where the contract requires three. The
+seven checklist questions and the three run-model questions live in `docs/reviewers/plan-review.md`,
+which the prompt does not name. The session can now reach the lifecycle and is sent to the wrong
+pages.
+
+**D4 — I enumerated two field lists wrongly.** `preflight_results` drops the environment and the
+observing role; `per_lens_results` drops the threshold, the floor and the dimension scores, without
+which a reader cannot tell whether a lens was met, which is the field's entire purpose. A wrong
+enumeration is worse than none: it produces a confidently malformed contract where the absence would
+have produced a stop.
+
+**D5 — the ladder is in all fourteen prompts and its verification rule makes the normal case
+unreachable.** It requires `HEAD` to start with the pin and orders a stop otherwise — but a clone,
+including the ladder's own final rung, lands on the default branch rather than a detached pin, and
+the rule forbids the obvious remedies of fetching the pin or reading at the revision. It works today
+only because the lifecycle's `main` happens to sit at `5efc869f`. The first merge there turns all
+fourteen prompts into a guaranteed stop.
+
+## What the re-review confirmed fixed
+
+Findings 3, 4, 6 and 7 are fixed and verified against the lifecycle: the admissibility test in both
+files, the `main_directly_consumed` rule with its source line and its `UNKNOWN` route, the
+applicability declaration with its per-unit and always-on rules, and the shared finding schema's
+attribution. Of finding 5, the Architect's Risk vocabulary and the Delivery Manager's
+`approval_scope` pointer are fixed and the pointer holds; the Planner's persistent-finding
+classification is fixed.
+
+The lens also checked the incidental content added during the repair — the advisory seat and
+verification-ledger rule, the cycle allowances and recovery rules, the repair accounting, the
+Architect's decision scope — and found all of it faithful.
+
+## Roster
+
+| Lens | Revision reviewed | Gating findings | Resolution |
+|---|---|---|---|
+| correctness | `1cee1bde` | 1 × P0 | repaired, `a9674a3f` |
+| testing | `a9674a3f` | 2 × P1 | repaired, `59f05286` |
+| security | `59f05286` | none | 5 advisories repaired, `502480d1` |
+| architecture-maintainability | `502480d1` | 1 × P1, 2 × P2 | P1 `a9eeded7`; P2s `bac820e3` |
+| documentation-clarity | `bac820e3` | 9 × P1 | repaired, `afa5dad7` |
+| documentation-clarity, re-run | `afa5dad7` | **5 × P1 open** | **stopped** |
+| agent-usability | — | — | not run |
+| adversarial | — | — | not run |
 
 # Round two
 

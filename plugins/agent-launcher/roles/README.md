@@ -179,11 +179,36 @@ deliberately not carried; roles record pass-or-fail evidence in their handoff co
 
 The `team-execution` files themselves still exist. Removing them is a separate piece of work.
 
+## The library's declared inputs
+
+Two data files sit beside the prompts, and both are generated rather than hand-written.
+
+`index.json` is what a consumer reads instead of parsing this README: the role-to-file map, each
+role's `emits`, the lens identifiers, and the rule for slicing the Lens Reviewer.
+
+`lifecycle-snapshot.json` is the lifecycle's roles, contracts and lenses at the pinned revision,
+vendored here. It states which roles and contracts exist, so it is the library's own declaration of
+what it is built against — which is why it lives here rather than under `tests/`. The suite checks
+the prompts against it everywhere, including where no lifecycle checkout is reachable, and a
+separate parity check compares it to the live lifecycle wherever one is.
+
+Neither file is edited by hand. `lifecycle-snapshot.json` carries a hash of its own contents that
+the suite recomputes, so a hand edit is caught.
+
 ## Adding a role later
 
-Add the row to the map above, add the file, and the structural test picks it up — it reads the
-expected set from this file's `## Role to file map` table rather than from a list in the test. A row
-without a file fails, and a file without a row fails, so neither half can drift alone.
+Four things change together, and the tests fail until all four agree:
+
+1. The prompt itself, `roles/<role>.md`, following the contract above.
+2. The row in this file's `## Role to file map` table.
+3. The entry in `index.json`.
+4. `lifecycle-snapshot.json`, if the role is new to the lifecycle rather than newly given a prompt —
+   regenerate it from the lifecycle at the pin.
+
+The structural test reads the expected set from the map table and from the snapshot, not from a list
+inside the test. A row without a file fails, a file without a row fails, and a prompt whose
+`role_id` the lifecycle does not name fails — so no half can drift alone, and a role the lifecycle
+has not declared cannot be introduced by adding a file.
 
 ## Exemptions this file claims
 

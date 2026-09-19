@@ -91,11 +91,14 @@ REQUIRED_FRONTMATTER_KEYS = ("role", "role_id", "emits", "source")
 COMMON_HANDOFF_FIELDS = ("revision", "artifact_link", "assigned", "next_action")
 COMMON_HANDOFF_LABELS = ("**Revision.**", "**Artifact.**", "**Assigned.**", "**Next.**")
 
-#: The vendored lifecycle snapshot: the data the prompts are checked against when no sibling
-#: checkout is reachable, which is the normal case in continuous integration. This follows the
-#: pattern this repository already uses for lifecycle-generated data -- vendor a copy, pin it, and
-#: gate it with a parity check -- rather than checking the sibling repository out on a runner.
-SNAPSHOT_PATH = TESTS_ROOT / "data" / "lifecycle-snapshot.json"
+#: The library's declared lifecycle inputs, vendored and pinned. It lives beside the prompts, not
+#: under `tests/`, because it is product data: it states which roles and contracts exist, so adding
+#: a role edits the library's own declaration rather than a verification fixture. Test data owning
+#: product truth would make the only way to add a role a change to the thing that judges it.
+#:
+#: The suite checks the prompts against this file everywhere, including on a runner with no sibling
+#: checkout; drift between it and the lifecycle is one explicit parity check.
+SNAPSHOT_PATH = ROLES_DIR / "lifecycle-snapshot.json"
 SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
 
 #: Vocabulary the retired plugin invented, as discriminating tokens. "pass", "warn" and "blocked"
@@ -581,8 +584,9 @@ def test_roles_directory_holds_nothing_unexpected() -> None:
     """R7's second clause: no prompt hidden in a subdirectory or under another extension."""
     unexpected = sorted(str(p.relative_to(ROLES_DIR)) for p in EVERY_FILE if p.parent != ROLES_DIR)
     assert not unexpected, f"files nested below the roles directory: {unexpected}"
+    allowed_data = {INDEX_NAME, SNAPSHOT_PATH.name}
     wrong_extension = sorted(
-        p.name for p in EVERY_FILE if p.suffix != ".md" and p.name != INDEX_NAME
+        p.name for p in EVERY_FILE if p.suffix != ".md" and p.name not in allowed_data
     )
     assert not wrong_extension, f"unexpected files in the roles directory: {wrong_extension}"
 

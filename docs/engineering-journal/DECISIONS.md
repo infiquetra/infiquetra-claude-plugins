@@ -26,6 +26,30 @@
 
 **Refs.** Issue #1022; plan KTD3; `config/lens-catalogue.json` in `infiquetra-sdlc`, read at `67845cdd` and re-pinned to `5efc869f` when the lifecycle advanced mid-run.
 
+### The lifecycle's roles and contracts are vendored and pinned, not read live  {#1022-vendored-lifecycle-snapshot}
+
+**Decision.** `plugins/agent-launcher/roles/lifecycle-snapshot.json` holds the lifecycle's roles, contracts and lenses at the pinned revision, generated from the sibling repository and never hand-edited. Every check of a prompt against the lifecycle reads that file. A separate test compares the snapshot to a live checkout and fails on any difference; it skips where no checkout is reachable.
+
+**Rationale.** The checks have to assert the same things in every environment. Requiring a live checkout made the suite green on a developer machine and red on every continuous-integration runner, because no workflow provides one — and in the cases that degraded to skips it made the runner, the environment that gates the merge, the one verifying least. Vendoring inverts that: the assertions are identical everywhere, and the one environment-dependent check is the parity comparison, whose skip costs nothing because the snapshot is fixed, reviewed data. It also matches what this repository already does with lifecycle-generated data behind the issue-contract vendored parity gate.
+
+**Alternatives rejected.** *Reading the sibling checkout live and requiring it* — the shape that produced the defect; it cannot pass on a runner, and the natural repair when it fails is to weaken the check. *Checking the sibling repository out in the workflow* — possible, but it puts a cross-repository clone and its credentials on the critical path of every pull request to buy a comparison the parity check already makes wherever it matters. *Accepting pinned mode silently* — the original hazard: the prompts would then be compared to a copy in the same repository with nothing saying so.
+
+**Revisit when.** The lifecycle publishes its roles and contracts as a released artifact this repository can depend on by version, at which point the vendored copy becomes a dependency rather than a snapshot.
+
+**Refs.** Issue #1022; `LEARNINGS.md` `{#1022-sibling-checkout-asymmetry}` for the defect that prompted it; `tests/test_roles_library.py::test_vendored_snapshot_matches_the_live_lifecycle`.
+
+### The lens-slicing rule is owned by `index.json`, and the test reads it from there  {#1022-slicing-rule-in-index}
+
+**Decision.** `plugins/agent-launcher/roles/index.json` carries the rule for cutting the Lens Reviewer into what a session receives: `shared_half_ends_before`, `section_heading_prefix`, and `section_terminator_pattern`, the last a regular expression. That file owns the rule. `tests/test_roles_library.py` compiles the pattern from it rather than restating it, and `test_index_agrees_with_the_files_and_the_readme` asserts the index's values are the ones the suite slices with.
+
+**Rationale.** A consumer must be able to slice the file without parsing Markdown prose, and the prose in `README.md` is for a person. Two expressions of one rule is a drift surface, so the machine-readable one is authoritative and the test is bound to it — otherwise a consumer cuts by the index, the tests cut by their own copy, the two agree by coincidence, and changing either leaves the suite green over a prompt nothing checked. That is not hypothetical: it is what the code did before this decision.
+
+**Alternatives rejected.** *Leaving the rule in prose only* — every consumer reimplements it from English. *Hard-coding it in the test* — the coincidence case above. *Byte offsets instead of patterns* — brittle against any edit to the file.
+
+**Revisit when.** A roster helper ships and becomes the second implementation of the rule; at that point the helper, not the test, should be the reference implementation, and the test should exercise the helper.
+
+**Refs.** Issue #1022; a code-review finding that the index published an algorithm no test was bound to; `{#1022-one-lens-file}`.
+
 ### Shared prompt blocks are copied into all fourteen prompts, and a test holds them identical  {#1022-shared-blocks-copied}
 
 **Supersedes** `{#1022-preamble-by-reference}` in part. That entry rejected copying a shared block into each prompt, because the retired plugin's twenty-five byte-identical copies were twenty-five chances to drift. The reasoning was sound and the conclusion was wrong for this artifact.

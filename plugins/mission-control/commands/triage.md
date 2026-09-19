@@ -73,7 +73,11 @@ When the user invokes `/triage repo#number`:
    - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Objective --option <name>`
 8. Recommend status:
    All three boards share the one `stage_flow` vocabulary, so the same Status names apply
-   everywhere; there is no per-board split.
+   everywhere; there is no per-board split. `board move` writes **Status** only -- it never
+   touches the Stage column -- so when the recommended Status belongs to a different Stage
+   than the card currently sits in, write the Stage too, or the card is left out-of-Stage:
+   `flow set-field --field Stage --option <Stage>`. The Stage each Status belongs to is in
+   `skills/board/references/kanban-workflow.md`.
    - Defect (critical/high): move to `Implementing`
    - Has complete context: `Ready for Planning`
    - Needs more context: keep `needs-plan` on actionable cards, optionally add `needs-context`,

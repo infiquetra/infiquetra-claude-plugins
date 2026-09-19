@@ -254,7 +254,8 @@ STATUS_FLAG_PATTERN = re.compile(r"--status\s+(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z
 # A per-line scan cannot see that, which is the blind spot a `re.DOTALL` flag
 # on a per-line scan only pretended to cover.
 STATUS_OPTION_PATTERN = re.compile(
-    r"--field\s+Status\b[\s\\]*?--option\s+(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z][\w-]*))",
+    r"--field\s+Status\b(?:(?!--field)[\s\S])*?--option\s+"
+    r"(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z][\w-]*))",
     re.DOTALL,
 )
 
@@ -274,6 +275,9 @@ BARE_RETIRED_NAME = re.compile(
     r"\b(?:Idea|Todo|Committed|Parked|Done)\b"
     r"|\bReady\b(?!\s+(?:for\s+Active|for\s+Planning|to\s+close|to\s+merge))"
 )
+
+# A bullet or numbered list item begins a new exemption unit.
+LIST_ITEM_START = re.compile(r"\s*(?:[-*+]|\d+\.)\s")
 
 # Lines that legitimately discuss the retired vocabulary as history rather than
 # instructing anyone to use it. Each is a deliberate, reviewed exemption.
@@ -340,10 +344,12 @@ def _status_values(text: str) -> list[tuple[int, str]]:
                 found.append((number, value))
 
     for match in STATUS_OPTION_PATTERN.finditer(text):
-        value = next((g for g in match.groups() if g), "")
-        if value:
-            # Derive the line from the match offset, since the match may span lines.
-            found.append((text.count("\n", 0, match.start()) + 1, value))
+        index = next((i for i, g in enumerate(match.groups(), 1) if g), 0)
+        if index:
+            # Derive the line from where the VALUE sits, not where the match
+            # began: the match spans lines, and the offending word is what a
+            # reader needs pointing at.
+            found.append((text.count("\n", 0, match.start(index)) + 1, match.group(index)))
 
     return found
 
@@ -364,14 +370,41 @@ def _history_exempt_lines(text: str) -> set[int]:
     lines = text.splitlines()
     exempt: set[int] = set()
 
-    # Paragraph scope: blank-line-separated runs.
+    # Paragraph scope: blank-line-separated runs -- but a bullet or numbered
+    # list is one such run with no blank lines inside it, so scoping the whole
+    # run would let one marked item excuse its siblings. Each list item is its
+    # own unit; its indented continuation lines belong to it.
+    def _units(block_lines: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
+        units: list[list[tuple[int, str]]] = []
+        fenced = False
+        for number, text_line in block_lines:
+            is_fence = text_line.strip().startswith(("```", "~~~"))
+            starts_unit = (
+                not units
+                or (is_fence and not fenced)
+                or (not fenced and LIST_ITEM_START.match(text_line))
+            )
+            if is_fence and fenced:
+                units[-1].append((number, text_line))
+                fenced = False
+                units.append([])
+                continue
+            if starts_unit:
+                units.append([])
+            units[-1].append((number, text_line))
+            if is_fence and not fenced:
+                fenced = True
+        return [unit for unit in units if unit]
+
     start = 0
     for index in range(len(lines) + 1):
         if index == len(lines) or not lines[index].strip():
             if index > start:
-                block = "\n".join(lines[start:index])
-                if any(marker in block for marker in HISTORY_MARKERS):
-                    exempt.update(range(start + 1, index + 1))
+                block = [(n + 1, lines[n]) for n in range(start, index)]
+                for unit in _units(block):
+                    text_of_unit = "\n".join(line for _, line in unit)
+                    if any(marker in text_of_unit for marker in HISTORY_MARKERS):
+                        exempt.update(number for number, _ in unit)
             start = index + 1
 
     # Section scope: from a marked heading to the next heading of any level.
@@ -444,3 +477,100 @@ def test_no_prose_surface_tells_an_agent_to_use_a_retired_status_name(
     assert not offenders, (
         "prose names a retired Status as though it were still usable:\n" + "\n".join(offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# The guard's own logic, driven directly.
+#
+# Everything above exercises these helpers only against this repository's real
+# prose, which is clean -- so every helper could regress and the suite would
+# stay green. That is the failure this module's own header paragraph names, so
+# it cannot be the one thing the module leaves unproven. These cases are the
+# evasions an earlier revision actually had, pinned so a later widening of the
+# patterns has to break a test to happen.
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryExemptionScope:
+    def test_a_marked_bullet_does_not_excuse_its_siblings(self) -> None:
+        """A list has no blank lines inside it, so a paragraph-scoped exemption
+        would let one historical bullet cover the instruction below it."""
+        text = (
+            "- The old Olympus board used a legacy ladder.\n"
+            "- Move the card to Done when finished.\n"
+        )
+        assert _history_exempt_lines(text) == {1}
+
+    def test_an_unmarked_bullet_alone_is_not_exempt(self) -> None:
+        assert _history_exempt_lines("- Move the card to Done when finished.\n") == set()
+
+    def test_a_marker_covers_its_own_wrapped_paragraph(self) -> None:
+        """The case a line-scoped exemption got wrong: the marker lands on the
+        first line of a wrapped paragraph and the retired name on the second."""
+        text = "The retired ladder is preserved for history:\nIdea, Ready and Done are gone.\n"
+        assert _history_exempt_lines(text) == {1, 2}
+
+    def test_a_marked_heading_covers_its_section_until_the_next_heading(self) -> None:
+        text = (
+            "## Legacy board\n"
+            "The ladder ended at Done.\n"
+            "\n"
+            "## Current board\n"
+            "Move the card to Done when finished.\n"
+        )
+        exempt = _history_exempt_lines(text)
+        assert 2 in exempt, "a line under a history heading should be exempt"
+        assert 5 not in exempt, "the next heading must end the exemption"
+
+    def test_a_shell_comment_in_a_fence_is_not_a_heading(self) -> None:
+        """`# ...` inside a fenced block is a shell comment. Treating one as a
+        heading would excuse every line after it."""
+        text = (
+            "```bash\n"
+            "# limits are retired; the schema defines none\n"
+            "board wip --project operations\n"
+            "```\n"
+            "Move the card to Done when finished.\n"
+        )
+        assert 5 not in _history_exempt_lines(text)
+
+
+class TestStatusValueExtraction:
+    def test_the_flag_form_in_each_quoting_style(self) -> None:
+        assert _status_values('--status "Ready for Planning"\n') == [(1, "Ready for Planning")]
+        assert _status_values("--status 'Implementing'\n") == [(1, "Implementing")]
+        assert _status_values("--status Implementing\n") == [(1, "Implementing")]
+
+    def test_the_field_option_form_wrapped_across_lines(self) -> None:
+        """The form this plugin actually writes, and the one a per-line scan
+        could never see however many DOTALL flags it carried."""
+        assert _status_values("  --field Status \\\n  --option Done\n") == [(2, "Done")]
+
+    def test_another_flag_between_field_and_option_does_not_hide_the_value(self) -> None:
+        assert _status_values("  --field Status --project 3 \\\n  --option Done\n") == [(2, "Done")]
+
+    def test_a_different_field_is_not_read_as_a_status(self) -> None:
+        """`--field Objective --option Done` sets something else entirely; the
+        match must not run past one `--field` into the next."""
+        assert _status_values("  --field Objective \\\n  --option defects\n") == []
+        assert _status_values("  --field Status --option Capturing\n") == [(1, "Capturing")]
+
+    def test_the_line_number_follows_the_value_not_the_flag(self) -> None:
+        text = "intro\n\n  --field Status \\\n  --option Capturing\n"
+        assert _status_values(text) == [(4, "Capturing")]
+
+
+class TestBareRetiredNamePattern:
+    def test_live_statuses_beginning_with_ready_are_not_flagged(self) -> None:
+        for live in ("Ready for Active", "Ready for Planning", "Ready to close", "Ready to merge"):
+            assert not BARE_RETIRED_NAME.search(live), f"{live} is a live Status"
+
+    def test_the_bare_retired_names_are_flagged(self) -> None:
+        for retired in ("Idea", "Todo", "Committed", "Parked", "Done", "Ready"):
+            assert BARE_RETIRED_NAME.search(f"move it to {retired} when done"), retired
+
+    def test_active_is_not_matched_bare(self) -> None:
+        """Deliberate: `Active` is a live Stage, so a bare mention is usually
+        legitimate. It is still caught as a Status VALUE by the flag patterns."""
+        assert not BARE_RETIRED_NAME.search("cards in the Active stage")
+        assert _status_values("--status Active\n") == [(1, "Active")]

@@ -80,7 +80,9 @@ class TestFetchProjectFieldsCensus:
             )
 
         monkeypatch.setattr(board_census, "_graphql", fake_graphql)
-        with pytest.raises(ValueError, match="duplicate field name 'Status'"):
+        with pytest.raises(
+            board_census.DuplicateFieldNameError, match="duplicate field name 'Status'"
+        ):
             board_census.fetch_project_fields_census(3)
 
     def test_over_thirty_fields_returns_full_census_not_truncated(self, monkeypatch):

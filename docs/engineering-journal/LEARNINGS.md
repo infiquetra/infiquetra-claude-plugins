@@ -2,6 +2,31 @@
 
 ## 2026-09-19
 
+### A plugin version bump breaks three tests that restate the version as a literal  {#fleet-core-version-pins-1032}
+
+**Evidence.** Issue #1032, pull request #1045. Bumping fleet-core 0.25.3 to 0.26.0 turned the
+continuous-integration test job red on `tests/test_liveness_events.py:730` and
+`tests/test_team_execution_liveness.py:158` and `:483`, each asserting
+`result["fleet_core_version"] == "0.25.3"`. The repository's own rule already says any
+version or metadata drift guard moves in the same change as the bump; I moved the three release
+surfaces and missed the three assertions.
+
+**Mechanism.** The six test files this card added all passed locally, which is exactly why the
+failure reached continuous integration: the breakage was in files the card never touched, reachable
+only by running the whole suite. A per-file inner loop cannot see a cross-file version coupling, and
+the coupling is invisible from the changed diff because the literal lives somewhere else entirely.
+
+Worth noting against the pin guard this same card shipped: `tests/test_typesafe_sdk_pin.py` reads
+the declared specifier out of `pyproject.toml` at test time precisely so that editing the
+declaration moves the guard with it. These three liveness assertions do the opposite -- they restate
+a value that lives in `plugin.json` -- so every fleet-core release will keep breaking them until
+they read it instead.
+
+**Generalizable rule.** After bumping a plugin version, grep the whole repository for the old
+version string before pushing, and run the full test suite rather than the files the change touched.
+A guard that restates a value instead of reading it is a guard that fails on every legitimate
+change, which is the opposite of what a guard is for.
+
 ### A module-scope import is outside every handler the file owns, and subclassing the dependency kills the sentinel repair  {#997-import-outside-every-handler}
 
 **Context.** `plugins/saga/scripts/plan_save_contract.py` promises in its own docstring that every invocation but `--help` prints one JSON object and exits 0, 1 or 2. Issue #996 had just finished making that promise hold against the foreign code the tool executes. The tool still imported PyYAML at module scope.

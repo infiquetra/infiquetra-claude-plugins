@@ -384,3 +384,92 @@ def test_contract_cli_resolves_the_engine_from_the_checkout(
     assert refused.returncode == 2, refused.stdout + refused.stderr
     payload = json.loads(refused.stdout)
     assert payload["code"] == "engine" and payload["file"] == api.RIDER
+
+
+PROOF = "plugins/saga/scripts/plan_save_proof.py"
+_ANNOTATIONS = "from __future__ import annotations"
+_VERIFY_DOC = (
+    '    """Prove candidate facts and saved semantics without loading tests or launching pytest."""'
+)
+
+
+def test_contract_cli_envelopes_baseexception_from_checkout_code(
+    contract_api: ModuleType, tmp_path: Path
+) -> None:
+    """Checkout code raising a BaseException stays inside the JSON envelope (issue #996).
+
+    The tool executes the checkout named by --root in-process. `except Exception` does not
+    cover SystemExit or KeyboardInterrupt, so either one used to leave a caller parsing stdout
+    with no JSON at all and an exit code outside the documented 0/1/2. Two seams can raise:
+    loading the proof through runpy, and calling the loaded verify(). Both are probed, because
+    the second one is reachable only after the first one is guarded.
+    """
+    api = contract_api
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    proof = checkout / PROOF
+    original = proof.read_text()
+    assert _ANNOTATIONS in original and _VERIFY_DOC in original, (
+        f"{PROOF}: probe anchors are gone; re-derive them from the current file"
+    )
+
+    def refusal(mutation: str, *, entry: str, code: str = "engine") -> dict[str, object]:
+        proof.write_text(mutation)
+        result = cli(api, checkout, "validate")
+        proof.write_text(original)
+        assert result.returncode == 2, (
+            f"{entry}: expected the documented refusal exit 2, "
+            f"got {result.returncode}\n{result.stdout}\n{result.stderr}"
+        )
+        payload: dict[str, object] = json.loads(result.stdout)
+        assert payload["outcome"] == "invalid"
+        assert payload["code"] == code and payload["entry"] == entry, payload
+        assert payload["file"] == PROOF, payload
+        return payload
+
+    # Seam one: the BaseException escapes while runpy loads the file.
+    refusal(
+        original.replace(_ANNOTATIONS, _ANNOTATIONS + "\nimport sys\nsys.exit(7)", 1),
+        entry="engine import",
+    )
+    refusal(
+        original.replace(_ANNOTATIONS, _ANNOTATIONS + "\nraise KeyboardInterrupt('probe')", 1),
+        entry="engine import",
+    )
+    # Seam two: the file loads, and the BaseException escapes while verify() runs.
+    refusal(
+        original.replace(_VERIFY_DOC, _VERIFY_DOC + "\n    import sys; sys.exit(9)", 1),
+        entry="engine proof",
+    )
+    # A ContractError from the proof keeps its own diagnosis; it is not relabelled an engine fault.
+    diagnosed = refusal(
+        original.replace(
+            _VERIFY_DOC,
+            _VERIFY_DOC
+            + '\n    api.fail("probe entry", "probe reason",'
+            + f' source="{PROOF}", code="verification")',
+            1,
+        ),
+        entry="probe entry",
+        code="verification",
+    )
+    assert "probe reason" in str(diagnosed["error"]), diagnosed
+
+    # The unmutated checkout is untouched by the guard.
+    clean = cli(api, checkout, "validate")
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    assert json.loads(clean.stdout)["outcome"] == "valid"
+
+    # --help is the one documented exemption, and it only works because main()'s handler stays
+    # narrow: argparse raises SystemExit(0) from inside that try. A broad handler there would
+    # print a JSON refusal at exit 2 instead of usage at exit 0.
+    usage = subprocess.run(
+        [sys.executable, str(ROOT / "plugins/saga/scripts/plan_save_contract.py"), "--help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert usage.returncode == 0, usage.stdout + usage.stderr
+    assert usage.stdout.startswith("usage: plan_save_contract.py"), usage.stdout
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(usage.stdout)

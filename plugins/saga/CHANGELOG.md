@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.159.1] - 2026-09-19
+
+- **A BaseException from checkout code stays inside the Plan save-contract JSON envelope (#996).** `plan_save_contract.py` executes the checkout named by `--root` in-process, and `except Exception` does not cover `SystemExit` or `KeyboardInterrupt`. Either one left a caller parsing stdout with no JSON and an exit code outside the documented 0/1/2. Both seams where checkout code runs are now guarded -- loading a file through `runpy` and calling the loaded `verify()` -- and both report the existing refusal shape (`code: engine`, exit 2). A `ContractError` raised by the proof keeps its own diagnosis. `--help` is unchanged: `main()`'s handler stays narrow on purpose, because argparse raises `SystemExit(0)` from inside it.
+
 ## [0.159.0] - 2026-09-16
 
 - **Accepted results cannot carry active findings (#894).** `ReviewResult` refuses `accepted` with empty failing lenses, empty unresolved fix ids, and any finding still `status=active`. `record_cycle` reconciles leftover active findings (and matching scoring evidence) before constructing that shape. `repairs_requested` and `cycle_cap_best_available` may still list `active`.

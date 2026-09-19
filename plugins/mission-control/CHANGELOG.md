@@ -31,11 +31,27 @@
   rather than restated, matching the schema decision that retired them. Terminal-status and
   cycle-time boundary tables across `skills/metrics/SKILL.md` and
   `skills/metrics/references/metrics-targets.md` no longer name `Done` or `In Progress`, neither
-  of which is an option on any live board; the terminal is `Ready to close` everywhere.
+  of which is an option on any live board; the terminal is `Ready to close` everywhere. The
+  work-in-progress **age** tables in both metrics files are rewritten to the one threshold
+  `_active_age_thresholds` actually computes — three days for every non-terminal Status on every
+  board — replacing a per-board split with a five-day CAMPPS row keyed on the retired Status
+  `In Progress`. The cycle-time boundary tables now also state plainly that `metrics cycle-time`
+  keys its start off the Status field and matches nothing today, because `_cycle_start_statuses`
+  still returns the retired Status `Active`; that code defect predates this change and is left for
+  a separate card rather than described as though it worked.
+- **`skills/board/SKILL.md` no longer shows commands that cannot succeed.** Four examples passed
+  `--status "Active"` or `--status "Shaping"`, both of which are Stage names and neither of which is
+  a valid Status option, under a heading naming the retired `intent_flow` workflow. An agent
+  following them would have emitted an option the board rejects.
 
 ### Changed
 
-- **`board-schema.json` keys `fields` by field name instead of listing them.** A consumer can now
+- **BREAKING (consumed shape): `board-schema.json` keys `fields` by field name instead of listing
+  them.** A cached expression like `.boards.operations.fields[] | select(.name=="Status")` stops
+  working; the equivalent is `.boards.operations.fields.Status`. Every in-repository consumer is
+  updated, and the artifact has no documented external consumer, which is why this ships as a minor
+  rather than a major version. A consumer outside this repository must update its path. A
+  consumer can now
   ask for one field directly — `.boards.operations.fields.Status.options[].name` — instead of
   scanning a list. Keys are emitted sorted and `--write` still serializes with `sort_keys=True`,
   so the committed file diffs as stably as before. A duplicate field name now raises rather than

@@ -14,7 +14,7 @@ document and a decision record before review caught it. Searching instead for ca
 producing function found
 `plugins/mission-control/config/generated/check_issue_contract_parity.py:121,129,152`, which imports
 `board_census.fetch_project_fields_census` and at line 158 did
-`next(f for f in census["fields"] if f["name"] == "Status")`. Under a mapping that iterates
+`next((f for f in census["fields"] if f["name"] == "Status"), None)`. Under a mapping that iterates
 field-name strings, so `f["name"]` raises `TypeError`. Three fixtures in
 `plugins/mission-control/tests/test_issue_contract_parity.py` built the same list shape.
 

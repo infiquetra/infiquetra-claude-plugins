@@ -20,7 +20,7 @@ Planning searched the repository for the strings `board-schema` and `board_schem
 only consumers were `board_census.py` and its own test. That search finds files that name the
 *artifact*. It does not find `plugins/mission-control/config/generated/check_issue_contract_parity.py`,
 which imports `board_census.fetch_project_fields_census` and consumed its result positionally at
-line 158 (`next(f for f in census["fields"] if f["name"] == "Status")`) — under a mapping that
+line 158 (`next((f for f in census["fields"] if f["name"] == "Status"), None)`) — under a mapping that
 iterates field-name strings and raises `TypeError`. It was caught during code review by searching for
 callers of the *producing function* instead, and fixed along with three fixtures in
 `tests/test_issue_contract_parity.py`. The full consumer set is four files, and the fix is confirmed
@@ -54,9 +54,21 @@ LEARNINGS [[#1020-skip-on-no-credential-reports-green]] (the companion guard),
 ### Retired policy in a reference document is deleted, never restated in the new vocabulary  {#1020-delete-retired-policy-dont-restate}
 
 **Decision.** When a board reference documents a policy the schema has withdrawn, remove the
-section. Do not translate it into the current vocabulary. Applied to the work-in-progress limit
-tables in `skills/board/references/kanban-workflow.md` and to the enforcement instructions in
-`skills/metrics/SKILL.md` and `skills/metrics/references/metrics-targets.md`.
+section. Do not translate it into the current vocabulary. Applied to the work-in-progress **limit**
+tables in `skills/board/references/kanban-workflow.md`, and to the instructions in
+`skills/metrics/SKILL.md` and `skills/metrics/references/metrics-targets.md` that told an agent to
+enforce those limits.
+
+**The distinction that matters: limits were deleted, age thresholds were corrected.** A
+work-in-progress *limit* is a cap on card count, and no code computes one — the schema deleted the
+block and retired the script, so the prose describing it had nothing behind it and was removed.
+A work-in-progress *age* threshold is a real, code-backed measure: `_active_age_thresholds`
+(`scripts/sdlc_manager.py:477-489`) returns three days for every non-terminal Status on every board.
+Those tables stayed, but they had been describing a per-board split with a five-day CAMPPS threshold
+keyed on the retired Status `In Progress`, none of which the function computes. They were rewritten
+to one row. Deleting them would have discarded a measure that exists; restating the limits would
+have reinstated one that does not. The test is whether code computes the thing, not whether the
+prose looks stale.
 
 **Rationale.** `sdlc-schema.json`'s migration decision E6 removed the `wip_limits` block outright
 and retired `check-wip-limits.py`; `sdlc_manager.py:1227-1228` and `:1409` already report that no

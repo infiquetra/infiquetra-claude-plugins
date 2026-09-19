@@ -15,6 +15,15 @@ Quick reference for Infiquetra board-flow metrics. Source of truth:
 |-------|-------|----------|
 | Operations / Asgard / CAMPPS | `Active` stage | `Ready to close` |
 
+> **What the tool measures today.** `metrics cycle-time` keys the start off the
+> **Status** field, not the Stage column: `_cycle_start_statuses` in
+> `scripts/sdlc_manager.py` returns the literal `Active`, which the board-stage
+> migration retired as a Status value. So the command matches nothing on any board
+> until that function is moved onto the Stage field. The boundary above is the
+> intended definition; it is not what the current code computes. Tracked separately
+> from issue #1020, whose scope is the cached census and the prose describing it.
+
+
 Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as start with
 `Done`/`Closed`/`Cancelled` terminals; its history may include `In Progress`, `In Development`,
 or `Deployed`. Tooling reads those for historical calculations only and creates no new movement
@@ -55,9 +64,11 @@ with those names.
 
 | Board | Status | Threshold |
 |-------|--------|-----------|
-| Operations | Active, Verify | > 3 days |
-| Asgard | Active, Verify | > 3 days |
-| CAMPPS | In Progress | > 5 days |
+| Operations / Asgard / CAMPPS | every non-terminal Status | > 3 days |
+
+`_active_age_thresholds` in `scripts/sdlc_manager.py` derives this from the
+workflow: every stage-flow Status that is not terminal, at three days. The
+boards are not split and no board carries a longer threshold.
 
 ---
 

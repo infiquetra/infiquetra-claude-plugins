@@ -59,6 +59,20 @@ from sdlc_manager import (  # noqa: E402
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "config" / "board-schema.json"
 
 
+class DuplicateFieldNameError(ValueError):
+    """Two fields on one board share a name, so the name-keyed census cannot
+    represent the board without losing one (#1020).
+
+    A distinct type, not a bare ``ValueError``, because callers must be able to
+    separate this from an access failure. ``sdlc_manager._graphql`` parses the
+    ``gh`` response with ``json.loads``, and ``json.JSONDecodeError`` is itself
+    a ``ValueError`` -- so a handler written against the bare type would turn a
+    non-JSON response from a failing live call into a hard failure where the
+    documented posture is a SKIP. Kept in the ``ValueError`` hierarchy so
+    existing broad handlers still behave sensibly.
+    """
+
+
 def fetch_project_fields_census(project_number: int, *, max_pages: int = 200) -> dict[str, Any]:
     """Live field/option shape for one project (id, name, dataType, options).
 
@@ -92,7 +106,7 @@ def fetch_project_fields_census(project_number: int, *, max_pages: int = 200) ->
             # ever does (#1020 KTD2). Raised here, AFTER `paginate_or_raise`
             # has had its chance, so a runaway-pagination fixture whose pages
             # repeat one field name still reports the pagination fault.
-            raise ValueError(
+            raise DuplicateFieldNameError(
                 f"duplicate field name {name!r} in project {project_number} census; "
                 "the census keys fields by name and cannot represent this board"
             )
@@ -170,11 +184,13 @@ def cmd_check() -> int:
     except PaginationExhaustedError as exc:
         print(f"FAIL board census pagination did not terminate: {exc}")
         return 1
-    except ValueError as exc:
-        # A duplicate field name (#1020). `ValueError` is outside the
-        # `RuntimeError` hierarchy the SKIP branch below catches, so this was
-        # already not misreported as a pass -- it just surfaced as a traceback.
-        # Report it in this script's own FAIL convention instead.
+    except DuplicateFieldNameError as exc:
+        # A board carries two fields with one name, so the census cannot
+        # represent it. A real defect on the board, not an access failure:
+        # report it in this script's own FAIL convention rather than letting
+        # it surface as a traceback. Caught by its own type so a
+        # `json.JSONDecodeError` from a failing live call -- also a
+        # `ValueError` -- still reaches the SKIP branch below.
         print(f"FAIL board census is not representable: {exc}")
         return 1
     except (GhApiError, RuntimeError, OSError) as exc:

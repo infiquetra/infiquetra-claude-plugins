@@ -70,7 +70,7 @@ python3 sdlc_manager.py board view --project asgard
 python3 sdlc_manager.py board view --project campps
 
 # Filter to a specific status
-python3 sdlc_manager.py board view --project asgard --status "Active"
+python3 sdlc_manager.py board view --project asgard --status "Implementing"
 python3 sdlc_manager.py board view --project campps --status "Implementing"
 ```
 
@@ -86,11 +86,11 @@ python3 sdlc_manager.py board add --project campps --repo athena-service --numbe
 ### Move Item
 
 ```bash
-# Intent-flow boards (Operations / Asgard)
-python3 sdlc_manager.py board move --project asgard --repo infiquetra-sdlc --number 42 --status "Active"
-python3 sdlc_manager.py board move --project operations --repo infiquetra-sdlc --number 42 --status "Shaping"
-
-# CAMPPS: board move writes Status (the in-stage condition), not the Stage column
+# board move writes Status (the in-stage condition), never the Stage column.
+# Every board shares the one stage_flow vocabulary, so the same Status names
+# are valid everywhere.
+python3 sdlc_manager.py board move --project asgard --repo infiquetra-sdlc --number 42 --status "Implementing"
+python3 sdlc_manager.py board move --project operations --repo infiquetra-sdlc --number 42 --status "Discovering"
 python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Implementing"
 python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Ready to merge"
 # Write the Stage column through flow set-field, not board move
@@ -157,8 +157,8 @@ not a workflow status.
 **"Review the Asgard board"**
 -> `board view --project asgard`
 
-**"Move issue #42 in infiquetra-sdlc to Active on Asgard"**
--> `board move --project asgard --repo infiquetra-sdlc --number 42 --status "Active"`
+**"Move issue #42 in infiquetra-sdlc to Implementing on Asgard"**
+-> `board move --project asgard --repo infiquetra-sdlc --number 42 --status "Implementing"`
 
 **"Add this issue to Operations"**
 -> Confirm repo and issue number, then `board add --project operations --repo <repo> --number <N>`

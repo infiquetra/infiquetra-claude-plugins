@@ -138,12 +138,18 @@ in the commit that ships them.
 `fields` as a sorted list of objects — assembled at `board_census.py:79-92`, returned at `:94-99` —
 so the card's two `jq` acceptance
 checks cannot pass as written; they index `fields` as a mapping. Change the writer to emit a mapping
-from field name to field record. The blast radius is exactly two files: a repository-wide search for
-`board-schema` and `board_schema` finds the file is written and read only by
-`plugins/mission-control/scripts/board_census.py` and asserted on only by
-`plugins/mission-control/tests/test_board_census.py`. No runtime code resolves field or option
-identifiers from it, so no consumer breaks. The diff stability the sorted list was chosen for is
-preserved, because the writer already serializes with `sort_keys=True`.
+from field name to field record. The diff stability the sorted list was chosen for is preserved,
+because the writer already serializes with `sort_keys=True`.
+
+> **Corrected during implementation, 2026-09-19.** This section originally claimed the blast radius
+> was "exactly two files", on the strength of a repository-wide search for the strings `board-schema`
+> and `board_schema`. That was wrong. The search finds files that name the *artifact*; it cannot find
+> a consumer that imports the *producing function* and never mentions the file.
+> `plugins/mission-control/config/generated/check_issue_contract_parity.py` does exactly that, and
+> consumed `fields` positionally at line 158. The real consumer set is four files — the census script,
+> its test, that parity gate, and the parity gate's test. All four are updated, and the fix is
+> verified against the live boards rather than only against fixtures. See LEARNINGS
+> `{#1020-blast-radius-search-the-producer}`.
 
 *Rejected: keep the list and treat the card's `jq` checks as approximate.* They are executable
 criteria the operator wrote, and a mapping is also the shape a consumer of this file actually wants
@@ -556,7 +562,7 @@ plan-review override.
 | Grounding turned up a latent defect in the vendored `project-mappings.json` that the card does not name. Fix it here, or file a separate card? | Fix it here, as its own unit | KTD6. It is the same drift the card is named for and it is three deleted keys. Surfaced rather than folded in, so it can be cut. |
 | The vendored mappings look fine when exercised through `load_config()`. Is the defect real? | Real, but latent | `load_config()` prefers an external `infiquetra-sdlc` checkout, which exists on the planning machine and is current. Driving the resolver from the vendored file directly reproduces it: `['No Status']` for Operations and Asgard, the retired ladder for CAMPPS. An earlier draft of this plan called it a live defect; that was wrong and is corrected in the problem frame. |
 | The live boards have dropped fields the cache still records (`Risk`, `Mode`, `Test Strategy` and eight others). Is that a problem to fix? | No — record it and move on | `sdlc-schema.json` declares exactly four board fields (`Stage`, `Status`, `Objective`, `Priority`); the dropped ones moved into the issue body. The census records what is live, so the removals are the correct result, not a regression. |
-| The card's `jq` acceptance checks assume a field mapping; the census writes a list. Change the shape, or narrow the check? | Change the shape | KTD1. The checks are executable criteria the operator wrote, and the blast radius is two files. Narrowing an operator's criterion to fit the code is weakening the card. |
+| The card's `jq` acceptance checks assume a field mapping; the census writes a list. Change the shape, or narrow the check? | Change the shape | KTD1. The checks are executable criteria the operator wrote. Narrowing an operator's criterion to fit the code is weakening the card. (The blast radius was estimated at two files here and turned out to be four — see the correction under KTD1.) |
 | The card's `grep "retired"` check would also catch two correct sentences about the closed Mount Olympus board. Reword them, or narrow the check? | Reword them | KTD5. Zero meaning lost, and the check passes as written. |
 | The board reference documents work-in-progress limits. Restate them in stage terms, or delete them? | Delete them | KTD4. `sdlc-schema.json`'s decision E6 removed the `wip_limits` block and retired the checking script; `sdlc_manager.py` already reports that no limits exist. |
 | Where does the new test live — repository root `tests/`, or the plugin's own `plugins/mission-control/tests/`? | Repository root `tests/test_board_schema_drift.py` | The card names that path in an executable criterion, and it is the convention the repository's `CLAUDE.md` states. |

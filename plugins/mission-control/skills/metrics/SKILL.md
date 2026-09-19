@@ -44,6 +44,15 @@ Always run the script with `python3`.
 |-------|--------------|-----------------|
 | Operations / Asgard / CAMPPS | `Active` stage | `Ready to close` |
 
+> **What the tool measures today.** `metrics cycle-time` keys the start off the
+> **Status** field, not the Stage column: `_cycle_start_statuses` in
+> `scripts/sdlc_manager.py` returns the literal `Active`, which the board-stage
+> migration retired as a Status value. So the command matches nothing on any board
+> until that function is moved onto the Stage field. The boundary above is the
+> intended definition; it is not what the current code computes. Tracked separately
+> from issue #1020, whose scope is the cached census and the prose describing it.
+
+
 Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as active start
 with `Done`/`Closed`/`Cancelled` terminals, and its timeline may include `In Progress`,
 `In Development`, or `Deployed`. The CLI reads those values for historical continuity only;
@@ -103,9 +112,12 @@ Use this to diagnose where one card spent time.
 
 | Board | Status | Flag if age > |
 |-------|--------|---------------|
-| Operations / Asgard | Active | 3 days |
-| Operations / Asgard | Verify | 3 days |
-| CAMPPS | In Progress | 5 days |
+| Operations / Asgard / CAMPPS | every non-terminal Status | 3 days |
+
+One threshold, every board, every Status that is not terminal. This is what
+`_active_age_thresholds` in `scripts/sdlc_manager.py` computes: the stage-flow
+statuses minus the terminal ones, each at three days. There is no per-board
+split and no longer threshold for any board.
 
 ## Natural Language Examples
 

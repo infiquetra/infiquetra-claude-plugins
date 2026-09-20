@@ -846,9 +846,10 @@ On a clean gate (or recorded override):
    `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept the handoff
    itself.
 
-**What continuation does not change.** Every confirmation on this path stays exactly where it is:
-the pull-request open, the review request, and the merge are **offered and confirmed, never
-auto-fired**. Issue #1027 removed the five ceremony transitions that used to carry them, and the
+**What continuation does not change.** Every confirmation on this path stays exactly where it is.
+The pull-request open, the review request, and the merge are
+**offered and confirmed, never auto-fired**. Issue #1027 removed the five transitions that carried
+them, and the
 confirmation did not go with the mechanism — it is now attached to the ordinary `gh` and `git`
 operations that replaced the transitions. Continuation moves the run from one step to the next; it
 never converts a confirmed action into a silent one. A continuation that would fire one of them

@@ -57,6 +57,11 @@ def _actionable_patterns(name: str) -> tuple[re.Pattern[str], ...]:
         re.compile(rf"spec_from_file_location\(\s*['\"]{escaped}['\"]"),
         re.compile(rf"plugins/team-execution/[A-Za-z0-9_./-]*{escaped}"),
         re.compile(rf"resolve_plugin_root\(\s*['\"]{escaped}['\"]"),
+        # The bare filename. A path built by joining segments across lines -- which is how
+        # tests/test_intent_envelope.py reached posture_check.py -- matches none of the patterns
+        # above, and the full-suite run found it after this guard had reported clean. A live file
+        # naming the script file is reaching for it whatever syntax assembles the path.
+        re.compile(rf"\b{escaped}\.py\b"),
     )
 
 

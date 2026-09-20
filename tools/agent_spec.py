@@ -49,8 +49,9 @@ Rule registry (see ``build_default_rules``):
    the policy fails unless its ``tools:`` frontmatter field is present, strictly parseable,
    non-empty, and excludes the direct file-mutation tools (``Edit``/``Write``/``NotebookEdit``).
    The floor is "no direct file-mutation tools", NOT "read-only": ``Bash`` is deliberately
-   allowed because review-class agents must run ``artifact_pointer.py deref`` (the required
-   verification path) and tests. The guarantee is fail-closed **by construction** at BOTH
+   allowed because review-class agents must run their own verification commands and tests. (The
+   named example used to be an artifact-pointer deref in the team-execution plugin, archived by
+   issue #1030; the floor's reasoning is unchanged.) The guarantee is fail-closed **by construction** at BOTH
    layers: block extraction rejects ambiguous boundaries (pseudo-``---`` lines) and value
    resolution uses the same YAML semantics the runtime uses, with anything outside the two
    recognized forms an error -- an authoring the lint cannot understand FAILS, it never passes
@@ -103,8 +104,8 @@ from fleet_commons.tier_palette import MODELS, model_rank  # noqa: E402
 from fleet_commons.tier_resolver import ROLE_TIER_ALIASES  # noqa: E402
 
 # Direct file-mutation tools. The tool-scope floor is "no direct file-mutation tools", NOT
-# "read-only": `Bash` is deliberately allowed (review-class agents must run
-# `artifact_pointer.py deref` -- the required verification path -- and tests), even though Bash
+# "read-only": `Bash` is deliberately allowed (review-class agents must run their own
+# verification commands and tests), even though Bash
 # can of course mutate files indirectly. The floor guards the authored file-mutation surface a
 # dispatcher grants from this roster.
 _MUTATING_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})

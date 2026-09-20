@@ -1,8 +1,8 @@
 """U3 #930 — maintenance sweep prose contracts.
 
-Pins that Work's post-merge ceremony names all five calls, that /loop no
-longer claims the first board move belongs to /work, and that every
-artifact_pointer.py reference under plugins/saga/skills uses its full path.
+Pins that Work's post-merge ceremony names all five calls. The /loop claim and the
+artifact-pointer path cases retired with the surfaces they guarded: issue #1030 removed the /loop
+skill and archived the team-execution plugin that owned the pointer script.
 
 The six stale sentences in #930 were re-resolved at preflight: three were
 located and repaired (teardown, first-time move, artifact_pointer path, and

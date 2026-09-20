@@ -34,15 +34,6 @@ CANONICAL_MODULE = (
     ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "intent_envelope.py"
 )
 SAGA_MODULE = SAGA_SCRIPTS / "intent_envelope.py"
-POSTURE_CHECK = (
-    ROOT
-    / "plugins"
-    / "team-execution"
-    / "skills"
-    / "team-execution"
-    / "scripts"
-    / "posture_check.py"
-)
 ENVELOPE_REFERENCE_DOC = ROOT / "plugins" / "saga" / "references" / "intent-envelope.md"
 
 if str(SAGA_SCRIPTS) not in sys.path:
@@ -358,63 +349,15 @@ def test_recommend_tier_rejects_unknown_inputs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T4-F4-1: shared posture primitive with a real wired consumer (Step B1).
+# T4-F4-1 tested the shared posture primitive against its one wired consumer, a script in the
+# team-execution plugin. Issue #1030 archived that plugin, so the consumer-side cases retire with
+# it; the primitive's own contract is covered by the cases above, which read the saga module.
 # ---------------------------------------------------------------------------
-
-PC = _load_by_path("te_posture_check", POSTURE_CHECK)
 
 
 def _envelope_dict(run_mode: str) -> dict[str, Any]:
     data: dict[str, Any] = ie.apply_answers({"run_mode": run_mode}).to_dict()
     return data
-
-
-def test_posture_error_without_token() -> None:
-    """The wired team-execution Step B1 consumer: attended + spend increase + no token
-    raises PostureError through the shared resolver (structural refusal, not prose)."""
-    with pytest.raises(PC.PostureError, match="approval token"):
-        PC.check(_envelope_dict("attended"), spend_increase=True)
-    # The CLI surfaces the same refusal as a distinct exit code (2).
-    approved = PC.check(_envelope_dict("attended"), spend_increase=True, approval_token="tok-1")
-    assert approved["action"] == "proceed-increase" and approved["step"] == "B1"
-
-
-def test_posture_unattended_silent_path() -> None:
-    """The unattended path returns cache-tight silently through the same wired consumer."""
-    result = PC.check(_envelope_dict("unattended"))
-    assert result["posture"] == "cache-tight"
-    assert result["silent"] is True
-    assert result["action"] == "proceed-default"
-    held = PC.check(_envelope_dict("unattended"), spend_increase=True)
-    assert held["action"] == "hold-at-default" and held["silent"] is True
-
-
-def test_posture_check_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    envelope_path = tmp_path / "envelope.json"
-    envelope_path.write_text(json.dumps(_envelope_dict("unattended")), encoding="utf-8")
-    assert PC.main(["--envelope-file", str(envelope_path)]) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["posture"] == "cache-tight"
-
-    attended_path = tmp_path / "attended.json"
-    attended_path.write_text(json.dumps(_envelope_dict("attended")), encoding="utf-8")
-    assert PC.main(["--envelope-file", str(attended_path), "--spend-increase"]) == 2
-    err = json.loads(capsys.readouterr().err)
-    assert err["error"] == "posture-error"
-
-
-def test_posture_check_rejects_malformed_envelope(tmp_path: Path) -> None:
-    """Fail closed: a wave never spawns under an envelope nobody can strictly understand."""
-    with pytest.raises(PC.IntentEnvelopeError):
-        PC.check({"run_mode": "attended", "surprise": 1})
-    bad = tmp_path / "bad.json"
-    bad.write_text("{not json", encoding="utf-8")
-    assert PC.main(["--envelope-file", str(bad)]) == 1
-
-
-# ---------------------------------------------------------------------------
-# G-hybrids-4 / H-F2-9 / S-22: issue -> envelope -> consumer, no re-prompt.
-# ---------------------------------------------------------------------------
 
 
 def _sdlc_manager() -> ModuleType:

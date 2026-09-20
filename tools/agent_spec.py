@@ -56,10 +56,11 @@ Rule registry (see ``build_default_rules``):
    recognized forms an error -- an authoring the lint cannot understand FAILS, it never passes
    unexamined. Mutating-tool names are compared case-insensitively (a case variant is a typo
    for the real tool, and blocking it costs nothing). The ``tools:`` frontmatter
-   field IS the spawn-time capability roster a dispatcher reads to scope a leaf (the same
-   mechanism saga's ``readonly-verifier`` uses); this lint checks that authored contract at CI
-   time, which is orthogonal to ``plugins/saga/references/sandbox-spawn-sites.md``'s decision
-   not to route team-execution through saga's ``mutation_policy`` sandbox mechanism.
+   field IS the spawn-time capability roster a dispatcher reads to scope a leaf; this lint checks
+   that authored contract at CI time. It used to name saga's read-only verifier agent as the
+   mechanism and the spawn-site inventory as the decision record; issue 1030 removed both saga
+   agents and that inventory, and review roles now run as roster sessions in their own worktrees.
+   The lint's subject -- the authored ``tools:`` contract -- is unchanged.
 
 A ``tiering_exempt`` truthy frontmatter value (mirroring ``tests/test_agent_tier_lint.py``'s KTD6
 escape hatch) opts a file out of the ``effort-presence`` and ``model-role-class`` rules.

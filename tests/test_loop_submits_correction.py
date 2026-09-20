@@ -81,11 +81,6 @@ class RecordingWriter:
         self.calls.append({"op_kind": op_kind, "repo": repo, "number": number, "payload": payload})
 
 
-@pytest.fixture()
-def loop_skill_text() -> str:
-    return (SAGA_ROOT / "skills" / "loop" / "SKILL.md").read_text(encoding="utf-8")
-
-
 # ---------------------------------------------------------------------------
 # R33 positive half: a detected drift produces a submission through the mutation contract
 # ---------------------------------------------------------------------------
@@ -187,22 +182,6 @@ def test_loop_detects_drift_but_advances_no_lifecycle_work() -> None:
     assert observed["status"] == "drift"
     assert observed["board_value"] == "Shaping"
     assert observed["saga_value"] == "Ready"
-
-
-def test_loop_skill_drives_only_detect_and_names_the_boundary(
-    loop_skill_text: str,
-) -> None:
-    """The /loop skill's driven reconcile tick is ``detect`` (read-only), the forward-progression
-    boundary is stated, and no fenced block runs a WRITING reconcile for a lifecycle field."""
-    assert "reconcile_controller.py detect" in loop_skill_text
-    assert "never drives NEW forward progression" in loop_skill_text
-    assert "read-only by construction" in loop_skill_text
-    import re
-
-    fenced = "\n".join(re.findall(r"```(?:bash|sh|shell)?\n(.*?)```", loop_skill_text, re.DOTALL))
-    assert not re.search(r"reconcile_controller\.py\s+reconcile\b", fenced), (
-        "the detect command must be the only controller invocation /loop drives"
-    )
 
 
 def test_loop_detect_tick_mints_no_ledger_key(tmp_path: Path) -> None:

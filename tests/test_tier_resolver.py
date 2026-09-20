@@ -276,7 +276,10 @@ def test_cli_resolve_unknown_work_shape_errors(capsys: pytest.CaptureFixture[str
 from fleet_commons import render_tier_table  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
-PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
+# Issue 1026 moved /plan's Phase 5.2a, and the generated tier-table block inside it, into
+# references/workflow-backend.md. The drift guard follows the generated region to its new
+# home rather than being deleted with the section that carried it.
+PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "references" / "workflow-backend.md"
 
 
 def _extract_generated_block(text: str) -> str:

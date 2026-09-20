@@ -116,8 +116,10 @@ answered. Its full contract is in the agent-launcher skill under "A whole roster
 
 ## Reviewer-session transport
 
-Orchestrate owns every reviewer session. Do not launch or collect an external reviewer
-through `engine_session_runner.py`, `engine_offer.py`, or any other saga transport.
+Orchestrate owns every reviewer session. **The operator is the transport.** This skill starts no
+reviewer process by any route, under any name: a script that would launch or collect an external
+reviewer is prohibited whatever it is called — the prohibition is general, because naming a
+particular script protects nothing the day someone adds a differently-named equivalent.
 Do not consult `engine-registry.yaml` as a launch authority — it is capability metadata
 only and cannot override the live Orchestrate/Herdr roster.
 

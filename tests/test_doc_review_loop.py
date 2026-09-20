@@ -1,0 +1,265 @@
+"""The plan-review loop: /plan dispatches it, and /work still refuses without the override.
+
+Issue 1026, units U1 through U4, and card 933. These cases pin instruction text, because what
+changed is what the three skills instruct — there is no runtime module between the operator and
+the behaviour. Each case therefore names the file and the contract sentence it guards, so a later
+edit that drops the sentence fails here rather than silently removing a gate.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent
+SAGA = ROOT / "plugins" / "saga"
+PLAN_SKILL = SAGA / "skills" / "plan" / "SKILL.md"
+WORK_SKILL = SAGA / "skills" / "work" / "SKILL.md"
+DOC_REVIEW_SKILL = SAGA / "skills" / "doc-review" / "SKILL.md"
+WORKFLOW_BACKEND_REF = SAGA / "references" / "workflow-backend.md"
+ROSTER = ROOT / "plugins" / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "roster.py"
+PLAN_REVIEWER_ROLE = ROOT / "plugins" / "agent-launcher" / "roles" / "plan-reviewer.md"
+
+
+def _section(text: str, heading: str) -> str:
+    """The body of one ``###`` section, up to the next heading of the same or higher level."""
+    start = text.index(heading)
+    rest = text[start + len(heading) :]
+    end = re.search(r"\n#{1,3} ", rest)
+    return rest[: end.start()] if end else rest
+
+
+# --------------------------------------------------------------------------- U2
+
+
+def test_plan_dispatches_the_review_without_an_operator_command() -> None:
+    """/plan Phase 5.4 runs the review; it does not recommend that the operator run it."""
+    text = PLAN_SKILL.read_text(encoding="utf-8")
+    assert "### 5.4 Dispatch the plan review, and loop until it passes" in text
+    body = _section(text, "### 5.4 Dispatch the plan review, and loop until it passes")
+    assert "does not recommend the review; it runs it" in body
+
+    # The retired routing bullet, in the shape it used to have: a recommendation that the
+    # operator run the review before execution.
+    assert "**`/doc-review`** (recommended next)" not in text
+
+
+def test_reviewer_resolution_names_both_branches_and_reads_the_run_record() -> None:
+    """The roster-pane branch and the same-session branch are both written, and the choice
+    is read from the run record rather than probed from the environment."""
+    body = _section(
+        PLAN_SKILL.read_text(encoding="utf-8"),
+        "### 5.4 Dispatch the plan review, and loop until it passes",
+    )
+    assert ".claude/saga/runs/issue-<N>.json" in body
+    assert "roster" in body and "plan-reviewer" in body
+    assert "review-only mode" in body
+    assert "roster.py" in body
+    # Exit 4 (outside a herdr pane) falls through; exit 5 (blocked) is reported, never answered.
+    assert "exit 4" in body and "exit 5" in body
+
+
+def test_the_roster_helper_and_role_prompt_the_dispatch_names_exist() -> None:
+    """The two files Phase 5.4 dispatches through are present at the paths it names."""
+    assert ROSTER.is_file()
+    assert PLAN_REVIEWER_ROLE.is_file()
+    assert "plan-reviewer" in ROSTER.read_text(encoding="utf-8")
+    assert "role_id: plan_reviewer" in PLAN_REVIEWER_ROLE.read_text(encoding="utf-8")
+
+
+def test_the_loop_bound_comes_from_the_run_record_not_a_literal() -> None:
+    """The cycle allowance is read from the record, so a run can lower it without editing
+    the skill. A literal count here would be a second copy of a settled number."""
+    body = _section(
+        PLAN_SKILL.read_text(encoding="utf-8"),
+        "### 5.4 Dispatch the plan review, and loop until it passes",
+    )
+    assert "standard_cycle_allowance" in body
+    assert "escalated_cycle_allowance" in body
+    assert "review_cycles" in body
+    assert re.search(r"\bthree cycles\b|\bthree standard cycles\b", body) is None
+
+
+def test_exhausting_the_allowance_stops_rather_than_passing() -> None:
+    body = _section(
+        PLAN_SKILL.read_text(encoding="utf-8"),
+        "### 5.4 Dispatch the plan review, and loop until it passes",
+    )
+    assert "stops and\n  reports" in body or "stops and reports" in body
+    assert "it never passes" in body
+
+
+def test_the_board_move_to_ready_for_active_follows_the_review() -> None:
+    """A board move's trigger must be observable where the move is made: the card is Ready
+    for Active because the review passed, so the submission sits after the loop."""
+    text = PLAN_SKILL.read_text(encoding="utf-8")
+    loop = text.index("### 5.4 Dispatch the plan review")
+    move = text.index("### 5.5 Submit the card's move to `Planning` / `Ready for Active`")
+    assert loop < move
+    assert "§5.4's review loop recorded a **pass**" in text
+
+
+# --------------------------------------------------------------------------- U3
+
+
+def test_an_explicitly_submitted_path_is_reviewed_as_given() -> None:
+    """Card 933: a document the caller names is reviewed, never redirected."""
+    body = _section(DOC_REVIEW_SKILL.read_text(encoding="utf-8"), "## Target Resolution")
+    assert "review that document, as given" in body
+    assert "never redirect it" in body
+
+
+def test_one_cycle_is_defined_as_a_result_followed_by_a_repair_batch() -> None:
+    """The definition matches the lifecycle repository's at revision 5efc869f, so the two
+    cannot mean different things by the same word."""
+    text = DOC_REVIEW_SKILL.read_text(encoding="utf-8")
+    assert "One cycle is one completed review result followed by one repair batch" in text
+    assert "A re-read after no\nrepair is not a cycle" in text
+
+
+def test_the_verdict_is_bound_to_the_revision_reviewed() -> None:
+    text = DOC_REVIEW_SKILL.read_text(encoding="utf-8")
+    assert "Bind the verdict to the revision you read" in text
+
+
+def test_doc_review_is_dispatched_not_requested() -> None:
+    """The retired arrangement: /doc-review explicit by default, /work asking whether to run it."""
+    text = DOC_REVIEW_SKILL.read_text(encoding="utf-8")
+    assert "`/doc-review` is explicit by default" not in text
+    assert "`/work` should ask whether to run it" not in text
+    assert "dispatched, not requested" in text
+
+
+# --------------------------------------------------------------------------- U4
+
+
+def test_work_refuses_on_an_open_p0_without_the_operator_override() -> None:
+    """The floor gate stays blocking. This is the preservation case: if it ever passes on a
+    weakened §1.3 the gate has been removed while still looking present."""
+    body = _section(WORK_SKILL.read_text(encoding="utf-8"), "### 1.3 Doc-review gate")
+    assert "block execution" in body
+    assert "`P0` or `P1`" in body
+    assert "operator explicitly overriding, in one word, with a rationale" in body
+
+
+def test_the_work_gate_produces_no_override_from_any_condition() -> None:
+    """No automatic override: not a finding count, not an exhausted allowance, not
+    unattended mode. Card 1026's non-goal, written as an assertion."""
+    body = _section(WORK_SKILL.read_text(encoding="utf-8"), "### 1.3 Doc-review gate")
+    assert "Nothing else produces an override" in body
+    for condition in ("finding count", "cycle allowance", "unattended mode"):
+        assert condition in body, f"§1.3 must rule out {condition!r} as an override source"
+
+
+def test_the_work_gate_declares_its_absence_contract() -> None:
+    """The gate carries the marker ``lint_gate_absence_contract.py`` parses, with HALT."""
+    text = WORK_SKILL.read_text(encoding="utf-8")
+    marker = re.search(
+        r"<!-- gate-record: id=work-doc-review-floor absence=(\w+) transport=([\w-]+) -->", text
+    )
+    assert marker is not None, "§1.3's gate-record marker is missing or unparseable"
+    assert marker.group(1) == "HALT"
+
+
+def test_the_work_gate_reads_the_durable_record_before_chat_memory() -> None:
+    """Parse the ordered list itself, not the first occurrence of each phrase.
+
+    A guard that searched the section for three substrings would pass while item 1 said
+    "whatever this session remembers", because the later items still mention the record. So this
+    reads the numbered items and asserts what each one is.
+    """
+    body = _section(WORK_SKILL.read_text(encoding="utf-8"), "### 1.3 Doc-review gate")
+    items = re.findall(r"^\d+\. (.+?)(?=\n\d+\. |\n\n)", body, re.DOTALL | re.MULTILINE)
+    assert len(items) == 3, f"§1.3's evidence order is not a three-item list: {items}"
+    first, second, third = (" ".join(i.split()) for i in items)
+    assert "review_cycles" in first and ".claude/saga/runs" in first, (
+        f"the first source of truth must be the durable run record, not: {first!r}"
+    )
+    assert "ame-session" in second, second
+    assert "docs/reviews/" in third, third
+    for item in (first, second, third):
+        assert "remember" not in item.lower(), (
+            "chat memory is not durable evidence and must not appear in the evidence order"
+        )
+
+
+# --------------------------------------------------------------------------- U1
+
+
+def test_no_workflow_backend_section_survives_in_the_plan_skill() -> None:
+    """The card's own criterion greps for a phrase the file never carried, so it passes
+    vacuously. What actually moved is the section, so that is what this asserts."""
+    text = PLAN_SKILL.read_text(encoding="utf-8")
+    assert "#### 5.2a Author the ExecutionSpec" not in text
+    assert "Step 1 — Derive per-unit tiers" not in text
+    assert "docs/workflows/<YYYY-MM-DD>-<topic>-spec.json" not in text
+    assert WORKFLOW_BACKEND_REF.is_file()
+    assert "references/workflow-backend.md" in text
+    # And the criterion as the card words it.
+    assert "workflow backend" not in text.lower()
+
+
+def test_the_relocated_prose_landed_in_the_reference_file() -> None:
+    ref = WORKFLOW_BACKEND_REF.read_text(encoding="utf-8")
+    for moved in (
+        "Step 1 — Derive per-unit tiers",
+        "docs/workflows/<YYYY-MM-DD>-<topic>-spec.json",
+        "execution_spec.py settlement",
+        "spec-check",
+    ):
+        assert moved in ref, f"{moved!r} did not survive the move into workflow-backend.md"
+
+
+#: The four clauses a reader needs in order to decide whether to open the reference file at all.
+#: Issue #808's NARROW ruling is what each one encodes.
+EXPLICIT_INVOCATION_CONTRACT = (
+    "explicit invocation",
+    "never a default",
+    "interchangeable",
+    ("never pre-select", "do not pre-select"),
+)
+
+
+def _offer_section(skill: Path) -> str:
+    """The one ``###`` section where the backend is chosen.
+
+    Scoped to that section on purpose. A guard that searched the whole file would pass on a
+    contract sentence left behind somewhere else while the section that actually makes the
+    decision said only "see the reference file" -- and the section that makes the decision is
+    the only one whose reader is deciding.
+    """
+    text = skill.read_text(encoding="utf-8")
+    match = re.search(r"The default (?:Saga )?offer is", text)
+    assert match is not None, f"{skill.name} no longer states a default backend offer"
+    anchor = match.start()
+    start = text.rindex("\n### ", 0, anchor)
+    end = re.search(r"\n#{1,3} ", text[anchor:])
+    stop = anchor + end.start() if end else len(text)
+    return text[start:stop].lower()
+
+
+def test_the_skills_keep_the_explicit_invocation_contract_where_the_choice_is_made() -> None:
+    """A reader must be able to decide whether to go to the reference file without going."""
+    for skill in (PLAN_SKILL, WORK_SKILL):
+        section = _offer_section(skill)
+        for clause in EXPLICIT_INVOCATION_CONTRACT:
+            options = clause if isinstance(clause, tuple) else (clause,)
+            assert any(o in section for o in options), (
+                f"{skill.name}'s backend-offer section drops the {options[0]!r} clause, so a "
+                "reader choosing a backend cannot tell from the skill that one is gated"
+            )
+        assert "references/workflow-backend.md" in section, (
+            f"{skill.name}'s backend-offer section does not point at the reference file"
+        )
+
+
+def test_every_other_pointer_still_names_the_explicit_invocation_gate() -> None:
+    """The offer is not the only place a reader arrives from, so each remaining pointer keeps
+    at least the gate itself."""
+    for skill in (PLAN_SKILL, WORK_SKILL):
+        text = skill.read_text(encoding="utf-8").lower()
+        for match in re.finditer(r"references/workflow-backend\.md", text):
+            window = text[max(0, match.start() - 900) : match.end() + 300]
+            assert "explicit invocation" in window or "explicitly invoke" in window, (
+                f"a pointer in {skill.name} sends the reader on without naming the gate"
+            )

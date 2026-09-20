@@ -192,12 +192,20 @@ historical `status`↔`phase_status` ambiguity.
 | `ideation` | `idea-ready` |
 | `brainstorm` | `requirements-ready` |
 | `plan` | `plan-ready` |
-| `review` | `plan-ready` |
+| `review` | `plan-ready` (declared, never written — see below) |
 | `work` | `resume-ready` |
 | `qa` | `resume-ready` |
 | `retro` | `resume-ready` |
 
 Fallback for any unmapped value: `requirements-ready` (matches `handoff_envelope.infer_maturity`'s default).
+
+**`review` is a declared phase that nothing writes.** It is a legal value of `LIFECYCLE_PHASES` in
+`scripts/saga.py` and of `--lifecycle-phase`, and a repository-wide search finds no code path that
+sets it. Plan review is a step inside the plan phase — `/plan` Phase 5.4 dispatches it and loops on
+repair — so a saga goes `plan` → `work` and never records `review`. The row stays because the value
+is accepted on read; it is documented as unwritten so a reader does not go looking for the writer.
+Whether the phase should become one a step advances is an open operator decision, recorded on issue
+934 and not taken here.
 
 **Off-chain doc-path note (`/spec`).** A `docs/specs/` artifact (off-chain `/spec`) is not on the saga
 chain: `handoff_envelope.infer_lifecycle_phase` returns `"unknown"` for it (no `spec` member is added to

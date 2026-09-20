@@ -136,14 +136,34 @@ def load_rubric(path: Path) -> Rubric:
     )
 
 
+class RubricsUnavailableError(Exception):
+    """The rubric library for a phase and tier cannot be loaded.
+
+    Raised rather than returned empty (issue 1026, card 932). An empty list and a missing
+    library are indistinguishable to a caller, and the caller here is a review that can block
+    ``/work``: reporting "no core rubrics apply" for a directory that is simply absent removes
+    the protection while continuing to report success. There is no signal an operator could use
+    to tell a thorough review from a degraded one, so the failure is loud.
+    """
+
+
 def rubrics_for_phase(phase: str, tier: str) -> list[Rubric]:
     d = RUBRICS_DIR / phase / tier
     if not d.exists():
-        return []
-    return sorted(
+        raise RubricsUnavailableError(
+            f"no rubric library at {d} for phase={phase} tier={tier}: "
+            "the review stops rather than continuing on a weaker rubric"
+        )
+    rubrics = sorted(
         (load_rubric(p) for p in d.glob("*.md")),
         key=lambda r: r.slug,
     )
+    if tier == "core" and not rubrics:
+        raise RubricsUnavailableError(
+            f"the core rubric library at {d} for phase={phase} is empty: "
+            "every phase has always-apply rubrics, so an empty one is a broken install"
+        )
+    return rubrics
 
 
 def find_rubric(phase: str, slug: str) -> Rubric | None:
@@ -159,7 +179,11 @@ def find_rubric(phase: str, slug: str) -> Rubric | None:
 
 
 def cmd_rubrics_list_cores(args: argparse.Namespace) -> int:
-    rubrics = rubrics_for_phase(args.phase, "core")
+    try:
+        rubrics = rubrics_for_phase(args.phase, "core")
+    except RubricsUnavailableError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps([r.slug for r in rubrics]))
     else:
@@ -169,7 +193,11 @@ def cmd_rubrics_list_cores(args: argparse.Namespace) -> int:
 
 
 def cmd_rubrics_list_extras(args: argparse.Namespace) -> int:
-    rubrics = rubrics_for_phase(args.phase, "extras")
+    try:
+        rubrics = rubrics_for_phase(args.phase, "extras")
+    except RubricsUnavailableError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps([r.slug for r in rubrics]))
     else:

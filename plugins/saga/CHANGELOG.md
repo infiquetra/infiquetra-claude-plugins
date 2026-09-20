@@ -1,5 +1,87 @@
 # Changelog
 
+## [0.165.0] - 2026-09-19
+
+**Bumped from 0.164.0**, the saga version on `origin/parent/1018` at commit `4e951f0e` when this
+card branched.
+
+### Changed
+
+- `/plan` ends by running the plan review instead of recommending it (issue #1026). Phase 5.4
+  dispatches `/doc-review` to the Plan Reviewer — a herdr pane through agent-launcher's roster
+  helper when the run record's `roster` carries one or its staffing plan names `plan-reviewer` and
+  the helper can run, otherwise the same session in review-only mode — and then loops review,
+  repair, re-check, recording one entry per turn in the record's `review_cycles`. The loop's bound
+  is the record's `standard_cycle_allowance` and `escalated_cycle_allowance`, not a number written
+  into the skill. It exits on a pass, on the operator's one-word override, or on exhausted
+  allowances, and the last of those stops and reports rather than passing.
+- The card's move to `Planning` / `Ready for Active` moved from the head of Phase 5 to §5.5, after
+  the review loop. Its trigger is the recorded pass, which is not observable where the submission
+  used to sit.
+- `/work` §1.3 still refuses to execute on an open `P0` or `P1` without a recorded operator
+  override — unchanged behaviour, now stated as a preservation contract with a `gate-record`
+  marker and a named evidence order: the run record's `review_cycles` first, then same-session
+  output, then the latest matching `docs/reviews/` artifact. Chat memory is not evidence.
+- `/doc-review` reviews an explicitly submitted path as given and never redirects it; it carries
+  the cycle definition from the lifecycle repository at revision `5efc869f`; and it binds each
+  verdict to the revision it read (cards #933, #1026).
+- The rubric command resolves from any working directory: the skill's invocation is now
+  repository-root-relative rather than relative to the skill's own directory, which only ever
+  resolved from `plugins/saga/skills/doc-review/` (card #932).
+- A rubric that cannot be loaded now **stops** the review. The skill's "continue with the readiness
+  review where safe" sentence is replaced, and one layer down `lifecycle_review.py`'s
+  `rubrics list-cores` and `list-extras` no longer exit 0 printing nothing when the rubric library
+  is absent — a reviewer read that as "no rubrics apply" (card #932).
+- The extras-rubric instructions read each applicability condition before the step that selects on
+  it (card #932).
+- Document Review carries the standalone operator-is-the-transport clause, and both Document Review
+  and Code Review state the prohibition generally rather than naming retired scripts, so a
+  differently-named equivalent is covered too (card #931).
+- Document Review's `external_opinion` / `claude_adjudication` cross-reference no longer points at
+  `../code-review/references/findings-schema.md`, which defines neither name; the fields are
+  defined in Document Review's own section. The guard that used to assert the *path string* —
+  and so passed while the reference was broken — is replaced by one that resolves the target and
+  reads it (card #931).
+- The retired external-engine dispatch is gone from Document Review's reviewer-panel section; the
+  only representable external seat is a named Orchestrate `external-reviewer` unit (issue #776
+  residue, card #931).
+- `review` is documented as a declared `lifecycle_phase` that no code path writes, in
+  `references/saga-spec.md` and in `/work`; no write path to it was added (card #934). Whether the
+  phase should be advanced by a step remains an open operator decision.
+- "The latest matching artifact" is defined, by the two filename conventions the `docs/reviews/`
+  corpus already uses, with ambiguity between them surfaced as a finding rather than guessed
+  (card #934).
+- A review artifact records a real commit SHA whenever the reviewed document is committed;
+  `working tree` is reserved for a document not yet in a commit (card #934).
+- "Safe fixes are enabled by default" loses the word `default`, which described a report-only
+  switch the skill never defined; a plain-language report-only request is honoured instead
+  (card #934).
+
+### Added
+
+- `plugins/saga/references/workflow-backend.md` — the new home of the Claude Code Workflow and
+  team-execution-emission instructions, moved out of `/plan` Phase 5.2 and 5.2a and `/work` §1.4
+  and §1.5 (card #808's NARROW ruling, issue #1026). The two skills keep the contract a reader
+  needs in order to decide whether to open it: the backend's name, that it is reached only by
+  explicit operator invocation, and the file's path. `/plan` drops from 772 to 567 lines and
+  `/work` from 1,142 to 837.
+- `--doc-review-fixes` on `issue_progress.py`, with its forwarding line in `/work`'s Phase-4
+  command. The parameter had existed and been rendered since the beginning with no flag able to
+  populate it, so the issue comment recorded a review's findings and silently dropped what was done
+  about them (card #932).
+
+### Removed
+
+- `plugins/saga/scripts/team_emitter.py` and `plugins/saga/scripts/spec_table.py`, with
+  `tests/test_team_emitter.py` and `tests/test_spec_table.py`. Every other reference is repaired
+  rather than left to fail at runtime: `execution_spec.recompile_for_tier` now emits the inline
+  baseline for the `team-execution` tier, and the four skills and commands that invoked
+  `spec_table.py` to render an approval table now describe building that table from the spec.
+- `plugins/saga/scripts/execution_spec.py` is **not** removed here. It has seven live importers
+  inside saga, every one of them already on issue #1030's removal list, so deleting it with them
+  reaches the same end state without pulling that card's work forward. Issue #1026's second
+  acceptance criterion is satisfied at the parent pull request, where the end state is identical.
+
 ## [0.164.0] - 2026-09-19
 
 **Bumped from 0.163.0**, the saga version on `origin/parent/1018` at commit `0fa2ea32` when this

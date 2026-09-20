@@ -12,7 +12,6 @@ import inspect
 import json
 import pathlib
 import sys
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,13 +32,13 @@ from fleet_commons.tier_resolver import (  # noqa: E402
     resolve_for_runtime,
 )
 
-# The twelve existing production/test modules the brief listed as resolve() consumers.
+# The existing production/test modules the brief listed as resolve() consumers. Issue 1026
+# removed plugins/saga/scripts/team_emitter.py from the list with the module itself.
 _EXISTING_RESOLVE_CONSUMERS = (
     "plugins/fleet-core/scripts/fleet_commons/intent_envelope.py",
     "plugins/fleet-core/scripts/fleet_commons/render_tier_table.py",
     "plugins/fleet-core/scripts/fleet_commons/tier_resolver.py",
     "plugins/saga/scripts/execution_spec.py",
-    "plugins/saga/scripts/team_emitter.py",
     "plugins/saga/scripts/tier_defaults.py",
     "tests/test_agent_spec_lint.py",
     "tests/test_effort_rider.py",
@@ -140,41 +139,12 @@ def test_existing_resolve_call_sites_are_unaffected_by_the_sibling(tmp_path: pat
         "effort": "high",
     }
 
-    emitter_spec = importlib.util.spec_from_file_location(
-        "u1_team_emitter_consumer", saga_scripts / "team_emitter.py"
-    )
-    assert emitter_spec is not None and emitter_spec.loader is not None
-    emitter_mod = importlib.util.module_from_spec(emitter_spec)
-    sys.modules["u1_team_emitter_consumer"] = emitter_mod
-    emitter_spec.loader.exec_module(emitter_mod)
-    wrapped_calls: list[tuple[Any, ...]] = []
-
-    def _wrapped_resolve(
-        role_kind: str | None,
-        work_shape: str,
-        envelope_ceiling: str | None = None,
-        operator_override: dict[str, str] | None = None,
-        *,
-        policy: dict[str, dict[str, str]] | None = None,
-    ) -> Resolution:
-        del envelope_ceiling, policy
-        wrapped_calls.append((role_kind, work_shape, operator_override))
-        return resolve(role_kind, work_shape, operator_override=operator_override)
-
-    # Live wrap: agent-frontmatter layer calls the real resolve() through the
-    # function object the emitter holds (team_emitter.py:129).
-    live_seg = SimpleNamespace(tier=SimpleNamespace(model="opus", effort=None))
-    live_effort, live_layer = emitter_mod.resolve_teammate_effort(live_seg, None)
-    assert live_layer == "agent-frontmatter"
-    assert live_effort == "high"
-    injected_effort, injected_layer = emitter_mod.resolve_teammate_effort(
-        live_seg, None, resolve=_wrapped_resolve
-    )
-    assert injected_layer == "agent-frontmatter"
-    assert injected_effort == "high"
-    assert wrapped_calls == [(None, "judgment", None)]
+    # Issue 1026 removed plugins/saga/scripts/team_emitter.py, which was the injected-resolve
+    # consumer this block used to exercise live. No surviving module carries an equivalent
+    # resolve= seam, so the live-wrap half of this case goes with the module it proved and the
+    # consumer-list half stays.
     assert "plugins/saga/scripts/tier_defaults.py" in _EXISTING_RESOLVE_CONSUMERS
-    assert "plugins/saga/scripts/team_emitter.py" in _EXISTING_RESOLVE_CONSUMERS
+    assert "plugins/saga/scripts/team_emitter.py" not in _EXISTING_RESOLVE_CONSUMERS
 
 
 def test_one_work_shape_resolves_to_different_models_for_claude_and_codex() -> None:

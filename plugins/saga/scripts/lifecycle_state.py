@@ -116,8 +116,8 @@ def requires_hard_test_gate(change_kinds: Sequence[str]) -> bool:
 
 
 # KTD4: the fixed backend enumeration order the offer always renders, most-capable last so the
-# ladder reads inline -> team-execution -> cc-workflows-ultracode.
-_ALL_BACKENDS = ("inline", "team-execution", "cc-workflows-ultracode")
+# ladder reads inline -> cc-workflows-ultracode since issue #1030 archived the middle rung.
+_ALL_BACKENDS = ("inline", "cc-workflows-ultracode")
 
 
 def _availability_note(*, workflow_available: bool, workflow_availability_source: str) -> str:
@@ -202,12 +202,12 @@ def recommend_execution_backend(
 ) -> dict[str, object]:
     """Recommend an execution backend, mirroring operator-choice.md section 3.
 
-    Reuses ``should_offer_team_execution`` for the team-execution trigger
-    (passing all six required kwargs). Per the operator ruling C5 (issue #840),
-    ``recommend_execution_backend()`` never returns ``cc-workflows-ultracode`` with
-    status ``recommended`` under any trigger: default offers present ``inline`` or
-    ``team-execution`` only. Claude Code Workflows remain available only via explicit
-    invocation or an already-approved recorded choice.
+    Per the operator ruling C5 (issue #840), ``recommend_execution_backend()`` never returns
+    ``cc-workflows-ultracode`` with status ``recommended`` under any trigger. Since issue #1030
+    archived team-execution, ``inline`` is therefore the only value this function recommends;
+    Claude Code Workflows remain available only via explicit invocation or an already-approved
+    recorded choice. ``should_offer_team_execution`` is still computed, and its result now selects
+    the recorded rationale rather than a different backend.
 
     GATED vs ADVISORY consensus (R7 keystone). A ``needs_consensus`` signal is
     no longer an unconditional hard-force to team-execution. The governance axis
@@ -252,8 +252,9 @@ def recommend_execution_backend(
     ``should_offer_team_execution`` so the size trigger fires on FUNCTIONAL surface
     only (``file_count - release_surface_file_count >= 8``).
 
-    ``backends`` (KTD4) always enumerates ALL THREE backends in a fixed order
-    (``inline`` / ``team-execution`` / ``cc-workflows-ultracode``) as ordered
+    ``backends`` (KTD4) always enumerates ALL backends in a fixed order
+    (``inline`` / ``cc-workflows-ultracode``; team-execution was the third until issue
+    #1030 archived it) as ordered
     ``{backend, status, note}`` entries with
     ``status in {recommended, alternative, unavailable}`` — never a silent drop.
     The unavailable status only ever attaches to ``cc-workflows-ultracode`` when
@@ -273,8 +274,13 @@ def recommend_execution_backend(
             f"valid sources are {', '.join(WORKFLOW_AVAILABILITY_SOURCES)}"
         )
 
+    # The size/risk and gated-consensus signals used to escalate to team-execution. Issue #1030
+    # archived that plugin, and what it provided -- reviewer consensus and named scanners -- is now
+    # the lensed code review and the build loop's mechanical baseline, both of which an inline run
+    # already performs. So the signals no longer pick a different backend; they are computed and
+    # reported, because the rationale a run records is still worth having.
     gated_consensus = needs_consensus and consensus_is_gated
-    team = (
+    escalating = (
         should_offer_team_execution(
             file_count=file_count,
             phase_count=phase_count,
@@ -288,14 +294,16 @@ def recommend_execution_backend(
         or gated_consensus
     )
 
-    if team:
-        recommended = "team-execution"
-        rationale = "size/risk or consensus signal -> review consensus + gates fit"
+    recommended = "inline"
+    if escalating:
+        rationale = (
+            "size/risk or consensus signal -> the lensed code review and the mechanical baseline "
+            "carry it inline"
+        )
     else:
-        recommended = "inline"
         rationale = "no escalation signal -> the agent does the work itself"
 
-    reachable = ["inline", "team-execution", "cc-workflows-ultracode"]
+    reachable = ["inline", "cc-workflows-ultracode"]
     if not workflow_available:
         reachable.remove("cc-workflows-ultracode")
     alternatives = [backend for backend in reachable if backend != recommended]
@@ -332,12 +340,13 @@ def recommend_execution_backend(
 # Orchestration tiers, ordered from the most-capable (dynamic workflows, Claude Code
 # only) down to the always-runnable inline baseline. Capability-portable degradation
 # (R11) only ever recompiles DOWN this ladder — a host that cannot run dynamic
-# workflows still runs team-execution or, at the floor, the inline/serial baseline.
-# The enum strings are the frozen wire contract (mirrors saga.py ORCHESTRATION_MODES).
-ORCHESTRATION_TIERS = ("cc-workflows-ultracode", "team-execution", "inline")
+# workflows falls to the inline/serial baseline. The middle rung was team-execution
+# until issue #1030 archived that plugin, so the ladder is now two rungs and the
+# degradation is direct. The enum strings mirror saga.py ORCHESTRATION_MODES.
+ORCHESTRATION_TIERS = ("cc-workflows-ultracode", "inline")
 
-# Only the dynamic-workflow tier needs the Workflow tool. team-execution and inline
-# run on any host, so an off-host resume only ever downgrades AWAY from this one tier.
+# Only the dynamic-workflow tier needs the Workflow tool. inline runs on any host, so an
+# off-host resume only ever downgrades AWAY from this one tier.
 _HOST_DEPENDENT_TIERS = frozenset({"cc-workflows-ultracode"})
 
 
@@ -345,7 +354,7 @@ def recheck_orchestration_capability(
     *,
     orchestration_mode: str,
     workflow_available: bool,
-    fallback_mode: str = "team-execution",
+    fallback_mode: str = "inline",
 ) -> dict[str, object]:
     """Re-check host capability on resume and recompile ONLY the orchestration tier (R11).
 

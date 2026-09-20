@@ -18,24 +18,6 @@ ROOT = Path(__file__).parent.parent
 SCRIPT_DIR = ROOT / "plugins" / "saga" / "scripts"
 DISPATCH_SCRIPT = SCRIPT_DIR / "engine_dispatch.py"
 TRUST_BOUNDARY_DOC = ROOT / "plugins" / "saga" / "references" / "engine-output-trust-boundary.md"
-TEAM_VALIDATOR_REGISTRY = (
-    ROOT
-    / "plugins"
-    / "team-execution"
-    / "skills"
-    / "team-execution"
-    / "references"
-    / "validator-registry.md"
-)
-TEAM_VALIDATOR_CRITERIA = (
-    ROOT
-    / "plugins"
-    / "team-execution"
-    / "skills"
-    / "team-execution"
-    / "references"
-    / "validator-criteria.md"
-)
 
 # The Python call sites this guard scans. It carried two until issue #938 deleted
 # `second_opinion.py` with Work's in-process second-opinion offer; one scanned site went with it.
@@ -199,16 +181,6 @@ def test_contract_document_names_untrusted_fields_and_forbidden_sinks() -> None:
         "opaque evidence data",
     ):
         assert anchor in text
-
-
-def test_team_execution_references_point_to_trust_boundary_contract() -> None:
-    registry = TEAM_VALIDATOR_REGISTRY.read_text(encoding="utf-8")
-    criteria = TEAM_VALIDATOR_CRITERIA.read_text(encoding="utf-8")
-
-    for text in (registry, criteria):
-        assert "engine-output-trust-boundary.md" in text
-        assert "opaque" in text
-        assert "gate" in text
 
 
 def test_lint_passes_clean_code() -> None:

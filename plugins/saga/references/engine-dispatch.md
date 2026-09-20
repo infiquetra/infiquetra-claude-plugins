@@ -152,7 +152,7 @@ Degradation is durable, never silent.
 
 Inline and cc-workflows dispatch use the same adapter. Team Execution routes an external-engine unit
 through a resident Claude chaperone using the context-package contract in
-`plugins/team-execution/skills/team-execution/references/external-engine-workers.md`. The engine still
+the external-engine worker contract in the team-execution plugin, archived by issue #1030. The engine still
 never joins residency or owns a gate; the chaperone dispatches, reconciles, calls the structural gate,
 applies as sole committer, tests, and writes the manifest.
 

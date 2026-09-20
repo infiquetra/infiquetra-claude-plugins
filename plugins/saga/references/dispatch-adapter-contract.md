@@ -109,7 +109,7 @@ wiring.
 ## What this pair does not change
 
 - team-execution's `ENGINE_INTENTS` resolution (by `<engine-key>` / `cap:<capability>`,
-  `plugins/team-execution/skills/team-execution/references/external-engine-workers.md`) is
+  the external-engine worker contract in the team-execution plugin, archived by issue #1030) is
   untouched — new HTTP-transport rows join resolution automatically, no team-execution code change.
 - The pre-existing CLI dispatch policy in `engine-dispatch.md` (Codex/agy wrapper contracts,
   override semantics, provenance/downgrade notes) is unchanged.

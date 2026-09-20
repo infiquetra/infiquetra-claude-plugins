@@ -79,7 +79,10 @@ LIFECYCLE_PHASES = ("ideation", "brainstorm", "plan", "review", "work", "qa", "r
 PHASE_STATUSES = ("pending", "in_progress", "complete")
 STATUSES = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
 DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
-ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
+# Two values since issue #1030 archived the team-execution plugin. The strings are a frozen wire
+# contract carried in persisted sagas, so a tick that recorded "team-execution" still reads back;
+# it is simply no longer selectable, because the backend it named no longer exists.
+ORCHESTRATION_MODES = ("inline", "cc-workflows-ultracode")
 # The ship ceremony's reversibility-tier vocabulary (issue #345). saga.py only ever validated the
 # closed set here; the transition ORDER and its index-derivation belonged to the ceremony, never to
 # saga.py — which kept the generic engine decoupled from one consumer's transition table. The
@@ -95,7 +98,10 @@ CEREMONY_TIERS = ("reversible", "additive", "always_operator")
 # the raw enum string — never errors.
 ORCHESTRATION_MODE_LABELS: dict[str, str] = {
     "cc-workflows-ultracode": "dynamic workflows",
-    "team-execution": "team execution",
+    # Kept deliberately after issue #1030 archived the plugin: a persisted saga can still carry
+    # this string, and a reader that fell back to the raw enum would show a worse label for a
+    # historical tick than the one it was written with. The map is additive and never gates a choice.
+    "team-execution": "team execution (archived)",
     "inline": "inline",
 }
 

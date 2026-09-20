@@ -65,11 +65,12 @@ legitimately sits at `work` from merge until `/qa` runs and passes (see Phase 5)
    weigh whether the tests are adequate and it does not decide which change kinds deserve a gate —
    that judgment was the thing the written criterion replaced. Run the criterion against the merge
    base, not stale local state.
-4. **Recommend a Saga backend, the operator confirms.** Compute the cheapest-correct Saga execution
-   backend (`inline` or `team-execution`) with `recommend_execution_backend()`, pre-select that Saga
-   backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default
-   or automatic Saga backend and never a generic interchangeable execution backend (issue #808
-   NARROW); **never pre-select** it. Enter a Claude Code Workflow only
+4. **Record the Saga backend.** `inline` is the only backend the recommender returns since issue
+   #1030 archived team-execution, so there is no offer to render and nothing for the operator to
+   pick between: call `recommend_execution_backend()` and record what it says, so the tick still
+   carries recommended-and-chosen. `cc-workflows-ultracode` is never a default or automatic Saga
+   backend and never a generic interchangeable execution backend (issue #808 NARROW); **never
+   pre-select** it. Enter a Claude Code Workflow only
    by **explicit invocation** (plan `backend: cc-workflows-ultracode`, or the operator names it in
    this session). No silent substitute. The recorded value is what the operator picked.
 5. **Coordinate the PR loop, mutate only under confirmation.** Offer PR-open, review-request, and merge
@@ -303,9 +304,12 @@ The offer renders from `references/operator-choice.md` as narrowed by issue #808
 the runnable recommender call, and the rules that keep a Claude Code Workflow behind an explicit
 invocation are in [`references/workflow-backend.md`](../../references/workflow-backend.md).
 
-**The default offer is `inline` and `team-execution`.** `cc-workflows-ultracode` is never a default
-or automatic backend and never a generic interchangeable execution backend; **do not pre-select**
-it, and never silently substitute it for `inline` or `team-execution`.
+**`inline` is the default and the only recommended backend.** The offer was `inline` or
+`team-execution` until issue #1030 archived that plugin; what it provided -- reviewer consensus and
+named scanners -- is now the lensed code review and the build loop's mechanical baseline, which an
+inline run already performs. `cc-workflows-ultracode` is never a default or automatic backend and
+never a generic interchangeable execution backend; **do not pre-select** it, and never silently
+substitute it for `inline`.
 
 Then mint/advance the work-thread saga to `lifecycle_phase=work`. Set `--issue-ref` (the issue case — the
 saga-spec §11 `issue_ref`-adoption write), `--plan-path` whenever a plan exists, and save **on the work
@@ -321,7 +325,7 @@ python3 plugins/saga/scripts/saga.py save \
   --phase-status in_progress \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
-  --orchestration-mode <inline|team-execution|cc-workflows-ultracode> \
+  --orchestration-mode <inline|cc-workflows-ultracode> \
   --orchestration-recommended <recommend_execution_backend() output> \
   --rounds-seen "1"
 ```
@@ -343,7 +347,7 @@ git-ignored, machine-local). Never set `next_round` — it is derived from `roun
 Enter this step only when `orchestration_mode == cc-workflows-ultracode` — which happens only when
 the plan's `backend:` field recorded an explicit invocation, or the operator names it in this
 session. Never enter it because the recommender suggested it, and never as a silent substitute for
-`inline` or `team-execution`. `/work` does not hand-roll sequential subagents as a substitute
+`inline`. `/work` does not hand-roll sequential subagents as a substitute
 either: it runs the real Workflow tool or halts visibly.
 
 The whole of this step — the freshness re-emission, the invocation identity, the reservation
@@ -360,13 +364,12 @@ The Workflow runtime owns execution; `/work` does not re-enter Phase 2 execution
 Resume here only for post-workflow wrap-up (Phase 3 gate, Phase 4 record, Phase 5 PR-ready) once the
 Workflow run returns.
 
-Execute **one meaningful phase at a time** per `references/execution-strategy.md` (for `inline` and
-`team-execution` modes, and for post-workflow Phase 2 wrap-up):
+Execute **one meaningful phase at a time** per `references/execution-strategy.md` (for the
+`inline` mode, and for post-workflow Phase 2 wrap-up):
 
 No admission pinning: the inline admission snapshot — pinned before the first direct spawn and
 cleared once every direct child is authoritatively terminal — retired with the lease lifecycle
-hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission. For `team-execution`, the
-lease preflight retires with U6.
+hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
 
 - **Execution strategy** — inline / serial subagents / parallel subagents, chosen from task count and
   dependency structure, gated by the **Parallel Safety Check** (file-to-unit overlap → worktree
@@ -519,10 +522,10 @@ canonical states is surfaced verbatim. A passing test gate is `tests:done:<ref>`
 
 List fields are full-snapshot (saga-spec §6) — pass the complete current set each tick, not a delta.
 
-When a team-execution run stored Layer-2 artifacts
-(`plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py store`), record their typed
-pointers on the tick via `--artifact-pointers "<pointer-json>|<pointer-json>"` (pipe-separated, omit =
-carry forward) so a resuming thread can `deref` the exact bytes instead of re-inlining them.
+Layer-2 artifact pointers were stored by a script in the team-execution plugin, which issue #1030
+archived. The tick's `--artifact-pointers` flag still accepts a typed pointer -- the field is durable
+and a historical tick still reads back -- but nothing in the chain writes one now; large evidence
+goes in the run record's per-unit envelopes instead.
 
 ### 4.3 Issue progress (mission-control)
 

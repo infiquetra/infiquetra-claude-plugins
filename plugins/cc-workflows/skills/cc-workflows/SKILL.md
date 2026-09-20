@@ -8,7 +8,7 @@ description: |
   Saga's spec shape, and Saga's /plan and /work keep the integration contract.
   Triggers when /work drives a plan whose `backend:` recorded cc-workflows-ultracode
   (re-emit, launch, settle), or when the operator explicitly invokes a Workflow;
-  it never triggers on the inline or team-execution paths.
+  it never triggers on the inline path.
 ---
 
 # cc-workflows
@@ -24,10 +24,11 @@ selection, validates availability, invokes this emitter, and consumes its struct
 
 `cc-workflows-ultracode` is never a default or automatic backend and never a generic
 interchangeable execution backend. **Do not pre-select** it — the recommender never returns
-it; the default offer is `inline` or `team-execution` only. A Workflow is entered only by
+it; `inline` is the only backend the recommender returns, since issue #1030 archived
+team-execution. A Workflow is entered only by
 **explicit invocation**: the plan already recorded `backend: cc-workflows-ultracode`, or the
 operator names it in the session. No silent substitute — if the Workflow tool is unavailable
-at launch, HALT with a recovery line pointing at `team-execution` or `inline`.
+at launch, HALT with a recovery line pointing at `inline`.
 
 ## What lives here
 
@@ -97,7 +98,8 @@ backend cannot enforce will HALT at emit rather than silently downgrade, and the
 
 Do **not** hand-build this table, and do **not** dump the spec JSON instead. Never ask an operator
 to approve a backend without showing its enforceability rows: `cc-workflows-ultracode` enforces
-read-only and disposable-worktree and reaches every model; `team-execution` enforces neither axis
+read-only and disposable-worktree and reaches every model; the archived team-execution plugin
+enforced neither axis
 and cannot reach `fable`. That asymmetry is invisible in the spec itself.
 
 **Split the work so concurrent units never share a file (#671).** The table's

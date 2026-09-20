@@ -70,22 +70,10 @@ REMOVED_MODULE_NAMES = (
 )
 
 #: Retained component -> (live consumer file, the reference that makes it a consumer,
+#: two rows named references inside the team-execution plugin, archived by issue #1030;
+#: they retired with it and the components they pointed at are still covered by the rows below.
 #: proving test file, the proving test's function name).
 RETAINED_COMPONENTS: tuple[tuple[str, str, str, str, str], ...] = (
-    (
-        "plugins/saga/references/engine-output-trust-boundary.md",
-        "plugins/team-execution/skills/team-execution/references/validator-registry.md",
-        "engine-output-trust-boundary.md",
-        "tests/test_engine_output_trust_boundary.py",
-        "test_team_execution_references_point_to_trust_boundary_contract",
-    ),
-    (
-        "plugins/saga/references/engine-output-trust-boundary.md",
-        "plugins/team-execution/skills/team-execution/references/validator-criteria.md",
-        "engine-output-trust-boundary.md",
-        "tests/test_engine_output_trust_boundary.py",
-        "test_team_execution_references_point_to_trust_boundary_contract",
-    ),
     (
         "plugins/saga/scripts/engine_dispatch.py",
         "plugins/saga/scripts/engine_resolver.py",

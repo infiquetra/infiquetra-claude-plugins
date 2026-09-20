@@ -31,6 +31,41 @@ taking 1.0.0 here would leave the complete release with no number to be.
 - **The spawn-site inventory**, `references/sandbox-spawn-sites.md`, with the project instruction it
   supported.
 
+### Removed -- BREAKING (the team-execution archive)
+
+- **`team-execution` is no longer an execution backend.** The plugin is archived by this card; its
+  final entry is `plugins/team-execution/CHANGELOG.md` at version 4.0.0, written at commit
+  `005e7e70`, one commit before the directory was deleted. `ORCHESTRATION_MODES` is now
+  `("inline", "cc-workflows-ultracode")` and `lifecycle_state.ORCHESTRATION_TIERS` is two rungs.
+  The enum strings remain a durable wire contract: a persisted tick recording `team-execution` still
+  reads back and still renders a label, so no saga becomes unreadable — the value is simply no
+  longer selectable.
+- **`recommend_execution_backend()` returns `inline` under every trigger.** Ruling C5 (issue #840)
+  forbids recommending a Workflow, and the only other value is gone. The size, risk and
+  gated-consensus signals are still computed; they now select the rationale the tick records rather
+  than a different backend. `/plan` §5.2 and `/work` §3 therefore render no backend offer, and still
+  record both `--orchestration-recommended` and `--orchestration-mode` so the decision is not silent.
+- **`/work` no longer stores Layer-2 artifact pointers.** The script that wrote them lived in the
+  archived plugin. The tick's `--artifact-pointers` flag still accepts a typed pointer, because the
+  field is durable and historical ticks read back, but nothing in the chain writes one; large
+  evidence goes in the run record's per-unit envelopes.
+- **The 25 agent prompts are not lost.** They are the source material for
+  `plugins/agent-launcher/roles/`. Recorded as DECISIONS `{#team-execution-archived-1030}`.
+
+### Tests (the archive)
+
+- **`tests/test_team_execution_archived.py` is new.** It checks the plugin in every syntax a caller
+  could use — a directory, a marketplace entry, an import, a `spec_from_file_location` by path, a
+  plugin-resolution call, and a bare command line in a skill — and carries its own two self-tests
+  proving the scanner fires on each actionable syntax and stays silent on a historical mention. It
+  failed 8 of its 17 cases before the removal.
+- Seven `tests/test_team_execution_*.py` files are deleted, including the twenty-two cases already
+  skipped with a reason naming this archive step. `tests/test_team_emitter_and_spec_table_removed.py`
+  is **kept**: its subject is that two modules stay gone, not that this plugin exists, and it is the
+  guard against re-adding what this release removes.
+- The agent inventory in `tests/test_agent_preamble_identity.py` goes from 34 files to 9. The
+  canary registry loses its `team-execution-pointers` entry, whose mutation target is gone.
+
 ### Changed
 
 - **Review roles run as roster sessions in their own worktrees.** The `CLAUDE.md` rule that every

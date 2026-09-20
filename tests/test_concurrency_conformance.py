@@ -697,11 +697,10 @@ def _assert_host_spawn_contracts() -> None:
             "lease_lifecycle_hook.py" in command for command in _hook_commands(entries)
         ), f"lease lifecycle hook re-registered on {event}"
 
-    team_path = ROOT / "plugins/team-execution/skills/team-execution/scripts/lease_protocol.py"
-    assert not team_path.exists(), (
-        "lease_protocol.py was deleted in #677/U6 — the team-execution lease wrapper is gone; "
-        "remove any remaining reference to its preflight/renew/teardown lifecycle"
-    )
+    # This asserted that the team-execution lease wrapper stayed deleted after #677/U6. Issue
+    # #1030 archived the whole plugin, so the assertion is subsumed by
+    # tests/test_team_execution_archived.py, which checks the directory and every reach for it.
+    assert not (ROOT / "plugins" / "team-execution").exists()
 
 
 def assert_conformance(sources: dict[str, str], inventory: str) -> None:

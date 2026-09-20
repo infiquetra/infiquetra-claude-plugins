@@ -160,7 +160,7 @@ library exists to undo.
 
 ## Where the retired prompts went
 
-The `team-execution` plugin's 25 agent prompts and its two criteria documents were the source
+The archived `team-execution` plugin's 25 agent prompts and its two criteria documents were the source
 material. This is the one file in this directory allowed to name them, because the accounting has to
 live somewhere; the role prompts themselves never mention that plugin.
 
@@ -177,7 +177,7 @@ substance is now the Lens Reviewer's instruction to read dimensions and anchors 
 catalogue. The validator criteria's gate-status vocabulary was that plugin's own invention and is
 deliberately not carried; roles record pass-or-fail evidence in their handoff comment instead.
 
-The `team-execution` files themselves still exist. Removing them is a separate piece of work.
+The `team-execution` plugin was archived by issue #1030; its final changelog entry points here.
 
 ## The library's declared inputs
 

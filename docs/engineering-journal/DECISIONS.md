@@ -2,6 +2,44 @@
 
 ## 2026-09-20
 
+### The team-execution plugin is archived; its content lives on as roles  {#team-execution-archived-1030}
+
+**Decision.** `plugins/team-execution/` is removed from the repository and from the marketplace by
+issue #1030. Its **final changelog entry is version 4.0.0, written at commit `005e7e70`**, one commit
+before the directory was deleted — that commit is where a reader finds what the plugin was, where its
+content went, and what a caller must change. This pointer exists because a changelog deleted in the
+commit that would carry its last entry says nothing to anyone, and because nobody thinks to run
+`git log` on a path that is not there.
+
+**Where the content went.** The 25 reviewer, tester and scanner agent prompts and the two criteria
+documents are the source material for `plugins/agent-launcher/roles/`, which uses the lifecycle
+repository's role vocabulary: base and optional reviewers became Lens Reviewer prompts keyed to the
+review catalogue's lenses, the scenario, smoke, contract and UI-regression testers became Functional
+Tester variants, the monitors and deploy watcher became the Release Worker's wait steps, and the
+scanners became build-loop mechanical-baseline entries. The `appsec-audit` skill is the Investigator
+role's security variant.
+
+**Rationale.** The structure was what did not survive review, not the content. Reviewer consensus and
+validator gates are now the lensed code review computing its verdict in code from the catalogue's
+strictness ladder, and roles are hosted as sessions in their own worktrees rather than as one
+plugin's private agent roster. The operating record shows the orchestration path was unused; the
+prompts were not.
+
+**Consequence for callers.** `team-execution` is no longer a saga execution backend. The
+orchestration enumeration is `inline` and `cc-workflows-ultracode`. The enum strings stay a durable
+wire contract, so a persisted saga tick recording `team-execution` still reads back and still renders
+a label — it is simply no longer selectable. `recommend_execution_backend()` now returns `inline`
+under every trigger, since ruling C5 (issue #840) forbids recommending a Workflow; the size, risk and
+gated-consensus signals are still computed and now select the recorded rationale rather than a
+different backend.
+
+**Rejected alternative.** Keep the plugin installed but unreferenced. Rejected because an installed
+plugin advertises commands and agents to every session that resolves it, and one nobody maintains is
+worse than one nobody has.
+
+**Revisit when** a reviewer role needs something the roles library cannot express, at which point the
+question is what the role prompt is missing — not whether to restore a plugin.
+
 ### Sandbox isolation belongs to how a role is hosted, not to a flag every caller must remember  {#isolation-is-hosting-not-a-flag-1030}
 
 **Decision.** The project instruction that every review-class Agent-tool spawn must name saga's

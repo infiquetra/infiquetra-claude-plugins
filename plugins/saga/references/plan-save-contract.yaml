@@ -32,10 +32,10 @@ writes:
   placeholder: 'KTD1: rationale. KTD2: rationale.'
   when: always
 - name: orchestration_mode
-  placeholder: <inline|cc-workflows-ultracode>
+  placeholder: inline
   when: always
 - name: orchestration_recommended
-  placeholder: <inline|cc-workflows-ultracode>
+  placeholder: inline
   when: always
 - name: orchestration_ref
   placeholder: docs/workflows/YYYY-MM-DD-<topic>-spec.json

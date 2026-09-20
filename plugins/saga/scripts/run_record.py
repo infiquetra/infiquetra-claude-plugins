@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess  # nosec B404 - fixed argv, no shell
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -46,7 +47,6 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import outcome_store  # noqa: E402  (after the sys.path shim, by design)
 
 #: The version token. The family name says *which* artifact this is, which a bare version number
 #: does not — the convention ``plan_pre_answers.v1``, ``roles_index.v1`` and
@@ -164,6 +164,61 @@ class StoreRootError(RunRecordError):
     """The primary checkout's store root could not be resolved. Exit 2, one line."""
 
 
+def _safe_session_name(name: str) -> str:
+    """Reject a path-traversing or empty session identifier before it becomes a filename.
+
+    Lived in ``outcome_store._safe_name`` until issue 1030 removed the outcome coordinator. The
+    spore and the run record both key files by a caller-supplied id, so the check belongs with the
+    module that owns the store root rather than in a sibling neither of them imports any more.
+    """
+    text = str(name).strip()
+    if not text:
+        raise StoreRootError("session_id must not be empty")
+    if text in {".", ".."} or "/" in text or "\\" in text or "\x00" in text:
+        raise StoreRootError(f"session_id {name!r} is not a safe path segment")
+    return text
+
+
+def _resolve_common_dir(repo_root: Path, *, runner: Callable[..., Any] | None = None) -> Path:
+    """Resolve the repository's git **common** directory as an absolute path.
+
+    ``git rev-parse --git-common-dir`` returns the shared git directory: ``.git`` in the primary
+    checkout and that same absolute path from every linked worktree. Resolving it therefore yields
+    one identical store root from anywhere, which is what lets a worktree read the record the
+    primary checkout owns.
+
+    This was `outcome_store.resolve_common_dir` until issue 1030 removed the outcome coordinator.
+    It is defined here rather than imported because the run record is now its only consumer in this
+    plugin -- the same choice `fleet_commons/audit_store.py` already made and documents, for the
+    same reason: a shared primitive with one caller is just that caller's code.
+
+    ``runner`` is resolved at call time, not bound as a default, so a test can monkeypatch
+    ``run_record.subprocess.run`` and have it take effect here.
+    """
+    run = runner if runner is not None else subprocess.run
+    try:
+        result = run(  # nosec B603 - fixed argv, no shell
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise StoreRootError(f"could not run git to resolve the common dir: {exc}") from exc
+    if result.returncode != 0:
+        raise StoreRootError(
+            f"git rev-parse --git-common-dir failed in {repo_root}: {result.stderr.strip()}"
+        )
+    raw = result.stdout.strip()
+    if not raw:
+        raise StoreRootError(f"git rev-parse --git-common-dir returned nothing in {repo_root}")
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = Path(repo_root) / candidate
+    return candidate.resolve()
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -186,8 +241,10 @@ def resolve_store_root(
     """
     anchor = Path(start) if start is not None else Path.cwd()
     try:
-        common = outcome_store.resolve_common_dir(anchor, runner=runner)
-    except Exception as exc:  # outcome_store raises its own error type
+        common = _resolve_common_dir(anchor, runner=runner)
+    except StoreRootError:
+        raise
+    except Exception as exc:  # defensive: any other failure is still a store-root failure
         raise StoreRootError(
             f"could not resolve the git common directory from {anchor}: {exc}"
         ) from exc

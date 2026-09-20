@@ -101,13 +101,12 @@ def compute_stakes(spec: Any) -> Any:
     computed by the SAME ``critical_path_wall`` the cost rollup's A7 comparison uses —
     reused, not re-derived, so the prompt and the rollup can never disagree about shape.
     """
-    import outcome_costs  # noqa: PLC0415  (sibling; deferred to keep import-light)
-    import outcome_spec  # noqa: PLC0415
-
-    layers = outcome_spec.dependency_layers(spec)
-    width = max((len(layer) for layer in layers), default=0)
-    depth = outcome_costs.critical_path_wall(spec, {n.subplot_id: 1.0 for n in spec.nodes})
-    return Stakes(parallel_width=width, critical_path_estimate=depth)
+    # The width and depth came from the outcome spec's dependency layers and the cost rollup's
+    # critical-path walk. Issue 1030 removed both with the outcome coordinator, so stakes are no
+    # longer derived from a DAG shape -- a run is one issue, and the caller supplies them.
+    raise NotImplementedError(
+        "stakes are no longer derived from an outcome spec; pass Stakes explicitly"
+    )
 
 
 def implied_required_checks(intent: dict[str, Any] | None, node_kind: str) -> tuple[str, ...]:
@@ -146,16 +145,10 @@ def seeded_tier(spec: Any, work_shape: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _load_outcome_spec(path: Path) -> Any:
-    import outcome_spec  # noqa: PLC0415
-
-    return outcome_spec.OutcomeSpec.from_json(path.read_text(encoding="utf-8"))
-
-
 def _cli_interview(args: argparse.Namespace) -> int:
+    # --outcome-spec derived stakes from an outcome DAG. Issue 1030 removed the outcome
+    # coordinator, so there is no spec to read and stakes are supplied by the caller.
     stakes = None
-    if args.outcome_spec:
-        stakes = compute_stakes(_load_outcome_spec(Path(args.outcome_spec)))
     if args.json:
         print(json.dumps(interview_manifest(stakes), indent=2))
     else:

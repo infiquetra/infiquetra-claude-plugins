@@ -47,7 +47,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.173.0"  # 0.173.0: the command-surface removals of issue
+    assert plugin_json["version"] == "1.0.0"  # 1.0.0: the removals of issue
     # #1030 — eleven commands and nine skills gone, four hooks deregistered and deleted, both saga
     # agents gone, and the sandbox-spawn project instruction replaced. Bumped over 0.172.0, the saga
     # version on origin/parent/1018 at b264f154, re-read at this merge turn. 0.172.0 was chosen from

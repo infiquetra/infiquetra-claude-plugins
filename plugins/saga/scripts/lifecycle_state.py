@@ -117,7 +117,7 @@ def requires_hard_test_gate(change_kinds: Sequence[str]) -> bool:
 
 # KTD4: the fixed backend enumeration order the offer always renders, most-capable last so the
 # ladder reads inline -> cc-workflows-ultracode since issue #1030 archived the middle rung.
-_ALL_BACKENDS = ("inline", "cc-workflows-ultracode")
+_ALL_BACKENDS = ("inline",)
 
 
 def _availability_note(*, workflow_available: bool, workflow_availability_source: str) -> str:
@@ -303,7 +303,7 @@ def recommend_execution_backend(
     else:
         rationale = "no escalation signal -> the agent does the work itself"
 
-    reachable = ["inline", "cc-workflows-ultracode"]
+    reachable = ["inline"]
     if not workflow_available:
         reachable.remove("cc-workflows-ultracode")
     alternatives = [backend for backend in reachable if backend != recommended]
@@ -328,12 +328,9 @@ def recommend_execution_backend(
     # recommendation is byte-identical to today's for every existing caller (none pass a ledger) and
     # for an empty ledger (the no-data fallback). A ledger implies ``run_ledger`` is already imported
     # (the caller built the RunLedger from it), so this lazy import keeps ``lifecycle_state`` light.
-    if ledger is not None:
-        import run_ledger
-
-        avg_tokens = run_ledger.last_n_prior(ledger, "spend", "tokens", prior_n)
-        if avg_tokens is not None:
-            result["prior"] = {"metric": "spend.tokens", "n": prior_n, "avg_tokens": avg_tokens}
+    # A `ledger` argument used to add a prior from the run-fact ledger's spend series. Issue 1030
+    # removed that ledger with the ceremony family, so the argument is accepted and ignored rather
+    # than changed: every existing caller passes nothing, and the recommendation is unchanged.
     return result
 
 
@@ -343,7 +340,7 @@ def recommend_execution_backend(
 # workflows falls to the inline/serial baseline. The middle rung was team-execution
 # until issue #1030 archived that plugin, so the ladder is now two rungs and the
 # degradation is direct. The enum strings mirror saga.py ORCHESTRATION_MODES.
-ORCHESTRATION_TIERS = ("cc-workflows-ultracode", "inline")
+ORCHESTRATION_TIERS = ("inline",)
 
 # Only the dynamic-workflow tier needs the Workflow tool. inline runs on any host, so an
 # off-host resume only ever downgrades AWAY from this one tier.
@@ -504,16 +501,18 @@ def resolve_build_unit_tier(
         _assert_known_tier(model, effort, source="plan_tier")
         return {"model": model, "effort": effort}
     shape = work_shape or "mechanical"
-    # Delegate to the existing chain so values stay in staffing.json's work_shapes and a
-    # malformed .saga/tier-defaults.json still raises TierDefaultsError.
+    # The repo-overlay chain in `tier_defaults.py` was removed by issue 1030; issue 1021 had already
+    # moved the tier policy into fleet-core's staffing component, which is the single source now.
     from pathlib import Path as _Path  # noqa: PLC0415  (lazy to avoid top-level side effects)
 
     _scripts_dir = _Path(__file__).resolve().parent
     if str(_scripts_dir) not in sys.path:
         sys.path.insert(0, str(_scripts_dir))
-    import tier_defaults as _tier_defaults  # noqa: PLC0415
+    import fleet_commons_shim  # noqa: PLC0415
 
-    return _tier_defaults.resolve_tier_with_overlay(shape)
+    resolver = fleet_commons_shim.load("tier_resolver")
+    resolved = resolver.resolve(shape)
+    return {"model": resolved.model, "effort": resolved.effort}
 
 
 def _build_parser() -> argparse.ArgumentParser:

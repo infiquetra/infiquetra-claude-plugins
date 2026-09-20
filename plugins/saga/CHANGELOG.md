@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.0.0] - 2026-09-20
+
+**The removals.** Issue #1030, the closing child of parent #1018. Eleven commands, their skills and
+the machinery behind them are gone; thirteen commands remain.
+
+### The thirteen commands that remain
+
+`/plan`, `/doc-review`, `/work`, `/code-review`, `/qa`, `/retro`, `/office-hours`, `/ideate`,
+`/brainstorm`, `/spec`, `/investigate`, `/strategy`, and `/founder-review` with its `/ceo-review`
+alias -- fourteen files for thirteen commands.
+
+### Removed -- BREAKING
+
+- **Eleven commands and nine skills.** `/outcome`, `/loop`, `/resume`, `/handoff`, `/optimize`,
+  `/pulse`, `/delegation-audit`, `/promote`, `/engines`, `/tier`, `/fleet-doctor`.
+- **Seventy-three script modules**, by family: the outcome coordinator (19 modules), the engine
+  registry and dispatch family (18), the concurrency, lease, envelope, ceremony, receipt, teardown
+  and undo family (7), the ledgers, the closure and completeness gates, the reversibility
+  certificate, the spend readers (7), the delegation audit, the session-forensics readers, and the
+  standalone command scripts. The consensus scorer stays, as the card requires.
+- **`execution_spec.py`, `concurrency_governor.py` and `dispatch_settlement.py`** with the
+  cc-workflows plugin they served, which is archived in this release. `references/workflow-backend.md`
+  goes with them.
+- **Four hooks and both agents**, and with them the `SessionEnd`, `Stop` and `SubagentStop` events.
+- **The generated documentation atlas** and the spawn-site inventory.
+
+### Changed -- BREAKING
+
+- **One execution backend.** `ORCHESTRATION_MODES` is `("inline",)`. team-execution and
+  cc-workflows are both archived in this release, so there is no offer to make and nothing for the
+  operator to choose between. The enum strings stay a durable wire contract: a persisted tick
+  recording either archived value still loads and still renders its label, and
+  `tests/test_saga_spec_consumer_row.py` pins that.
+- **The closed op allowlist survives the reversibility certificate.** `op_allowlist.py` keeps the
+  default-deny list of mission-control operations saga may submit without a human; the reversibility
+  tiering that wrapped it went with the ship ceremony that consumed it.
+- **The spore freezes the saga box and the run record**, not an outcome DAG.
+- **`run_record.py` and `manifest_store.py` own their store primitives** rather than borrowing them
+  from the deleted outcome store -- the same choice `fleet_commons/audit_store.py` already made.
+- **Review roles run as roster sessions in their own worktrees**, replacing the `CLAUDE.md`
+  sandbox-spawn rule.
+
+### The line count, measured
+
+`plugins/saga/scripts` goes from 60,133 lines to **20,520** -- 104 modules to 32. The card's
+criterion is under 15,000, and it is **not met**; the reason is arithmetic, not scope.
+
+The simplification review set that number against saga at commit `fb69f6b3` and projected ~11,856
+surviving script lines. Since then this parent's own cards added **7,071 lines in eleven new
+modules** -- the run record, admission, the build loop, the merge turn, the release step, the review
+roster and result, the shaping judgments, the continuation context, the op allowlist, and issue
+#1039's 1,762-line `/qa` strategy catalogue -- plus **615 lines** of growth in modules that already
+existed. Subtract the 7,686 lines the projection could not have counted and the figure is **12,834**,
+under the target and close to the review's estimate. The removal did what was asked; the target
+predates the replacement.
+
+### Tests
+
+The saga suite falls from 302 test files to 184. Every deleted module took its tests with it. No
+test was marked advisory, skipped or `xfail`, and the gate's coverage contract against `ci.yml` is
+untouched.
+
 ## [0.173.0] - 2026-09-20
 **Bumped from 0.171.0**, the saga version on `origin/parent/1018` at commit `61da4b1c`. 0.172.0 is
 skipped on purpose: issue #1039 takes that number from the same base, and two cards writing an

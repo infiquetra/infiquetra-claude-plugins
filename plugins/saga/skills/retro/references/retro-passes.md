@@ -80,13 +80,6 @@ read subcommands of `gh` — never create / edit / merge.
 Reuse the `/resume` forensic substrate, file-mediated. The orchestrator **never reads a raw `.jsonl` or a
 skeleton file** — paths only.
 
-```bash
-SCRATCH=$(mktemp -d -t retro-sessions-XXXXXX)
-# thread-scoped: identify sessions from the saga / branch.
-# windowed: discover, recency-ranked, capped, current session excluded:
-python3 plugins/saga/scripts/discover_sessions.py --repo <repo-folder> --days <N> --exclude <current-session-id>
-python3 plugins/saga/scripts/extract_session_skeleton.py --output "$SCRATCH/<id>.skeleton.txt" < <session-file>
-```
 
 **Fan-out (optional, offered).** When several sessions warrant parallel synthesis, **OFFER** a backend per
 `../../../references/operator-choice.md` and dispatch **one generic agent per session** (`Explore` / `Task` —

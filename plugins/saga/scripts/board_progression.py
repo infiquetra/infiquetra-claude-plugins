@@ -32,7 +32,11 @@ from typing import Any
 
 
 def _cert():
-    import reversibility_certificate as _m  # noqa: PLC0415
+    """The closed op allowlist. Issue 1030 removed `reversibility_certificate.py` with the ship
+    ceremony that consumed its tiering; `op_allowlist.py` is the default-deny half that survives,
+    and it keeps the same `authorize_write` / AUTHORIZED / GATE / OpKind surface so every call
+    site below is unchanged."""
+    import op_allowlist as _m  # noqa: PLC0415
 
     return _m
 

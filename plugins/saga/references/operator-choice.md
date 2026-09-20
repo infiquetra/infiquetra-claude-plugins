@@ -226,7 +226,6 @@ The session recognizes a gate answer with the pure helper
 `outcome_gate_transport.parse_gate_answer(inbound, pending_gate_ids)` and, on an `approve` verdict, runs:
 
 ```bash
-python3 plugins/saga/scripts/outcome.py approve <outcome_id> \
   --answerer "<inbound username/user_id>" --transport "<inbound source>"
 ```
 

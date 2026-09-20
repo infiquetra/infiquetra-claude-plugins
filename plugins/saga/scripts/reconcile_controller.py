@@ -61,7 +61,11 @@ from typing import Any
 
 
 def _cert():
-    import reversibility_certificate as _m  # noqa: PLC0415
+    """The closed op allowlist. Issue 1030 removed `reversibility_certificate.py` with the ship
+    ceremony that consumed its tiering; `op_allowlist.py` is the default-deny half that survives,
+    and it keeps the same `authorize_write` / AUTHORIZED / GATE / OpKind surface so every call
+    site below is unchanged."""
+    import op_allowlist as _m  # noqa: PLC0415
 
     return _m
 
@@ -502,16 +506,12 @@ def default_live_reader(
     lives in this module — the reads route through ``outcome_github`` (already lane-linted), so the
     controller stays inside saga's write-ownership lane.
     """
-    import outcome_github as _gh  # noqa: PLC0415
-
-    cert = _cert()
 
     def _reader(op_kind: str, repo: str, number: int) -> str:
-        ref = f"{repo}#{number}" if repo else str(number)
-        if op_kind == str(cert.OpKind.SET_FIELD_STATUS):
-            return _gh.board_status(ref, project=project, runner=runner)
-        if op_kind in (str(cert.OpKind.SUB_ISSUE_CLOSE), str(cert.OpKind.SUB_ISSUE_REOPEN)):
-            return str(_gh.issue_close_info(ref, runner=runner).get("state", ""))
+        # The live-state lookups went through `outcome_github`, removed with the outcome
+        # coordinator by issue 1030. Returning "" means "could not read", which this controller
+        # already treats as a reason not to claim drift -- the safe direction.
+        del op_kind, repo, number
         return ""
 
     return _reader

@@ -407,7 +407,6 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
   units, not after every single one.
 - **Poll the mid-run adjustment envelope at each phase/segment boundary (#372).** Before starting the
   next phase, read `.saga/adjustment-envelope.json` via `adjustment_envelope.poll(...)` (schema in
-  `plugins/saga/references/adjustment-envelope.md`) — this reuses the phase boundary, not a new poll
   loop. The poll decision governs the boundary:
   - `drain` (operator `quiesce`) or `halt` (`andon_halt`/`cancel`/`abort`) — finish the in-flight unit,
     dispatch no new phase, and surface the resume point; do not start the next phase.

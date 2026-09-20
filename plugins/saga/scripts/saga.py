@@ -82,14 +82,7 @@ DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
 # Two values since issue #1030 archived the team-execution plugin. The strings are a frozen wire
 # contract carried in persisted sagas, so a tick that recorded "team-execution" still reads back;
 # it is simply no longer selectable, because the backend it named no longer exists.
-ORCHESTRATION_MODES = ("inline", "cc-workflows-ultracode")
-# The ship ceremony's reversibility-tier vocabulary (issue #345). saga.py only ever validated the
-# closed set here; the transition ORDER and its index-derivation belonged to the ceremony, never to
-# saga.py — which kept the generic engine decoupled from one consumer's transition table. The
-# ceremony module was removed with issue #1027, so these values now have no producer; they are
-# carried until issue #1030's removal pass, which owns the commands that still read them, so that
-# one card retires the vocabulary and its readers together rather than leaving a dangling half.
-CEREMONY_TIERS = ("reversible", "additive", "always_operator")
+ORCHESTRATION_MODES = ("inline",)
 
 # Display-label map (R8 / KTD5).  Maps the stored enum string to the human-readable
 # label surfaced in every offer.  The enum values in ORCHESTRATION_MODES are the
@@ -97,7 +90,6 @@ CEREMONY_TIERS = ("reversible", "additive", "always_operator")
 # this map is additive and never changes their meaning.  A key miss falls back to
 # the raw enum string — never errors.
 ORCHESTRATION_MODE_LABELS: dict[str, str] = {
-    "cc-workflows-ultracode": "dynamic workflows",
     # Kept deliberately after issue #1030 archived the plugin: a persisted saga can still carry
     # this string, and a reader that fell back to the raw enum would show a worse label for a
     # historical tick than the one it was written with. The map is additive and never gates a choice.
@@ -252,8 +244,6 @@ class Saga:
     # `ceremony_transition` against its own canonical order each time, so there was never a
     # stored index to drift out of sync with the name. The ceremony was removed with issue
     # #1027 and nothing writes these now; issue #1030 retires them with their readers.
-    ceremony_transition: str = ""
-    ceremony_tier: str = ""
 
     # Disposition detail.
     blockers: str = ""
@@ -1700,17 +1690,6 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--pr-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--adr-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--journal-refs", default=None, help="pipe-separated; omit = carry forward")
-    p.add_argument(
-        "--ceremony-transition",
-        default="",
-        help="ship ceremony (removed in #1027): last transition run; omit = carry forward",
-    )
-    p.add_argument(
-        "--ceremony-tier",
-        default="",
-        choices=[*CEREMONY_TIERS, ""],
-        help="ship ceremony (removed in #1027): that transition's tier; omit = carry forward",
-    )
     p.add_argument("--open-questions", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--checks-run", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument(

@@ -42,7 +42,7 @@ MARKER_U1_PREFIX_LABEL = "the `U1` U-ID prefix"
 # The `U1` U-ID prefix: a heading or line beginning with the unit id (`U1.` / `U1:` / `U1 `).
 U1_PREFIX_RE = re.compile(r"^#{0,6}\s*U1[.:\s]", re.MULTILINE)
 
-BACKEND_ENUM = ("inline", "cc-workflows-ultracode")
+BACKEND_ENUM = ("inline",)
 REQUIRED_FIELDS = ("title", "type", "status", "date", "backend")
 
 KIND_LEGACY_NO_BACKEND = "legacy-no-backend"

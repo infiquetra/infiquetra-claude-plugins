@@ -46,11 +46,13 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.167.0"  # 0.167.0: the run record reference documents the
+    assert plugin_json["version"] == "0.168.0"  # 0.168.0: the run record reference documents the
     # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
-    # unit row (issue #1025). Bumped from 0.166.0, the saga version on origin/parent/1018 at
-    # b98e94ea: issues #1001 and #1026 took 0.165.0 and 0.166.0 while this card's suite ran, so
-    # this card renumbered above them rather than shipping a colliding version.
+    # unit row (issue #1025). Bumped from 0.167.0, the saga version on origin/parent/1018 at
+    # 54a526b1: issues #1001, #1026 and #938 took 0.165.0, 0.166.0 and 0.167.0 while this card's
+    # suite ran, so this card renumbered above them rather than shipping a colliding version.
+    # 0.167.0 was issue #938: Work no longer offers an in-process external-engine second opinion,
+    # and plugins/saga/scripts/second_opinion.py is deleted with no live consumer.
     # Predecessor 0.166.0: /plan ends by dispatching the plan
     # review to the Plan Reviewer and looping on repair until no P0 or P1 remains, the /work floor
     # gate stays blocking on the operator's one-word override alone, the Workflow-backend and
@@ -909,39 +911,14 @@ def test_backend_offer_contract_docs_pin_explicit_invocation() -> None:
         )
 
 
-def test_work_second_opinion_trigger_contract_is_operator_confirmed_and_non_gating() -> None:
-    """Issue #394 keeps repeated-failure assistance typed, durable, and advisory-only."""
-    work = PLUGIN_ROOT / "skills" / "work"
-    skill_doc = _read(work / "SKILL.md")
-    continuation = _read(work / "references" / "pr-continuation-loop.md")
-    corpus = "\n".join((skill_doc, continuation))
-
-    for token in (
-        "saga.work-second-opinion.v1",
-        "WorkAttempt",
-        "record_work_attempt",
-        "save_work_second_opinion_state",
-        "accept_work_offer",
-        "dispatch_second_opinion",
-        "record_work_dispatch_outcome",
-        "complete_second_opinion",
-        "external_opinion.state=recommended",
-        "requested",
-        "available",
-        "apply",
-    ):
-        assert token in corpus
-    assert (
-        "Second opinion available: {target} failed after 3 fix attempts; "
-        "dispatch an advisory second opinion?"
-    ) in skill_doc
-    for boundary in (
-        "Never auto-dispatch.",
-        "zero runner calls",
-        "Only Claude-owned final status/severity",
-        "There is no persisted `.saga/engine-prefs.json` preference",
-    ):
-        assert boundary in corpus
+# Issue #394's Work-side pin lived here: it asserted that Work's skill still carried the
+# repeated-failure second-opinion offer, its twelve vocabulary tokens, and its four boundary
+# sentences. Issue #938 removed that offer and the module behind it, so the pin could not survive
+# the thing it pinned. Its replacement runs in the opposite direction:
+# `tests/test_work_second_opinion_removed.py` asserts the offer is gone by every route, that no
+# feature-private dispatch, sidecar, streak, or state module is importable, and -- with a mutation
+# proof -- that re-adding the offer turns the check red. Document Review's half of #394 is
+# untouched and is still pinned immediately below.
 
 
 def test_document_review_second_opinion_contract_is_intact() -> None:

@@ -165,6 +165,29 @@ into the changelog entry and the drift-guard comment, where someone would look f
 remains available for the release that earns it. **If the operator wants 1.0.0 shipped anyway, it is
 a one-line change in four places and this note is the objection, not a veto.**
 
+## The full suite
+
+Green at branch head `63516f00`, merged against parent head `61da4b1c`: **8511 passed, 34 skipped,
+1 xfailed, 0 failed**, exit 0, in 12 minutes.
+
+The run before it found 20 failures, and every one was the same shape — a test reading a file inside
+a removed skill, command or agent. Nine cases retired with their subject; four narrowed to the half
+that still has one. The plan phase-status case is the clearest example: it checked that three parties
+agree on what a finished plan looks like — the producer in `/plan` Phase 5.3, the `saga-spec` row, and
+a router row in the deleted `/loop` skill's dispatch table. The producer and the spec row are the pair
+that can still drift, and they are still checked against each other.
+
+Two of the twenty were mine, not the removals'. The plan document used lowercase section headings
+where the plan contract's markers are exact, so `plan_artifact_conformance.py` failed on its own
+card's plan. And the prompt-suggestion corpus expected four removed commands: `/pulse` and `/handoff`
+are re-pointed at `/strategy` and `/founder-review`, two surviving commands the corpus never covered,
+while `/tier` and `/outcome` become negatives — which is the true answer now, because no command is
+left to suggest for either request.
+
+**No skip was added.** The 34 skips are the ones already on the base, 22 of them the team-execution
+consensus tests whose recorded reason names this card's archive step; they retire when that unit
+lands. Cases this stage retired were deleted, never marked.
+
 ## Residuals for the merge turn
 
 - The `/qa` skill still names saga's read-only verifier agent at `SKILL.md:201`. Issue 1039 rewrites
@@ -174,3 +197,27 @@ a one-line change in four places and this note is the objection, not a veto.**
   `team-execution` as an execution backend. That enum value goes with the archive; it is recorded
   here because the backend enum is shared with `references/operator-choice.md` and the cc-workflows
   emitter, so it moves with the archive unit rather than piecemeal.
+- `plugins/saga/scripts/execution_spec.py` still names saga's removed read-only verifier agent twice,
+  in comments at `:413` and `:2211`. That module is the blocker's subject and will be rewritten by
+  whichever card resolves it; the comments go then.
+- `plugins/saga/references/brainstorm-evidence-model.md` names `scripts/second_opinion.py`, which
+  issue 938 removed. Pre-existing at this card's base, not introduced here, and left alone because
+  the file belongs to neither card.
+- The check that found all three is worth keeping: a grep from every surviving skill, command, hook
+  and reference for `plugins/saga/**` paths that no longer resolve. Run it after any deletion pass.
+
+## What did not land, and what is still owed
+
+Four of the plan's thirteen units landed: U1 the command and skill surface, U4 the hooks and agents,
+U5 in the narrowed form above, and U7 the sandbox-spawn rule, plus the release surfaces of U9.
+
+Still owed, all blocked behind the cc-workflows finding or behind it in sequence: U2 the script
+families, U3 the severances in surviving modules, U6 the team-execution archive, U8 the fleet-core
+shrink, and U10 through U13 — the merge turn, the parent pull request, the one code review, and the
+install into both plugin trees, which are later stages in any case.
+
+U6 is the one of these that is **not** blocked by the cc-workflows finding and could land next on its
+own. It was not attempted here because the `team-execution` backend enum reaches into
+`references/operator-choice.md`, `lifecycle_state.recommend_execution_backend`, the cc-workflows
+emitter and a three-backend wire enumeration pinned by tests, and starting it without finishing it
+would have left the suite red.

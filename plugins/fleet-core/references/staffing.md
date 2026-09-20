@@ -54,6 +54,8 @@ uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve \
   --role lens-reviewer --lens security
 # the rated alternatives for a role
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py explain --role lens-reviewer
+# the tier judgment's suggestion beside the default (advisory; exit zero either way)
+uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve --shape judgment --suggest
 ```
 
 The default output is short and human, and its shape depends on what you asked:
@@ -104,10 +106,22 @@ a model's ceiling, and a malformed overlay each raise with the offending value n
 sits on a path every subagent spawn reads, so a silent default would be invisible and wrong
 everywhere at once.
 
-**The advisory suggestion.** `--suggest model/effort` is recorded beside the chosen tier whether or
-not the two agree, and cannot change it. The typed-judgment model (issue 1033) supplies it as a
-parameter; this component never calls out to one, so a staffing question can never depend on a
-service being reachable.
+**The advisory suggestion.** Bare `--suggest` consults the `tier` judgment verb once about the
+unit being resolved and records its suggestion beside the chosen tier; `--suggest model/effort`
+records that tier as the suggestion instead, making no call. Either way the suggestion cannot
+change the resolved tier. A suggestion below the verb's confidence floor, or one that fails
+palette validation, is reported with its reason and left off the record; a failed request falls
+open to the default the same way. Every scored suggestion is logged to the verdict log with the
+chosen tier as its label, plus an override record where an operator-set tier differs from a
+suggestion that cleared the floor. Admission's `--suggest` runs the same consult once per run,
+batched over every staffed role.
+
+With a bare `--suggest` the output is three lines instead of one — the `default:`, the
+`suggestion:` with its confidence and floor, and `applies:` naming the tier that stands — and
+`--json` adds a `consult` block with the request status and reason. `applies:` is always the
+default: a suggestion is recorded beside the tier, never promoted over it. The `resolve` path
+itself still never calls out, so a staffing question can never depend on a service being
+reachable.
 
 ## To add a model
 

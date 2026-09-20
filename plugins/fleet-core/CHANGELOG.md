@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.32.0] - 2026-09-20
+
+### Added
+
+- **Advisory tier suggestions inside the staffing component (issue #1033).**
+  `consult_tier_suggestions` asks the `tier` judgment verb about a batch of roles or work shapes
+  in one request, validates each answer like any tier, and logs one verdict per suggested unit
+  with the chosen tier as its label. A suggestion below the verb's confidence floor, or one that
+  fails palette validation, is reported with its reason and left off the record; a failed request
+  falls open to the defaults the same way. The suggestion is recorded beside the resolved tier
+  and can never change it -- the resolve path itself still never calls out. Bare `resolve
+  --suggest` consults once and prints the default, the suggestion with its confidence, and which
+  tier applies; `--suggest MODEL/EFFORT` keeps its issue-1021 meaning of recording a parameter.
+
 ## [0.31.0] - 2026-09-20
 
 ### Removed

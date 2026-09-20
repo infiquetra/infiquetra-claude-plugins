@@ -270,12 +270,21 @@ def fill_defaults(
     record: run_record.RunRecord,
     profile: dict[str, Any],
     staffing: Any = None,
+    *,
+    suggest: bool = False,
+    suggest_ask: Callable[..., Any] | None = None,
+    suggest_log_dir: Path | None = None,
 ) -> run_record.RunRecord:
     """Fill every defaultable parameter, recording where each value came from (plan R7).
 
     Never overwrites a value already carrying an ``operator`` source: an answer the operator gave
     outranks any default, and re-deriving it would be the re-asking this whole module exists to
     stop.
+
+    ``suggest`` asks the staffing component for one batched tier suggestion per role and records
+    each beside its default. Advisory and fail-open: a suggestion never changes a value, and a
+    component without a consult entry point — or a failed request — leaves the defaults exactly
+    as they would have been.
     """
     configuration = {name: dict(block) for name, block in record.run_configuration.items()}
     admission = json.loads(json.dumps(record.admission))
@@ -300,7 +309,9 @@ def fill_defaults(
         staffing is not None
         and configuration["staffing_models_and_efforts"]["source"] != "operator"
     ):
-        resolved = _resolve_staffing(staffing)
+        resolved = _resolve_staffing(
+            staffing, suggest=suggest, suggest_ask=suggest_ask, suggest_log_dir=suggest_log_dir
+        )
         if resolved is not None:
             _fill(configuration, "staffing_models_and_efforts", resolved, "staffing")
             catalogue = _resolve_catalogue(staffing)
@@ -324,13 +335,25 @@ def fill_defaults(
     )
 
 
-def _resolve_staffing(staffing: Any) -> dict[str, Any] | None:
-    """Ask the staffing component for each role's vendor, model and effort."""
+def _resolve_staffing(
+    staffing: Any,
+    *,
+    suggest: bool = False,
+    suggest_ask: Callable[..., Any] | None = None,
+    suggest_log_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Ask the staffing component for each role's vendor, model and effort.
+
+    With ``suggest``, one batched tier consult covers every resolved role, and each role's
+    suggestion is recorded beside its default. The consult is best-effort: a component without
+    the consult entry point, or a request that fails, leaves the defaults untouched.
+    """
     try:
         roles = staffing.roles()
     except Exception:
         return None
     resolved: dict[str, Any] = {}
+    operator_set: dict[str, bool] = {}
     for role in sorted(roles):
         try:
             decision = staffing.resolve_role(role)
@@ -341,7 +364,59 @@ def _resolve_staffing(staffing: Any) -> dict[str, Any] | None:
             "model": getattr(decision, "model", None),
             "effort": getattr(decision, "effort", None),
         }
+        operator_set[role] = getattr(decision, "source", "policy") == "overlay"
+    if suggest and resolved:
+        _attach_suggestions(staffing, resolved, operator_set, suggest_ask, suggest_log_dir)
     return resolved or None
+
+
+def _attach_suggestions(
+    staffing: Any,
+    resolved: dict[str, Any],
+    operator_set: dict[str, bool],
+    suggest_ask: Callable[..., Any] | None,
+    suggest_log_dir: Path | None,
+) -> None:
+    """Consult the tier judgment once for every role and record each suggestion beside its
+    default. Never raises and never alters a default: anything unexpected leaves ``resolved``
+    exactly as it was."""
+    consult = getattr(staffing, "consult_tier_suggestions", None)
+    if not callable(consult):
+        return
+    units = {
+        role: {
+            "task": (f"role '{role}' (staffing default {tier.get('model')}/{tier.get('effort')})"),
+            "default": {"model": tier.get("model"), "effort": tier.get("effort")},
+            "operator_set": operator_set.get(role, False),
+        }
+        for role, tier in resolved.items()
+    }
+    try:
+        outcome = consult(units, ask=suggest_ask, log_dir=suggest_log_dir)
+    except Exception:
+        return
+    if not isinstance(outcome, dict):
+        return
+    entries = outcome.get("suggestions") or {}
+    if not isinstance(entries, dict):
+        return
+    for role, entry in entries.items():
+        if role not in resolved or not isinstance(entry, dict):
+            continue
+        suggested = entry.get("suggested")
+        resolved[role]["suggestion"] = {
+            "suggested": (
+                f"{suggested.get('model')}/{suggested.get('effort')}"
+                if isinstance(suggested, dict)
+                else None
+            ),
+            "confidence": entry.get("confidence"),
+            "floor": entry.get("floor"),
+            "low_confidence": entry.get("low_confidence", False),
+            "usable": entry.get("usable", False),
+            "problem": entry.get("problem"),
+            "reason": entry.get("reason", ""),
+        }
 
 
 def _resolve_catalogue(staffing: Any) -> dict[str, Any]:
@@ -516,6 +591,9 @@ def admit(
     validator: Callable[[str], tuple[bool, list[str]]],
     staffing: Any = None,
     answers: dict[str, Any] | None = None,
+    suggest: bool = False,
+    suggest_ask: Callable[..., Any] | None = None,
+    suggest_log_dir: Path | None = None,
 ) -> tuple[run_record.RunRecord, list[Question]]:
     """Validate, fill, apply any answers, and return the record with what is still outstanding."""
     existing = run_record.load(store_root, issue, warn=None)
@@ -529,7 +607,14 @@ def admit(
     admission["issue_review_checks"] = issue_review_block(card_block["passed"])
     record = run_record.RunRecord(**{**record.__dict__, "admission": admission})
 
-    record = fill_defaults(record, load_profile(repo_root), staffing)
+    record = fill_defaults(
+        record,
+        load_profile(repo_root),
+        staffing,
+        suggest=suggest,
+        suggest_ask=suggest_ask,
+        suggest_log_dir=suggest_log_dir,
+    )
     if answers:
         record = apply_answers(record, answers)
 
@@ -590,6 +675,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", default=None, help="Where to look for .saga-profile.json.")
     parser.add_argument("--answers", default=None, help="A JSON file of answers to record.")
     parser.add_argument(
+        "--suggest",
+        action="store_true",
+        help=(
+            "Consult the tier judgment once for every staffed role and record each suggestion "
+            "beside its default. Advisory: a suggestion never changes a value."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the questions and the filled defaults; write nothing.",
@@ -619,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
             validator=load_card_validator(),
             staffing=load_staffing(),
             answers=answers,
+            suggest=args.suggest,
         )
         path = None if args.dry_run else run_record.save(store_root, record)
         print(render(record, outstanding, path))

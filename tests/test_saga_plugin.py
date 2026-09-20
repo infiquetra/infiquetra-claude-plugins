@@ -46,7 +46,12 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "1.0.0"  # 1.0.0: the removals of issue
+    assert plugin_json["version"] == "1.1.0"  # 1.1.0: batched tier suggestions at admission
+    # (issue #1033) -- admission's opt-in --suggest flag runs the staffing component's tier
+    # consult once per run over every staffed role and records each suggestion beside its
+    # default, with one verdict-log entry per suggested role. Bumped from 1.0.0, the saga
+    # version on origin/parent/1018 at 994443ea.
+    # Predecessor 1.0.0: the removals of issue
     # #1030 — eleven commands and nine skills gone, four hooks deregistered and deleted, both saga
     # agents gone, and the sandbox-spawn project instruction replaced. Bumped over 0.172.0, the saga
     # version on origin/parent/1018 at b264f154, re-read at this merge turn. 0.172.0 was chosen from

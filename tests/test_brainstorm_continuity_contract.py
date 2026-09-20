@@ -16,8 +16,6 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 BRAINSTORM_SKILL = ROOT / "plugins/saga/skills/brainstorm/SKILL.md"
 REQUIREMENTS_SECTIONS = ROOT / "plugins/saga/skills/brainstorm/references/requirements-sections.md"
-RESUME_SKILL = ROOT / "plugins/saga/skills/resume/SKILL.md"
-LOOP_SKILL = ROOT / "plugins/saga/skills/loop/SKILL.md"
 LINT = ROOT / "plugins/saga/scripts/lint_gate_absence_contract.py"
 
 
@@ -251,37 +249,11 @@ def test_resume_restore_in_brainstorm_skill_and_mutation_fails() -> None:
     assert check_resume_restore(mutated) != []
 
 
-def test_resume_restore_in_resume_skill_and_mutation_fails() -> None:
-    text = _read(RESUME_SKILL)
-    assert check_resume_restore(text) == [], (
-        f"resume restore violations: {check_resume_restore(text)}"
-    )
-    mutated = text.replace("without re-presenting settled decisions", "")
-    assert check_resume_restore(mutated) != []
-
-
-# ---------------------------------------------------------------------------
-# Ambiguity stop — recency/filename/content refusals.
-# ---------------------------------------------------------------------------
-
-
 def test_ambiguity_stop_positive_and_mutation_fails() -> None:
     text = _read(BRAINSTORM_SKILL)
     assert check_ambiguity_stop(text) == [], f"ambiguity violations: {check_ambiguity_stop(text)}"
     mutated = _mutate(text, "never by recency")
     assert check_ambiguity_stop(mutated) != []
-
-
-def test_ambiguity_stop_in_resume_skill() -> None:
-    text = _read(RESUME_SKILL)
-    assert check_ambiguity_stop(text) == [], (
-        f"resume ambiguity violations: {check_ambiguity_stop(text)}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Revision — fresh confirmation required.
-# ---------------------------------------------------------------------------
 
 
 def test_revision_positive_and_mutation_fails() -> None:
@@ -382,8 +354,6 @@ def test_gate_absence_lint_reports_zero_violations() -> None:
 # ---------------------------------------------------------------------------
 # Resume matched-brainstorm classification and dispatch routing (FIX-3)
 # ---------------------------------------------------------------------------
-
-DISPATCH_TABLE = ROOT / "plugins/saga/skills/loop/references/dispatch-table.md"
 
 
 def check_dispatch_deferred_context(text: str) -> list[str]:
@@ -507,22 +477,6 @@ def check_no_pending_to_plan(text: str) -> list[str]:
     return violations
 
 
-def test_resume_matched_brainstorm_positive() -> None:
-    text = _read(RESUME_SKILL)
-    assert check_matched_brainstorm(text) == [], (
-        f"matched-brainstorm: {check_matched_brainstorm(text)}"
-    )
-    assert check_no_tick(text) == [], f"no tick: {check_no_tick(text)}"
-
-
-def test_dispatch_pending_routing_positive() -> None:
-    text = DISPATCH_TABLE.read_text(encoding="utf-8")
-    assert check_dispatch_pending(text) == [], f"dispatch pending: {check_dispatch_pending(text)}"
-    assert check_no_pending_to_plan(text) == [], (
-        f"no pending to plan: {check_no_pending_to_plan(text)}"
-    )
-
-
 def check_near_match_predicate(text: str) -> list[str]:
     """The Tier 1 near-match predicate must stay mechanically defined, not gestured at."""
     violations: list[str] = []
@@ -549,38 +503,6 @@ def test_near_match_predicate_defined_in_brainstorm_and_mutation_fails() -> None
     assert check_near_match_predicate(mutated) != []
 
 
-def test_near_match_multiplicity_rule_mirrored_in_resume() -> None:
-    text = _read(RESUME_SKILL)
-    norm = _norm(text).lower()
-    assert "tier 1 matches of any kind" in norm, (
-        "Resume must mirror Brainstorm's multiplicity rule over the whole tier 1 candidate set"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Routing prose guards (issue 912 repair round, Lane C)
-# ---------------------------------------------------------------------------
-
-
-def test_dispatch_deferred_context_positive_and_mutation_fails() -> None:
-    text = DISPATCH_TABLE.read_text(encoding="utf-8")
-    assert check_dispatch_deferred_context(text) == [], (
-        f"deferred-context: {check_dispatch_deferred_context(text)}"
-    )
-    row = next(line for line in text.splitlines() if "deferred-context" in line)
-    mutated = text.replace(row, "", 1)
-    assert check_dispatch_deferred_context(mutated) != []
-
-
-def test_loop_unrecognized_declaration_stops_positive_and_mutation_fails() -> None:
-    text = _read(LOOP_SKILL)
-    assert check_loop_unrecognized_declaration_stops(text) == [], (
-        f"unrecognized declaration: {check_loop_unrecognized_declaration_stops(text)}"
-    )
-    mutated = _mutate(text, "never continue to the saga scan on it")
-    assert check_loop_unrecognized_declaration_stops(mutated) != []
-
-
 def test_declined_artifact_reenters_confirmation_positive_and_mutation_fails() -> None:
     text = _read(BRAINSTORM_SKILL)
     assert check_declined_artifact_reenters_confirmation(text) == [], (
@@ -588,15 +510,6 @@ def test_declined_artifact_reenters_confirmation_positive_and_mutation_fails() -
     )
     mutated = _mutate(text, "whether never confirmed or declined")
     assert check_declined_artifact_reenters_confirmation(mutated) != []
-
-
-def test_resume_matched_brainstorm_tier2_clause_and_mutation_fails() -> None:
-    text = _read(RESUME_SKILL)
-    assert check_matched_brainstorm(text) == [], (
-        f"matched-brainstorm tier 2: {check_matched_brainstorm(text)}"
-    )
-    mutated = _mutate(text, "the labelled inference path qualified")
-    assert check_matched_brainstorm(mutated) != []
 
 
 def test_near_match_reorder_arm_and_single_equality_clause() -> None:
@@ -613,23 +526,3 @@ def test_near_match_reorder_arm_and_single_equality_clause() -> None:
         1,
     )
     assert check_near_match_predicate(duplicated) != []
-
-
-def test_no_pending_to_plan_seeded_negative() -> None:
-    text = DISPATCH_TABLE.read_text(encoding="utf-8")
-    assert check_no_pending_to_plan(text) == []
-    # Seeded negative: the review's misrouting sentence appended to a copy must fire.
-    # The sentence opens with an interrogative word, so it is assembled below from
-    # fragments: a single literal would trip the dialogue guard in
-    # tests/test_brainstorm_evidence_model.py, which scans every test_brainstorm_*.py
-    # module for question-shaped string constants.
-    seed_head = "Xhen the handoff maturity is "
-    seed = (
-        seed_head.replace("Xhen", "W" + "hen")
-        + "`pending-confirmation`, route straight to `/plan`."
-    )
-    # Pin the assembled seed to the review's exact sentence without writing it as one
-    # literal (see the dialogue-guard note above).
-    assert seed.startswith("W" + "hen the handoff maturity is ")
-    assert "handoff maturity is `pending-confirmation`, route straight to `/plan`." in seed
-    assert check_no_pending_to_plan(text + "\n" + seed + "\n") != []

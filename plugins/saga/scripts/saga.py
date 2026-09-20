@@ -79,14 +79,10 @@ LIFECYCLE_PHASES = ("ideation", "brainstorm", "plan", "review", "work", "qa", "r
 PHASE_STATUSES = ("pending", "in_progress", "complete")
 STATUSES = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
 DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
-ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
-# The ship ceremony's reversibility-tier vocabulary (issue #345). saga.py only ever validated the
-# closed set here; the transition ORDER and its index-derivation belonged to the ceremony, never to
-# saga.py — which kept the generic engine decoupled from one consumer's transition table. The
-# ceremony module was removed with issue #1027, so these values now have no producer; they are
-# carried until issue #1030's removal pass, which owns the commands that still read them, so that
-# one card retires the vocabulary and its readers together rather than leaving a dangling half.
-CEREMONY_TIERS = ("reversible", "additive", "always_operator")
+# Two values since issue #1030 archived the team-execution plugin. The strings are a frozen wire
+# contract carried in persisted sagas, so a tick that recorded "team-execution" still reads back;
+# it is simply no longer selectable, because the backend it named no longer exists.
+ORCHESTRATION_MODES = ("inline",)
 
 # Display-label map (R8 / KTD5).  Maps the stored enum string to the human-readable
 # label surfaced in every offer.  The enum values in ORCHESTRATION_MODES are the
@@ -94,7 +90,9 @@ CEREMONY_TIERS = ("reversible", "additive", "always_operator")
 # this map is additive and never changes their meaning.  A key miss falls back to
 # the raw enum string — never errors.
 ORCHESTRATION_MODE_LABELS: dict[str, str] = {
-    "cc-workflows-ultracode": "dynamic workflows",
+    # Kept deliberately after issue #1030 archived the plugin: a persisted saga can still carry
+    # this string, and a reader that fell back to the raw enum would show a worse label for a
+    # historical tick than the one it was written with. The map is additive and never gates a choice.
     "team-execution": "team execution",
     "inline": "inline",
 }
@@ -241,14 +239,6 @@ class Saga:
     adr_refs: ListOrAbsent = ABSENT
     journal_refs: ListOrAbsent = ABSENT
 
-    # Ship-ceremony state (issue #345, KTD2): the last transition run and that transition's
-    # reversibility tier. No index was ever stored — the ceremony derived the index from
-    # `ceremony_transition` against its own canonical order each time, so there was never a
-    # stored index to drift out of sync with the name. The ceremony was removed with issue
-    # #1027 and nothing writes these now; issue #1030 retires them with their readers.
-    ceremony_transition: str = ""
-    ceremony_tier: str = ""
-
     # Disposition detail.
     blockers: str = ""
     open_questions: ListOrAbsent = ABSENT
@@ -306,8 +296,6 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "pr_refs",
     "adr_refs",
     "journal_refs",
-    "ceremony_transition",
-    "ceremony_tier",
     "blockers",
     "open_questions",
     "checks_run",
@@ -709,11 +697,16 @@ class SagaTickIndexWriteError(OSError):
 
 
 def _orchestration_rank(mode: str) -> int | None:
-    """Tier rank of an orchestration mode (inline < team-execution < cc-workflows-ultracode).
+    """Tier rank of an orchestration mode (inline < cc-workflows-ultracode).
 
     Returns the index in ``ORCHESTRATION_MODES`` (a higher index is a richer/costlier tier),
     or ``None`` for an unrecognized value (the guard then can't reason about direction and is
     lenient).
+
+    That leniency is what keeps a saga written before issue #1030 readable: ``team-execution`` was
+    the middle rung until that card archived the plugin, and a persisted tick still carrying the
+    string ranks ``None`` rather than raising. The value is refused at the command line, where a
+    new choice is made, and accepted on the way back in, where history is only being read.
     """
     try:
         return ORCHESTRATION_MODES.index(mode)
@@ -929,8 +922,6 @@ def _tick_snapshot(saga: Saga) -> dict[str, Any]:
             "summary": saga.summary,
             "open_questions": _materialize(saga.open_questions),
             "rounds_seen": _materialize(saga.rounds_seen),
-            "ceremony_transition": saga.ceremony_transition,
-            "ceremony_tier": saga.ceremony_tier,
         }
     )
     return snapshot
@@ -1585,8 +1576,6 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         pr_refs=_split_list(args.pr_refs),
         adr_refs=_split_list(args.adr_refs),
         journal_refs=_split_list(args.journal_refs),
-        ceremony_transition=args.ceremony_transition,
-        ceremony_tier=args.ceremony_tier,
         blockers=args.blockers,
         open_questions=_split_list(args.open_questions),
         checks_run=_split_list(args.checks_run),
@@ -1689,17 +1678,6 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--pr-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--adr-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--journal-refs", default=None, help="pipe-separated; omit = carry forward")
-    p.add_argument(
-        "--ceremony-transition",
-        default="",
-        help="ship ceremony (removed in #1027): last transition run; omit = carry forward",
-    )
-    p.add_argument(
-        "--ceremony-tier",
-        default="",
-        choices=[*CEREMONY_TIERS, ""],
-        help="ship ceremony (removed in #1027): that transition's tier; omit = carry forward",
-    )
     p.add_argument("--open-questions", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--checks-run", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument(

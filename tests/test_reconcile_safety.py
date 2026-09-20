@@ -55,7 +55,7 @@ def _load(name: str) -> ModuleType:
 
 
 RC = _load("reconcile_controller")
-CERT = _load("reversibility_certificate")
+CERT = _load("op_allowlist")
 
 
 class LiveBoard:
@@ -305,7 +305,8 @@ def test_reconcile_safety_prompts_when_uncertain(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("consumer_skill", ["work", "loop"])
+# /loop was the second consumer until issue 1030 removed it; /work is the one that remains.
+@pytest.mark.parametrize("consumer_skill", ["work"])
 def test_level_triggered_tick_survives_for_work_and_loop(consumer_skill: str) -> None:
     """The per-op level-triggered tick SURVIVES for /work and /loop — each skill still drives the
     shared controller (a writing reconcile for the non-field op in /work's 4.4; the read-only
@@ -334,29 +335,6 @@ def test_level_triggered_tick_survives_for_work_and_loop(consumer_skill: str) ->
         "set-field-status", "infiquetra/saga", 450, "Active", live_reader=board.reader
     )
     assert second["status"] == "skipped", "the tick re-read live every call (level-triggered)"
-
-
-def test_outcome_absence_of_level_triggered_tick_is_a_known_gap() -> None:
-    """/outcome's ``advance`` loop is NOT yet a controller consumer — asserted as a KNOWN GAP per
-    KTD3 (this unit does not decide #593), documented in the /loop skill (which owns the boundary
-    statement) instead of hidden."""
-    loop_text = " ".join(
-        (SAGA_ROOT / "skills" / "loop" / "SKILL.md").read_text(encoding="utf-8").split()
-    )
-    assert "not yet a controller consumer" in loop_text and "#593" in loop_text, (
-        "/outcome's controller-consumer gap must stay documented (KTD3)"
-    )
-    # Mechanically: /outcome composes its own board ops through outcome_board_sync — it never
-    # calls the controller's reconcile primitives (verified in its module source).
-    sync_text = (SCRIPTS / "outcome_board_sync.py").read_text(encoding="utf-8")
-    assert "reconcile_controller" not in sync_text, (
-        "/outcome's board sync drives its own composition, not the controller tick (the #593 gap)"
-    )
-
-
-# ---------------------------------------------------------------------------
-# AT-RISK behaviour B (R35) — halt-on-irreversible-drift surfaces a NAMED reason
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

@@ -115,7 +115,15 @@ def test_plan_reads_the_destination_before_continuing() -> None:
     assert "admission.destination" in text
 
 
-def test_nothing_this_card_does_not_own_was_removed() -> None:
-    """`/loop`, `/resume` and `/handoff` are issue #1030's to remove, not this card's."""
+def test_the_three_skills_issue_1030_owns_are_gone() -> None:
+    """`/loop`, `/resume` and `/handoff` were issue #1030's to remove, and it removed them.
+
+    This case was written by the continuation card as a boundary guard -- "not mine to delete" --
+    and it inverts here rather than retiring, because the boundary it protects still matters in the
+    other direction: the run record's `next_step` is what replaced these three, so a re-added skill
+    would mean the continuation mechanism had been abandoned rather than merely reverted.
+    """
     for name in ("loop", "resume", "handoff"):
-        assert (SKILLS / name / "SKILL.md").is_file(), f"/{name} was removed by the wrong card"
+        assert not (SKILLS / name).exists(), (
+            f"/{name} is removed by issue 1030; the run record's next_step replaced it"
+        )

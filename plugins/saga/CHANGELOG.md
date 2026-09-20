@@ -1,5 +1,170 @@
 # Changelog
 
+## [1.0.0] - 2026-09-20
+
+**The removals.** Issue #1030, the closing child of parent #1018. Eleven commands, their skills and
+the machinery behind them are gone; thirteen commands remain.
+
+### The thirteen commands that remain
+
+`/plan`, `/doc-review`, `/work`, `/code-review`, `/qa`, `/retro`, `/office-hours`, `/ideate`,
+`/brainstorm`, `/spec`, `/investigate`, `/strategy`, and `/founder-review` with its `/ceo-review`
+alias -- fourteen files for thirteen commands.
+
+### Removed -- BREAKING
+
+- **Eleven commands and nine skills.** `/outcome`, `/loop`, `/resume`, `/handoff`, `/optimize`,
+  `/pulse`, `/delegation-audit`, `/promote`, `/engines`, `/tier`, `/fleet-doctor`.
+- **Seventy-three script modules**, by family: the outcome coordinator (19 modules), the engine
+  registry and dispatch family (18), the concurrency, lease, envelope, ceremony, receipt, teardown
+  and undo family (7), the ledgers, the closure and completeness gates, the reversibility
+  certificate, the spend readers (7), the delegation audit, the session-forensics readers, and the
+  standalone command scripts. The consensus scorer stays, as the card requires.
+- **`execution_spec.py`, `concurrency_governor.py` and `dispatch_settlement.py`** with the
+  cc-workflows plugin they served, which is archived in this release. `references/workflow-backend.md`
+  goes with them.
+- **Four hooks and both agents**, and with them the `SessionEnd`, `Stop` and `SubagentStop` events.
+- **The generated documentation atlas** and the spawn-site inventory.
+
+### Changed -- BREAKING
+
+- **One execution backend.** `ORCHESTRATION_MODES` is `("inline",)`. team-execution and
+  cc-workflows are both archived in this release, so there is no offer to make and nothing for the
+  operator to choose between. The enum strings stay a durable wire contract: a persisted tick
+  recording either archived value still loads and still renders its label, and
+  `tests/test_saga_spec_consumer_row.py` pins that.
+- **The closed op allowlist survives the reversibility certificate.** `op_allowlist.py` keeps the
+  default-deny list of mission-control operations saga may submit without a human; the reversibility
+  tiering that wrapped it went with the ship ceremony that consumed it.
+- **The spore freezes the saga box and the run record**, not an outcome DAG.
+- **`run_record.py` and `manifest_store.py` own their store primitives** rather than borrowing them
+  from the deleted outcome store -- the same choice `fleet_commons/audit_store.py` already made.
+- **Review roles run as roster sessions in their own worktrees**, replacing the `CLAUDE.md`
+  sandbox-spawn rule.
+
+### The line count, measured
+
+`plugins/saga/scripts` goes from 60,133 lines to **20,520** -- 104 modules to 32. The card's
+criterion is under 15,000, and it is **not met**; the reason is arithmetic, not scope.
+
+The simplification review set that number against saga at commit `fb69f6b3` and projected ~11,856
+surviving script lines. Since then this parent's own cards added **7,071 lines in eleven new
+modules** -- the run record, admission, the build loop, the merge turn, the release step, the review
+roster and result, the shaping judgments, the continuation context, the op allowlist, and issue
+#1039's 1,762-line `/qa` strategy catalogue -- plus **615 lines** of growth in modules that already
+existed. Subtract the 7,686 lines the projection could not have counted and the figure is **12,834**,
+under the target and close to the review's estimate. The removal did what was asked; the target
+predates the replacement.
+
+### Tests
+
+The saga suite falls from 302 test files to 184. Every deleted module took its tests with it. No
+test was marked advisory, skipped or `xfail`, and the gate's coverage contract against `ci.yml` is
+untouched.
+
+## [0.173.0] - 2026-09-20
+**Bumped from 0.171.0**, the saga version on `origin/parent/1018` at commit `61da4b1c`. 0.172.0 is
+skipped on purpose: issue #1039 takes that number from the same base, and two cards writing an
+identical version string never conflict — the manifest and the marketplace entry come through a merge
+clean and the only signal is two bodies under one changelog heading.
+
+**This is not the 1.0.0 the card names.** Issue #1030 calls for saga 1.0.0 as the version of a
+release that removes eleven commands *and* the script families behind them. The command surface is
+gone; the script families are not, blocked on a finding recorded in
+`docs/work-sessions/2026-09-20-issue-1030-removals-and-release.md`. A version says what shipped, and
+taking 1.0.0 here would leave the complete release with no number to be.
+
+### Removed -- BREAKING
+
+- **Eleven commands and nine skills.** `/outcome`, `/loop`, `/resume`, `/handoff`, `/optimize`,
+  `/pulse`, `/delegation-audit`, `/promote`, `/engines`, `/tier` and `/fleet-doctor` are gone, with
+  the nine skill directories behind them. Fourteen command files remain: the thirteen surviving
+  commands plus the `/ceo-review` alias. The eleven removed commands were carried by **ten** files —
+  `/delegation-audit` was reached through its skill alone.
+- **Four hooks, and the three event keys that held only them.** The delegation tripwire, the
+  delegation stop audit, the team-spawn residency check and the team teardown hook are deregistered
+  and deleted; `SessionEnd`, `Stop` and `SubagentStop` leave `hooks.json` with them. Eight hooks
+  remain.
+- **Both agents.** `saga:mechanical-executor` and `saga:readonly-verifier`, with the
+  agent-registration canary entry and its guard.
+- **The generated documentation atlas.** Four SVGs, `docs/model/saga-docs-model.yaml`, the visuals
+  page and `scripts/render_docs_visuals.py`. A hand-maintained model of a command surface goes stale
+  the moment the surface moves; `tests/test_command_surface.py` now guards the surface directly.
+- **The spawn-site inventory**, `references/sandbox-spawn-sites.md`, with the project instruction it
+  supported.
+
+### Removed -- BREAKING (the team-execution archive)
+
+- **`team-execution` is no longer an execution backend.** The plugin is archived by this card; its
+  final entry is `plugins/team-execution/CHANGELOG.md` at version 4.0.0, written at commit
+  `005e7e70`, one commit before the directory was deleted. `ORCHESTRATION_MODES` is now
+  `("inline", "cc-workflows-ultracode")` and `lifecycle_state.ORCHESTRATION_TIERS` is two rungs.
+  The enum strings remain a durable wire contract: a persisted tick recording `team-execution` still
+  reads back and still renders a label, so no saga becomes unreadable — the value is simply no
+  longer selectable.
+- **`recommend_execution_backend()` returns `inline` under every trigger.** Ruling C5 (issue #840)
+  forbids recommending a Workflow, and the only other value is gone. The size, risk and
+  gated-consensus signals are still computed; they now select the rationale the tick records rather
+  than a different backend. `/plan` §5.2 and `/work` §3 therefore render no backend offer, and still
+  record both `--orchestration-recommended` and `--orchestration-mode` so the decision is not silent.
+- **`/work` no longer stores Layer-2 artifact pointers.** The script that wrote them lived in the
+  archived plugin. The tick's `--artifact-pointers` flag still accepts a typed pointer, because the
+  field is durable and historical ticks read back, but nothing in the chain writes one; large
+  evidence goes in the run record's per-unit envelopes.
+- **The 25 agent prompts are not lost.** They are the source material for
+  `plugins/agent-launcher/roles/`. Recorded as DECISIONS `{#team-execution-archived-1030}`.
+
+### Tests (the archive)
+
+- **`tests/test_team_execution_archived.py` is new.** It checks the plugin in every syntax a caller
+  could use — a directory, a marketplace entry, an import, a `spec_from_file_location` by path, a
+  plugin-resolution call, and a bare command line in a skill — and carries its own two self-tests
+  proving the scanner fires on each actionable syntax and stays silent on a historical mention. It
+  failed 8 of its 17 cases before the removal.
+- Seven `tests/test_team_execution_*.py` files are deleted, including the twenty-two cases already
+  skipped with a reason naming this archive step. `tests/test_team_emitter_and_spec_table_removed.py`
+  is **kept**: its subject is that two modules stay gone, not that this plugin exists, and it is the
+  guard against re-adding what this release removes.
+- The agent inventory in `tests/test_agent_preamble_identity.py` goes from 34 files to 9. The
+  canary registry loses its `team-execution-pointers` entry, whose mutation target is gone.
+
+### Changed
+
+- **Review roles run as roster sessions in their own worktrees.** The `CLAUDE.md` rule that every
+  review-class Agent-tool spawn must name saga's read-only verifier and pass `isolation: "worktree"`
+  is replaced. The hazard is unchanged — a reviewer sharing the tree it reviews can clobber it — but
+  the roster helper gives each role its own worktree when it creates the session, so the property
+  holds by construction instead of depending on four mechanisms and every caller's memory.
+  `/code-review`, `/investigate`, `/brainstorm` and `/work`'s execution-strategy reference say it the
+  new way.
+- **`/spec` and `/strategy` stop citing the dispatch table** in the deleted `/loop` skill, and
+  `/spec`'s onward routing stops naming `/handoff`. `/retro` stops citing the promotion contract in
+  the deleted `/promote` skill and carries the promotability rule itself.
+
+### Tests
+
+- **`tests/test_command_surface.py` is new** and replaces two hand-maintained inventories in
+  `tests/test_saga_plugin.py`. It asserts the surviving set, the removed names in the card's own
+  spelling, and that every surviving command resolves a skill whose frontmatter declares the same
+  name — three things a file count cannot distinguish. It failed 22 of its 37 cases on the base.
+- **`tests/test_saga_hooks.py` is rewritten** around a re-add guard naming each retired hook by
+  filename and a set assertion over the eight survivors, plus both directions of the
+  registered-versus-on-disk check. Verified by breaking it: restoring one registration fails three of
+  its six cases.
+- Nine test files retired with their subjects. The suite goes from 302 files to 296. No test was
+  marked advisory, skipped or `xfail`, and the gate's coverage contract against `ci.yml` is
+  untouched.
+- The gate-absence ratchet baseline shrank by its four vanished skill files, which is the direction
+  the lint's own procedure allows. The check itself is unchanged.
+
+### Fixed
+
+- **Nineteen reference documents were deleted and restored in the same branch.** They describe the
+  families this card removes, but the families are the script removal and the script removal is
+  blocked, so fifteen of the nineteen were verified to document a module still on disk. Deleting the
+  documentation of live code is worse than leaving both: the next reader hits a module with no
+  contract. They go when their scripts go. Recorded as LEARNINGS
+  `{#docs-go-with-their-code-1030}`.
 ## [0.172.0] - 2026-09-20
 
 **Bumped from 0.171.0**, the saga version on `origin/parent/1018` at commit `61da4b1c`

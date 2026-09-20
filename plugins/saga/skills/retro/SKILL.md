@@ -25,7 +25,7 @@ maturity (`scripts/saga.py:56`, `:72`):
 - **`/retro` answers: "What did we learn, and how does the system get smarter?"** (this engine — terminal)
 
 `/retro` is **ADVISORY**: `/loop` names it as the next command after `/qa` but **never blocks the router**
-on its output (`loop/references/dispatch-table.md`). It is **READ-ONLY on the world** — it reads issues,
+on its output. It is **READ-ONLY on the world** — it reads issues,
 PRs, checks, and the board via `gh` and never mutates them (**mission-control owns the SDLC**); it reads git
 and the saga and writes **no** saga tick (the `->retro` advance is dead wiring — `/retro` is saga
 READ-ONLY). Surfaced follow-ups become a `/handoff` (new issue) or a `QUEUED.md` entry — `/retro` routes
@@ -185,9 +185,6 @@ The orchestrator never reads a raw `.jsonl` or a skeleton file — paths only.
 **1.6 R12 orchestration telemetry (read-only).** Run the override-rate reader to surface
 backend choice-vs-recommendation signals across all sagas:
 
-```bash
-python3 plugins/saga/scripts/override_rate_reader.py --root . [--json]
-```
 
 This surfaces three R12 signals:
 
@@ -211,14 +208,11 @@ re-weighting is evidence-driven (R12's intent: measure before re-weighting).
 **1.6a Gate-divergence telemetry (read-only, issue #399).** Run the gate-divergence reader to
 surface per-gate rubber-stamp rates across all sagas, alongside the R12 reader above:
 
-```bash
-python3 plugins/saga/scripts/gate_divergence_reader.py --root . [--json]
-```
 
 This generalizes the R12 reader shape from one gate (orchestration-backend choice) to the
 fleet's other interactive decision gates (mode selection, fix-vs-diagnosis-vs-rethink,
 per-expansion opt-in, coordinator-level decisions — see
-`plugins/saga/references/gate-divergence-instrumentation.md` for the full list of instrumented
+  the run record, which is where a gate interaction and its outcome are now recorded.
 `gate_id`s). For each `gate_id`, it reports the rubber-stamp rate (fraction of interactions
 where the operator's answer matched the offered default/recommendation), the interaction count,
 and mean latency.
@@ -359,7 +353,9 @@ latent cross-repo lessons this sweep does not.
 - **Form + placement (frozen — do not redefine).** Exactly `**Transcendent.**` on its own line directly
   below the rule it elevates, with an optional one-line reason it crosses. The canonical form, the
   detection anchor, and the `<repo>:<hash>` source key are frozen in
-  `../promote/references/promotion-contract.md` §1–§2 — quote that contract, it is the single definition.
+  the promotion contract that lived in the removed `/promote` skill. `/retro` now carries the rule
+  itself: a learning is promotable when it is repo-independent, evidence-backed, and stated as a rule
+  a future reader could apply without this repository in front of them.
 - **Tier.** It **edits an existing entry**, so it is **PROPOSE-DIFF-AND-WAIT** (never the Tier-1 AUTO
   append) — show the one-line insertion as a diff + `AskUserQuestion` (apply / skip / modify the reason).
   Skip any entry that already carries the marker (a human may have written it — idempotent, never
@@ -397,7 +393,7 @@ Surfaced follow-ups exit to:
 - **`/handoff`** — a follow-up that should become an SDLC issue (envelope per `/loop`'s Phase 4.2);
 - **`QUEUED.md`** — a follow-up that is durable backlog, not yet an issue.
 
-Route per `loop/references/dispatch-table.md` — **read** it, never restate it. `/retro` is terminal: there
+`/retro` is terminal: there
 is **NO saga write** (the `->retro` advance is dead wiring; `/retro` is saga READ-ONLY).
 
 ---
@@ -434,12 +430,8 @@ It never blocks the router.
   links + diff-vs-last) and the journal-promotion entry templates (LEARNINGS / DECISIONS / QUEUED / ARCHIVE).
 - `../../references/operator-choice.md` — the decision contract for offering a refactor backend
   (narrow default offer: inline / team-execution).
-- `loop/references/dispatch-table.md` — the outbound routing reference (read, never restate).
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).
 - `../../references/saga-spec.md` — the saga contract (`restore` / `ticks`; `/retro` is read-only).
-- `../../scripts/override_rate_reader.py` — R12 telemetry reader: scans saga envelopes for
-  override-rate, over/under-tier, and budget-exhaustion signals (Phase 1.6). Zero-data reports
-  "no data yet"; read-only; `--json` for machine-readable output.
 - `../../scripts/manifest_reader.py` — R7/R16/R18 telemetry reader: scans the provenance-manifest
   tree for parroting count, disposition rate, and the adjudicated verified ratio (Phase 1.8).
   Zero-data reports "no data yet"; read-only and advisory-only (R8/R12); `--json` for

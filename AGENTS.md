@@ -34,7 +34,7 @@ plugin-name/
 └── CHANGELOG.md
 ```
 
-**Examples**: `saga`, `home-lab-ops`, `team-execution`
+**Examples**: `saga`, `home-lab-ops`
 
 ### CLI-based Plugins
 Python CLI scripts wrapped as Claude Code skills/commands for interacting with external services.

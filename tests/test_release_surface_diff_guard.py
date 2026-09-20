@@ -770,3 +770,93 @@ def test_main_handles_diff_guard_error(monkeypatch, capsys):
     assert rc == 1
     captured = capsys.readouterr()
     assert "release_surface_diff_guard: git diff failed" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# An archived plugin: the directory and the manifest are gone on purpose (#1030)
+# ---------------------------------------------------------------------------
+
+
+def test_archived_plugin_absent_from_the_marketplace_passes():
+    """A plugin deleted whole, and removed from the marketplace, needs no proposed manifest.
+
+    The guard's rule is "if you changed a plugin, bump it". A plugin that no longer exists cannot
+    carry a proposed version, and the bump it did take -- its final release -- lives in the commit
+    before the deletion. What is still checkable at the tip is that the registry agrees, which is
+    what the next case fails on.
+    """
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "3.2.0"}
+            ),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): None,
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+        marketplace_names=frozenset({"bar"}),
+    )
+
+    assert violations == []
+
+
+def test_archived_plugin_still_listed_in_the_marketplace_fails():
+    """The failure this case exists for: a deleted tree with a live registry entry.
+
+    That combination installs a plugin whose files are not there, which is worse than either half
+    alone -- so the exemption above is granted only when the registry agrees the plugin is gone.
+    """
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "3.2.0"}
+            ),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): None,
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+        marketplace_names=frozenset({"foo", "bar"}),
+    )
+
+    assert len(violations) == 1
+    assert "foo" in violations[0]
+    assert "marketplace" in violations[0]
+
+
+def test_a_missing_manifest_without_a_marketplace_listing_still_fails_when_the_tree_remains():
+    """Not every missing manifest is an archive: deleting only the manifest is a broken plugin.
+
+    Without the marketplace argument the guard cannot tell the two apart, so it keeps its original
+    strict behaviour and reports the missing manifest.
+    """
+    reader = make_manifest_reader(
+        {
+            ("base", "plugins/foo/.claude-plugin/plugin.json"): json.dumps(
+                {"name": "foo", "version": "3.2.0"}
+            ),
+            ("HEAD", "plugins/foo/.claude-plugin/plugin.json"): None,
+        }
+    )
+    violations = GUARD.find_violations(
+        [
+            "plugins/foo/skills/x/SKILL.md",
+            "plugins/foo/.claude-plugin/plugin.json",
+            "plugins/foo/CHANGELOG.md",
+        ],
+        manifest_reader=reader,
+    )
+
+    assert len(violations) == 1
+    assert "is missing" in violations[0]

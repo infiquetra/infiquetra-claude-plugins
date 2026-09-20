@@ -159,60 +159,6 @@ def test_supports_effort_matrix() -> None:
     assert tier_palette.supports_effort("haiku", "xhigh") is False
 
 
-def test_segment_units_refactor_uses_ladder_ops() -> None:
-    """The refactored segment_units() merge must equal the old strongest-model/highest-effort."""
-    sys.path.insert(0, str(REPO_ROOT / "plugins" / "saga" / "scripts"))
-    import fleet_commons_shim
-
-    tp = fleet_commons_shim.load("tier_palette")
-    # A haiku/high segment merged with a sonnet/medium sibling -> sonnet/high.
-    assert tp.strongest("model", ["haiku", "sonnet"]) == "sonnet"
-    assert tp.strongest("effort", ["high", "medium"]) == "high"
-
-
-# ---------------------------------------------------------------------------
-# U3 (AC6/AC7) — unsupported-combo HALT (engine-owned excluded) + ladder
-# monotonicity invariant over every adjacent pair.
-# ---------------------------------------------------------------------------
-
-sys.path.insert(0, str(REPO_ROOT / "plugins" / "saga" / "scripts"))
-
-import execution_spec as es  # noqa: E402
-
-
-def test_unsupported_combo_halts_for_claude_teammate() -> None:
-    """AC6: a Claude haiku/xhigh tier HALTs at validate() — a typed error, not a clamp."""
-    with pytest.raises(es.SpecError, match="ceiling"):
-        es.Tier(model="haiku", effort="xhigh").validate("unit u1")
-    # within-ceiling combos pass untouched
-    es.Tier(model="haiku", effort="high").validate("unit u1")
-    es.Tier(model="opus", effort="xhigh").validate("unit u1")
-
-
-def test_engine_owned_tier_excluded_from_ceiling_halt() -> None:
-    """is_engine_owned=True skips the ceiling check (chaperone-dispatch stays pinned)."""
-    es.Tier(model="haiku", effort="xhigh").validate("unit u1", is_engine_owned=True)
-
-
-def test_unit_validate_halts_claude_but_not_engine_owned() -> None:
-    """The Unit.validate wiring: a Claude unit HALTs; an engine-owned unit does not."""
-    claude = es.Unit(
-        unit_id="u1", label="l", tier=es.Tier(model="haiku", effort="xhigh"), prompt="p"
-    )
-    with pytest.raises(es.SpecError, match="ceiling"):
-        claude.validate("spec")
-
-    engine_owned = es.Unit(
-        unit_id="u2",
-        label="l",
-        tier=es.Tier(model="haiku", effort="xhigh"),
-        prompt="p",
-        capability="code-generation",
-        engine_intent="offload",
-    )
-    engine_owned.validate("spec")  # excluded from the ceiling HALT — must not raise
-
-
 @pytest.mark.parametrize(
     "stronger,weaker",
     [
@@ -364,17 +310,6 @@ def _tier_token_drift(text: str) -> list[str]:
         elif right_is_effort and not left_is_model:
             bad.append(f"{left}/{right} (invalid model)")
     return bad
-
-
-def test_tier_catalog_check() -> None:
-    """AC8 (team-execution half): no unspaced `model/effort` token in the team-execution
-    worker table drifts from the vocabulary. That table uses unspaced tokens (`opus/high`);
-    the /plan table is spaced and is guarded by render-equality instead — see
-    test_plan_table_render_synced (and test_tier_resolver.py::test_skill_registry_sync).
-    A spaced regex here would false-positive on prose ("high / low"), so the two tables use
-    the guard each fits."""
-    drift = sorted(set(_tier_token_drift(TEAM_SKILL_MD.read_text(encoding="utf-8"))))
-    assert drift == [], f"team-execution SKILL.md tier tokens drift from the palette: {drift}"
 
 
 def test_plan_table_render_synced() -> None:

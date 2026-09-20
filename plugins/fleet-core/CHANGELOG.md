@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.31.0] - 2026-09-20
+
+### Removed
+
+- **Four modules with their last consumers (issue #1030).** `concurrency_policy.py`,
+  `delegation_audit.py`, `delegation_state.py` and `liveness_engine.py` are gone: the saga modules
+  that imported them -- the concurrency governor, the delegation-audit query, the engine dispatch
+  and the liveness event reader -- were removed with the commands they served, and a survey of every
+  plugin, hook, test and skill found no reference left by any syntax.
+- `plugins/saga/references/liveness-consumer-sites.md` goes with `liveness_engine.py` in the same
+  commit: every consumer it inventoried was in the archived team-execution plugin, so the document
+  described an engine with no callers.
+
+The eighteen surviving modules all have a live importer, verified the same way. `audit_store.py`,
+`bridge_receipt.py` and `output_attestation.py` stay because the agy and codex delegate wrappers
+still use them.
+
 All notable changes to the fleet-core plugin will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import pathlib
 import re
 import subprocess
 import sys
@@ -216,14 +217,35 @@ def classify_by_plugin(paths: list[str]) -> dict[str, list[str]]:
     return by_plugin
 
 
+def _marketplace_names() -> frozenset[str] | None:
+    """The plugin names the marketplace lists in the working tree, or None if it cannot be read.
+
+    None keeps the guard strict: a registry it cannot consult is never taken as agreement.
+    """
+    path = pathlib.Path(".claude-plugin/marketplace.json")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return frozenset(entry["name"] for entry in data["plugins"])
+    except Exception:
+        return None
+
+
 def find_violations(
     paths: list[str],
     base_ref: str = DEFAULT_BASE_REF,
     *,
     runner: Callable[..., Any] | None = None,
     manifest_reader: Callable[[str, str], str | None] | None = None,
+    marketplace_names: frozenset[str] | None = None,
 ) -> list[str]:
-    """Return violations for plugins whose non-doc files changed without an advancing version."""
+    """Return violations for plugins whose non-doc files changed without an advancing version.
+
+    ``marketplace_names`` is the set of plugin names the marketplace lists at the proposed tip.
+    Supplying it lets the guard tell an **archived** plugin -- manifest gone AND registry entry gone
+    -- from a **broken** one, whose manifest was deleted while the registry still advertises it.
+    Omit it and the guard keeps its original strict behaviour: any missing proposed manifest is a
+    violation, which is the safe answer when the registry cannot be consulted.
+    """
     by_plugin = classify_by_plugin(paths)
     violations: list[str] = []
 
@@ -250,6 +272,19 @@ def find_violations(
 
         head_res = extract_manifest_version(head_content, f"proposed manifest {manifest_path}")
         if head_res.error:
+            if head_content is None and marketplace_names is not None:
+                # The manifest is gone. Two very different changes look identical here, and the
+                # marketplace is what separates them: a deliberate archive removes both, while a
+                # deleted manifest beside a live registry entry installs a plugin whose files are
+                # not there. The archive needs no proposed version -- it cannot have one -- and its
+                # final release lives in the commit before the deletion.
+                if plugin_name not in marketplace_names:
+                    continue
+                violations.append(
+                    f"{plugin_name}: the manifest {manifest_path} is gone but the marketplace "
+                    f"still lists the plugin; an archive removes both"
+                )
+                continue
             if base_content is not None:
                 base_res = extract_manifest_version(
                     base_content, f"base-ref manifest {manifest_path}"
@@ -306,7 +341,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         paths = changed_files(args.base_ref)
-        violations = find_violations(paths, base_ref=args.base_ref)
+        violations = find_violations(
+            paths, base_ref=args.base_ref, marketplace_names=_marketplace_names()
+        )
     except DiffGuardError as exc:
         print(f"release_surface_diff_guard: {exc}", file=sys.stderr)
         return 1

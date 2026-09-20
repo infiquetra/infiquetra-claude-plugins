@@ -87,7 +87,7 @@ def main() -> None:
         text = saga_spore.dump(spore)
 
         # R5. Write target (atomic)
-        common_dir = saga_spore.outcome_store.resolve_common_dir(repo_root)
+        common_dir = saga_spore.run_record._resolve_common_dir(repo_root)
         out_path = saga_spore.spore_path(common_dir, session_id)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 

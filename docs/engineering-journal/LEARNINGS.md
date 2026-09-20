@@ -2,6 +2,142 @@
 
 ## 2026-09-20
 
+### A name-based check is only as good as the set of names you hand it  {#name-checks-need-checked-inputs-1030}
+
+**Evidence.** Issue 1030's removal of 73 script modules and the test sweeps that followed. Four
+failures of the same kind, in one card:
+
+1. The archive guard reported clean while `tests/test_intent_envelope.py` reached a deleted script
+   through a path joined across seven lines. Fixed by matching the bare filename, since a path can
+   be assembled and a filename cannot.
+2. A sweep matched `outcome.` and `"outcome"` -- English prose and a dict key -- and dropped 62
+   cases including 20 live ones. Reverted; rewritten to require an *actionable* reference (an
+   import, a `spec_from_file_location`, a `_load("name")`, a `scripts/name.py` path).
+3. The same loose match was reintroduced later and dropped 120. Reverted again.
+4. Underneath all of it: the "which modules are gone" set was computed by diffing the working tree
+   against `HEAD`, but `HEAD` already contained the removals, so the set was nearly empty. The
+   precise matcher therefore found almost nothing, which is what made the blunt one look necessary.
+   Comparing against `origin/parent/1018` gave the right set, and the precise matcher then dropped
+   52 -- the correct answer all along.
+
+**Mechanism.** Three of these look like precision bugs and the fourth like a silly mistake, but the
+fourth caused the other two. A check that reports nothing has two explanations -- there is nothing
+to find, or it was asked the wrong question -- and the instinct to widen the net treats the first as
+given. The reference commit for "what did this change remove" is never `HEAD` once the change is
+committed; it is the branch point.
+
+**Generalizable rule.** When a check comes back empty, verify its input before loosening its
+pattern. For "what did I remove", diff against the branch point, never against `HEAD`.
+
+### Deleted tests do not fail, so something else has to notice  {#deleted-tests-need-a-witness-1030}
+
+**Evidence.** Issue 1030. The sweeps above removed four cases from
+`tests/test_saga_spec_consumer_row.py` and five from `tests/test_saga_plan_contract_boundaries.py`
+that had nothing to do with the removals: the plan-save contract CLI's failure envelopes (a missing
+PyYAML, a `BaseException` from checkout code, engine resolution, conflict recovery, the proof CLI
+staying inert under the loader) and the renderer's edit and rollback workflows.
+
+**Mechanism.** Nine entries in `tools/canary_registry.json` name those guards, and a canary whose
+guard function has vanished reports `error`, not `caught`. That is the only reason the loss
+surfaced: `test_plan_contract_guards_have_teeth` failed. A suite cannot report a test that is no
+longer there, so a deletion pass over tests is the one refactor with no built-in witness -- it can
+only go green.
+
+The near-miss is worth recording too. The first repair that suggested itself was to prune the canary
+entries whose guards were "missing", which would have silenced the alarm rather than answered it.
+Checking each entry individually split them nine guard-absent to fourteen guard-present, which is
+what made the deletion obvious.
+
+**Generalizable rule.** A pass that deletes tests needs an independent witness that the survivors
+are still there -- a canary registry, a committed count, anything outside the suite. When that
+witness fires, repair what it points at; never repair the witness.
+
+### A guard over a path must also match the bare filename  {#guard-paths-by-filename-1030}
+
+**Evidence.** Issue 1030's `tests/test_team_execution_archived.py`, which reported clean; the full
+suite then failed at collection because `tests/test_intent_envelope.py` built the path to a deleted
+script by joining `ROOT / "plugins" / "team-execution" / ... / "posture_check.py"` across seven
+lines. Adding `\b<module>\.py\b` as a pattern found four more readers the same minute.
+
+**Mechanism.** A removal guard that enumerates syntaxes -- import, `from`, `spec_from_file_location`,
+a slash-separated path literal -- is matching *how the reference is written*, and a path is the one
+form that can be assembled rather than written. A filename cannot: whatever expression builds the
+directories, the last segment is a literal string. So the filename is the invariant and the path is
+the variable, and a guard that matches only the path is guarding the easy half.
+
+The guard's own self-tests did not catch this either, because they test that the scanner fires on
+each syntax the author thought of. A self-test proves a scanner is not vacuous; it cannot prove the
+syntax list is complete.
+
+**Generalizable rule.** When guarding that a file is gone, match its bare filename, not only the
+paths you can imagine someone writing.
+
+### A frozen-contract test can be right about its rationale and wrong about its assertion  {#frozen-contract-assertion-vs-rationale-1030}
+
+**Evidence.** `tests/test_saga_saga.py::test_orchestration_modes_enum_is_frozen`, restated by issue
+1030 when `team-execution` left `ORCHESTRATION_MODES`.
+
+**Mechanism.** The test asserted the tuple byte-for-byte, and its docstring gave the reason:
+persisted sagas carry the raw enum string, so a rename or reorder would silently corrupt a saga
+saved before the change. That reasoning is correct and still holds. But it licenses a byte-for-byte
+assertion only against renames and reorders -- and a *removal* is safe for exactly the reason given,
+because nothing on the read path validates against the enum. The assertion was stricter than the
+invariant it was defending, so a safe change read as a contract break.
+
+The repair is to restate the invariant, never to delete the guard or relax it to a substring check:
+a surviving value is never renamed and never reordered, and a removed value is never reused to mean
+something else. The removal's real property -- refused at the write path, accepted at the read path
+-- became its own case with a canary mutation behind it.
+
+**Generalizable rule.** When a frozen-contract test fails, read its docstring before its assertion.
+If the rationale does not cover the change, the assertion is too strict and needs restating -- which
+is not the same as weakening it.
+
+### Documentation is deleted in the same commit as the code it documents, never ahead of it  {#docs-go-with-their-code-1030}
+
+**Evidence.** Issue 1030, commits `bc05521b` (the mistake) and `00e38cd1` (the correction), caught by
+a check for dangling paths from every surviving saga skill, command, hook and reference.
+
+**Mechanism.** The card removes eleven command families, so a commit deleted the nineteen reference
+documents describing them. But the families *are* the script removal, and the script removal was
+blocked on a separate finding. Fifteen of the nineteen were then verified one by one to document a
+module still on disk — `adjustment-envelope.md` and `adjustment_envelope.py`, `run-fact-ledger.md`
+and `run_ledger.py`, `fleet-doctor-sources.md` and `fleet_doctor.py`, and so on. The failure is
+asymmetric and that is what makes it worth a rule: code with stale documentation is a known hazard a
+reader can see, while live code whose contract was deleted looks like code that never had one, and
+the next person to touch it reconstructs the guarantees by guessing.
+
+It surfaced as a test failure three steps away — a case reading a deleted reference — rather than as
+anything that looked like a documentation problem, which is the other half of the lesson: nothing in
+a deletion pass tells you that you removed a description of something that still exists.
+
+**Generalizable rule.** A document that describes a module is deleted in the same commit as the
+module. When a removal is split across commits, the documentation waits for the code, not the other
+way round — and after any deletion pass, grep every surviving surface for paths that no longer
+resolve.
+
+### A count is the weakest half of a surface guard  {#count-is-the-weak-half-1030}
+
+**Evidence.** `tests/test_command_surface.py`, added in issue 1030's first unit; the card's own
+acceptance criterion is `ls plugins/saga/commands | wc -l` printing 14.
+
+**Mechanism.** A count cannot distinguish a correct surface from a wrong one of the same size. A
+tree that deleted `/qa` and kept `/pulse` still prints fourteen and still passes the criterion. The
+guard that replaced it asserts three things a count cannot: which names survive, which names are
+gone — spelled exactly as the card spells them, so a partial revert fails on the name rather than on
+arithmetic — and that every surviving command resolves a skill whose frontmatter declares the same
+name. Watching it fail on the base commit is what proved the third assertion was live: 22 of its 37
+cases failed before a single file was deleted.
+
+This also let two older cases retire without losing coverage.
+`test_infiquetra_lifecycle_commands_are_packaged` and
+`test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior` in `tests/test_saga_plugin.py`
+each carried a hand-maintained list of every command and skill, which is the same weak shape one
+level up; the new guard subsumes both and is stricter, because theirs asserted only that the named
+files exist, never that nothing else does.
+
+**Generalizable rule.** When an acceptance criterion is a count, write the guard against the set.
+
 ### A rewritten skill document owes contracts that live in four other test files  {#1039-skill-prose-contracts-are-distributed}
 
 **Evidence.** The `/qa` skill rewrite passed every test in `tests/test_saga_plugin.py`, which is the

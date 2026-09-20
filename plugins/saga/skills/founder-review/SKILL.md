@@ -143,7 +143,7 @@ Run Step 0 (sub-steps detailed in `references/review-modes.md`):
   context-default recommendation; state **"options differ in kind, not coverage — no completeness
   score"**; once selected, **commit, no silent drift.** Gate-divergence telemetry (optional, issue
   #399): record via `gate_id` `founder-review-mode-selection` per
-  `plugins/saga/references/gate-divergence-instrumentation.md`.
+  the run record, which is where a gate interaction and its outcome are now recorded.
   <!-- gate-record: id=founder-review-mode-selection absence=HALT transport=ask-user-question -->
   The mode selection is a durable gate-record (`founder-review-mode-selection-<run-id>`) under the
   Interaction-method contract above: open before prompting, satisfy on answer, `resolve-absent` on
@@ -160,7 +160,7 @@ Run the branch for the committed mode (full ceremonies in `references/review-mod
   **FLAT -> EXPANSIVE** (lead with the felt experience, close with effort + impact). Options:
   **A) add / B) defer (-> journal/QUEUED) / C) skip**. Gate-divergence telemetry (optional, issue
   #399): record each expansion decision via `gate_id` `founder-review-expansion-optin` per
-  `plugins/saga/references/gate-divergence-instrumentation.md`.
+  the run record, which is where a gate interaction and its outcome are now recorded.
   <!-- gate-record: id=founder-review-expansion-optin absence=HALT transport=ask-user-question -->
   Each expansion opt-in is a durable gate-record (`founder-review-expansion-optin-<n>-<run-id>`)
   under the Interaction-method contract above: open before prompting, satisfy on answer,

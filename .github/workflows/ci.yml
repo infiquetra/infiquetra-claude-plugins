@@ -203,12 +203,7 @@ jobs:
       - name: Test-shape lint (fake-only test suites)
         run: uv run python scripts/lint_test_shape.py tests plugins --prod-module server
 
-      # #458 T11-F1-6: golden-fixture drift check. Advisory per the facet's advisory rollout — it
-      # reports a deleted/mutated golden but never fails the build.
-      - name: Golden-fixture drift check (advisory)
-        run: uv run python scripts/check_fake_fixtures.py --check --advisory
-
-      # #371: every gate site across plugins/saga + plugins/team-execution must declare its
+      # #371: every gate site across plugins/saga must declare its
       # machine-readable operator-absence contract (gate-record/gate-exempt markers in markdown,
       # a literal absence_behavior on every open_gate call). Legacy debt is pinned exact-count in
       # plugins/saga/scripts/gate_absence_baseline.json — surfaced, shrink-only, drift fails.

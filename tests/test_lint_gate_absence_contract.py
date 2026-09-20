@@ -3,7 +3,7 @@
 Two layers, both against the PRODUCTION lint:
 
 * the issue's acceptance commands run via subprocess against the REAL repo tree (fixture red/green
-  pair; the six-site skills scan; the CI default scan), and
+  pair; the five-site skills scan; the CI default scan), and
 * red-path controls on throwaway trees proving every verdict the lint can emit — uncovered
   mention, malformed marker, baseline drift in both directions, vanished/stale baseline entries,
   non-literal / off-vocabulary / kwargs-hidden Python declarations — actually goes red.
@@ -29,7 +29,6 @@ MIGRATED_SKILLS = (
     "plugins/saga/skills/founder-review/SKILL.md",
     "plugins/saga/skills/ideate/SKILL.md",
     "plugins/saga/skills/investigate/SKILL.md",
-    "plugins/saga/skills/loop/SKILL.md",
 )
 
 
@@ -75,7 +74,7 @@ def test_fixture_with_absence_passes() -> None:
     assert "absence=HALT" in result.stdout
 
 
-def test_scan_saga_skills_passes_and_lists_all_six_migrated_sites() -> None:
+def test_scan_saga_skills_passes_and_lists_all_five_migrated_sites() -> None:
     result = _run("--scan", "plugins/saga/skills")
     assert result.returncode == 0, result.stdout + result.stderr
     for skill in MIGRATED_SKILLS:

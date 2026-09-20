@@ -376,26 +376,6 @@ def test_four_typed_review_outcomes_still_pinned() -> None:
     )
 
 
-def test_programmatic_review_writes_nothing_still_pinned() -> None:
-    text = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
-    # Multiple phrasings exist; check the canonical one.
-    assert "ZERO durable writes" in text or "ZERO file writes" in text
-    # Work's 5.2 also states the caller owns persistence.
-    work = _read_skill()
-    assert (
-        "programmatic" in work.lower()
-        and "writes nothing" in work.lower()
-        or "caller owns persistence" in work.lower()
-    )
-    sec52 = _section(work, "### 5.2 ", "### 5.3 ")
-    assert "outcome" in sec52.lower()
-
-
-# ---------------------------------------------------------------------------
-# Phase-4 skill contracts — gate verdict validation and override naming
-# ---------------------------------------------------------------------------
-
-
 def test_skill_names_gate_verdict_validation_at_save() -> None:
     text = _read_skill()
     sec = _section(text, "### 4.2 ", "### 4.3 ")

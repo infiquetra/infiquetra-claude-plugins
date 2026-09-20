@@ -245,7 +245,7 @@ asked. Five rules govern it:
 
 - **Apply and narrate.** A valid `destination` (Phase 5.1's enum) and an `inline` backend are
   applied to their decisions and visibly narrated together with the `caller` that supplied them. Do
-  not ask the operator to repeat a settled decision. `team-execution` and `cc-workflows-ultracode`
+  not ask the operator to repeat a settled decision. `cc-workflows-ultracode`
   are legal plan values, but the carrier never applies them automatically — they require explicit
   operator invocation, so the validator stops and surfaces them instead of applying.
 - **Absence falls through.** A missing carrier, or a carrier omitting a field, is not an error: the
@@ -356,7 +356,7 @@ type: <feat|fix|refactor|chore|docs|perf|test>
 status: active
 date: YYYY-MM-DD
 origin: <repo-relative path to the upstream brainstorm/requirements doc, when planning from one>
-backend: <inline|team-execution|cc-workflows-ultracode>
+backend: <inline|cc-workflows-ultracode>
 deepened: <YYYY-MM-DD, optional; added when the confidence pass deepened the plan>
 ---
 ```
@@ -424,21 +424,20 @@ document travels with the work because the executor commits it alongside the cha
 it the place a decision made here can reliably be read later. `/work` honours that field and does
 not ask again.
 
-The recorded enum has three values — `inline` ("inline") | `team-execution` ("team execution") |
+The recorded enum has two values — `inline` ("inline") |
 `cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
-`ORCHESTRATION_MODES`. **The default Saga offer is `inline` and `team-execution` only.** Read the
-work shape, call `lifecycle_state.py recommend-backend` so the tick can record
-`--orchestration-recommended` (R12 telemetry), pre-select the cheapest-correct of those two,
-confirm with the operator, and record what they picked via `--orchestration-mode`. (If a Phase 0.7
-pre-answer carrier applied `backend: inline`, skip only the operator-facing offer — still call the
-recommender, still record both flags, and still write the plan document's `backend:` field.)
+`ORCHESTRATION_MODES`. **The default Saga offer is `inline` only**, since issue #1030
+archived team-execution and ruling C5 forbids recommending a Workflow; there is no longer an offer
+to render or a choice to put to the operator. Still call `lifecycle_state.py recommend-backend` and
+still record both `--orchestration-recommended` and `--orchestration-mode` (R12 telemetry), so a
+tick continues to carry recommended-and-chosen rather than going silent on the decision.
 
 **Claude Code Workflows (`cc-workflows-ultracode`) are reachable only by explicit operator
 invocation** (DECISIONS `{#cc-workflows-backend-narrow-808}`, issue #808's NARROW ruling).
 They are **never a default** or automatic Saga backend, and never a generic interchangeable
 execution backend. **Never pre-select** one. Never launch one because
 `recommend_execution_backend()` returned it. Never
-silently substitute one for `inline` or `team-execution`. Do not build a mechanism-neutral
+silently substitute one for `inline`. Do not build a mechanism-neutral
 backend-switching abstraction around it.
 
 Everything about the two non-`inline` backends — the availability probe, the per-unit tier table,
@@ -481,19 +480,8 @@ This changes only the table's proposed defaults — the table itself, the operat
 and the `VERIFY_N_CAP` mechanics are unchanged, and no per-unit posture question is ever asked
 (the fleet drift guard fails on one).
 
-**Estimate column (#402).** Add a fourth `Estimate` column to this per-plan table (the U-ID/label/
-tier/rationale table above, never the GENERATED work-shape registry table) — the ordinal, index-weighted
-spend the assigned tier costs (never a dollar amount). Once the per-unit tiers are locked into a draft
-`ExecutionSpec`, run
+**The Estimate column (#402) is retired.** It rendered an ordinal, index-weighted spend per unit from `spend_estimate.py`, which issue 1030 removed with the spend readers; the tier table is U-ID, label, tier and rationale.
 
-```bash
-python3 plugins/saga/scripts/spend_estimate.py estimate --spec <spec.json>
-```
-
-and fold its per-unit figures into the Estimate column so the operator sees relative cost alongside the
-tier they are confirming, not as a separate lookup. The estimator is read-only (it renders a table; it
-writes nothing to the ledger or the spec) — see `spend_estimate.py`'s own module docstring for the
-reconcile-side (post-run) companion this authoring-time render feeds into.
 
 **The `/plan`-authored tier table is not the only lever (#365).** The operator can adjust tier
 **mid-run** without aborting and re-planning via `/tier`: a run-scoped ceiling
@@ -542,8 +530,9 @@ carries the unit's `intent` and a **plan-time resolution preview**: for a capabi
 "resolves today to `<engine_id>/<variant>`" alongside the tier row; an explicit-engine unit has no
 preview to show (naming the engine already fixes it — R26 halts rather than substitutes if it becomes
 unavailable). This preview is the baseline the chaperone's `substituted-engine` disposition compares
-the run-time resolution against (KTD4, `references/external-engine-workers.md` §4 in team-execution) —
-record it in the saga tick / emitted plan alongside the tier so it survives to `/work`.
+the run-time resolution against (KTD4; the external-engine worker contract lived in the
+team-execution plugin, which issue #1030 archived) — record it in the saga tick / emitted plan
+alongside the tier so it survives to `/work`.
 
 ### 5.3 Write the saga tick
 
@@ -565,12 +554,11 @@ python3 plugins/saga/scripts/saga.py save \
   --destination '<plan-only|pr|merge|nonprod-deploy>' \
   --adr-refs 'ADR-NNNN|ADR-MMMM' \
   --decisions 'KTD1: rationale. KTD2: rationale.' \
-  --orchestration-mode '<inline|team-execution|cc-workflows-ultracode>' \
-  --orchestration-recommended '<inline|team-execution|cc-workflows-ultracode>'
+  --orchestration-mode '<inline>' \
+  --orchestration-recommended '<inline>'
 ```
 
 - `--deploy-autonomy '<gate|auto>'` only when `--destination nonprod-deploy`.
-- `--orchestration-ref 'docs/workflows/YYYY-MM-DD-<topic>-spec.json'` only when `--orchestration-mode cc-workflows-ultracode`.
 <!-- END GENERATED PLAN SAVE EXAMPLES: default -->
 
 **For `cc-workflows-ultracode`:** also pass `--orchestration-ref` pointing at the **spec JSON** (the
@@ -579,24 +567,7 @@ canonical artifact, per KTD1/KD3 — regenerable, so the ref is the spec not the
 <!-- BEGIN GENERATED PLAN SAVE EXAMPLES: workflow -->
 <!-- Source: plugins/saga/references/plan-save-contract.yaml; renderer: plugins/saga/scripts/plan_save_contract.py.
 Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract. -->
-**Example: cc-workflows-ultracode**
 
-```bash
-python3 plugins/saga/scripts/saga.py save \
-  --kind '<issue|task>' \
-  --id '<issue-number-or-task-slug>' \
-  --lifecycle-phase plan \
-  --phase-status complete \
-  --plan-path 'docs/plans/YYYY-MM-DD-<topic>-plan.md' \
-  --destination '<plan-only|pr|merge|nonprod-deploy>' \
-  --adr-refs 'ADR-NNNN|ADR-MMMM' \
-  --decisions 'KTD1: rationale. KTD2: rationale.' \
-  --orchestration-mode cc-workflows-ultracode \
-  --orchestration-recommended '<inline|team-execution|cc-workflows-ultracode>' \
-  --orchestration-ref 'docs/workflows/YYYY-MM-DD-<topic>-spec.json'
-```
-
-- `--deploy-autonomy '<gate|auto>'` only when `--destination nonprod-deploy`.
 <!-- END GENERATED PLAN SAVE EXAMPLES: workflow -->
 
 The `.workflow.js` is regenerable at any time from the spec (`execution_spec.py emit`); the spec JSON is

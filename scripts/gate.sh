@@ -211,8 +211,6 @@ step "Journal newest-first guard (new entries)" \
 step "Run ruff check"        uv run python -m ruff check .
 step "Run ruff format check" uv run python -m ruff format --check .
 step "Test-shape lint (fake-only test suites)" tracked_test_shape
-advisory "Golden-fixture drift check (advisory)" \
-  uv run python scripts/check_fake_fixtures.py --check --advisory
 step "Gate operator-absence contract lint" \
   uv run python plugins/saga/scripts/lint_gate_absence_contract.py
 step "Engineering-journal ordering lint" uv run python scripts/lint_journal_order.py

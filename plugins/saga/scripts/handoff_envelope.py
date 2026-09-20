@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Build a thin Infiquetra loop handoff envelope for mission-control.
+"""Document-maturity assessment: the readiness owner mission-control delegates to.
+
+**Kept by issue 1030, which removed the `/handoff` command.** The name is historical. This module
+is not that command's envelope machinery -- that went with the command. What it is, and has been
+for some time, is the owner of the readiness vocabulary (`idea-ready`, `requirements-ready`,
+`plan-ready`, `resume-ready`, `deferred-context`, `pending-confirmation`) and the parser that
+classifies a source document's declared maturity.
+
+`plugins/mission-control/scripts/sdlc_manager.py` resolves this file by path (its
+`_SAGA_OWNER_MARKER`), gates it on `READINESS_CONTRACT_MAJOR`, and calls `assess_source` and
+`assess_declared` at seven sites in its issue-prepare path. Deleting it with the command would have
+broken a plugin this card does not otherwise touch, in order to remove a name rather than a
+behaviour.
+
+Original header: build a thin Infiquetra loop handoff envelope for mission-control.
 
 Also exposes the versioned readiness-owner API (``assess_source`` /
 ``assess_declared``, issue #942) that the mission-control consumer gates on.

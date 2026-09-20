@@ -118,7 +118,7 @@ After writing, note in one line that the file lives at the repo root as `STRATEG
 
 If the strategy implies concrete implementation work, route it onward — to `/plan` (settle the HOW) or
 `/loop` (route it through the lifecycle). Resolve any cross-command route through the lifecycle routing
-reference at `saga/skills/loop/references/dispatch-table.md` (referenced by path; do not
+routing each command's own skill states (do not
 copy the routing table here). If no downstream skill has run yet on this repo, suggest `/ideate` or
 `/brainstorm` as the next step.
 

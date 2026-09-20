@@ -1,6 +1,6 @@
 {
   "name": "fleet-core",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "Fleet-commons library: the one staffing component (work shape, role and lens to vendor, model and effort), shared primitives, liveness decisions, execution-class routing, and the delegation audit.",
   "author": {
     "name": "Infiquetra",

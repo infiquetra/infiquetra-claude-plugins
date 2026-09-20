@@ -1,17 +1,5 @@
 [
   {
-    "id": "agent-registration-drift",
-    "guard": "tests/test_agent_registration_drift.py::test_agent_frontmatter_name_matches_stem",
-    "invariant": "Every saga agent file's frontmatter `name:` matches its filename stem, so `saga:<name>` spawn references resolve to a real agent file (#325 R4).",
-    "mutation": {
-      "kind": "replace_text",
-      "file": "plugins/saga/agents/readonly-verifier.md",
-      "find": "name: readonly-verifier",
-      "replace": "name: readonly-verifier-canary-mutant"
-    },
-    "mutation_description": "Rename readonly-verifier's frontmatter `name:` so it no longer matches its file stem."
-  },
-  {
     "id": "release-triad",
     "guard": "tests/test_release_triad.py::test_release_triad_in_sync",
     "invariant": "plugin.json, marketplace.json, and CHANGELOG.md agree on each plugin's version in lockstep (CLAUDE.md step 6, U15/R17).",
@@ -34,18 +22,6 @@
       "replace": "    execution_id: str\n    canary_mutant_field: str\n    saga_ref: str"
     },
     "mutation_description": "Add a schema field to the Manifest dataclass with no matching \u00a713.3 matrix row (orphan field)."
-  },
-  {
-    "id": "team-execution-pointers",
-    "guard": "tests/test_team_execution_pointers.py::test_byte_drift_raises_hash_mismatch",
-    "invariant": "artifact_pointer.deref raises POINTER_HASH_MISMATCH when the holding ref is moved off the snapshot tree (KTD1 L1 integrity).",
-    "mutation": {
-      "kind": "replace_text",
-      "file": "plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py",
-      "find": "    if ref_oid.returncode != 0 or ref_oid.stdout.strip() != pointer.hash:",
-      "replace": "    if False and (ref_oid.returncode != 0 or ref_oid.stdout.strip() != pointer.hash):"
-    },
-    "mutation_description": "Neuter the L1 holding-ref integrity check so a moved ref no longer raises HASH_MISMATCH."
   },
   {
     "id": "plan-save-contract-row",
@@ -317,5 +293,17 @@
       "replace": "    return 0"
     },
     "mutation_description": "Return the success code from a direct invocation, which is the reported defect: the file answered every invocation with exit 0, so a mistyped one was indistinguishable from a passing run. The unconditional-entrypoint mutation was tried first and rejected: it fires while pytest imports this module, so the run dies with an INTERNALERROR and the canary reports 'error' rather than the clean guard failure 'caught' requires."
+  },
+  {
+    "id": "archived-orchestration-mode",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_an_archived_orchestration_mode_is_refused_at_write_and_read_back_at_rest",
+    "invariant": "`team-execution` stays out of ORCHESTRATION_MODES after issue #1030 archived the plugin, so no new run can select a backend that is not installed, while a stored tick carrying the string still loads and still renders its label.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/saga.py",
+      "find": "ORCHESTRATION_MODES = (\"inline\", \"cc-workflows-ultracode\")",
+      "replace": "ORCHESTRATION_MODES = (\"inline\", \"team-execution\", \"cc-workflows-ultracode\")"
+    },
+    "mutation_description": "Re-add the archived `team-execution` value to the orchestration enum, which is exactly the regression the guard exists to catch."
   }
 ]

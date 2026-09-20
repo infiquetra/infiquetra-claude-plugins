@@ -76,15 +76,13 @@ deferred-implementation questions, and the instruction to check the unit's test 
 four applicable categories (happy / edge / error / integration) and supplement gaps. **Preserve the
 U-ID** in the dispatch and in everything the subagent reports back.
 
-**Mechanical units (census, file-exist checks, JSON validation, grep counts, link checks) should use
-the `mechanical-executor` agent** (`plugins/saga/agents/mechanical-executor.md`) instead of a generic
-`Task` agent.  The mechanical executor runs on haiku (cheap tier), is Bash-only, and is op-discriminated
-— pass it a single `op:` payload; it rejects unknown ops rather than guessing.  Dispatch it inline
-(not as a parallel subagent) because its output feeds the calling phase directly.  Example dispatch
-payload:
+**Mechanical units (census, file-exist checks, JSON validation, grep counts, link checks) run
+inline in this session.**  They were dispatched to a dedicated cheap-tier Bash-only agent until issue
+1030 removed both saga agents; the work is a shell command and a read of its output, which costs less
+run here than it costs to stand an agent up for it.  Run the command, read the result, and carry on —
+the point of the old agent was to keep the tier cheap, and inline is cheaper still.  Example:
 
 ```
-op: census
 glob: plugins/*/agents/*.md
 ```
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.20.0] - 2026-09-20
+
+### Changed
+
+- **The saga readiness reader loses its handoff-envelope and reversibility-certificate paths
+  (issue #1030).** Both saga modules were removed with the `/handoff` command and the ship ceremony;
+  `sdlc_manager.py` no longer resolves or loads them. Mission Control's own command surface,
+  its board writes and its issue handling are unchanged -- this is the consumer side of a removal,
+  not a change to what this plugin does.
+
 ## [2.19.0] - 2026-09-19
 
 Renumbered from 2.18.0 and 2.17.0 when `main` was folded into `parent/1018`: issue #1035 took

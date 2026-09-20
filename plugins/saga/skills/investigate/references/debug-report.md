@@ -99,5 +99,5 @@ consumes a **plan path**, a **GitHub issue ref**, or a **resume request** (`work
 does **not** consume an investigation doc path. So: `/investigate` → `/handoff` → SDLC issue (DEFECT) →
 `/work` executes the issue. An **inline trivial fix already applied + self-verified** routes instead to
 `/work` or `/code-review` to SHIP it via a PR (the fix is on a branch; `/investigate` never pushes). A
-**design problem** routes to `/brainstorm`. Route per `loop/references/dispatch-table.md` — read it, never
+**design problem** routes to `/brainstorm`. Route to the command that owns the finding, never
 restate it. No saga write.

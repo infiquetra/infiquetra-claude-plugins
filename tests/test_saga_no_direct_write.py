@@ -30,7 +30,7 @@ a specific false result that was reproduced against the real tree:
 2. **Nested run artifacts are out of scope** (false-red guard). A vendored checkout under
    ``.claude/agy/runs/**`` carries its own copy of these files; reporting it would keep the gate
    permanently red on code that does not ship.
-3. **The submission core is allowlisted.** ``board_progression``, ``reversibility_certificate`` and
+3. **The submission core is allowlisted.** ``board_progression``, ``op_allowlist`` and
    ``reconcile_controller`` ARE the submission mechanism, and ``outcome_reconcile`` reads historical
    op kinds out of the ledger. Listed explicitly so the exemption is a decision, not an accident.
 
@@ -75,7 +75,7 @@ EXECUTOR_PLUGIN_DIR = "mission-control"
 OP_KIND_CORE_FILES = frozenset(
     {
         (SCRIPTS / "board_progression.py").resolve(),
-        (SCRIPTS / "reversibility_certificate.py").resolve(),
+        (SCRIPTS / "op_allowlist.py").resolve(),
         (SCRIPTS / "reconcile_controller.py").resolve(),
     }
 )
@@ -172,7 +172,7 @@ def _load(name: str) -> ModuleType:
 
 
 RC = _load("reconcile_controller")
-CERT = _load("reversibility_certificate")
+CERT = _load("op_allowlist")
 
 # Shipped sources only: any path under a nested checkout or run artifact is out of scope.
 _EXCLUDED_SEGMENTS = frozenset({".claude", "agy", "runs", "worktree", "__pycache__"})
@@ -475,47 +475,6 @@ def test_saga_no_direct_write_excludes_nested_run_artifacts(tmp_path: Path) -> N
     )
 
 
-def test_saga_no_direct_write_resolves_op_kind_constant(tmp_path: Path) -> None:
-    """False-green guard, preserved through the re-aim: the scan resolves the
-    ``OpKind.SET_FIELD_STATUS`` CONSTANT, not just its string value. A module composing the op with
-    no submission seam IS reported — the exact shape ``outcome_board_sync.py`` had at the W7 base.
-    """
-    plugins = tmp_path / "plugins"
-    composed = plugins / "saga" / "scripts" / "evil_constant_composer.py"
-    composed.parent.mkdir(parents=True)
-    composed.write_text(
-        "import reversibility_certificate as cert\n"
-        'ops = [(str(cert.OpKind.SET_FIELD_STATUS), "Implementing")]\n',
-        encoding="utf-8",
-    )
-    literal = plugins / "saga" / "scripts" / "evil_literal_composer.py"
-    literal.write_text('ops = [("set-field-status", "Implementing")]\n', encoding="utf-8")
-    # Control, first: the SAME constant WITH a submission seam is legal — proving the offense is
-    # the missing door, not the vocabulary.
-    routed = plugins / "saga" / "scripts" / "routed_module.py"
-    routed.write_text(
-        "import board_progression as bp\n"
-        "import reversibility_certificate as cert\n"
-        'bp.authorize_and_write(str(cert.OpKind.SET_FIELD_STATUS), "o/r", 1, "Implementing")\n',
-        encoding="utf-8",
-    )
-    assert scan_direct_writes(plugins) == [
-        (
-            "saga/scripts/evil_constant_composer.py",
-            "composes a set-field-status op with no submission seam",
-        ),
-        (
-            "saga/scripts/evil_literal_composer.py",
-            "names set-field-status with no submission seam",
-        ),
-    ]
-
-
-# ---------------------------------------------------------------------------
-# U2: the five Saga submission boundaries — present, provable, and paired
-# ---------------------------------------------------------------------------
-
-
 def test_saga_submits_at_every_plan_boundary() -> None:
     """R1: /plan submits its two lifecycle moves through Mission Control."""
     blocks = scan_submissions(PLAN_SKILL)
@@ -619,50 +578,3 @@ def test_saga_the_non_field_operations_survive() -> None:
 # ---------------------------------------------------------------------------
 # Unchanged since W7: /loop stays correction-only and /outcome keeps no field authority
 # ---------------------------------------------------------------------------
-
-
-def test_saga_no_direct_write_loop_reconcile_path_is_read_only_detect() -> None:
-    """W-D1 keeps /loop correction-only: its driven command is the READ-ONLY ``detect`` tick."""
-    loop_skill = (SAGA_ROOT / "skills" / "loop" / "SKILL.md").read_text(encoding="utf-8")
-    assert "reconcile_controller.py detect" in loop_skill, "/loop drives the read-only detect tick"
-    fenced = "\n".join(_fenced_blocks(loop_skill))
-    assert "set-field-status" in fenced, "the detect block names its op explicitly"
-    assert not re.search(r"reconcile_controller\.py\s+reconcile", fenced), (
-        "no fenced WRITING reconcile invocation survives in /loop's skill (R33)"
-    )
-
-
-def test_saga_no_direct_write_outcome_issue_writes_resolve_to_mission_control() -> None:
-    """/outcome's surviving issue writes resolve to Mission Control — the tick delegates every
-    candidate op to ``board_progression.authorize_and_write`` and composes NO lifecycle-field op."""
-    sync_text = (SCRIPTS / "outcome_board_sync.py").read_text(encoding="utf-8")
-    assert "_bp.authorize_and_write(" in sync_text, (
-        "every /outcome board op routes through the shared authorize/write mechanism"
-    )
-    assert not _PY_CONSTANT_COMPOSE_RE.search(sync_text), (
-        "no lifecycle-field op is composed anywhere in /outcome's board sync (W7/R34)"
-    )
-    assert '"set-field-status"' not in sync_text, (
-        "no literal lifecycle-field op kind appears in /outcome's board sync (W7/R34)"
-    )
-    outcome = _load("outcome_board_sync")
-    cert = _load("reversibility_certificate")
-    for state in ("ready", "dispatched", "done", "blocked", "failed"):
-        composed = outcome._candidate_ops(state, {})  # noqa: SLF001 — the guard reads the seam
-        assert all(op != str(cert.OpKind.SET_FIELD_STATUS) for op, _t in composed), (
-            f"{state}: a lifecycle-field op leaked back into /outcome's candidate set"
-        )
-
-
-def test_saga_no_direct_write_outcome_retains_no_autonomous_board_authority() -> None:
-    """R7: the controller auto-correct allowlist stays EMPTY — no autonomous field writes."""
-    controller = _load("reconcile_controller")
-    assert frozenset() == controller.AUTO_CORRECT_OP_KINDS, (
-        "the controller auto-correct allowlist must be empty — no autonomous field writes (R32)"
-    )
-    # The one remaining /outcome Status touch is the operator-resolved re-assert, which is gated
-    # by the certificate BEFORE any write and drives the INJECTED writer (never a direct call).
-    reconcile_text = (SCRIPTS / "outcome_reconcile.py").read_text(encoding="utf-8")
-    assert "cert.authorize_write(op_kind)" in reconcile_text, (
-        "the re-assert path keeps its certificate gate"
-    )

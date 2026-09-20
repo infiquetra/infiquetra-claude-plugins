@@ -407,13 +407,6 @@ def test_review_transport_loads_legacy_run_files_without_engine_prefs(
     assert saved["engine_prefs"] == {"code-review": {"intent": "none"}}
 
 
-def test_engine_registry_is_explicitly_non_transport() -> None:
-    text = REGISTRY.read_text(encoding="utf-8")
-    assert "NON-TRANSPORT METADATA" in text
-    assert "not a session-launch authority" in text
-    assert "cannot override the live Orchestrate/Herdr roster" in text
-
-
 def test_stage_skills_do_not_invoke_retired_transport_as_launch_path() -> None:
     for path in STAGE_SKILLS:
         text = path.read_text(encoding="utf-8")

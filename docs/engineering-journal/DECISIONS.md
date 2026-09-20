@@ -2,6 +2,155 @@
 
 ## 2026-09-20
 
+### The closed op allowlist outlives the reversibility certificate  {#op-allowlist-survives-certificate-1030}
+
+**Decision.** `reversibility_certificate.py` (582 lines) is removed by issue 1030 and replaced by
+`plugins/saga/scripts/op_allowlist.py` (87 lines), which keeps `OpKind`, `authorize_write`,
+`authorize_correction_field`, `idempotency_key`, `CORRECTION_FIELDS`, `AUTHORIZED` and `GATE` --
+the same names, so every call site in `board_progression.py` and `reconcile_controller.py` is
+unchanged.
+
+**Rationale.** The certificate carried two things. A **reversibility tiering** -- which operations
+were reversible, what their inverse was, what aborting one cost -- which existed for the ship
+ceremony that issue #1027 removed, and which nothing computes any more. And underneath it a
+**default-deny allowlist** answering a question the lifecycle still asks on every board write: may
+saga do this one without a human? Deleting the file wholesale would have deleted a fail-closed gate
+along with the dead tiering, which the card forbids.
+
+Two ops stay enumerated and still refused, named rather than omitted so the refusal reads as a
+decision: closing a parent issue, which declares a whole tree finished, and merging, which was
+reachable only through the envelope machinery this release removes.
+
+**Rejected alternative.** Let the gate go with the module and have the controller submit whatever it
+is asked to. Rejected because the failure direction inverts: an unenumerated op would be attempted
+rather than refused.
+
+**Revisit when** mission-control adds a verb saga should submit autonomously -- the change is one
+entry in `_AUTONOMOUS`, and the default-deny means forgetting it fails safe.
+
+### A module is kept or removed by what it does, not by what it is named  {#keep-by-behaviour-not-name-1030}
+
+**Decision.** `handoff_envelope.py` survives issue 1030 even though the card removes `/handoff`,
+and `plugins/saga/references/liveness-consumer-sites.md` is deleted even though nothing in the card
+names it.
+
+**Rationale.** The first is not the command's envelope machinery; the name is historical. It owns
+the readiness vocabulary and the parser that classifies a source document's declared maturity, and
+`plugins/mission-control/scripts/sdlc_manager.py` resolves that exact path, gates it on a contract
+major, and calls `assess_source` and `assess_declared` at seven sites in its issue-prepare path.
+Deleting it would have broken a plugin this card does not otherwise touch, to remove a name.
+
+The second is the mirror. Its rows inventoried the liveness protocol's consumers, every one of which
+was in the archived team-execution plugin, so the document described an engine with no callers --
+and `fleet_commons/liveness_engine.py` went with it once the scan confirmed no importer remained.
+
+**Rejected alternative.** Work the card's list literally in both directions. Rejected because the
+card names families and intentions; matching a filename against that list is the same
+name-over-behaviour error in a different coat.
+
+**Revisit when** the readiness vocabulary moves into mission-control, which is now its only
+consumer. That is a follow-up card, not this one.
+
+### The team-execution plugin is archived; its content lives on as roles  {#team-execution-archived-1030}
+
+**Decision.** `plugins/team-execution/` is removed from the repository and from the marketplace by
+issue #1030. Its **final changelog entry is version 4.0.0, written at commit `005e7e70`**, one commit
+before the directory was deleted — that commit is where a reader finds what the plugin was, where its
+content went, and what a caller must change. This pointer exists because a changelog deleted in the
+commit that would carry its last entry says nothing to anyone, and because nobody thinks to run
+`git log` on a path that is not there.
+
+**Where the content went.** The 25 reviewer, tester and scanner agent prompts and the two criteria
+documents are the source material for `plugins/agent-launcher/roles/`, which uses the lifecycle
+repository's role vocabulary: base and optional reviewers became Lens Reviewer prompts keyed to the
+review catalogue's lenses, the scenario, smoke, contract and UI-regression testers became Functional
+Tester variants, the monitors and deploy watcher became the Release Worker's wait steps, and the
+scanners became build-loop mechanical-baseline entries. The `appsec-audit` skill is the Investigator
+role's security variant.
+
+**Rationale.** The structure was what did not survive review, not the content. Reviewer consensus and
+validator gates are now the lensed code review computing its verdict in code from the catalogue's
+strictness ladder, and roles are hosted as sessions in their own worktrees rather than as one
+plugin's private agent roster. The operating record shows the orchestration path was unused; the
+prompts were not.
+
+**Consequence for callers.** `team-execution` is no longer a saga execution backend. The
+orchestration enumeration is `inline` and `cc-workflows-ultracode`. The enum strings stay a durable
+wire contract, so a persisted saga tick recording `team-execution` still reads back and still renders
+a label — it is simply no longer selectable. `recommend_execution_backend()` now returns `inline`
+under every trigger, since ruling C5 (issue #840) forbids recommending a Workflow; the size, risk and
+gated-consensus signals are still computed and now select the recorded rationale rather than a
+different backend.
+
+**Rejected alternative.** Keep the plugin installed but unreferenced. Rejected because an installed
+plugin advertises commands and agents to every session that resolves it, and one nobody maintains is
+worse than one nobody has.
+
+**Revisit when** a reviewer role needs something the roles library cannot express, at which point the
+question is what the role prompt is missing — not whether to restore a plugin.
+
+### Sandbox isolation belongs to how a role is hosted, not to a flag every caller must remember  {#isolation-is-hosting-not-a-flag-1030}
+
+**Decision.** The project instruction that every review-class Agent-tool spawn must name saga's
+read-only verifier agent and pass `isolation: "worktree"` is replaced by "review roles run as roster
+sessions in their own worktrees". `plugins/saga/references/sandbox-spawn-sites.md`, the inventory of
+every site that had to remember the flag, is deleted with it, as are both saga agents.
+
+**Rationale.** The old rule was correct about the hazard — a reviewer that shares the tree it is
+reviewing can clobber it with a `git checkout` — and wrong about where to fix it. A rule enforced at
+every call site needs an inventory of call sites, a fallback ladder for when the named agent is
+missing, a lint over the inventory, and a test that the lint covers each skill; that is four
+mechanisms guarding one property. The roster helper gives each role its own worktree when it creates
+the session, so the property holds by construction and a caller cannot forget it.
+
+**Rejected alternative.** Keep the rule and retarget it at a surviving agent. Rejected because there
+is no surviving agent: the card removes both, and inventing a replacement to satisfy a rule is how
+the four mechanisms appeared in the first place.
+
+**Revisit when** a review role has to run as a subagent rather than a pane — the surviving skills say
+read-only and disposable-worktree in prose for that case, and if that case becomes common the
+property deserves a mechanism again rather than a sentence.
+
+### A plugin's version moves when its files move, not when a card names it  {#version-moves-with-files-1030}
+
+**Decision.** Issue 1030's card asks for a bump on orchestrate and agent-launcher as part of the
+saga 1.0.0 release. Neither is bumped, because this card changes no file in either plugin. The only
+saga script orchestrate names is `admission.py`, which survives, and agent-launcher's only mention of
+anything removed is a historical line in its own changelog.
+
+**Rationale.** A version bump is a claim that something a consumer depends on moved. Bumping an
+untouched plugin because it appeared in a card's prose makes the changelog a worse signal than
+silence, and it makes the two installed plugin trees harder to compare after a release, which is
+exactly the comparison the release's own acceptance criterion rests on.
+
+**Rejected alternative.** Bump everything the card names, so the release is one coherent set of
+version numbers. Rejected because coherence of numbers is not a property anyone reads for; the
+question a reader asks is "did this plugin change", and a bump that answers yes when the answer is no
+costs more than an uneven set of versions.
+
+**Revisit when** a release genuinely needs a coordinated floor across plugins — a shared schema
+change, say — at which point the bump carries real information and the rule bends for a stated reason.
+
+### Removing a module that another plugin imports is a move, not a deletion  {#rehome-rather-than-break-1030}
+
+**Decision.** `execution_spec.py`, `concurrency_governor.py` and `dispatch_settlement.py` leave
+`plugins/saga/scripts/` but are not deleted: they move into
+`plugins/cc-workflows/skills/cc-workflows/scripts/` as that plugin's own modules, and the
+cross-plugin shim that reached for them goes. Recorded as a recommendation with the operator's
+alternative named, because the card does not name the cc-workflows plugin at all.
+
+**Rationale.** The cc-workflows emitter loads saga's `execution_spec.py` at import time and imports
+the other two. Deleting them from saga would make that plugin unloadable. The simplification review
+says to remove the execution spec and issue 808 ruled the Workflow backend is narrowed but not
+retired; both hold only if the modules stop being saga's.
+
+**Rejected alternatives.** Delete them and let the emitter break — rejected because the card names no
+cc-workflows work and a driver does not delete what its card did not name. Archive cc-workflows
+alongside team-execution — a legitimate choice, but it is the operator's to make, so it is recorded
+as the open question rather than taken.
+
+**Revisit when** the operator answers that question, or when the Workflow backend is invoked again
+and the move's import path is exercised for real.
 ### The status card follows the functional test rather than the functional test keeping a score for the card  {#1039-status-card-follows-the-verdict}
 
 **Decision.** `status_card.project_qa` was retargeted with `/qa` in the same commit. Its rows are

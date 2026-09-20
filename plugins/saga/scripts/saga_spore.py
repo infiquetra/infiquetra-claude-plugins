@@ -12,7 +12,7 @@ re-grounds on facts, not prose.
 This module is the pure, offline-testable core — the two hooks (``precompact_spore_hook`` /
 ``compact_spore_session_hook``) are thin shells over it:
 
-* :func:`build_spore` freezes the active saga box + the DAG (via :func:`outcome.status`, derived-on-read
+* :func:`build_spore` freezes the active saga box and the run record (issue 1030 removed the
   at the instant of the call — KTD3/KTD4) into a structured dict.
 * :func:`serialize` renders that dict into the self-describing ``additionalContext`` block, applying the
   deterministic R5 byte budget with the **ready frontier never dropped**.
@@ -37,8 +37,7 @@ from typing import Any
 # (``saga``) rather than re-deriving any of them. Mirrors the shim ``outcome_store`` itself uses.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import outcome  # noqa: E402  (after the sys.path shim, by design)
-import outcome_store  # noqa: E402
+import run_record  # noqa: E402
 import saga  # noqa: E402
 
 SCHEMA = "saga.spore.v1"
@@ -69,9 +68,9 @@ _AUTHORITY = (
 def spore_path(common_dir: Path, session_id: str) -> Path:
     """``<common-dir>/saga-spores/<session_id>.json`` — session-keyed, worktree-stable (R6/R9).
 
-    Reuses ``outcome_store._safe_name`` so a hostile ``session_id`` cannot escape the directory.
+    Uses :func:`_safe_name` so a hostile ``session_id`` cannot escape the directory.
     """
-    safe = outcome_store._safe_name(session_id, what="session_id")
+    safe = run_record._safe_session_name(session_id)
     return Path(common_dir) / SPORE_NAMESPACE / f"{safe}.json"
 
 
@@ -130,126 +129,6 @@ def resolve_active_saga(repo_root: Path) -> dict[str, Any] | None:
     return box
 
 
-def _store_mtime(common_dir: Path, outcome_id: str) -> float:
-    """Newest-activity mtime for an outcome store: its ``ledger.jsonl`` if present, else the dir."""
-    root = Path(common_dir) / outcome_store.STORE_NAMESPACE / outcome_id
-    ledger = root / "ledger.jsonl"
-    try:
-        return ledger.stat().st_mtime
-    except OSError:
-        try:
-            return root.stat().st_mtime
-        except OSError:
-            return 0.0
-
-
-def _outcome_is_complete(repo_root: Path, outcome_id: str) -> bool | None:
-    """``outcome.status(...).complete`` for one outcome, or None when it cannot be determined."""
-    try:
-        return bool(outcome.status(Path(repo_root), outcome_id)["complete"])
-    except Exception:  # noqa: BLE001 — a partial/corrupt store is "unknown", not fatal
-        return None
-
-
-def resolve_outcome_id(
-    active_saga_id: str | None, common_dir: Path, *, repo_root: Path
-) -> str | None:
-    """Resolve which OutcomeOrchestrator (if any) the session is attending (KTD4 — no new saga field).
-
-    Order (deadline-bounded by the calling hook, KTD7):
-
-    1. **leaf-id fast-path (authoritative).** A leaf saga id is ``leaf-<outcome_id>-<subplot_id>``
-       (``outcome_dispatcher``). Because both halves may contain hyphens, the split is resolved by
-       disk: the existing ``saga-outcomes/<dir>`` whose name is the longest prefix of the stripped id
-       is the outcome. This covers the dominant campaign case (the session attends a leaf).
-    2. **bounded best-effort scan.** Otherwise scan ``saga-outcomes/`` newest-first by ledger mtime and
-       return the single **non-complete** store. With **two or more** non-complete stores and no leaf id
-       the frontier is ambiguous (a paused campaign + a hotfix) → return None (the DAG is omitted and the
-       ambiguity logged by the caller; never inject a guessed frontier).
-    3. None when nothing resolves → a single-saga-only spore.
-    """
-    outcomes_dir = Path(common_dir) / outcome_store.STORE_NAMESPACE
-    try:
-        existing = sorted(p.name for p in outcomes_dir.iterdir() if p.is_dir())
-    except OSError:
-        return None
-    if not existing:
-        return None
-
-    if active_saga_id and active_saga_id.startswith("leaf-"):
-        rest = active_saga_id[len("leaf-") :]
-        candidates = [oid for oid in existing if rest == oid or rest.startswith(oid + "-")]
-        if candidates:
-            return max(candidates, key=len)
-
-    # Scan newest-first; collect non-complete. Stop once a second non-complete proves ambiguity.
-    non_complete: list[str] = []
-    for oid in sorted(existing, key=lambda o: _store_mtime(common_dir, o), reverse=True):
-        if _outcome_is_complete(repo_root, oid) is False:
-            non_complete.append(oid)
-            if len(non_complete) >= 2:
-                return None  # ambiguous frontier — never guess
-    if len(non_complete) == 1:
-        return non_complete[0]
-    return None
-
-
-def freeze_dag(repo_root: Path, outcome_id: str | None) -> dict[str, Any] | None:
-    """Freeze the DAG box from :func:`outcome.status` at this instant (KTD3), or None on any failure.
-
-    ``status`` is the single source of truth — derived-on-read with the U8 cross-surface fix baked in
-    (a negative-terminal leaf is never re-listed as dispatchable). Per-leaf ``gated`` comes from the spec
-    node and ``last_completion_event_ref`` from the latest completion event; both are best-effort
-    enrichments that never break the freeze.
-    """
-    if not outcome_id:
-        return None
-    repo_root = Path(repo_root)
-    try:
-        spec = outcome.load_spec(repo_root, outcome_id)
-        store = outcome._store(repo_root, outcome_id)
-        st = outcome.status(repo_root, outcome_id, spec=spec, store=store)
-    except Exception:  # noqa: BLE001 — a corrupt/partial store degrades to single-saga-only (R12)
-        return None
-
-    gated_map: dict[str, bool] = {}
-    try:
-        gated_map = {n.subplot_id: bool(getattr(n, "gated", False)) for n in spec.nodes}
-    except Exception:  # noqa: BLE001
-        gated_map = {}
-
-    states: dict[str, str] = st.get("states", {})
-    leaves: dict[str, dict[str, Any]] = {}
-    for sid, state in states.items():
-        ref: str | None = None
-        try:
-            events = outcome_store.read_completion_events(store, sid)
-            if events:
-                last = events[-1]
-                ref = f"attempt:{getattr(last, 'attempt', '?')}:{getattr(last, 'state', '?')}"
-        except Exception:  # noqa: BLE001 — event read is enrichment only
-            ref = None
-        leaves[sid] = {
-            "state": state,
-            "gated": gated_map.get(sid, False),
-            "last_completion_event_ref": ref,
-        }
-    return {
-        "outcome_id": st.get("outcome_id", outcome_id),
-        "objective": st.get("objective", ""),
-        "spec_revision": st.get("spec_revision"),
-        "counts": st.get("counts", {}),
-        "frontier": list(st.get("frontier", [])),
-        "complete": st.get("complete"),
-        "leaves": leaves,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Build + serialize (R1/R3/R5/R10)
-# ---------------------------------------------------------------------------
-
-
 def freeze_run_record(repo_root: Path, box: dict[str, Any] | None) -> dict[str, Any] | None:
     """Freeze the active issue's run record for re-injection after compaction (#1023).
 
@@ -290,21 +169,15 @@ def freeze_run_record(repo_root: Path, box: dict[str, Any] | None) -> dict[str, 
 
 
 def build_spore(repo_root: Path, session_id: str, *, now: str) -> dict[str, Any]:
-    """Assemble the structured spore: ``{provenance, saga_box, dag, pointers}`` (``dag`` None for the
+    """Assemble the structured spore: ``{provenance, saga_box, pointers, run_record}``.
 
     single-saga case). ``now`` is an ISO timestamp injected by the caller (the hook passes
     ``datetime.now(UTC).isoformat()``; tests pass a fixed string) so the module stays wall-clock-free.
     """
     repo_root = Path(repo_root)
     box = resolve_active_saga(repo_root)
-    common = outcome_store.resolve_common_dir(
-        repo_root
-    )  # raises OutcomeStoreError if git is absent
-
     active_id = box["saga_id"] if box else None
     pointers = box.pop("_pointers", {}) if box else {}
-    outcome_id = resolve_outcome_id(active_id, common, repo_root=repo_root) if active_id else None
-    dag = freeze_dag(repo_root, outcome_id)
 
     source_tick = saga.latest_envelope_for(repo_root, active_id) if active_id else None
     provenance = {
@@ -313,19 +186,11 @@ def build_spore(repo_root: Path, session_id: str, *, now: str) -> dict[str, Any]
         "session_id": session_id,
         "repo_root": str(repo_root),
         "saga_id": active_id,
-        "spec_revision": dag.get("spec_revision") if dag else None,
         "source_tick": _repo_relative(source_tick, repo_root),
     }
-    if dag:
-        pointers = {
-            **pointers,
-            "outcome_id": dag["outcome_id"],
-            "outcome_objective": dag["objective"],
-        }
     return {
         "provenance": provenance,
         "saga_box": box,
-        "dag": dag,
         "pointers": pointers,
         "run_record": freeze_run_record(repo_root, box),
     }
@@ -340,20 +205,6 @@ def _repo_relative(path: Path | None, repo_root: Path) -> str:
         return str(path)
 
 
-def _leaf_priority(state: str) -> int:
-    """R5 drop order: ready leaves are the resumable core (never dropped); ``done`` leaves go first.
-
-    Lower rank = kept longer. ready < dispatched/other non-terminal < negative-terminal < done.
-    """
-    if state == "ready":
-        return 0
-    if state in ("dispatched", "blocked"):
-        return 1
-    if state == "done":
-        return 3
-    return 2  # failed / rejected / stalled and any other non-ready terminal
-
-
 def serialize(spore: dict[str, Any]) -> str:
     """Render the self-describing ``additionalContext`` block (R10) under the R5 byte budget.
 
@@ -366,19 +217,15 @@ def serialize(spore: dict[str, Any]) -> str:
     """
     prov = spore.get("provenance", {})
     box = spore.get("saga_box")
-    dag = spore.get("dag")
     pointers = spore.get("pointers", {})
 
     head: list[str] = ["=== SAGA SPORE (structured re-grounding after compaction) ==="]
     head.append(f"AUTHORITY: {_AUTHORITY}")
     head.append("")
     head.append(
-        "Provenance: generated_at={generated_at} · saga_id={saga_id} · spec_revision={spec_revision}".format(
+        "Provenance: generated_at={generated_at} · saga_id={saga_id}".format(
             generated_at=prov.get("generated_at", "?"),
             saga_id=prov.get("saga_id") or "(none)",
-            spec_revision=prov.get("spec_revision")
-            if prov.get("spec_revision") is not None
-            else "-",
         )
     )
     refs = []
@@ -388,8 +235,6 @@ def serialize(spore: dict[str, Any]) -> str:
         refs.append(f"issue={pointers['issue_ref']}")
     if prov.get("source_tick"):
         refs.append(f"source_tick={prov['source_tick']}")
-    if pointers.get("outcome_id"):
-        refs.append(f"outcome={pointers['outcome_id']}")
     if refs:
         head.append("Canonical refs: " + " · ".join(refs))
 
@@ -430,33 +275,13 @@ def serialize(spore: dict[str, Any]) -> str:
         if record.get("pending_questions"):
             head.append("  admission still to answer: " + ", ".join(record["pending_questions"]))
 
-    # The ready frontier is part of the resumable core — always inline, never dropped.
+    # The outcome DAG block was rendered here from the frozen `dag` box, with a counted pointer
+    # to the spec when the leaf list exceeded the budget. Issue 1030 removed the outcome
+    # coordinator, so the spore freezes the active saga and the run record only, and neither is
+    # ever trimmed: the core is now small enough to emit whole.
     frontier_block: list[str] = []
     leaf_lines: list[str] = []
-    spec_ref = pointers.get("outcome_id") or "the outcome spec"
-    if dag:
-        counts = dag.get("counts", {})
-        counts_str = " ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "(none)"
-        frontier = list(dag.get("frontier", []))
-        frontier_block.append("")
-        frontier_block.append("OUTCOME DAG (frozen at the compaction boundary)")
-        frontier_block.append(
-            f"  outcome: {dag.get('outcome_id')} · spec_revision: {dag.get('spec_revision')} · counts: {counts_str}"
-        )
-        frontier_block.append(
-            "  READY FRONTIER (act on these): " + (", ".join(frontier) if frontier else "(empty)")
-        )
-        leaves = dag.get("leaves", {})
-        ordered = sorted(
-            leaves.items(),
-            key=lambda kv: (_leaf_priority(kv[1].get("state", "")), kv[0]),
-        )
-        for sid, info in ordered:
-            flag = " [gated]" if info.get("gated") else ""
-            ref = info.get("last_completion_event_ref")
-            ref_str = f" (last={ref})" if ref else ""
-            leaf_lines.append(f"    {sid}: {info.get('state')}{flag}{ref_str}")
-
+    spec_ref = "the run record"
     # Assemble with the budget: head + frontier_block are the never-dropped core; leaf_lines trim.
     core = "\n".join(head + frontier_block)
     if not leaf_lines:

@@ -1,8 +1,0 @@
-worktree <ROOT>/repo
-HEAD <SHA>
-branch refs/heads/main
-
-worktree <ROOT>/wt-feature
-HEAD <SHA>
-branch refs/heads/feature
-

@@ -33,14 +33,8 @@ VENDORED_SHIMS = (
     ROOT / "plugins" / "unifi" / "skills" / "unifi-protect" / "scripts" / "fleet_commons_shim.py",
     ROOT / "plugins" / "agy" / "scripts" / "fleet_commons_shim.py",
     ROOT / "plugins" / "codex" / "scripts" / "fleet_commons_shim.py",
-    # #380: team-execution's Step B1 posture check loads intent_envelope through the shim.
-    ROOT
-    / "plugins"
-    / "team-execution"
-    / "skills"
-    / "team-execution"
-    / "scripts"
-    / "fleet_commons_shim.py",
+    # team-execution vendored the shim too, for its Step B1 posture check; issue #1030 archived
+    # the plugin and the copy went with it.
 )
 
 _LOAD_COUNTER = 0
@@ -311,25 +305,3 @@ def test_vendored_shim_is_byte_identical_to_canonical(vendored: Path) -> None:
 
 
 # --- consumer 1: saga re-export seam (U3) ---------------------------------------------------
-
-
-def test_saga_execution_spec_reexports_the_shim_loaded_palette_object() -> None:
-    """``execution_spec.MODELS is`` the shim-loaded module's — an import, not a copy."""
-    saga_scripts = ROOT / "plugins" / "saga" / "scripts"
-    if str(saga_scripts) not in sys.path:
-        sys.path.insert(0, str(saga_scripts))
-    spec = importlib.util.spec_from_file_location(
-        "execution_spec", saga_scripts / "execution_spec.py"
-    )
-    assert spec is not None and spec.loader is not None
-    execution_spec = importlib.util.module_from_spec(spec)
-    sys.modules["execution_spec"] = execution_spec
-    spec.loader.exec_module(execution_spec)
-
-    palette = _load_shim(saga_scripts / "fleet_commons_shim.py").load("tier_palette")
-    assert execution_spec.MODELS is palette.MODELS
-    assert execution_spec.EFFORTS is palette.EFFORTS
-    assert execution_spec._CHEAP_MODELS is palette.CHEAP_MODELS
-    assert execution_spec.ENGINE_INTENTS is palette.ENGINE_INTENTS
-    # PASS_RULES deliberately stays saga-local (refute-N vocabulary, not tier vocabulary).
-    assert execution_spec.PASS_RULES == ("majority", "unanimous")

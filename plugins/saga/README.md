@@ -2,9 +2,7 @@
 
 Saga is the Infiquetra lifecycle spine for turning vague work into reviewed plans, PRs, merges, handoffs, QA evidence, and durable learning.
 
-It is an operating model, not just a command bundle. Saga owns lifecycle choice, local saga state, routing, and handoff envelopes. Adjacent plugins own their own mutation surfaces: `mission-control` owns SDLC issues and board state, `deploy` owns deployment mutation, and `team-execution` owns reviewer/validator orchestration.
-
-![Saga Lifecycle Atlas](docs/assets/lifecycle-atlas.svg)
+It is an operating model, not just a command bundle. Saga owns lifecycle choice, local saga state, routing, and handoff envelopes. Adjacent plugins own their own mutation surfaces: `mission-control` owns SDLC issues and board state, and `deploy` owns deployment mutation. Review and testing roles are herdr sessions launched from the roles library in `plugins/agent-launcher/roles/`.
 
 ## Start Here
 
@@ -46,7 +44,6 @@ The manual pages are the maintained user-facing reference.
 | [State and readiness](docs/state-readiness.md) | Stored saga state vs derived handoff maturity |
 | [Scenarios](docs/scenarios.md) | User-situation journeys and example routes |
 | [Boundaries](docs/boundaries.md) | Saga vs adjacent plugin ownership, Claude vs Codex adapter notes |
-| [Visuals](docs/visuals.md) | Source model, generated assets, and regeneration workflow |
 
 ## Lifecycle In One Pass
 
@@ -84,13 +81,7 @@ See [state and readiness](docs/state-readiness.md) for the full passport.
 
 ## Maintainer Workflow
 
-The visual and coverage source lives at [docs/model/saga-docs-model.yaml](docs/model/saga-docs-model.yaml). Update it when command routes, readiness mappings, ownership boundaries, scenarios, or visual coverage change.
-
-Regenerate visuals:
-
-```bash
-uv run python plugins/saga/scripts/render_docs_visuals.py
-```
+Update the pages under [docs/](docs/) directly when command routes, readiness mappings, ownership boundaries or scenarios change. The generated atlas and its source model were retired with the eleven removed commands.
 
 Check drift:
 

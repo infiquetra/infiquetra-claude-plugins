@@ -15,7 +15,6 @@ benign matrix reformatting without caring about path notation.
 
 from __future__ import annotations
 
-import ast
 import dataclasses
 import importlib.util
 import re
@@ -125,84 +124,3 @@ EXTERNAL_ENGINE_WORKERS_MD = (
     / "external-engine-workers.md"
 )
 WORKER_MANIFEST_MD = EXTERNAL_ENGINE_WORKERS_MD.with_name("worker-manifest.md")
-
-
-def test_external_engine_workers_has_one_manifest_construction_path() -> None:
-    """R5/#392 (U3): the chaperone contract documents exactly one manifest-construction path.
-
-    §5 step 4 must always call the shared `record_dispatch_manifest` builder with
-    `expected_identity` threaded through — never hand-construct `provenance_manifest.Manifest`
-    directly for the substituted-engine disposition. A regression here means an agent reading
-    this contract would (re-)author a second, divergent manifest-construction path.
-    """
-    body = EXTERNAL_ENGINE_WORKERS_MD.read_text(encoding="utf-8")
-    assert "expected_identity" in body, (
-        "external-engine-workers.md must reference `expected_identity` — the single "
-        "substitution-detection input threaded from §1's preview through dispatch() to the "
-        "shared manifest builder."
-    )
-    assert "has no way to express this disposition" not in body, (
-        "external-engine-workers.md must not claim record_dispatch_manifest/build_dispatch_"
-        "manifest can't express the substituted-engine disposition — the shared builder now "
-        "derives it from expected_identity (R5)."
-    )
-    assert "pm.Manifest(" not in body, (
-        "external-engine-workers.md must not instruct the chaperone to hand-construct "
-        "provenance_manifest.Manifest directly — record_dispatch_manifest is the only "
-        "manifest-construction path this contract documents (R5)."
-    )
-
-
-def test_documented_chaperone_manifest_path_names_exact_close_receipt_chain() -> None:
-    # Broker-free chain (#677/U3): dispatch mints a self-authenticating close receipt; claim and
-    # adjudication chain from it by digest; the gate re-validates the terminal receipt.
-    body = EXTERNAL_ENGINE_WORKERS_MD.read_text(encoding="utf-8")
-    for banned in ("lease_admission", "lease_authority", "settlement_close"):
-        assert banned not in body, (
-            f"the broker's {banned!r} vocabulary must be gone from the chaperone contract"
-        )
-    for required in (
-        "attempt_id=attempt_id",
-        'provenance["dispatch_close"]',
-        'predecessor_close=evidence.provenance["dispatch_close"]',
-        "claim_result.close_receipt",
-        "adjudicated = engine_dispatch.adjudicate_manifest(",
-        "predecessor_close=claim_result.close_receipt",
-        "manifest_close_receipt=adjudicated.close_receipt",
-        "stable by `execution_id`",
-        "saga.close-receipt.v1",
-    ):
-        assert required in body, f"canonical chaperone manifest contract is missing {required!r}"
-    stages = (
-        "evidence = engine_dispatch.dispatch(",
-        'predecessor_close=evidence.provenance["dispatch_close"]',
-        "adjudicated = engine_dispatch.adjudicate_manifest(",
-        "predecessor_close=claim_result.close_receipt",
-        "engine_dispatch.satisfy_gate(",
-        "manifest_close_receipt=adjudicated.close_receipt",
-    )
-    positions = [body.index(stage) for stage in stages[:4]] + [
-        body.rindex(stage) for stage in stages[4:]
-    ]
-    assert positions == sorted(positions), "canonical close receipt sequence must remain ordered"
-    assert "A stale or tampered predecessor receipt fails digest re-derivation" in body
-
-
-def test_documented_raw_manifest_cli_is_explicitly_noncanonical() -> None:
-    body = WORKER_MANIFEST_MD.read_text(encoding="utf-8")
-    assert "manifest_store.py" in body
-    assert "explicitly noncanonical evidence" in body
-    assert "cannot\nsatisfy a gate" in body
-
-
-def test_canonical_manifest_writer_is_only_called_by_protected_dispatch() -> None:
-    production_calls: list[str] = []
-    for path in (REPO_ROOT / "plugins").rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            if node.func.attr == "write_manifest":
-                production_calls.append(path.relative_to(REPO_ROOT).as_posix())
-
-    assert production_calls == ["plugins/saga/scripts/engine_dispatch.py"]

@@ -86,20 +86,6 @@ def test_the_registry_is_capability_metadata_and_never_launch_authority() -> Non
         assert "launch authority" in flat
 
 
-def test_the_engine_registry_still_exists_with_its_readers() -> None:
-    """A sibling candidate proposed deleting it; that was rejected. This unit clarifies what
-    the registry is, it does not remove it."""
-    assert ENGINE_REGISTRY.is_file()
-    readers = [
-        p
-        for p in (ROOT / "plugins").rglob("*")
-        if p.is_file()
-        and p.suffix in {".py", ".md"}
-        and "engine-registry" in p.read_text(encoding="utf-8", errors="ignore")
-    ]
-    assert len(readers) >= 5, f"engine-registry.yaml readers collapsed to {len(readers)}"
-
-
 def _cross_references(text: str) -> list[tuple[str, tuple[str, ...]]]:
     """(relative path, cited identifiers) for each backtick path the skill cites fields from."""
     found: list[tuple[str, tuple[str, ...]]] = []

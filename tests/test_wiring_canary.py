@@ -196,15 +196,14 @@ def test_no_mutation_leaks_to_working_tree() -> None:
     We compare ``git status --porcelain`` before and after rather than asserting emptiness, so the
     test is robust to unrelated in-progress edits in the working copy.
 
-    Cross-surface coupling note (#588, S3 F11):
-    This test executes the live registry entry ``agent-registration-drift`` from
-    ``tools/canary_registry.json`` against the repository. That canary entry targets the saga agent
-    file ``plugins/saga/agents/readonly-verifier.md`` and mutates its literal frontmatter anchor
-    ``name: readonly-verifier`` (expecting the mutation to be caught without modifying the working tree).
-    If ``plugins/saga/agents/readonly-verifier.md`` or its frontmatter anchor ``name: readonly-verifier``
-    is renamed or relocated, this test and the canary entry must be updated in lockstep.
-    Both ends of this coupling are documented here to make the rename hazard explicit without
-    cross-lane writes to lane B's saga agent surface.
+    Cross-surface coupling note (#588, S3 F11; retargeted by issue 1030):
+    This test executes one live registry entry from ``tools/canary_registry.json`` against the
+    repository. It used to execute ``agent-registration-drift``, which mutated the frontmatter of
+    ``plugins/saga/agents/readonly-verifier.md``; issue 1030 removed both saga agents, so that
+    entry and its guard went with them. It now executes ``release-triad``, which sets a version
+    field in ``plugins/deploy/.claude-plugin/plugin.json``. The coupling is the same shape and is
+    recorded here for the same reason: if that entry's target file or field moves, this test and
+    the registry entry must be updated in lockstep.
     """
 
     def _status() -> str:
@@ -216,7 +215,7 @@ def test_no_mutation_leaks_to_working_tree() -> None:
         ).stdout
 
     entries = canary.load_registry(REPO_ROOT / "tools" / "canary_registry.json")
-    entry = next(e for e in entries if e["id"] == "agent-registration-drift")
+    entry = next(e for e in entries if e["id"] == "release-triad")
 
     before = _status()
     record = canary.run_entry(entry, REPO_ROOT)
@@ -237,11 +236,13 @@ def test_registry_loads_seed_entries() -> None:
     entries = canary.load_registry(REPO_ROOT / "tools" / "canary_registry.json")
     assert len(entries) >= 4
     ids = {e["id"] for e in entries}
+    # "agent-registration-drift" was a seed entry until issue 1030 removed both saga agents, and
+    # "team-execution-pointers" until the same card archived that plugin. A seed entry is a guard
+    # over a surface that exists; when the surface goes, the entry goes with it rather than being
+    # kept as a name this assertion pins.
     assert {
-        "agent-registration-drift",
         "release-triad",
         "manifest-consumer-matrix",
-        "team-execution-pointers",
     } <= ids
     for entry in entries:
         assert entry["invariant"].strip(), entry

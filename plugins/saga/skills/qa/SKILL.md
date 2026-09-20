@@ -53,12 +53,11 @@ pre-merge entry route: PR-ready never moves a card to `Verify`; the single autho
 condition is the `verify_entry` block of `config/sdlc-schema.json` in `infiquetra-sdlc`. When a
 card is in `Verify`, the activity it holds is this functional test.
 
-**Any verify-class agent this step spawns is sandboxed.** A spawn made from here passes
-`subagent_type: saga:readonly-verifier` with `isolation: "worktree"`, so a verifier can run a
-command without its working tree reaching the primary checkout. `/qa` reads running behaviour and
-never writes code, and the sandbox is what makes that a property rather than a promise. The full
-spawn-site inventory and the fallback ladder are in
-`saga/references/sandbox-spawn-sites.md`.
+**Any verify-class role this step runs is sandboxed.** The Functional Tester runs as a roster
+session in its own worktree, so it can run a command without its working tree reaching the primary
+checkout. `/qa` reads running behaviour and never writes code, and the isolation is what makes that
+a property rather than a promise. Where the step must spawn a subagent instead of a pane, it runs
+read-only and in a disposable worktree for the same reason.
 
 ## Core principles
 

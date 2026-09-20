@@ -177,28 +177,6 @@ def test_contract_cli_reports_operation_and_checkout(
     assert detail["file"] == str(tmp_path / api.CONTRACT) and "restore" in detail["error"]
 
 
-def test_contract_conflict_recovery(contract_api: ModuleType, tmp_path: Path) -> None:
-    """Following the runbook removes the entire conflict before a successful render."""
-    api = contract_api
-    tree(api, tmp_path)
-    path = tmp_path / api.SKILL
-    original = path.read_text()
-    begin, end = api.region_span(original, "PLAN SAVE EXAMPLES: default")
-    region = original[begin:end]
-    conflict = "<<<<<<< ours\n" + region + "\n=======\n" + region + "\n>>>>>>> theirs\n"
-    path.write_text(original[:begin] + conflict + original[end:])
-    result = cli(api, tmp_path, "render", "--write")
-    assert result.returncode == 2 and "entire conflict" in json.loads(result.stdout)["error"]
-    assert conflict in path.read_text()
-    # Resolve the entire hunk to one region; surrounding prose remains byte-identical.
-    path.write_text(path.read_text().replace(conflict, region))
-    result = cli(api, tmp_path, "render", "--write")
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert path.read_text() == original
-    result = cli(api, tmp_path, "render", "--check")
-    assert result.returncode == 0 and json.loads(result.stdout)["outcome"] == "clean"
-
-
 def test_contract_save_workspace_is_contained(contract_api: ModuleType, tmp_path: Path) -> None:
     api = contract_api
     workspace = tmp_path / "workspace"
@@ -348,57 +326,94 @@ def test_contract_cli_without_pytest(contract_api: ModuleType, tmp_path: Path) -
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_contract_cli_resolves_the_engine_from_the_checkout(
-    contract_api: ModuleType, tmp_path: Path
-) -> None:
-    """The effort engine comes from --root, never from the operator's installed plugins.
-
-    fleet_commons_shim.resolve_root() falls through to ~/.claude/plugins and the plugin
-    cache when a checkout carries no marketplace manifest, which is every temporary
-    checkout here. Without the binding this suite passes on a developer machine that has
-    fleet-core installed and fails everywhere else, so the run below scrubs HOME.
-    """
-    api = contract_api
-    checkout = tmp_path / "checkout"
-    tree(api, checkout)
-    home = tmp_path / "home"
-    home.mkdir()
-    environment = {
-        **os.environ,
-        "HOME": str(home),
-        "USERPROFILE": str(home),
-    }
-    environment.pop(api.FLEET_ROOT_ENV, None)
-    script = checkout / "plugins/saga/scripts/plan_save_contract.py"
-
-    def run() -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(script), "--root", str(checkout), "validate"],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=environment,
-        )
-
-    result = run()
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout)["outcome"] == "valid"
-
-    # Prove the checkout's own copy is what answered: remove it and the tool must refuse,
-    # not quietly fall back to whatever fleet-core the machine has installed.
-    shutil.rmtree(checkout / api.FLEET_CORE / "scripts")
-    refused = run()
-    assert refused.returncode == 2, refused.stdout + refused.stderr
-    payload = json.loads(refused.stdout)
-    assert payload["code"] == "engine" and payload["file"] == api.RIDER
-
-
 PROOF = "plugins/saga/scripts/plan_save_proof.py"
 _ANNOTATIONS = "from __future__ import annotations"
 _VERIFY_DOC = (
     '    """Prove candidate facts and saved semantics without loading tests or launching pytest."""'
 )
+
+
+# ---------------------------------------------------------------------------
+# Plan-save contract boundary guards, restored. Issue 1030's sweeps took these five with the tests
+# of removed modules, which was wrong: they guard the contract CLI's failure envelopes -- a missing
+# PyYAML, a BaseException from checkout code, engine resolution, conflict recovery, and the proof
+# CLI staying inert under the loader. None of that is touched by the removals, and four canary
+# entries name them.
+# ---------------------------------------------------------------------------
+
+
+def test_contract_cli_envelopes_a_missing_pyyaml(contract_api: ModuleType, tmp_path: Path) -> None:
+    """An absent PyYAML stays inside the documented envelope (issue #997).
+
+    The tool used to import PyYAML at module scope, which is outside every handler it owns: a
+    machine without PyYAML got a traceback, empty stdout and exit 1 -- the code the docstring
+    reserves for drift, so a broken interpreter was indistinguishable from a real documentation
+    failure. `--help` broke the same way, and it is the one invocation the docstring exempts.
+
+    The interpreter here genuinely lacks PyYAML rather than carrying a module that raises on
+    import. A stub proves the symptom; only a real absence proves the repair.
+    """
+    api = contract_api
+    checkout = tmp_path / "checkout"
+    tree(api, checkout)
+    environment = tmp_path / "python"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+    python = environment / "bin/python"
+    absent = subprocess.run(
+        [str(python), "-I", "-c", 'import importlib.util; assert importlib.util.find_spec("yaml")'],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert absent.returncode != 0, "this environment can import PyYAML; the guard proves nothing"
+    script = checkout / SCRIPT
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(python), "-I", str(script), "--root", str(checkout), *args],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    originals = {path: (checkout / path).read_bytes() for path in (api.SKILL, api.SPEC)}
+    for args in (("validate",), ("render", "--check"), ("render", "--write")):
+        result = run(*args)
+        assert result.returncode == 2, (
+            f"{args}: expected the documented refusal exit 2, got {result.returncode}"
+            f"\n{result.stdout}\n{result.stderr}"
+        )
+        assert not result.stderr, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["outcome"] == "invalid", payload
+        assert payload["code"] == "engine", payload
+        assert payload["entry"] == "python dependency", payload
+        assert payload["file"] == str(SCRIPT), payload
+        assert "PyYAML" in str(payload["error"]), payload
+    assert originals == {path: (checkout / path).read_bytes() for path in originals}, (
+        "a refused render wrote to an owned document"
+    )
+
+    # --help is the documented exemption, and it must survive an interpreter with no PyYAML at all:
+    # argparse runs before any YAML is touched.
+    usage = subprocess.run(
+        [str(python), "-I", str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert usage.returncode == 0, usage.stdout + usage.stderr
+    assert not usage.stderr, usage.stderr
+    assert usage.stdout.startswith("usage: plan_save_contract.py"), usage.stdout
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(usage.stdout)
+
+    # The same checkout under this suite's own interpreter, which has PyYAML, is unaffected.
+    clean = cli(api, checkout, "validate")
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    assert json.loads(clean.stdout)["outcome"] == "valid"
 
 
 def test_contract_cli_envelopes_baseexception_from_checkout_code(
@@ -483,78 +498,79 @@ def test_contract_cli_envelopes_baseexception_from_checkout_code(
         json.loads(usage.stdout)
 
 
-def test_contract_cli_envelopes_a_missing_pyyaml(contract_api: ModuleType, tmp_path: Path) -> None:
-    """An absent PyYAML stays inside the documented envelope (issue #997).
+def test_contract_cli_resolves_the_engine_from_the_checkout(
+    contract_api: ModuleType, tmp_path: Path
+) -> None:
+    """The effort engine comes from --root, never from the operator's installed plugins.
 
-    The tool used to import PyYAML at module scope, which is outside every handler it owns: a
-    machine without PyYAML got a traceback, empty stdout and exit 1 -- the code the docstring
-    reserves for drift, so a broken interpreter was indistinguishable from a real documentation
-    failure. `--help` broke the same way, and it is the one invocation the docstring exempts.
-
-    The interpreter here genuinely lacks PyYAML rather than carrying a module that raises on
-    import. A stub proves the symptom; only a real absence proves the repair.
+    fleet_commons_shim.resolve_root() falls through to ~/.claude/plugins and the plugin
+    cache when a checkout carries no marketplace manifest, which is every temporary
+    checkout here. Without the binding this suite passes on a developer machine that has
+    fleet-core installed and fails everywhere else, so the run below scrubs HOME.
     """
     api = contract_api
     checkout = tmp_path / "checkout"
     tree(api, checkout)
-    environment = tmp_path / "python"
-    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
-    python = environment / "bin/python"
-    absent = subprocess.run(
-        [str(python), "-I", "-c", 'import importlib.util; assert importlib.util.find_spec("yaml")'],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert absent.returncode != 0, "this environment can import PyYAML; the guard proves nothing"
-    script = checkout / SCRIPT
+    home = tmp_path / "home"
+    home.mkdir()
+    environment = {
+        **os.environ,
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+    }
+    environment.pop(api.FLEET_ROOT_ENV, None)
+    script = checkout / "plugins/saga/scripts/plan_save_contract.py"
 
-    def run(*args: str) -> subprocess.CompletedProcess[str]:
+    def run() -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [str(python), "-I", str(script), "--root", str(checkout), *args],
+            [sys.executable, str(script), "--root", str(checkout), "validate"],
             cwd=tmp_path,
             capture_output=True,
             text=True,
             check=False,
+            env=environment,
         )
 
-    originals = {path: (checkout / path).read_bytes() for path in (api.SKILL, api.SPEC)}
-    for args in (("validate",), ("render", "--check"), ("render", "--write")):
-        result = run(*args)
-        assert result.returncode == 2, (
-            f"{args}: expected the documented refusal exit 2, got {result.returncode}"
-            f"\n{result.stdout}\n{result.stderr}"
-        )
-        assert not result.stderr, result.stderr
-        payload = json.loads(result.stdout)
-        assert payload["outcome"] == "invalid", payload
-        assert payload["code"] == "engine", payload
-        assert payload["entry"] == "python dependency", payload
-        assert payload["file"] == str(SCRIPT), payload
-        assert "PyYAML" in str(payload["error"]), payload
-    assert originals == {path: (checkout / path).read_bytes() for path in originals}, (
-        "a refused render wrote to an owned document"
-    )
+    result = run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["outcome"] == "valid"
 
-    # --help is the documented exemption, and it must survive an interpreter with no PyYAML at all:
-    # argparse runs before any YAML is touched.
-    usage = subprocess.run(
-        [str(python), "-I", str(script), "--help"],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert usage.returncode == 0, usage.stdout + usage.stderr
-    assert not usage.stderr, usage.stderr
-    assert usage.stdout.startswith("usage: plan_save_contract.py"), usage.stdout
-    with pytest.raises(json.JSONDecodeError):
-        json.loads(usage.stdout)
+    # Prove the checkout's own copy is what answered: remove it and the tool must refuse,
+    # not quietly fall back to whatever fleet-core the machine has installed.
+    shutil.rmtree(checkout / api.FLEET_CORE / "scripts")
+    refused = run()
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    payload = json.loads(refused.stdout)
+    assert payload["code"] == "engine" and payload["file"] == api.RIDER
 
-    # The same checkout under this suite's own interpreter, which has PyYAML, is unaffected.
-    clean = cli(api, checkout, "validate")
-    assert clean.returncode == 0, clean.stdout + clean.stderr
-    assert json.loads(clean.stdout)["outcome"] == "valid"
+
+PROOF = "plugins/saga/scripts/plan_save_proof.py"
+_ANNOTATIONS = "from __future__ import annotations"
+_VERIFY_DOC = (
+    '    """Prove candidate facts and saved semantics without loading tests or launching pytest."""'
+)
+
+
+def test_contract_conflict_recovery(contract_api: ModuleType, tmp_path: Path) -> None:
+    """Following the runbook removes the entire conflict before a successful render."""
+    api = contract_api
+    tree(api, tmp_path)
+    path = tmp_path / api.SKILL
+    original = path.read_text()
+    begin, end = api.region_span(original, "PLAN SAVE EXAMPLES: default")
+    region = original[begin:end]
+    conflict = "<<<<<<< ours\n" + region + "\n=======\n" + region + "\n>>>>>>> theirs\n"
+    path.write_text(original[:begin] + conflict + original[end:])
+    result = cli(api, tmp_path, "render", "--write")
+    assert result.returncode == 2 and "entire conflict" in json.loads(result.stdout)["error"]
+    assert conflict in path.read_text()
+    # Resolve the entire hunk to one region; surrounding prose remains byte-identical.
+    path.write_text(path.read_text().replace(conflict, region))
+    result = cli(api, tmp_path, "render", "--write")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert path.read_text() == original
+    result = cli(api, tmp_path, "render", "--check")
+    assert result.returncode == 0 and json.loads(result.stdout)["outcome"] == "clean"
 
 
 def test_proof_cli_describes_itself_and_stays_inert_under_the_loader(

@@ -382,7 +382,11 @@ def assert_saved_example(
 
     def fill(name: str, value: str, template_id: str = template["id"]) -> str:
         # Substitute only enum choices, never replace literal text under test.
-        if value.startswith("<") and value.endswith(">") and "|" in value:
+        # A placeholder is an enum whenever it is angle-bracketed. It used to need a pipe as
+        # well, which silently stopped being true when issue 1030 left `orchestration_mode` with a
+        # single choice: `<inline>` was passed through literally and saga.py rejected it. A
+        # one-value enum is still an enum.
+        if value.startswith("<") and value.endswith(">"):
             choices = value[1:-1].split("|")
             selected = {
                 "destination": destination,

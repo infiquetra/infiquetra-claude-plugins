@@ -32,22 +32,14 @@ writes:
   placeholder: 'KTD1: rationale. KTD2: rationale.'
   when: always
 - name: orchestration_mode
-  placeholder: <inline|team-execution|cc-workflows-ultracode>
+  placeholder: <inline>
   when: always
 - name: orchestration_recommended
-  placeholder: <inline|team-execution|cc-workflows-ultracode>
+  placeholder: <inline>
   when: always
-- name: orchestration_ref
-  placeholder: docs/workflows/YYYY-MM-DD-<topic>-spec.json
-  when:
-    field: orchestration_mode
-    equals: cc-workflows-ultracode
 templates:
 - id: default
   fixed: {}
-- id: cc-workflows-ultracode
-  fixed:
-    orchestration_mode: cc-workflows-ultracode
 effort_honoring:
   spawn_kinds:
     workflow: native

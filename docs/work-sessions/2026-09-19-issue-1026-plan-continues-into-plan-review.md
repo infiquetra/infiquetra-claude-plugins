@@ -11,7 +11,7 @@ Nine units, as planned, with one addition the implementation found (see "What th
 
 | Unit | What | Card |
 |---|---|---|
-| U1 | The Claude Code Workflow and team-execution prose moved to `plugins/saga/references/workflow-backend.md`; `/plan` 772 → 567 lines, `/work` 1,142 → 837 | 808, 1026 |
+| U1 | The Claude Code Workflow and team-execution prose moved to `plugins/saga/references/workflow-backend.md` (603 lines). The extraction alone took `/plan` 772 → 567 and `/work` 1,142 → 837; U2's Phase 5.4 and U4's §1.3 then added back, so the files end at 629 and 864 | 808, 1026 |
 | U2 | `/plan` Phase 5.4 dispatches the plan review and loops on repair; the Ready-for-Active board move follows it as §5.5 | 1026, 933 |
 | U3 | `/doc-review` carries the loop contract, the cycle definition, and reviews a submitted path as given | 933 |
 | U4 | `/work` §1.3 keeps refusing, now with a gate-record marker and a named evidence order | 933, 1026 |

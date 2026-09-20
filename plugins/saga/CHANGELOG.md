@@ -63,8 +63,10 @@ card branched.
   team-execution-emission instructions, moved out of `/plan` Phase 5.2 and 5.2a and `/work` §1.4
   and §1.5 (card #808's NARROW ruling, issue #1026). The two skills keep the contract a reader
   needs in order to decide whether to open it: the backend's name, that it is reached only by
-  explicit operator invocation, and the file's path. `/plan` drops from 772 to 567 lines and
-  `/work` from 1,142 to 837.
+  explicit operator invocation, and the file's path. The extraction took `/plan` from 772 lines to
+  567 and `/work` from 1,142 to 837; the new Phase 5.4 and the rewritten `/work` §1.3 then put some
+  back, so the files end at 629 and 864 — a net 143 and 278 lines lighter, with 603 lines of backend
+  instructions now one hop away instead of in the entry path of every run.
 - `--doc-review-fixes` on `issue_progress.py`, with its forwarding line in `/work`'s Phase-4
   command. The parameter had existed and been rendered since the beginning with no flag able to
   populate it, so the issue comment recorded a review's findings and silently dropped what was done

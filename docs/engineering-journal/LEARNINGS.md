@@ -2,6 +2,17 @@
 
 ## 2026-09-19
 
+### A guard in a file your change never touches is invisible to every diff-scoped check  {#full-suite-catches-untouched-guards-1037}
+
+**Evidence.** Issue #1037, commit `4c0a2ac7`. The inner loop was green — `ruff check`, `ruff format --check`, `mypy plugins/ scripts/ tests/`, the whole new test file, both brainstorm guard files, release-surface parity, the release-surface diff guard, the marketplace sync check and the marketplace validator. The full suite across both pytest roots then failed one test: `tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module`.
+
+**Mechanism.** The new module declared `RUBRIC_LEVELS = ("low", "medium", "high")` as the ordered levels for its score questions. Those three words are a strict subset of `tier_palette.EFFORTS` (`low`, `medium`, `high`, `xhigh`), and the fleet guard walks every production Python file's syntax tree looking for a bare tuple, list or set whose members are *all* drawn from the closed model or effort vocabulary. It cannot tell a rubric ladder from a truncated re-declaration of the fleet's effort ladder, and neither can a reader — which is the whole reason the guard exists.
+
+Nothing scoped to the diff could have caught it. The guard lives in a test file the card never edits, over a vocabulary the card never mentions, in a plugin the card only imports from. A reviewer reading the diff would have to already know that constant exists.
+
+The repair was to change the levels to `weak` / `moderate` / `strong` rather than to exempt the file. The words are better rubric positions anyway, so the collision and the weaker prompt wording had the same fix.
+
+**Generalizable rule.** Run the whole test suite, not the touched-file subset, before pushing any change that adds a module-level constant or bumps a version — the guards most likely to catch a real defect are the ones living furthest from the diff, and a diff-scoped loop reports green right through them.
 ### A Jev score answer's distribution is keyed by level INDEX, so a recorded fixture hides it  {#1035-score-distribution-keyed-by-index}
 
 **Evidence.** Issue #1035; `plugins/mission-control/scripts/triage_suggest.py`

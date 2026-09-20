@@ -159,6 +159,31 @@ legal or operational consequence, recovery expectations, and auditability or con
 Rigor rises and falls as those factors enter or leave scope. The trigger is never a domain name
 alone. No named tiers are used — the factors themselves are named. What changes with consequence is how much time the dialogue spends on mitigations rather than whether a checklist appears: a factor in scope means more questions about its mitigations, a different ordering of those questions, and an explicit assumption recorded when an obligation is left unaddressed. For example, a small one-line webhook credential rotation carries high consequence via granted authority and blast radius, so the dialogue probes retention and revert expectations before narrowing on scope boundaries, even though the product tier is Lightweight.
 
+### 0.6 Advisory typed judgments
+
+Four of the internal judgments above can be asked as typed questions instead of assessed in prose,
+through `plugins/saga/scripts/shaping_judgments.py`. Every one is **advisory** and none is a gate:
+the dialogue is unchanged, the operator can ignore any answer, and each **fails open** — when the
+call fails or the key is absent, make the judgment exactly as this skill describes it, with a
+one-line non-blocking note.
+
+| Judgment | Where | What it informs | Fails open to |
+|---|---|---|---|
+| `scope-tier` | 0.4 | which scope tier the work sits in | assessing it in prose, and asking the one targeted question when unclear |
+| `consequence` | 0.5 | which consequence factors are actually present in scope | naming the factors by reading |
+| `question-order` | 1.3 | how consequential and how uncertain each candidate question is, so ordering is consistent | choosing the next question by judgment |
+| `readiness` | 4 | whether the requirements document is ready for the `/doc-review` handoff | offering the review without a suggestion |
+
+Three rules bind them. The consequence factors come back as one probability per factor and code
+**never aggregates them into a level or a tier** — the no-named-tiers rule above is unchanged. A
+confident scope-tier answer never suppresses the disambiguating question this skill would otherwise
+ask. And ordering is not filtering: a rigor gap the Phase 1.2 probes found is still probed, whatever
+its scores.
+
+```bash
+python3 plugins/saga/scripts/shaping_judgments.py readiness --doc docs/brainstorms/<doc>.md
+```
+
 ## Phase 1 — Understand the idea
 
 ### 1.1 Existing-context scan (verify before claiming)

@@ -2,6 +2,74 @@
 
 ## 2026-09-19
 
+### Saga owns its shaping question sets; fleet-core owns the client  {#shaping-judgments-live-in-saga-1037}
+
+**Context.** `docs/plans/2026-09-19-shaping-judgments-plan.md` (issue #1037). Issue #1032 shipped a
+named-verb registry in `plugins/fleet-core/scripts/fleet_commons/jev_verbs.py` whose docstring says
+the policy lives in exactly one place, and it already carries generic `dedupe` and `readiness` verbs.
+The obvious move was to add the eleven shaping judgments there beside them.
+
+**Decision.** The question sets live in `plugins/saga/scripts/shaping_judgments.py`. Everything
+fleet-wide still comes from fleet-core: the client, redaction, retry, the verdict log, the cache and
+the data rule. Only the questions are saga's.
+
+**Why.** These questions quote saga's own prose contracts — ideate's four grounding-fit outcomes, its
+per-idea rubric dimensions, brainstorm's six consequence factors, office-hours' route list. In
+fleet-core, every wording edit to a saga skill would become a fleet-core release. And the two
+existing generic verbs ask a different question from a different state shape, so reusing them would
+have silently changed what was being asked while looking like reuse.
+
+**Rejected.** Eleven new fleet-core verbs (moves saga's skill prose into fleet-core); reusing the
+generic `dedupe` and `readiness` verbs (changes the question without changing the name).
+
+*Revisit when:* a second plugin needs the same question set. One caller is a saga concern; two is a
+fleet concern, and the verb registry is where it should then move.
+
+### An advisory judgment may widen a floor and may group, but may never narrow or drop  {#advisory-judgments-widen-and-group-1037}
+
+**Context.** Issue #1037 wires typed judgments into three conversational commands whose operator
+rule is "add no rigidity without demonstrated value". The failure mode is not a wrong probability;
+it is a probability quietly acquiring authority.
+
+**Decision.** Three mechanical properties, each with a guard test rather than a sentence of prose:
+
+- The `dedupe` judgment returns **groups**, and the identifier set coming out equals the set going
+  in (`tests/test_shaping_judgments.py::test_grouping_never_removes_a_candidate`). A candidate no
+  pair matched is its own single-member group.
+- The `tactical-scope` keyword list is a **floor**, unioned in code rather than in prose
+  (`tactical_scope_union`), so a judgment answering "no" cannot clear a keyword hit.
+- The per-factor consequence probabilities are **never aggregated** into a level, tier or score, so
+  brainstorm's "No named tiers are used" rule survives a card that adds a classifier next to it.
+
+**Why.** A rule that lives only in a skill's prose is a rule the next edit can drop without anything
+reddening. Each of these is now a property of the code that a test kills on mutation — both
+mutations were run and both guards died before the change was trusted.
+
+*Revisit when:* the evaluation harness reports agreement per confidence band for one of these
+decisions, which is when a judgment may be promoted above a band — and the promotion itself is the
+thing to re-decide, not these three properties.
+
+### A verdict is recorded for an answered call only  {#verdicts-for-answers-only-1037}
+
+**Context.** Issue #1037's doc review left one open question: whether a declined judgment (an empty
+state, or a candidate list above the pairwise cap) or a failed call still writes to the fleet-core
+verdict log.
+
+**Decision.** No. Only a call that produced answers records a verdict, which is what
+`plugins/fleet-core/scripts/jev.py` already does — it returns before its logging block on any
+non-`ok` status.
+
+**Why.** The harness joins answers to labels on `decision_id` and scores agreement per confidence
+band. A record with no answer has nothing to score and nothing to band, so it would only inflate the
+denominator of "thirty real uses" with calls the model never made. The declined case is still
+visible to the operator: it comes back as an advisory result whose note says why.
+
+**Rejected.** Logging declines as a separate record kind. That is telemetry about this module's own
+availability, not a verdict, and mixing the two in one file is how the harness's input stops meaning
+one thing.
+
+*Revisit when:* the decline rate itself becomes a question worth measuring; it wants its own counter,
+not the verdict log.
 ### Mission-control's triage judgment lives in mission-control, not in the shared fleet-core verb registry  {#1035-triage-questions-live-in-mission-control}
 
 **Decision.** The issue-type, risk, Objective and board-Status questions for `issue prepare --suggest` are built in a new `plugins/mission-control/scripts/triage_suggest.py`, which calls the fleet-core TypeSafe client through the vendored shim. The fleet-core `triage` verb at `plugins/fleet-core/scripts/fleet_commons/jev_verbs.py:85-102` is left exactly as it is, and this card changes no file under `plugins/fleet-core/`. A guard test asserts both question sets enumerate the same five issue types.

@@ -106,6 +106,12 @@ When a doc is warranted, these are always present.
   order discussed. R-IDs stay continuous across groups (R1, R2 in the first group; R3, R4 in the
   second; never restart per group). A long flat list is a smell that subgroups were missed.
 
+**A readiness suggestion over these sections.** The `readiness` judgment in
+`plugins/saga/scripts/shaping_judgments.py` asks one yes/no question per readiness criterion over a
+finished document — the criteria are drawn from the hard floor above and the material sections
+below. It is advisory: it suggests whether the document is ready for the `/doc-review` handoff, and
+`/doc-review` still decides. It fails open to offering the review with no suggestion.
+
 ## Include when material
 
 Decide per brainstorm whether each section carries information not covered elsewhere. Placeholder

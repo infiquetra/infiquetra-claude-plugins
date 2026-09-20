@@ -46,7 +46,11 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.160.0"  # 0.160.0: parse_issue.py gains --flags and
+    assert plugin_json["version"] == "0.161.0"  # 0.161.0: shaping_judgments.py asks the
+    # eleven advisory typed judgments inside /ideate, /brainstorm and /office-hours through the
+    # fleet-core TypeSafe client, batched one request per body of text. None is a gate, the dedupe
+    # judgment groups without removing a candidate, and every one fails open (issue #1037).
+    # Predecessor 0.160.0: parse_issue.py gains --flags and
     # --issue, which widen the five keyword flags with a model judgment (widen-only: a keyword
     # flag stays set whatever the model answers) and report the seven approval boundaries
     # advisorily; the journal-nudge hook asks the same way when the feat/fix prefix did not

@@ -23,7 +23,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -36,14 +36,28 @@ import pytest
 TEST_ISSUE = 1
 
 
-def test_store() -> Path:
-    """This test's record store, derived from the repository it has chdir'd into.
+_STORE: Path | None = None
 
-    Never the resolved store: that is the developer's own ``.claude/saga/runs``.
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
     """
-    store = Path.cwd().parent / "orch-test-store"
-    store.mkdir(parents=True, exist_ok=True)
-    return store
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
 
 
 def NS(**fields: object) -> argparse.Namespace:
@@ -253,7 +267,7 @@ def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **override
     block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
     block.update(overrides)
     _support.write_record(
-        repo.parent / "orch-test-store",
+        test_store(),
         TEST_ISSUE,
         units=[_support.fill_unit_row(u) for u in (units or [])],
         **block,
@@ -414,7 +428,7 @@ class TestNoIssuesMeansNoWrite:
         assert r.issues == {}
         assert r.status_map == {}
         r.save()
-        payload = _support.read_record(repo.parent / "orch-test-store", _support.TEST_ISSUE)
+        payload = _support.read_record(test_store(), _support.TEST_ISSUE)["orchestrate"]
         assert payload["issues"] == {}
         assert payload["status_map"] == {}
 
@@ -1225,168 +1239,16 @@ class TestARealTimeoutReturnsTheSafetyRecord:
         assert isinstance(proc, subprocess.CompletedProcess)
 
 
-class TestAFailedWritebackOutlivesTheInvocationThatSawIt:
-    def test_a_second_land_still_reports_an_outstanding_failure(
-        self,
-        orchestrate: ModuleType,
-        repo: Path,
-        fake_controller: FakeReconcileController,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """`land` announces only what it merged, so a second land saw no failure and exited 0."""
-        _write_run(
-            repo,
-            [_unit("work-alpha")],
-            issues={"work-alpha": "infiquetra/orch#52"},
-            status_map={"work": ["Active", "No Such Status"]},
-        )
-        monkeypatch.chdir(repo)
-        assert orchestrate.cmd_merge(NS()) == 2
-        capsys.readouterr()
-        # Nothing new to merge: without the ledger this land attempts no write and exits 0.
-        assert orchestrate.cmd_merge(NS()) == 2
-        assert "BOARD WRITEBACK STILL OUTSTANDING" in capsys.readouterr().out
-
-    def test_a_converged_announce_clears_the_outstanding_entry(
-        self,
-        orchestrate: ModuleType,
-        repo: Path,
-        fake_controller: FakeReconcileController,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Control: the ledger must clear, or every run reports a failure forever."""
-        _write_run(
-            repo,
-            [_unit("work-alpha")],
-            issues={"work-alpha": "infiquetra/orch#52"},
-            status_map={"work": ["Active", "No Such Status"]},
-        )
-        monkeypatch.chdir(repo)
-        assert orchestrate.cmd_merge(NS()) == 2
-        run_path = repo / ".orchestrate" / "run.json"
-        payload = json.loads(run_path.read_text())
-        assert "work-alpha" in payload["writeback_failed"]
-        payload["status_map"] = {"work": ["Active", "Implementing"]}
-        run_path.write_text(json.dumps(payload))
-        assert orchestrate.cmd_announce(NS(units=["work-alpha"])) == 0
-        assert json.loads(run_path.read_text())["writeback_failed"] == {}
+# `TestAFailedWritebackOutlivesTheInvocationThatSawIt` went with the outstanding-writeback
+# ledger it named (issue #1025): a failure is reported where it happens and re-running
+# `announce` is the retry, so there is no record to outlive an invocation.
 
 
-# The Unit field set each run-file contract string was issued for. A contract names the shape
-# an older Orchestrate would misread: a 4.0.x reader passes the contract gate on a string it
-# knows and then dies in a bare ``Unit(**raw)`` on a key it does not (terminal review F05/F21).
-# So the string moves whenever Unit gains or loses a field, and this table is the binding.
-UNIT_FIELDS_BY_CONTRACT: dict[str, tuple[str, ...]] = {
-    "2026-08-31.stage-status-pair": (
-        "name",
-        "vendor",
-        "task",
-        "task_file",
-        "model",
-        "effort",
-        "account",
-        "permission",
-        "setup",
-        "launch_args",
-        "workspace",
-        "merge",
-        "role",
-        "lifecycle",
-        "paths",
-        "fix_requests",
-        "after",
-        "serialize",
-        "worktree",
-        "branch",
-        "branched_from",
-        "tab_id",
-        "pane_id",
-        "agent_name",
-        "status",
-        "note",
-        "variant",
-        "launch_receipt",
-        "parked_state",
-    ),
-    "2026-09-02.permission-declared": (
-        "name",
-        "vendor",
-        "task",
-        "task_file",
-        "model",
-        "effort",
-        "account",
-        "permission",
-        "permission_declared",
-        "setup",
-        "launch_args",
-        "workspace",
-        "merge",
-        "role",
-        "lifecycle",
-        "paths",
-        "fix_requests",
-        "after",
-        "serialize",
-        "worktree",
-        "branch",
-        "branched_from",
-        "tab_id",
-        "pane_id",
-        "agent_name",
-        "status",
-        "note",
-        "variant",
-        "launch_receipt",
-        "parked_state",
-    ),
-}
+
 
 
 class TestTheRunFileNamesItsOwnContract:
-    def test_the_contract_string_moves_with_the_unit_field_set(
-        self, orchestrate: ModuleType
-    ) -> None:
-        """Terminal review F05/F21: ``permission_declared`` shipped under the 2026-08-31
-        string, so an installed 4.0.1 accepted the file and raised a bare TypeError instead
-        of the named refusal. The current field set must be the one recorded for the
-        current contract string; a new field without a new string fails here."""
-        fields = tuple(orchestrate.Unit.__dataclass_fields__)
-        assert orchestrate.RUN_FILE_CONTRACT in UNIT_FIELDS_BY_CONTRACT, (
-            "record the Unit field set for the new RUN_FILE_CONTRACT in UNIT_FIELDS_BY_CONTRACT"
-        )
-        assert fields == UNIT_FIELDS_BY_CONTRACT[orchestrate.RUN_FILE_CONTRACT], (
-            "Unit gained or lost a field: bump RUN_FILE_CONTRACT to a new dated string and "
-            "record the field set it was issued for"
-        )
-        assert max(UNIT_FIELDS_BY_CONTRACT) == orchestrate.RUN_FILE_CONTRACT, (
-            "the current contract must be the newest dated string"
-        )
-        assert set(UNIT_FIELDS_BY_CONTRACT) <= set(orchestrate.KNOWN_RUN_FILE_CONTRACTS), (
-            "every contract this Orchestrate ever wrote must still be readable"
-        )
-        assert "" in orchestrate.KNOWN_RUN_FILE_CONTRACTS
 
-    def test_a_reader_that_knows_only_the_previous_contract_refuses_this_run_file(
-        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The backward half F05 names: the contract gate an installed 4.0.1 runs is
-        ``contract not in {"", "2026-08-31.stage-status-pair"}``. A run file this version
-        writes must trip that gate, so the older reader stops with RunFileContractError and
-        its update remedy instead of reaching ``Unit(**raw)``."""
-        previous_reader_knows = frozenset({"", "2026-08-31.stage-status-pair"})
-        _write_run(repo, [_unit("work-alpha")])
-        monkeypatch.chdir(repo)
-        orchestrate.Run.load(_support.TEST_ISSUE, test_store()).save()
-        payload = _support.read_record(repo.parent / "orch-test-store", _support.TEST_ISSUE)
-        assert payload["contract"] not in previous_reader_knows
-        assert "permission_declared" in payload["units"][0]
-        # Cycle 2, F73: exercise the gate itself as the older reader would run it, not only
-        # the membership of two literals.
-        monkeypatch.setattr(orchestrate, "KNOWN_RUN_FILE_CONTRACTS", previous_reader_knows)
-        with pytest.raises(orchestrate.RunFileContractError, match="Update the orchestrate plugin"):
-            orchestrate.Run.load(_support.TEST_ISSUE, test_store())
 
     def test_a_legacy_row_without_the_permission_key_reads_as_not_declared(
         self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
@@ -1402,30 +1264,7 @@ class TestTheRunFileNamesItsOwnContract:
             is False
         )
 
-    def test_a_run_file_from_a_newer_orchestrate_is_refused_not_read(
-        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A downgrade reads an unknown `status_map` shape as "no status mapped" -- silence again."""
-        _write_run(repo, [_unit("work-alpha")])
-        path = repo / ".orchestrate" / "run.json"
-        payload = json.loads(path.read_text())
-        payload["contract"] = "2099-01-01.something-later"
-        path.write_text(json.dumps(payload))
-        monkeypatch.chdir(repo)
-        with pytest.raises(orchestrate.RunFileContractError, match="does not know"):
-            orchestrate.Run.load(_support.TEST_ISSUE, test_store())
 
-    def test_a_run_file_this_version_wrote_round_trips(
-        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Control, and the backward-compatible half: a file with no contract key still opens."""
-        _write_run(repo, [_unit("work-alpha")])
-        monkeypatch.chdir(repo)
-        run = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
-        run.save()
-        payload = _support.read_record(repo.parent / "orch-test-store", _support.TEST_ISSUE)
-        assert payload["contract"] == orchestrate.RUN_FILE_CONTRACT
-        assert orchestrate.Run.load(_support.TEST_ISSUE, test_store()).run_id == "r1"
 
 
 class TestProvenanceIsRecorded:

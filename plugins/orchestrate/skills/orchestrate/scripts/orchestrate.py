@@ -4856,10 +4856,24 @@ def release_unit_worktree(unit: Unit, root: Path) -> tuple[bool, str]:
 
     Refuses on dirty or unpushed state, naming what is at risk: the worktree is the last copy of
     anything not committed, and the branch is the last copy of anything not pushed.
+
+    **It also refuses while the unit still records a tab.** A recorded tab is a session this run
+    has not closed, and a session's working directory is this worktree -- pulling the floor out
+    from under a live session is worse than a branch that stays undeletable for one more step.
+    `clean` closes the tab first and then removes the worktree, which is the order that already
+    worked; this is the same order, brought forward to the merge turn only where it is safe. The
+    reading is the record's rather than herdr's on purpose: it is deterministic, it needs no
+    round trip in the middle of a merge, and a machine that cannot answer about its sessions must
+    not silently become a machine that removes them.
     """
     path = Path(unit.worktree) if unit.worktree else None
     if path is None or not os.path.lexists(path):
         return True, "no worktree to release"
+    if unit.tab_id:
+        return False, (
+            f"the worktree at {path} still hosts tab {unit.tab_id}; `clean` closes the tab and "
+            "then removes it"
+        )
     if not live_linked_worktree_at(path, operator_worktree=root):
         return False, f"{path} is not a proven separate linked worktree; it was left untouched"
     status = run(["git", "-C", str(path), "status", "--porcelain"], check=False)
@@ -5058,7 +5072,11 @@ def cmd_merge(args: argparse.Namespace) -> int:
             r.save()
             released, why = release_unit_worktree(unit, root)
             print(f"  {unit.name}: {why}")
-            if not released and unit.worktree:
+            # A release DEFERRED because the unit still records a tab is the correct order, not a
+            # cleanup failure: `clean` closes the tab and then removes the worktree. Only a
+            # release that was attempted and could not be made records a failure, so the exit
+            # status keeps meaning "something was left behind that should not have been".
+            if not released and unit.worktree and not unit.tab_id:
                 cleanup_failures.append((Path(unit.worktree), why))
             r.save()
             # The boundary just passed: write it back to the board here, where it happened, and
@@ -5518,6 +5536,7 @@ def reap(
     only: Sequence[str] | None = None,
     remote: str = "origin",
     kept_reasons: dict[str, str] | None = None,
+    failures: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
 
@@ -5567,6 +5586,10 @@ def reap(
                 # what names the tab the operator must close by hand, and the session in it
                 # may still be standing in this unit's worktree.
                 if kept_reasons is not None:
+                    # Reported, but NOT a failure of this run's cleanup: the run never owned
+                    # this tab, so there is nothing here it failed to clean. Exit 3 means
+                    # "something this run owns was left behind", and widening it to include a
+                    # borrowed tab would make the honest signal fire on a healthy sweep.
                     kept_reasons[unit.name] = f"tab left open (not owned): tab {unit.tab_id}"
                 kept.append(unit.name)
                 continue
@@ -5577,6 +5600,8 @@ def reap(
                 # repeated failure must not stack a second copy on it.
                 if kept_reasons is not None:
                     kept_reasons[unit.name] = failure
+                if failures is not None:
+                    failures[unit.name] = failure
                 kept.append(unit.name)
                 continue
             tab_closed = True
@@ -5593,6 +5618,10 @@ def reap(
                     closed_tab = f"tab {unit.tab_id} closed; " if tab_closed else ""
                     kept_reasons[unit.name] = (
                         f"{closed_tab}worktree removal failed ({removed.returncode}): {detail}"
+                    )
+                if failures is not None:
+                    failures[unit.name] = (
+                        f"worktree removal failed ({removed.returncode}): {detail}"
                     )
                 kept.append(unit.name)
                 continue
@@ -5617,6 +5646,8 @@ def reap(
                 kept.append(label)
                 if kept_reasons is not None:
                     kept_reasons[label] = reason
+                if failures is not None:
+                    failures[label] = reason
         for label, reason in report_unattended_worktrees(r, root):
             kept.append(label)
             if kept_reasons is not None:
@@ -5688,12 +5719,19 @@ def report_unattended_worktrees(r: Run, root: Path) -> list[tuple[str, str]]:
     except SystemExit:
         return findings
     live_cwds = {str(row.get("cwd")) for row in agents if row.get("cwd")}
+    live_names = {str(row.get("name")) for row in agents if row.get("name")}
     for unit in r.units:
         if not unit.worktree or unit.status in (DONE, *TERMINAL_UNIT_STATUSES):
             continue
         if not os.path.lexists(Path(unit.worktree)):
             continue
         if str(Path(unit.worktree)) in live_cwds:
+            continue
+        # Match on the agent NAME as well as the working directory. herdr does not always report
+        # a cwd, and "this session did not say where it is" must not read as "no session is
+        # there" -- absence of information is not evidence of absence, which is the rule this
+        # file already applies to a companion it cannot ask.
+        if (unit.agent_name or unit.name) in live_names:
             continue
         findings.append(
             (
@@ -5741,6 +5779,10 @@ def cmd_clean(args: argparse.Namespace) -> int:
         )
     remote = getattr(args, "remote", "origin") or "origin"
     kept_reasons: dict[str, str] = {}
+    # Kept-by-rule and could-not-be-removed are different things, and only the second is a
+    # cleanup failure. `--merged` keeping a running unit is the rule working; an exit code that
+    # called that incomplete would make the honest signal useless.
+    failures: dict[str, str] = {}
     try:
         closed, kept = reap(
             r,
@@ -5748,6 +5790,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
             branches=args.branches,
             remote=remote,
             kept_reasons=kept_reasons,
+            failures=failures,
         )
     finally:
         # Exception-proof by construction: printing, and nothing else. A leftover named only on
@@ -5760,7 +5803,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
     ordinary_kept = [name for name in kept if name not in kept_reasons]
     if ordinary_kept:
         print(f"kept (not done, or its work not on the run branch): {', '.join(ordinary_kept)}")
-    return 3 if kept_reasons else 0
+    return 3 if failures else 0
 
 
 def cmd_check(args: argparse.Namespace) -> int:

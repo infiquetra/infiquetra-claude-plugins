@@ -14,6 +14,7 @@ import argparse
 import importlib.util
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -25,14 +26,28 @@ import pytest
 TEST_ISSUE = 1
 
 
-def test_store() -> Path:
-    """This test's record store, derived from the repository it has chdir'd into.
+_STORE: Path | None = None
 
-    Never the resolved store: that is the developer's own ``.claude/saga/runs``.
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
     """
-    store = Path.cwd().parent / "orch-test-store"
-    store.mkdir(parents=True, exist_ok=True)
-    return store
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
 
 
 def NS(**fields: object) -> argparse.Namespace:

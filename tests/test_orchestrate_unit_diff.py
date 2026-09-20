@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -33,14 +34,28 @@ import pytest
 TEST_ISSUE = 1
 
 
-def test_store() -> Path:
-    """This test's record store, derived from the repository it has chdir'd into.
+_STORE: Path | None = None
 
-    Never the resolved store: that is the developer's own ``.claude/saga/runs``.
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
     """
-    store = Path.cwd().parent / "orch-test-store"
-    store.mkdir(parents=True, exist_ok=True)
-    return store
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
 
 
 def NS(**fields: object) -> argparse.Namespace:
@@ -129,7 +144,7 @@ def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **override
     block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
     block.update(overrides)
     _support.write_record(
-        repo.parent / "orch-test-store",
+        test_store(),
         TEST_ISSUE,
         units=[_support.fill_unit_row(u) for u in (units or [])],
         **block,
@@ -137,7 +152,7 @@ def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **override
 
 
 def _read_run(repo: Path) -> dict[str, Any]:
-    raw: dict[str, Any] = _support.read_record(repo.parent / "orch-test-store", _support.TEST_ISSUE)
+    raw: dict[str, Any] = _support.read_record(test_store(), _support.TEST_ISSUE)
     return raw
 
 
@@ -359,7 +374,7 @@ class TestStartRejectsUnknownDependencies:
         with pytest.raises(SystemExit, match="waits on 'ghost', which is in no run"):
             orchestrate.cmd_start(NS(plan=str(plan), base=None))
         # nothing written, no branch created -- the refusal happens before any of it
-        assert not (repo.parent / "orch-test-store" / f"issue-{_support.TEST_ISSUE}.json").exists()
+        assert not (test_store() / f"issue-{_support.TEST_ISSUE}.json").exists()
         assert (
             subprocess.run(
                 ["git", "rev-parse", "--verify", "--quiet", "orch/r2"],
@@ -385,7 +400,7 @@ class TestStartRejectsUnknownDependencies:
         )
         with pytest.raises(SystemExit, match="serializes behind 'ghost', which is in no run"):
             orchestrate.cmd_start(NS(plan=str(plan), base=None))
-        assert not (repo.parent / "orch-test-store" / f"issue-{_support.TEST_ISSUE}.json").exists()
+        assert not (test_store() / f"issue-{_support.TEST_ISSUE}.json").exists()
 
     def test_a_sibling_dependency_is_accepted(
         self,
@@ -423,7 +438,7 @@ class TestStartRejectsUnknownDependencies:
             ],
         )
         assert orchestrate.cmd_start(NS(plan=str(plan), base=None)) == 0
-        assert (repo.parent / "orch-test-store" / f"issue-{_support.TEST_ISSUE}.json").exists()
+        assert (test_store() / f"issue-{_support.TEST_ISSUE}.json").exists()
         assert (
             subprocess.run(
                 ["git", "rev-parse", "--verify", "--quiet", "orch/r2"],

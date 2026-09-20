@@ -47,6 +47,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import orchestrate_support as _support
 import pytest
 
 SCRIPT = (
@@ -112,20 +113,28 @@ def _worktree(repo: Path, name: str) -> Path:
     return path
 
 
+TEST_ISSUE = _support.TEST_ISSUE
+
+
+def test_store(repo: Path) -> Path:
+    """This test's record store, beside the repository rather than resolved (issue #1025)."""
+    return repo.parent / "orch-test-store"
+
+
 def _write_run(repo: Path, units: list[dict[str, Any]]) -> None:
+    _support.ensure_origin(repo)
     base = subprocess.run(
         ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
     ).stdout.strip()
-    payload = {
-        "run_id": "r1",
-        "source": "a test",
-        "base": base,
-        "branch": "orch/r1",
-        "units": units,
-    }
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+    _support.write_record(
+        test_store(repo),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in units],
+        run_id="r1",
+        source="a test",
+        base=base,
+        branch="orch/r1",
+    )
 
 
 def _unit_row(name: str, worktree: Path | None, status: str, **over: Any) -> dict[str, Any]:
@@ -140,10 +149,28 @@ def _unit_row(name: str, worktree: Path | None, status: str, **over: Any) -> dic
     }
 
 
-def _clean_args(**over: bool) -> argparse.Namespace:
-    kwargs = {"merged": False, "branches": False, "all": False}
+def _clean_args(repo: Path | None = None, **over: object) -> argparse.Namespace:
+    """`clean`'s Namespace. `--all` went with the run state it deleted (issue #1025)."""
+    kwargs: dict[str, object] = {"merged": False, "branches": False, "remote": "origin"}
     kwargs.update(over)
-    return argparse.Namespace(**kwargs)
+    kwargs.pop("all", None)
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store(repo)) if repo is not None else None,
+        **kwargs,
+    )
+
+
+def _ns(repo: Path, **fields: object) -> argparse.Namespace:
+    """Any other command's Namespace, carrying this test's issue and store."""
+    return argparse.Namespace(issue=TEST_ISSUE, store_root=str(test_store(repo)), **fields)
+
+
+def _merge_args(repo: Path, **over: object) -> argparse.Namespace:
+    """`merge`'s Namespace: `land` is gone and the turn carries its comparison ref."""
+    kwargs: dict[str, object] = {"clean": False, "remote": "origin", "compare": "main"}
+    kwargs.update(over)
+    return argparse.Namespace(issue=TEST_ISSUE, store_root=str(test_store(repo)), **kwargs)
 
 
 def _land_sibling(repo: Path) -> None:
@@ -176,15 +203,16 @@ def _write_legacy_run(repo: Path, units: list[dict[str, Any]], *, base: str | No
         base = subprocess.run(
             ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
         ).stdout.strip()
-    payload = {
-        "run_id": "r1",
-        "source": "a legacy test",
-        "base": base,
-        "units": units,
-    }
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+    _support.ensure_origin(repo)
+    _support.write_record(
+        test_store(repo),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in units],
+        run_id="r1",
+        source="a legacy test",
+        base=base,
+        branch="",
+    )
 
 
 def _fake_agents(
@@ -212,7 +240,10 @@ class TestLandedHasThreeAnswers:
         _write_run(repo, [_unit_row("alpha", wt, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.landed("orch/r1-alpha", orchestrate.Run.load()) is True
+        assert (
+            orchestrate.landed("orch/r1-alpha", orchestrate.Run.load(TEST_ISSUE, test_store(repo)))
+            is True
+        )
 
     def test_a_branch_with_commits_not_on_the_run_branch_is_not_landed(
         self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
@@ -222,7 +253,10 @@ class TestLandedHasThreeAnswers:
         _write_run(repo, [_unit_row("beta", wt, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.landed("orch/r1-beta", orchestrate.Run.load()) is False
+        assert (
+            orchestrate.landed("orch/r1-beta", orchestrate.Run.load(TEST_ISSUE, test_store(repo)))
+            is False
+        )
 
     def test_a_branch_with_no_commits_of_its_own_is_not_landed(
         self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
@@ -231,7 +265,9 @@ class TestLandedHasThreeAnswers:
         wt = _worktree(repo, "silent")
         _write_run(repo, [_unit_row("silent", wt, "running")])
         monkeypatch.chdir(repo)
-        got = orchestrate.landed("orch/r1-silent", orchestrate.Run.load())
+        got = orchestrate.landed(
+            "orch/r1-silent", orchestrate.Run.load(TEST_ISSUE, test_store(repo))
+        )
 
         assert got is None
         assert got is not True
@@ -261,7 +297,7 @@ class TestHandFinishedLandingShapes:
         assert unit.worktree is not None
         worktree = Path(unit.worktree)
         _commit(worktree, "fast.txt")
-        run_record.save()
+        _support.save_run(run_record, test_store(repo))
 
         _git(repo, "checkout", "orch/r1")
         _git(repo, "merge", "--no-edit", "orch/r1-fast")
@@ -269,22 +305,22 @@ class TestHandFinishedLandingShapes:
         assert _git_out(repo, "rev-parse", "orch/r1") == _git_out(repo, "rev-parse", "orch/r1-fast")
         assert len(_git_out(repo, "rev-list", "--parents", "-n", "1", "orch/r1").split()) == 2
 
-        loaded = orchestrate.Run.load()
+        loaded = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
         got = orchestrate.landed("orch/r1-fast", loaded)
         assert got is None
         assert got is not True
 
         capsys.readouterr()
-        assert orchestrate.cmd_diff(argparse.Namespace(unit="fast", stat=False)) == 0
+        assert orchestrate.cmd_diff(_ns(repo, unit="fast", stat=False)) == 0
         diff_out = capsys.readouterr().out
         assert "no commits of its own" in diff_out
 
         _fake_agents(orchestrate, monkeypatch, {})
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(_ns(repo)) == 1
         check_out = capsys.readouterr().out
         assert "NO COMMITS fast" in check_out
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 0
         clean_out = capsys.readouterr().out
         assert worktree.exists()
         assert "closed: nothing" in clean_out
@@ -315,20 +351,20 @@ class TestHandFinishedLandingShapes:
         )
         _fake_agents(orchestrate, monkeypatch, {})
         monkeypatch.chdir(repo)
-        loaded = orchestrate.Run.load()
+        loaded = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
 
         got = orchestrate.landed("orch/r1-silent", loaded)
         assert got is None
         assert got is not True
 
-        assert orchestrate.cmd_diff(argparse.Namespace(unit="silent", stat=False)) == 0
+        assert orchestrate.cmd_diff(_ns(repo, unit="silent", stat=False)) == 0
         diff_out = capsys.readouterr().out
         assert "no commits of its own" in diff_out
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(_ns(repo)) == 1
         assert "NO COMMITS silent" in capsys.readouterr().out
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 0
         clean_out = capsys.readouterr().out
         assert worktree.exists()
         assert "closed: nothing" in clean_out
@@ -366,7 +402,7 @@ class TestHandFinishedLandingShapes:
         )
         _fake_agents(orchestrate, monkeypatch, {})
         monkeypatch.chdir(repo)
-        loaded = orchestrate.Run.load()
+        loaded = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
         updater = loaded.unit("updater")
 
         got = orchestrate.landed("orch/r1-updater", loaded)
@@ -375,10 +411,10 @@ class TestHandFinishedLandingShapes:
         assert orchestrate.reapable(updater, loaded) is False
         assert orchestrate.produced_anything(updater, loaded) is False
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(_ns(repo)) == 1
         assert "NO COMMITS updater" in capsys.readouterr().out
 
-        assert orchestrate.cmd_diff(argparse.Namespace(unit="updater", stat=False)) == 0
+        assert orchestrate.cmd_diff(_ns(repo, unit="updater", stat=False)) == 0
         diff_out = capsys.readouterr().out
         assert "no commits of its own" in diff_out
         assert "sibling.txt" not in diff_out
@@ -389,13 +425,13 @@ class TestHandFinishedLandingShapes:
             "launch",
             lambda unit, *_args, **_kwargs: launched.append(unit.name),
         )
-        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
         go_out = capsys.readouterr().out
         assert launched == []
         assert "follower: skipped" in go_out
         assert "updater committed nothing" in go_out
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 0
         clean_out = capsys.readouterr().out
         assert worktree.exists()
         assert "closed: nothing" in clean_out
@@ -420,8 +456,11 @@ class TestHandFinishedLandingShapes:
         _git(repo, "checkout", "main")
         monkeypatch.chdir(repo)
 
-        assert orchestrate.landed("orch/r1-normal", orchestrate.Run.load()) is True
-        assert orchestrate.cmd_diff(argparse.Namespace(unit="normal", stat=False)) == 0
+        assert (
+            orchestrate.landed("orch/r1-normal", orchestrate.Run.load(TEST_ISSUE, test_store(repo)))
+            is True
+        )
+        assert orchestrate.cmd_diff(_ns(repo, unit="normal", stat=False)) == 0
         out = capsys.readouterr().out
         assert "landed on orch/r1 in merge" in out
         assert "normal.txt" in out
@@ -438,7 +477,12 @@ class TestHandFinishedLandingShapes:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.landed("orch/r1-waiting", orchestrate.Run.load()) is False
+        assert (
+            orchestrate.landed(
+                "orch/r1-waiting", orchestrate.Run.load(TEST_ISSUE, test_store(repo))
+            )
+            is False
+        )
 
 
 class TestCleanMergedOnlyReapsWhatSurvived:
@@ -455,7 +499,7 @@ class TestCleanMergedOnlyReapsWhatSurvived:
         _write_run(repo, [_unit_row("builder", wt, "running")])
         monkeypatch.chdir(repo)
 
-        rc = orchestrate.cmd_clean(_clean_args(merged=True))
+        rc = orchestrate.cmd_clean(_clean_args(repo, merged=True))
         out = capsys.readouterr().out
 
         assert rc == 0
@@ -475,8 +519,8 @@ class TestCleanMergedOnlyReapsWhatSurvived:
         _write_run(repo, [_unit_row("alpha", wt, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=False)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 0
         out = capsys.readouterr().out
 
         assert not wt.exists(), "a done unit whose work landed is pure overhead"
@@ -491,7 +535,7 @@ class TestCleanMergedOnlyReapsWhatSurvived:
         _write_run(repo, [_unit_row("silent", wt, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 0
 
         assert wt.exists()
 
@@ -507,7 +551,7 @@ class TestCleanMergedOnlyReapsWhatSurvived:
         _write_run(repo, [_unit_row("later", wt, "pending")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 0
 
         assert wt.exists()
 
@@ -534,7 +578,7 @@ class TestLandCleanReapsWhatTheRuleAllows:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=True)) == 0
         out = capsys.readouterr().out
 
         assert not wt_alpha.exists()
@@ -577,12 +621,12 @@ class TestLandCleanReapsWhatTheRuleAllows:
         monkeypatch.setattr(orchestrate, "run", selective_run)
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=True)) == 0
         output = capsys.readouterr().out
         failure = "tab close failed (3) for w1:t1: herdr refused; pane is busy"
 
         assert wt_alpha.exists()
-        assert orchestrate.Run.load().unit("alpha").note == failure
+        assert orchestrate.Run.load(TEST_ISSUE, test_store(repo)).unit("alpha").note == failure
         assert f"kept alpha: {failure}" in output
 
     def test_clean_reports_an_unowned_tab_as_left_open_and_never_closes_it(
@@ -624,7 +668,7 @@ class TestLandCleanReapsWhatTheRuleAllows:
         monkeypatch.setattr(orchestrate, "run", selective_run)
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(all=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, all=True)) == 0
         out = capsys.readouterr().out
 
         assert "closed: nothing" in out
@@ -634,9 +678,10 @@ class TestLandCleanReapsWhatTheRuleAllows:
             "a tab Orchestrate does not own is never closed"
         )
         assert wt.exists(), "the borrowed session may still be standing in this worktree"
-        assert (repo / ".orchestrate" / "run.json").exists(), (
-            "--all retains the run record that names the tab the operator must close by hand"
-        )
+        # The `--all` run-state retention assertion went with `--all` itself (issue #1025): there
+        # is no run file to delete, and the record belongs to the issue rather than to the sweep.
+        # What it was really checking -- that the tab the operator must close by hand stays named
+        # -- is the `left open (not owned)` assertion above.
 
     def test_every_keep_cause_prints_its_own_reason(
         self,
@@ -708,7 +753,10 @@ class TestLandCleanReapsWhatTheRuleAllows:
         monkeypatch.setattr(orchestrate, "run", selective_run)
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        # Exit 3, not 0: `closer`'s owned tab could not be closed, so something this run owns
+        # was left behind and the status says so (issue #1025). The rule keeps -- `fixer`,
+        # `runner`, `silent` -- are not failures and would not raise it on their own.
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 3
         out = capsys.readouterr().out
 
         assert "kept fixer: fix request outstanding" in out
@@ -753,13 +801,14 @@ class TestLandCleanReapsWhatTheRuleAllows:
         monkeypatch.setattr(orchestrate, "run", refuse_removal)
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, all=True)) == 0
+        # Exit 3: the removal was attempted and could not be made, so something this run owns
+        # was left behind (issue #1025). `--all` and the run-state retention it protected went
+        # with the run file; the record belongs to the issue and no sweep deletes it.
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 3
         out = capsys.readouterr().out
 
         assert "closed: nothing" in out
         assert "kept alpha: worktree removal failed (128): fatal: simulated removal failure" in out
-        assert "run state retained because cleanup kept work" in out
-        assert (repo / ".orchestrate" / "run.json").exists()
         assert wt_alpha.exists()
 
     def test_a_kept_unit_names_the_tab_this_pass_already_closed(
@@ -803,7 +852,8 @@ class TestLandCleanReapsWhatTheRuleAllows:
         monkeypatch.setattr(orchestrate, "run", close_then_refuse_removal)
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        # Exit 3: the removal was attempted and could not be made (issue #1025).
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 3
         out = capsys.readouterr().out
         assert (
             "kept alpha: tab w1:t1 closed; worktree removal failed (128): "
@@ -836,11 +886,11 @@ class TestLandCleanReapsWhatTheRuleAllows:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=True)) == 0
         out = capsys.readouterr().out
         assert "landed on orch/r1: alpha" in out or "alpha" in out
         assert "this land merged nothing" not in out
-        assert "nothing reaped: every unit this land merged was kept" in out
+        assert "nothing reaped: every unit this invocation merged was kept" in out
         assert "kept alpha: tab left open (not owned): tab w1:t-borrowed" in out
 
     def test_a_worktree_already_gone_when_removal_reports_failure_is_still_closed(
@@ -869,7 +919,7 @@ class TestLandCleanReapsWhatTheRuleAllows:
         monkeypatch.setattr(orchestrate, "run", remove_then_complain)
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 0
         out = capsys.readouterr().out
         assert "closed: alpha" in out
         assert "worktree removal failed" not in out
@@ -892,7 +942,7 @@ class TestLandCleanReapsWhatTheRuleAllows:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=True)) == 0
         capsys.readouterr()
 
         assert _branch_exists(repo, "orch/r1-alpha"), "the reaped unit keeps its branch"
@@ -906,10 +956,10 @@ class TestLandCleanReapsWhatTheRuleAllows:
         _write_run(repo, [_unit_row("alpha", wt_alpha, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=True)) == 0
         assert _branch_exists(repo, "orch/r1-alpha")
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         assert not _branch_exists(repo, "orch/r1-alpha")
 
     def test_with_nothing_landed_it_is_a_clean_no_op(
@@ -923,7 +973,7 @@ class TestLandCleanReapsWhatTheRuleAllows:
         _write_run(repo, [_unit_row("builder", wt, "running")])
         monkeypatch.chdir(repo)
 
-        rc = orchestrate.cmd_land(argparse.Namespace(clean=True))
+        rc = orchestrate.cmd_merge(_merge_args(repo, clean=True))
         out = capsys.readouterr().out
 
         assert rc == 0
@@ -943,7 +993,7 @@ class TestProducedAnythingMeansThisUnit:
         wt = _worktree(repo, "late")  # cut from orch/r1 AFTER alpha landed
         _write_run(repo, [_unit_row("late", wt, "running")])
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
 
         assert orchestrate.produced_anything(r.unit("late"), r) is False
 
@@ -955,7 +1005,7 @@ class TestProducedAnythingMeansThisUnit:
         _commit(wt, "late.txt")
         _write_run(repo, [_unit_row("late", wt, "running")])
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
 
         assert orchestrate.produced_anything(r.unit("late"), r) is True
 
@@ -967,7 +1017,7 @@ class TestProducedAnythingMeansThisUnit:
         _land_sibling(repo)
         _write_run(repo, [_unit_row("alpha", None, "done")])
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
 
         assert orchestrate.produced_anything(r.unit("alpha"), r) is True
 
@@ -990,7 +1040,7 @@ class TestCheckAfterALand:
         _fake_agents(orchestrate, monkeypatch, {"late": "idle"})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert orchestrate.cmd_check(_ns(repo)) == 0
         out = capsys.readouterr().out
         assert "LOOKS DONE" not in out
         assert "the record agrees with the repository" in out
@@ -1011,7 +1061,7 @@ class TestCheckAfterALand:
         _fake_agents(orchestrate, monkeypatch, {"late": "idle"})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(_ns(repo)) == 1
         assert "LOOKS DONE late" in capsys.readouterr().out
 
     def test_no_commits_fires_for_a_done_post_land_unit_that_saved_nothing(
@@ -1028,7 +1078,7 @@ class TestCheckAfterALand:
         _fake_agents(orchestrate, monkeypatch, {})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(_ns(repo)) == 1
         out = capsys.readouterr().out
         assert "NO COMMITS late" in out
         assert "LOOKS DONE" not in out
@@ -1051,7 +1101,10 @@ class TestALegacyRunStillRecognisesItsMergedWork:
         _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
         monkeypatch.chdir(repo)
 
-        assert orchestrate.landed("orch/r1-alpha", orchestrate.Run.load()) is True
+        assert (
+            orchestrate.landed("orch/r1-alpha", orchestrate.Run.load(TEST_ISSUE, test_store(repo)))
+            is True
+        )
 
     def test_check_is_quiet_for_a_merged_legacy_unit(
         self,
@@ -1068,7 +1121,7 @@ class TestALegacyRunStillRecognisesItsMergedWork:
         _fake_agents(orchestrate, monkeypatch, {})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert orchestrate.cmd_check(_ns(repo)) == 0
         out = capsys.readouterr().out
         assert "NO COMMITS" not in out
         assert "the record agrees with the repository" in out
@@ -1086,7 +1139,7 @@ class TestALegacyRunStillRecognisesItsMergedWork:
         _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
         monkeypatch.chdir(repo)
 
-        rc = orchestrate.cmd_clean(_clean_args(merged=True))
+        rc = orchestrate.cmd_clean(_clean_args(repo, merged=True))
         out = capsys.readouterr().out
 
         assert rc == 0
@@ -1105,7 +1158,10 @@ class TestALegacyRunStillRecognisesItsMergedWork:
         _write_legacy_run(repo, [_unit_row("alpha", wt, "done")], base="")
         monkeypatch.chdir(repo)
 
-        assert orchestrate.landed("orch/r1-alpha", orchestrate.Run.load()) is True
+        assert (
+            orchestrate.landed("orch/r1-alpha", orchestrate.Run.load(TEST_ISSUE, test_store(repo)))
+            is True
+        )
 
     def test_a_legacy_unit_that_never_committed_is_not_landed(
         self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
@@ -1114,7 +1170,9 @@ class TestALegacyRunStillRecognisesItsMergedWork:
         wt = _legacy_worktree(repo, "silent")
         _write_legacy_run(repo, [_unit_row("silent", wt, "done")])
         monkeypatch.chdir(repo)
-        got = orchestrate.landed("orch/r1-silent", orchestrate.Run.load())
+        got = orchestrate.landed(
+            "orch/r1-silent", orchestrate.Run.load(TEST_ISSUE, test_store(repo))
+        )
 
         assert got is None
         assert got is not True
@@ -1127,7 +1185,7 @@ class TestALegacyRunStillRecognisesItsMergedWork:
         _write_legacy_run(repo, [_unit_row("silent", wt, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 0
 
         assert wt.exists()
 
@@ -1146,18 +1204,22 @@ class TestLandCleanReapsOnlyWhatThisLandMerged:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
+        # `alpha` carries a tab, which is the realistic shape of a merged unit whose session
+        # has not been closed yet -- and it is what defers the merge-turn worktree release
+        # (issue 876), so this test still asks its own question: does a later invocation sweep
+        # what an earlier one kept?
         wt_alpha = _worktree(repo, "alpha")
         _commit(wt_alpha, "alpha.txt")
-        _write_run(repo, [_unit_row("alpha", wt_alpha, "done")])
+        _write_run(repo, [_unit_row("alpha", wt_alpha, "done", tab_id="w1:t-alpha")])
         monkeypatch.chdir(repo)
 
         # The first land merges alpha and deliberately keeps its worktree.
-        assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=False)) == 0
         capsys.readouterr()
         assert wt_alpha.exists()
 
         # The second merges nothing -- and must not sweep what the first one kept.
-        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=True)) == 0
         out = capsys.readouterr().out
 
         assert wt_alpha.exists(), "a land that merged nothing is not a licence to reap"
@@ -1175,23 +1237,33 @@ class TestLandCleanReapsOnlyWhatThisLandMerged:
         _commit(wt_alpha, "alpha.txt")
         wt_beta = _worktree(repo, "beta")
         _commit(wt_beta, "beta.txt")
+        # `alpha` carries a tab, which is the realistic shape of a merged unit whose session
+        # has not been closed yet -- and it is what defers the merge-turn worktree release
+        # (issue 876), so this test still asks its own question: does a later invocation sweep
+        # what an earlier one kept?
         _write_run(
             repo,
-            [_unit_row("alpha", wt_alpha, "done"), _unit_row("beta", wt_beta, "running")],
+            [
+                _unit_row("alpha", wt_alpha, "done", tab_id="w1:t-alpha"),
+                _unit_row("beta", wt_beta, "running"),
+            ],
         )
         monkeypatch.chdir(repo)
 
         # The first land merges alpha and deliberately keeps its worktree.
-        assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=False)) == 0
         capsys.readouterr()
         assert wt_alpha.exists()
 
         # Beta finishes; the second land merges it -- and reaps only it.
         _write_run(
             repo,
-            [_unit_row("alpha", wt_alpha, "done"), _unit_row("beta", wt_beta, "done")],
+            [
+                _unit_row("alpha", wt_alpha, "done", tab_id="w1:t-alpha"),
+                _unit_row("beta", wt_beta, "done"),
+            ],
         )
-        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        assert orchestrate.cmd_merge(_merge_args(repo, clean=True)) == 0
         out = capsys.readouterr().out
 
         assert not wt_beta.exists()
@@ -1259,7 +1331,7 @@ class TestCleanBranchesRemotePass:
         _write_run(repo, [_unit_row("alpha", wt, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert not _branch_exists(repo, "orch/r1-alpha")
@@ -1285,7 +1357,7 @@ class TestCleanBranchesRemotePass:
         _write_run(repo, [_unit_row("beta", wt, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         # Local branch kept because merged_only is True, remote branch preserved with reason
@@ -1322,7 +1394,7 @@ class TestCleanBranchesRemotePass:
         _write_run(repo, [_unit_row("alpha", wt_alpha, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert not _remote_branch_exists(repo, "orch/r1-alpha")
@@ -1347,7 +1419,7 @@ class TestCleanBranchesRemotePass:
         _write_run(repo, [_unit_row("silent", wt_silent, "done")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert _remote_branch_exists(repo, "orch/r1-silent")
@@ -1370,7 +1442,7 @@ class TestCleanBranchesRemotePass:
         _write_run(repo, [_unit_row("builder", wt, "running")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=False, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=False, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert _remote_branch_exists(repo, "orch/r1-builder")
@@ -1393,7 +1465,7 @@ class TestCleanBranchesRemotePass:
         _write_run(repo, [_unit_row("fixer", wt, "done", fix_requests=[{"id": "fix1"}])])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert _remote_branch_exists(repo, "orch/r1-fixer")
@@ -1426,13 +1498,13 @@ class TestCleanBranchesRemotePass:
         monkeypatch.chdir(repo)
 
         # First clean pass deletes it
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out1 = capsys.readouterr().out
         assert "deleted remote branch: orch/r1-alpha" in out1
         assert not _remote_branch_exists(repo, "orch/r1-alpha")
 
         # Second clean pass reports already absent
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out2 = capsys.readouterr().out
         assert "already absent on remote: orch/r1-alpha" in out2
         assert "deleted remote branch: orch/r1-alpha" not in out2
@@ -1475,7 +1547,7 @@ class TestCleanBranchesRemotePass:
 
         monkeypatch.setattr(orchestrate, "run", mock_run)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert not _remote_branch_exists(repo, "orch/r1-pr-unit")
@@ -1518,7 +1590,7 @@ class TestCleanBranchesRemotePass:
 
         monkeypatch.setattr(orchestrate, "run", mock_run)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert _remote_branch_exists(repo, "orch/r1-open-pr")
@@ -1545,9 +1617,7 @@ class TestCleanBranchesRemotePass:
         # Clean with a remote name that does not exist
         assert (
             orchestrate.cmd_clean(
-                argparse.Namespace(
-                    merged=True, branches=True, all=False, remote="nonexistent-remote"
-                )
+                _clean_args(repo, merged=True, branches=True, remote="nonexistent-remote")
             )
             == 0
         )
@@ -1600,7 +1670,7 @@ class TestCleanBranchesRemotePass:
 
         monkeypatch.setattr(orchestrate, "run", mock_run)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert _remote_branch_exists(repo, "orch/r1-pr-diverged")
@@ -1621,7 +1691,7 @@ class TestCleanBranchesRemotePass:
         _write_run(repo, [_unit_row("alpha", wt_alpha, "done", branch="main")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True, branches=True)) == 0
         out = capsys.readouterr().out
 
         assert _remote_branch_exists(repo, "main")

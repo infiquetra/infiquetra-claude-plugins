@@ -98,7 +98,15 @@ def ensure_origin(repo: Path) -> None:
     remote = repo.parent / f"{repo.name}-origin.git"
     if not remote.exists():
         git(repo, "init", "--bare", str(remote))
-    git(repo, "remote", "add", "origin", str(remote))
+    # ``check=False``: two helpers in one module may both ask for a remote, and "it is already
+    # there" is the state this function exists to reach, not a failure.
+    subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "remote", "add", "origin", str(remote)],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
     subprocess.run(  # nosec B603 B607 - a local push into a bare directory
         ["git", "push", "-q", "origin", "main"],
         cwd=repo,

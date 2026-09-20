@@ -20,6 +20,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -32,14 +33,28 @@ import pytest
 TEST_ISSUE = 1
 
 
-def test_store() -> Path:
-    """This test's record store, derived from the repository it has chdir'd into.
+_STORE: Path | None = None
 
-    Never the resolved store: that is the developer's own ``.claude/saga/runs``.
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
     """
-    store = Path.cwd().parent / "orch-test-store"
-    store.mkdir(parents=True, exist_ok=True)
-    return store
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
 
 
 def NS(**fields: object) -> argparse.Namespace:
@@ -94,13 +109,20 @@ def _controller(
 
 
 def _run(orchestrate: ModuleType, *units: Any, ceiling: int | None = None) -> Any:
-    return orchestrate.Run(
+    """A run attached to its own throwaway record, so ``save()`` has somewhere to write.
+
+    ``Run.save`` takes no path any more -- it writes the unit rows and this plugin's block back
+    into the issue's record (issue #1025) -- so a run built by hand has to say which record it
+    belongs to. These tests never touch a repository; the store is a temporary directory.
+    """
+    run = orchestrate.Run(
         run_id="scoped-run",
         source="test",
         base="base",
         units=list(units),
         review_controller_ceiling=ceiling,
     )
+    return _support.attach_record(run, test_store())
 
 
 # --- 1. the single-controller default is untouched, including today's error ------------------
@@ -561,10 +583,13 @@ def test_cmd_start_carries_and_validates_the_ceiling(
             }
         )
     )
+    # `start` requires the record and never creates one (issue #1025): admission writes it, so
+    # this fixture stands in for that step before the command runs.
+    _support.write_record(test_store(), _support.TEST_ISSUE, units=None)
     # Worktree creation may still refuse in a bare fixture; the record is written before that,
     # and the record is what this test is about.
     with contextlib.suppress(SystemExit):
-        orchestrate.cmd_start(NS(plan=str(plan_path), base=None))
+        orchestrate.cmd_start(NS(plan=str(plan_path), base=None, branch=None))
     assert orchestrate.Run.load(_support.TEST_ISSUE, test_store()).review_controller_ceiling == 2
 
 
@@ -817,6 +842,9 @@ def test_cmd_merge_resubmits_a_scoped_pending_controller(
     run_git("add", "-A")
     run_git("commit", "-qm", "seed")
     run_git("branch", "orch/proof-run")
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails (issue
+    # #1025), so this repository gets the local bare remote every migrated fixture gets.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
 
     run = _run(
@@ -861,10 +889,11 @@ def test_run_load_validates_the_ceiling_from_a_hand_edited_record(
     run = _run(orchestrate, _controller(orchestrate, "cr-c2", lifecycle="c2"), ceiling=2)
     run.save()
 
-    record = json.loads(Path(".orchestrate/run.json").read_text())
+    path = test_store() / f"issue-{_support.TEST_ISSUE}.json"
+    record = json.loads(path.read_text())
     for bad in (False, 0, "2"):
-        record["review_controller_ceiling"] = bad
-        Path(".orchestrate/run.json").write_text(json.dumps(record))
+        record["orchestrate"]["review_controller_ceiling"] = bad
+        path.write_text(json.dumps(record))
         with pytest.raises(SystemExit):
             orchestrate.Run.load(_support.TEST_ISSUE, test_store())
 
@@ -876,9 +905,10 @@ def test_lifecycle_whitespace_is_normalised_at_load(
     monkeypatch.chdir(tmp_path)
     run = _run(orchestrate, _controller(orchestrate, "cr-c2", lifecycle="c2"))
     run.save()
-    record = json.loads(Path(".orchestrate/run.json").read_text())
+    path = test_store() / f"issue-{_support.TEST_ISSUE}.json"
+    record = json.loads(path.read_text())
     record["units"][0]["lifecycle"] = "  c2  "
-    Path(".orchestrate/run.json").write_text(json.dumps(record))
+    path.write_text(json.dumps(record))
 
     reloaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert reloaded.review_controllers()[0].lifecycle == "c2"

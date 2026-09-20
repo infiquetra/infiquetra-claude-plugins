@@ -301,8 +301,8 @@
     "mutation": {
       "kind": "replace_text",
       "file": "plugins/saga/scripts/saga.py",
-      "find": "ORCHESTRATION_MODES = (\"inline\", \"cc-workflows-ultracode\")",
-      "replace": "ORCHESTRATION_MODES = (\"inline\", \"team-execution\", \"cc-workflows-ultracode\")"
+      "find": "ORCHESTRATION_MODES = (\"inline\",)",
+      "replace": "ORCHESTRATION_MODES = (\"inline\", \"team-execution\")"
     },
     "mutation_description": "Re-add the archived `team-execution` value to the orchestration enum, which is exactly the regression the guard exists to catch."
   }

@@ -227,27 +227,18 @@ through this skill that scores a required lens with something that does not meet
 In a channel session `AskUserQuestion` cannot be called; inline the choices in the reply text
 instead, following the convention in `saga/skills/brainstorm/SKILL.md`.
 
-## Choosing where the lens work runs
+## Where the lens work runs
 
-The backend changes **transport, never policy ownership**. `inline`, Team Execution, and an
-explicitly invoked Claude Code Workflow may each execute selected lenses, but every backend returns
-evidence to the same controller, which resolves the roster, computes the verdict and emits the
-result. No backend recomputes a score or owns a second acceptance rule.
+**One backend: `inline`.** Issue #1030 archived the `team-execution` plugin and removed the
+`cc-workflows` plugin, so there is no alternative transport to weigh, nothing to pre-select against,
+and no operator question to ask here. §1 of
+[`../../references/operator-choice.md`](../../references/operator-choice.md) is the contract.
 
-Read the work shape and recommend the cheapest correct Saga backend — `inline` for a small diff,
-`team-execution` for gated multi-reviewer consensus — and pre-select it.
-
-**The team-versus-workflow fork is a governance question, not a question of review depth**: both
-have depth. The question is whether the verdict must **block a merge and persist as standing
-evidence**. The Code Review outcome blocks a merge when the caller applies it, whichever backend
-transported the lens work, so this is a governance choice about durable execution evidence.
-
-**Claude Code Workflows still serve both purposes** (per `../../references/operator-choice.md`
-§3.2) — **breadth /
-scale** (broad independent fan-out across many targets) and **adversarial confidence** (judge panels,
-prove-by-refutation / refute-N). These describe **when an operator might explicitly invoke** a
-Workflow; they are **never** default or automatic offer triggers and must never pre-select
-`cc-workflows-ultracode`, which is reached only by **explicit invocation**. Omit that option entirely when the Workflow tool is observably absent.
+The property that outlived the three-backend era is the one worth stating: the transport never owns
+policy. Wherever a lens seat runs — this thread, or a roster session in its own worktree — it returns
+evidence to **this** controller, which resolves the roster, computes the verdict and emits the
+result. No seat recomputes a score, and none owns a second acceptance rule. The Code Review outcome
+blocks a merge when the caller applies it, whoever ran the lens.
 
 **Search before recommending a fix pattern.** Before citing one (concurrency, caching, authentication,
 framework behaviour), verify it is current practice for the version in use. If a web search is

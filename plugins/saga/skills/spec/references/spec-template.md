@@ -106,8 +106,8 @@ Before confirming the write, scan the draft for:
 
 ## Handoff routing note
 
-This artifact is a **`/handoff` source** mapping to handoff maturity **`requirements-ready`** — the
-sharp WHAT that `/handoff` -> `mission-control` -> issue -> `/work` points at. `/spec` produces the
+This artifact is a **`mission-control` source** mapping to handoff maturity **`requirements-ready`** — the
+sharp WHAT that `mission-control` -> issue -> `/work` points at. `/spec` produces the
 source; **`mission-control` owns the issue body** (sections, labels, board placement). Do not copy SDLC
 issue templates into this spec. When the WHAT is locked but a HOW must still be settled before
 implementation, route to `/plan` instead; an optional `/doc-review` readiness pass can run on this spec

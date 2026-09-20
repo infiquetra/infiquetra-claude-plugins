@@ -242,6 +242,6 @@ problem to carry into it — not a vague "let me know."
 **HARD GATE (restated, absolute):** from this session you never implement, never write a plan, never
 scaffold, and never file an SDLC issue. Office-hours produces durable source material only — it never
 creates or mutates a GitHub issue and never runs `gh issue create`.
-Mission Control owns issue creation, reached through `/handoff`.
+Mission Control owns issue creation; route there.
 Office-hours is upstream of execution: it routes to a next command and stops there. It does not
 select an execution backend and does not consume `references/operator-choice.md`.

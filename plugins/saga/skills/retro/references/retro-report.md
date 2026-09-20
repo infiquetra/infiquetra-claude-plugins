@@ -35,7 +35,7 @@ Path: `docs/retros/<saga-id-or-issue>-<date>.md`. **Agent-consumable structured 
 - Recurring (compounding signal): <friction seen in a prior retro → Pass 6(a) new-skill candidate>.
 
 ## Surfaced follow-ups
-- → /handoff: <follow-up that should become an SDLC issue>
+- → mission-control issue: <follow-up that should become an SDLC issue>
 - → QUEUED: <durable backlog item>
 
 ## Proposed edits (Tier-2, awaiting operator)

@@ -180,8 +180,8 @@ Offer these routes:
    `Explored`, then load `saga/skills/brainstorm/SKILL.md` with that idea as the seed.
 5. **Re-evaluate / raise the bar** — return to Phase 3 and re-run the rubric, stricter.
 6. **Interview me (I'm stuck)** — conditional tactic; see Interview below.
-7. **Hand off → `idea-ready`** — write a durable record, then graduate to `/handoff` (which routes to
-   `mission-control`) or to `/plan`. The ideation artifact is `idea-ready` maturity.
+7. **Hand off → `idea-ready`** — write a durable record, then graduate to `mission-control`, which
+   owns the issue, or to `/plan`. The ideation artifact is `idea-ready` maturity.
 
 A no-save exit needs no dedicated option: pick route 1 and stop, or use the question tool's free-text
 escape. Persistence stays opt-in.
@@ -300,7 +300,7 @@ brainstorm-grounded, `requirements-ready` material. Ideation output is `idea-rea
 ### 6.7 Hand off → `idea-ready`
 
 1. Write or update the durable record (Phase 5).
-2. Graduate to `/handoff`, which builds the handoff envelope and routes to `mission-control`; the
+2. Graduate to `mission-control`, which builds the handoff envelope and opens the issue; the
    `docs/ideation/` artifact carries `idea-ready` maturity. `/plan <issue>` also consumes `idea-ready`.
 
 Leave the run scratch directory (`.claude/saga/ideate/<run-id>/`) in place on

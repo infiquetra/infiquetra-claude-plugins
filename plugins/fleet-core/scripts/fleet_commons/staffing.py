@@ -3,13 +3,13 @@
 
 Choosing a subagent's model, a workflow unit's tier, and a herdr role's vendor and model are
 one decision whose inputs used to sit in four places: the work-shape tier policy and model
-palette here in fleet-core, the per-repository tier overlay in saga's ``tier_defaults.py``, the
+palette here in fleet-core, the per-repository tier overlay saga's ``tier_defaults.py`` read, the
 capability ratings and trust tiers in saga's ``references/engine-registry.yaml``, and the
 software-development-lifecycle repository's ledger of which executor has been qualified against
 which review lens. ``staffing.json`` now carries all four, and this module is the only thing that
 reads them for a staffing answer.
 
-It answers three questions and nothing else:
+It answers three resolve questions:
 
 * ``resolve_shape(work_shape)`` — the tier for a work shape, honouring the repository overlay.
 * ``resolve_role(role)`` — the vendor, model and effort for a named role.
@@ -20,8 +20,12 @@ dispatches nothing: every call returns a :class:`StaffingDecision` describing th
 layer that supplied it, and any advisory suggestion the caller passed in. Persisting that record
 belongs to the run record (KTD8), not here.
 
-The advisory tier suggestion (KTD9) is a parameter, never a call: this module never reaches out to
-a suggestion service, so a staffing question can never depend on one being reachable.
+The advisory tier suggestion (KTD9) arrives two ways. ``resolve_shape`` and ``resolve_role`` take
+it as a parameter and never call out, so a staffing question can never depend on a service being
+reachable. ``consult_tier_suggestions`` (issue 1033) is the explicit consult: it asks the tier
+judgment verb about a batch of units in one request, validates each answer like any tier, and logs
+one verdict per suggested unit. Either way the suggestion is recorded beside the chosen tier and
+can never change it.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -77,6 +82,26 @@ LENS_UNVERIFIED = "lens-unverified"
 RATINGS: tuple[str, ...] = ("STRONG", "MODERATE", "WEAK")
 
 DEFAULT_VENDOR = "claude"
+
+#: The named judgment verb consulted for tier suggestions (issue 1033). The verb supplies the
+#: question criteria, the policy text, and the confidence floor, so this module carries none of
+#: those as literals.
+TIER_SUGGEST_VERB = "tier"
+
+#: Decision-id namespace for suggestion verdicts, so ``jev eval`` can score this judgment point
+#: separately from every other.
+SUGGEST_DECISION_PREFIX = "staffing/tier-suggest"
+
+#: Scalar effort names the tier verb may suggest that are not Claude-palette rungs, mapped onto
+#: the palette top they read as. The verb's effort question offers low/medium/high/max while
+#: EFFORTS tops out at xhigh; without this map a "max" suggestion — the honest answer for a
+#: consequential decision — would be unusable on arrival.
+SUGGESTED_EFFORT_ALIASES: dict[str, str] = {"max": "xhigh"}
+
+#: Argparse sentinel for a bare ``--suggest``: consult the client. A MODEL/EFFORT value keeps its
+#: issue-1021 meaning (record the parameter, make no call). An object rather than a string so no
+#: value a caller could type collides with it.
+CONSULT = object()
 
 
 class StaffingError(ValueError):
@@ -226,8 +251,10 @@ def capability_ratings(registry: dict[str, Any] | None = None) -> dict[str, Any]
 def overlay_path(root: Path | None = None) -> Path:
     """Where the per-repository overlay lives, relative to ``root`` or the working directory.
 
-    Public because saga's ``tier_defaults`` writes the file this module reads; a second copy of
-    the path would let the writer and the reader drift onto different files silently.
+    Public because a writer of the overlay and this reader must agree on one path; a second copy
+    would let them drift onto different files silently. Saga's ``tier_defaults`` was that writer
+    until issue 1030 removed it, and the path stays public because the overlay is an operator-
+    committed file that anything may write.
     """
     return (root or Path.cwd()) / OVERLAY_PATH
 
@@ -235,8 +262,8 @@ def overlay_path(root: Path | None = None) -> Path:
 def load_overlay(root: Path | None = None) -> dict[str, dict[str, str]]:
     """Return the per-repository overlay; absent means ``{}``, malformed raises.
 
-    This is the one implementation of the read and its validation; saga's ``tier_defaults``
-    delegates here. An unknown work shape, an off-palette model or effort, and a model-effort pair
+    This is the one implementation of the read and its validation. Saga's ``tier_defaults``
+    delegated here until issue 1030 removed it; callers now read this directly. An unknown work shape, an off-palette model or effort, and a model-effort pair
     above the model's ceiling are each a loud failure rather than a silent fall-through to the
     policy default.
     """
@@ -273,9 +300,10 @@ def validate_tier(
 ) -> dict[str, str]:
     """Validate one ``{work_shape: {model, effort}}`` pair against the palette.
 
-    Public because saga's ``tier_defaults.write_tier_default`` validates an operator-confirmed
-    override before persisting it, and that check must be the same one the overlay reader uses —
-    two copies is how a write starts accepting a pair the read would refuse.
+    Public because a writer validating an operator-confirmed override before persisting it must
+    use the same check the overlay reader uses — two copies is how a write starts accepting a pair
+    the read would refuse. Saga's ``tier_defaults.write_tier_default`` was that writer until issue
+    1030 removed it.
     """
     registry = registry if registry is not None else work_shapes()
     if work_shape not in registry:
@@ -737,6 +765,440 @@ def qualify_lens(
     )
 
 
+# --------------------------------------------------------------------------- tier suggestion
+
+
+def _load_commons(module: str) -> Any:
+    """Load a sibling fleet-commons module, lazily.
+
+    The resolve path never calls this: asking this module a staffing question keeps exactly the
+    dependency graph it had before the suggestion (KTD9). Only the consult entry points below
+    reach it, and a load failure there falls open to the defaults rather than raising.
+    """
+    import fleet_commons_shim  # noqa: PLC0415 (lazy by design, cf. mission-control)
+
+    return fleet_commons_shim.load(module)
+
+
+def suggestion_unit(
+    task: str, default: Mapping[str, str], *, operator_set: bool = False
+) -> dict[str, Any]:
+    """One unit for :func:`consult_tier_suggestions`: its description, the default tier that
+    stands whatever the model says, and whether an operator set that tier.
+
+    ``operator_set`` is what makes an override record meaningful: when an operator-set tier differs
+    from a suggestion that cleared the floor, the difference is logged as an override of that
+    suggestion (mission-control's rule: the author's value is the decision, a difference is the
+    override). A policy default standing over a suggestion is the standing rule, not an override.
+    """
+    try:
+        model, effort = str(default["model"]), str(default["effort"])
+    except (KeyError, TypeError) as exc:
+        raise StaffingError(
+            f"suggestion unit needs a default {{'model', 'effort'}}, got {default!r}"
+        ) from exc
+    return {
+        "task": task,
+        "default": {"model": model, "effort": effort},
+        "operator_set": bool(operator_set),
+    }
+
+
+def describe_unit(label: str, decision: StaffingDecision) -> str:
+    """The task text one resolved decision is consulted as: the unit, its default, and why."""
+    kind = f"role '{label}'" if decision.role is not None else f"work shape '{label}'"
+    rationale = str(work_shapes().get(decision.work_shape, {}).get("rationale") or "")
+    text = (
+        f"{kind} (work shape '{decision.work_shape}', "
+        f"staffing default {decision.vendor} {decision.tier})"
+    )
+    return f"{text}: {rationale}" if rationale else text
+
+
+def consult_tier_suggestions(
+    units: Mapping[str, Mapping[str, Any]],
+    *,
+    decision_prefix: str = SUGGEST_DECISION_PREFIX,
+    floor: float | None = None,
+    ask: Callable[..., Any] | None = None,
+    client: Any = None,
+    verbs: Any = None,
+    log_module: Any = None,
+    log_verdicts: bool = True,
+    log_dir: Path | None = None,
+    timeout: float | None = None,
+    max_attempts: int | None = None,
+    total_deadline: float | None = None,
+) -> dict[str, Any]:
+    """Ask the tier verb about every unit in one request; the defaults stand regardless.
+
+    ``units`` maps a label to :func:`suggestion_unit`. The whole batch goes out as one ``ask``
+    call over one ``{"tasks": ...}`` state (the house batching rule), and each label comes back
+    as one entry carrying the ``suggested`` tier, its ``confidence`` (the weaker of the model's
+    and the effort's), the ``floor``, and ``chosen`` — the default that stands. A suggestion
+    below the floor, or one that fails palette validation, is reported with its reason and is
+    never carried onto a decision. A client failure, a timeout, a malformed body, or an
+    unloadable client falls open the same way, with the reason in ``note``.
+
+    Three properties, mirroring the sibling advisory paths (``jev_widen``, mission-control's
+    ``issue prepare --suggest``):
+
+    * **Advisory.** Nothing here returns a tier to run. The caller records a suggestion beside
+      its own answer; the answer is computed without consulting.
+    * **Fail open.** Every failure mode returns a result whose entries carry ``chosen`` and a
+      reason. The only raise is a malformed ``units`` mapping, which is the caller's bug.
+    * **One call path, injectable.** ``ask`` defaults to the client's and is a parameter, so a
+      test hands in a fake and cannot reach the network even by accident.
+    """
+    normalized = {
+        key: suggestion_unit(
+            str(unit.get("task", key)),
+            unit.get("default", {}),
+            operator_set=bool(unit.get("operator_set", False)),
+        )
+        if isinstance(unit, Mapping)
+        else suggestion_unit(key, {})
+        for key, unit in units.items()
+    }
+
+    try:
+        client = client if client is not None else _load_commons("typesafe_client")
+        verbs = verbs if verbs is not None else _load_commons("jev_verbs")
+        log_module = log_module if log_module is not None else _load_commons("jev_log")
+    except Exception as exc:  # noqa: BLE001 - a missing fleet-core is not a broken default
+        return _consult_failure(
+            normalized, "error", f"the TypeSafe client could not be loaded ({exc})", floor
+        )
+
+    if floor is None:
+        try:
+            floor = float(verbs.VERBS[TIER_SUGGEST_VERB].confidence_floor)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            floor = None
+    if floor is None:
+        return _consult_failure(
+            normalized,
+            "error",
+            f"the {TIER_SUGGEST_VERB!r} verb carries no confidence floor",
+            None,
+        )
+
+    if not normalized:
+        return {"status": "ok", "note": "", "resolved_model": "", "floor": floor, "suggestions": {}}
+
+    try:
+        questions = _suggest_questions(normalized, verbs)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        return _consult_failure(
+            normalized,
+            "error",
+            f"the {TIER_SUGGEST_VERB!r} verb question set is unusable ({exc})",
+            floor,
+        )
+
+    state = {"tasks": {key: unit["task"] for key, unit in normalized.items()}}
+    options: dict[str, Any] = {}
+    if timeout is not None:
+        options["timeout"] = timeout
+    if max_attempts is not None:
+        options["max_attempts"] = max_attempts
+    if total_deadline is not None:
+        options["total_deadline"] = total_deadline
+    try:
+        caller = ask if ask is not None else client.ask
+        result = caller(state, questions, **options)
+    except Exception as exc:  # noqa: BLE001 - a caller's defaults must survive any failure
+        return _consult_failure(
+            normalized, "error", f"the request raised {type(exc).__name__}", floor
+        )
+
+    status = getattr(result, "status", "error")
+    if status != getattr(client, "STATUS_OK", "ok"):
+        note = getattr(result, "note", "") or f"the request returned status {status}"
+        return _consult_failure(normalized, status, note, floor)
+
+    answers = dict(getattr(result, "answers", None) or {})
+    resolved_model = str(getattr(result, "model", "") or "")
+    suggestions = {
+        key: _shape_suggestion(key, unit, answers, client, floor)
+        for key, unit in normalized.items()
+    }
+    if log_verdicts:
+        _record_suggest_verdicts(
+            log_module,
+            decision_prefix=decision_prefix,
+            units=normalized,
+            state=state,
+            questions=questions,
+            answers=answers,
+            suggestions=suggestions,
+            floor=floor,
+            resolved_model=resolved_model,
+            log_dir=log_dir,
+        )
+    return {
+        "status": "ok",
+        "note": "",
+        "resolved_model": resolved_model,
+        "floor": floor,
+        "suggestions": suggestions,
+    }
+
+
+def _consult_failure(
+    units: Mapping[str, Mapping[str, Any]], status: str, note: str, floor: float | None
+) -> dict[str, Any]:
+    """The fall-open result: every unit keeps its default, with the reason why."""
+    return {
+        "status": status,
+        "note": note,
+        "resolved_model": "",
+        "floor": floor,
+        "suggestions": {
+            key: {
+                "suggested": None,
+                "confidence": None,
+                "model_confidence": None,
+                "effort_confidence": None,
+                "floor": floor,
+                "low_confidence": False,
+                "usable": False,
+                "problem": None,
+                "chosen": dict(unit["default"]),
+                "reason": note,
+            }
+            for key, unit in units.items()
+        },
+    }
+
+
+def _suggest_questions(units: Mapping[str, Mapping[str, Any]], verbs: Any) -> dict[str, Any]:
+    """One model and one effort question per unit, from the tier verb's own set.
+
+    The criteria and policy text are the verb's verbatim; only the task reference is retargeted
+    from the verb's single-task ```task``` onto this unit's entry in the batched ``tasks`` state.
+    """
+    base = verbs.VERBS[TIER_SUGGEST_VERB].question_set()
+    questions: dict[str, Any] = {}
+    for key in units:
+        ref = f"`tasks.{key}`"
+        for name in ("model", "effort"):
+            question = dict(base[name])
+            question["instructions"] = _retarget_instructions(base[name]["instructions"], ref)
+            questions[f"{key}__{name}"] = question
+    return questions
+
+
+def _retarget_instructions(instructions: Any, ref: str) -> Any:
+    if isinstance(instructions, str):
+        return instructions.replace("`task`", ref)
+    if isinstance(instructions, Mapping):
+        retargeted = dict(instructions)
+        question = retargeted.get("question")
+        if isinstance(question, str):
+            retargeted["question"] = question.replace("`task`", ref)
+        return retargeted
+    return instructions
+
+
+def _safe_confidence(client: Any, answer: Any) -> float | None:
+    if not isinstance(answer, Mapping):
+        return None
+    try:
+        value = client.answer_confidence(answer)
+    except Exception:  # noqa: BLE001 - an unreadable answer reads as no confidence
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _safe_value(client: Any, answer: Mapping[str, Any]) -> Any:
+    try:
+        return client.answer_value(answer)
+    except Exception:  # noqa: BLE001 - an unreadable answer reads as no value
+        return None
+
+
+def _unusable_reason(model: str, effort: str) -> str | None:
+    """Why a suggested pair may not stand beside a tier, or None when it may."""
+    if model not in MODELS:
+        return f"suggested model {model!r} is not in the palette {MODELS}"
+    if effort not in EFFORTS:
+        return f"suggested effort {effort!r} is not in the palette {EFFORTS}"
+    if not _tier_palette.supports_effort(model, effort):
+        return (
+            f"suggested tier {model}/{effort} is unrunnable "
+            f"({model}'s ceiling is {_tier_palette.effort_ceiling(model)!r})"
+        )
+    return None
+
+
+def _shape_suggestion(
+    key: str,
+    unit: Mapping[str, Any],
+    answers: Mapping[str, Any],
+    client: Any,
+    floor: float,
+) -> dict[str, Any]:
+    """One unit's answers into the entry the caller records: what was suggested, how confident,
+    and the default that stands."""
+    chosen = dict(unit["default"])
+    model_answer = answers.get(f"{key}__model")
+    effort_answer = answers.get(f"{key}__effort")
+    model_conf = _safe_confidence(client, model_answer)
+    effort_conf = _safe_confidence(client, effort_answer)
+    base: dict[str, Any] = {
+        "model_confidence": model_conf,
+        "effort_confidence": effort_conf,
+        "floor": floor,
+        "chosen": chosen,
+    }
+    if not isinstance(model_answer, Mapping) or not isinstance(effort_answer, Mapping):
+        missing = ", ".join(
+            name
+            for name, answer in (("model", model_answer), ("effort", effort_answer))
+            if not isinstance(answer, Mapping)
+        )
+        return {
+            **base,
+            "suggested": None,
+            "confidence": None,
+            "low_confidence": False,
+            "usable": False,
+            "problem": None,
+            "reason": f"the answer carried no suggestion for '{key}' (missing {missing}); "
+            "the default stands",
+        }
+    model = _safe_value(client, model_answer)
+    effort_raw = _safe_value(client, effort_answer)
+    if not isinstance(model, str) or not isinstance(effort_raw, str):
+        return {
+            **base,
+            "suggested": None,
+            "confidence": None,
+            "low_confidence": False,
+            "usable": False,
+            "problem": "the answer has no usable tier value",
+            "reason": f"the answer for '{key}' has no usable tier value; the default stands",
+        }
+    effort = SUGGESTED_EFFORT_ALIASES.get(effort_raw, effort_raw)
+    suggested = {"model": model, "effort": effort}
+    confidence = (
+        min(model_conf, effort_conf) if model_conf is not None and effort_conf is not None else None
+    )
+    problem = _unusable_reason(model, effort)
+    if problem is not None:
+        return {
+            **base,
+            "suggested": suggested,
+            "confidence": confidence,
+            "low_confidence": False,
+            "usable": False,
+            "problem": problem,
+            "reason": f"{problem}; the default stands",
+        }
+    if confidence is None or confidence < floor:
+        if confidence is None:
+            reason = "no confidence was reported; the default stands"
+        else:
+            reason = (
+                f"confidence {confidence:.2f} is below the floor {floor:.2f}; the default stands"
+            )
+        return {
+            **base,
+            "suggested": suggested,
+            "confidence": confidence,
+            "low_confidence": True,
+            "usable": True,
+            "problem": None,
+            "reason": reason,
+        }
+    if suggested == chosen:
+        reason = "agrees with the default; recorded beside it"
+    else:
+        reason = "differs from the default; advisory only, the default stands"
+    return {
+        **base,
+        "suggested": suggested,
+        "confidence": confidence,
+        "low_confidence": False,
+        "usable": True,
+        "problem": None,
+        "reason": reason,
+    }
+
+
+def _record_suggest_verdicts(
+    log_module: Any,
+    *,
+    decision_prefix: str,
+    units: Mapping[str, Mapping[str, Any]],
+    state: Any,
+    questions: Mapping[str, Any],
+    answers: Mapping[str, Any],
+    suggestions: Mapping[str, dict[str, Any]],
+    floor: float,
+    resolved_model: str,
+    log_dir: Path | None,
+) -> None:
+    """Append one verdict per suggested unit, plus an override where an operator-set tier differs
+    from a suggestion that cleared the floor.
+
+    The verdict's answer is the combined ``model/effort`` choice so the evaluation harness can
+    join it against the ``chosen`` label; the two raw answers ride along as ``parts`` for audit.
+    A unit with no suggestion to score — missing answers, unusable values — writes nothing, and a
+    failed request never reaches here. Best-effort like jev_widen's: evidence is never worth
+    failing a staffing answer for.
+    """
+    for key, entry in suggestions.items():
+        suggested = entry.get("suggested")
+        if not isinstance(suggested, dict):
+            continue
+        tier = f"{suggested.get('model')}/{suggested.get('effort')}"
+        chosen = entry["chosen"]
+        label = f"{chosen['model']}/{chosen['effort']}"
+        try:
+            record = log_module.record_verdict(
+                decision_id=f"{decision_prefix}:{key}",
+                state=state,
+                questions=questions,
+                answer={
+                    "type": "choice",
+                    "choice": tier,
+                    "confidence": entry.get("confidence"),
+                    "parts": {
+                        "model": answers.get(f"{key}__model"),
+                        "effort": answers.get(f"{key}__effort"),
+                    },
+                },
+                confidence=entry.get("confidence"),
+                threshold=floor,
+                resolved_model=resolved_model,
+                label=label,
+                directory=log_dir,
+            )
+        except Exception:  # noqa: BLE001, PERF203 - see the docstring
+            return
+        try:
+            if (
+                entry.get("usable")
+                and not entry.get("low_confidence")
+                and units.get(key, {}).get("operator_set")
+                and suggested != entry.get("chosen")
+            ):
+                log_module.record_override(
+                    verdict_hash=record["verdict_hash"],
+                    chosen=label,
+                    rationale=(
+                        f"the operator's tier for '{key}' is {label}; the suggestion was {tier}"
+                    ),
+                    directory=log_dir,
+                )
+        except Exception:  # noqa: BLE001 - see the docstring
+            return
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="staffing.py",
@@ -750,8 +1212,14 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--lens", help="a review lens; only meaningful for a reviewing role")
     resolve.add_argument(
         "--suggest",
+        nargs="?",
+        const=CONSULT,
         metavar="MODEL/EFFORT",
-        help="an advisory tier suggestion, recorded beside the answer and never able to change it",
+        help=(
+            "bare: consult the tier judgment once and record its suggestion beside the answer; "
+            "with MODEL/EFFORT: record that tier as the advisory suggestion instead. "
+            "Neither can change the resolved tier"
+        ),
     )
     resolve.add_argument(
         "--json", action="store_true", help="print the whole decision record instead of the tier"
@@ -796,6 +1264,8 @@ def _dispatch(args: argparse.Namespace) -> int:
 def _cli_resolve(args: argparse.Namespace) -> int:
     if bool(args.shape) == bool(args.role):
         raise StaffingError("pass exactly one of --shape or --role")
+    if args.suggest is CONSULT:
+        return _cli_consult(args)
     suggestion = _parse_suggestion(args.suggest)
     if args.shape:
         if args.lens:
@@ -808,6 +1278,69 @@ def _cli_resolve(args: argparse.Namespace) -> int:
     else:
         print(_short_form(decision))
     return 0
+
+
+def _cli_consult(args: argparse.Namespace) -> int:
+    """Resolve the default, consult the tier judgment once, and print both.
+
+    The suggestion is carried onto the decision only when it is usable and clears the floor; the
+    resolved tier is the default's whatever the model says. A client failure still exits zero:
+    the consult is advisory, and the default it falls open to is a complete answer.
+    """
+    if args.shape:
+        if args.lens:
+            raise StaffingError("a lens applies to a reviewing role, not a work shape")
+        decision = resolve_shape(args.shape)
+        label = decision.work_shape
+    else:
+        decision = resolve_role(args.role, lens=args.lens)
+        label = decision.role or args.role
+    outcome = consult_tier_suggestions(
+        {
+            label: suggestion_unit(
+                describe_unit(label, decision),
+                {"model": decision.model, "effort": decision.effort},
+                operator_set=decision.source == "overlay",
+            )
+        }
+    )
+    entry = outcome["suggestions"][label]
+    if entry.get("usable") and not entry.get("low_confidence") and entry.get("suggested"):
+        decision = replace(decision, suggestion=dict(entry["suggested"]))
+    if args.json:
+        payload = decision.as_dict()
+        payload["consult"] = {
+            "status": outcome["status"],
+            "note": outcome["note"],
+            "resolved_model": outcome["resolved_model"],
+            "floor": outcome["floor"],
+            "confidence": entry.get("confidence"),
+            "reason": entry.get("reason"),
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("\n".join(_format_consult(decision, entry, outcome["floor"])))
+    return 0
+
+
+def _format_consult(
+    decision: StaffingDecision, entry: dict[str, Any], floor: float | None
+) -> list[str]:
+    """The short human form: the default, the suggestion with its confidence, and what applies."""
+    lines = [f"default: {_short_form(decision)} ({decision.source})"]
+    suggested = entry.get("suggested")
+    if not isinstance(suggested, dict):
+        lines.append(f"suggestion: none ({entry.get('reason', 'no suggestion')})")
+    else:
+        confidence = entry.get("confidence")
+        shown = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "n/a"
+        floor_shown = f"{floor:.2f}" if isinstance(floor, (int, float)) else "n/a"
+        lines.append(
+            f"suggestion: {suggested.get('model')}/{suggested.get('effort')} "
+            f"at confidence {shown} (floor {floor_shown}); {entry.get('reason', '')}"
+        )
+    lines.append(f"applies: {_short_form(decision)}")
+    return lines
 
 
 def _cli_explain(args: argparse.Namespace) -> int:

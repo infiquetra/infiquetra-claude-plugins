@@ -13,7 +13,7 @@ The visual shape of the generated artifact follows the canonical formatting cont
 `description` / `rationale` / `downsides` as short blank-line-separated prose, and render the compact
 fields (`basis` / `confidence` / `complexity` / `axis` / `status`) as a small two-column table.
 
-The artifact carries `idea-ready` handoff maturity (feeds `/handoff` → `mission-control` and `/plan`).
+The artifact carries `idea-ready` handoff maturity (feeds `mission-control` and `/plan` directly).
 
 ```markdown
 ---

@@ -697,11 +697,12 @@ class SagaTickIndexWriteError(OSError):
 
 
 def _orchestration_rank(mode: str) -> int | None:
-    """Tier rank of an orchestration mode (inline < cc-workflows-ultracode).
+    """Tier rank of an orchestration mode. One rung since issue #1030: ``inline``.
 
     Returns the index in ``ORCHESTRATION_MODES`` (a higher index is a richer/costlier tier),
     or ``None`` for an unrecognized value (the guard then can't reason about direction and is
-    lenient).
+    lenient). With one rung there is no upgrade or downgrade left to detect, and the function
+    stays because the ladder is the shape the guard reads, not a count it assumes.
 
     That leniency is what keeps a saga written before issue #1030 readable: ``team-execution`` was
     the middle rung until that card archived the plugin, and a persisted tick still carrying the

@@ -75,9 +75,9 @@ read subcommands of `gh` — never create / edit / merge.
 
 ---
 
-## Pass 3 — Transcript-review fan-out (reuse the /resume scripts, context-safe)
+## Pass 3 — Transcript-review fan-out (context-safe)
 
-Reuse the `/resume` forensic substrate, file-mediated. The orchestrator **never reads a raw `.jsonl` or a
+Reuse the transcript-forensics substrate, file-mediated. The orchestrator **never reads a raw `.jsonl` or a
 skeleton file** — paths only.
 
 
@@ -150,7 +150,7 @@ apply / skip / modify; channel session: inline the choice):
 The passes neither source had:
 
 - **(a) new-skill / plugin detection** — repeated friction (esp. flagged recurring in Pass 4) that a new
-  skill or plugin would remove → propose a `QUEUED.md` entry or a `/handoff`.
+  skill or plugin would remove → propose a `QUEUED.md` entry or a `mission-control` issue.
 - **(b) refine-lifecycle** — propose diffs to the saga SKILLs when the thread exposed a
   gap or a wrong instruction (including `skills/retro/SKILL.md` itself — proposal only, never
   self-applied).
@@ -167,6 +167,6 @@ auto-run** it, never auto-launch a destructive self-edit.
 
 ## Pass 7 — Route
 
-Surfaced follow-ups → `/handoff` (becomes an SDLC issue) or `QUEUED.md` (durable backlog). Route per
+Surfaced follow-ups → `mission-control` (becomes an SDLC issue) or `QUEUED.md` (durable backlog). Route per
 No saga write; `/retro` is terminal and
 saga READ-ONLY.

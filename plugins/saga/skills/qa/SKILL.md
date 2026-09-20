@@ -219,8 +219,9 @@ evaluation harness has recorded agreement for the widening judgment at the chose
 **NOT** open, update, or merge a PR, does **NOT** deploy, does **NOT** file SDLC issues, and does
 **NOT** set readiness labels. It reports, verdicts, and routes — then stops.
 
-Outbound routing is the chain's, and the map is referenced rather than restated:
-`saga/skills/loop/references/dispatch-table.md`.
+Outbound routing is the chain's. The next step is the one the section below names, read from the
+run record; issue 1030 removed the `/loop` router and its dispatch table, so there is no separate
+map to consult.
 
 ## The step this continues into
 

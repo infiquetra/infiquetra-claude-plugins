@@ -46,11 +46,16 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "1.1.0"  # 1.1.0: the three advisory review
+    assert plugin_json["version"] == "1.2.0"  # 1.2.0: the three advisory review
     # judgments of issue #1034 — the conditional-lens proposal at declaration time
     # (review_roster.py --propose, additive only), finding dedupe groups and the severity
     # flag over results (review_result.py, grouped and attached, never applied). Bumped over
-    # 1.0.0, the saga version on parent/1018 at 994443ea.
+    # 1.1.0, the saga version on main at d899c6a0 (issue #1033's batched tier suggestions at
+    # admission, merged the same day; both cards were cut from parent/1018 at 994443ea and both
+    # chose 1.1.0, so the second to land re-bumped at merge time).
+    #
+    # Predecessor 1.1.0 was issue #1033: admission's opt-in --suggest flag runs the staffing
+    # component's tier consult once per run and records each suggestion beside its default.
     #
     # Predecessor 1.0.0 was the removals of issue
     # #1030 — eleven commands and nine skills gone, four hooks deregistered and deleted, both saga
@@ -544,14 +549,23 @@ def test_qa_functional_test_step_contract() -> None:
             "any `git add` mention must be inside a 'Never git add' negation"
         )
 
-    # --- MECHANISM FLOOR 12: dispatch-table is REFERENCED, never restated. ---
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "outbound routing must REFERENCE the dispatch-table by path"
+    # --- MECHANISM FLOOR 12: outbound routing is DEFERRED, never restated. ---
+    # Until issue 1030 this floor required the skill to cite
+    # `loop/references/dispatch-table.md` by path. That table left with `/loop`, and the floor
+    # outlived it pinned to a path that no longer resolves: a guard that requires a dangling
+    # reference is why the rewritten skill kept pointing at a deleted file. The floor's real
+    # subject is that `/qa` does not carry its own copy of the routing map, so that is what is
+    # checked now, plus the positive half — the skill still says where the next step comes from.
+    assert "loop/references/dispatch-table.md" not in corpus, (
+        "the dispatch table left with /loop; a reference to it no longer resolves"
     )
     assert "# Dispatch Table" not in corpus, (
         "the dispatch-table H1 title must not be restated in /qa"
     )
     assert "The designed routing map for `/loop`" not in corpus
+    assert "run record" in skill_doc.lower(), (
+        "outbound routing must name where the next step is read from"
+    )
 
     # --- MECHANISM FLOOR 13: the two strategies declared WITHOUT a driver say so, with the
     # condition that reopens each. A narrowing declared openly is not the same as a silent gap. ---
@@ -1125,6 +1139,32 @@ def test_recommend_backend_release_surface_subtraction() -> None:
         rec(file_count=3, release_surface_file_count=-10)
 
 
+def test_recommend_backend_survives_an_unavailable_workflow_tool() -> None:
+    """A host without the Workflow tool gets a recommendation, not a ValueError.
+
+    Issue 1030 narrowed the reachable-backend list to ``["inline"]`` and left behind the line
+    that removed ``cc-workflows-ultracode`` from it when the tool was absent. ``list.remove``
+    raises on a value that is not there, so every call passing ``workflow_available=False`` --
+    which is every call from a host that actually probed -- died with
+    ``ValueError: list.remove(x): x not in list``. The full suite stayed green because no case
+    passed the flag.
+
+    Both provenance values are exercised, because the crash was in the branch the flag selects
+    and not in the note the source chooses.
+    """
+
+    lifecycle = _load_module("lifecycle_state.py")
+    for source in ("probed", "asserted"):
+        result = lifecycle.recommend_execution_backend(
+            workflow_available=False,
+            workflow_availability_source=source,
+        )
+        assert result["recommended"] == "inline"
+        assert result["alternatives"] == []
+        assert [entry["backend"] for entry in result["backends"]] == ["inline"]
+        assert [entry["status"] for entry in result["backends"]] == ["recommended"]
+
+
 def test_issue_progress_comments_include_required_evidence() -> None:
     issue_progress = _load_module("issue_progress.py")
 
@@ -1513,12 +1553,21 @@ def test_intake_exit_saga_creates_no_issue() -> None:
     # the commands produce. Each corpus still carries its producing verbs + paths. ---
     assert "diagnos" in office_doc.lower(), "office-hours must keep its diagnostic identity"
     assert "frame" in office_doc.lower(), "office-hours must keep its frame-finding identity"
-    for route in ("/ideate", "/brainstorm", "/plan", "/handoff"):
+    # ``/handoff`` was the fourth route until issue 1030 removed the command. Its
+    # destination did not move -- Mission Control still owns the issue -- so the
+    # boundary assertion above carries that half, and this loop pins only routes that
+    # still resolve. A guard that required a removed command's name would have made
+    # the dangling route impossible to fix.
+    for route in ("/ideate", "/brainstorm", "/plan"):
         assert route in office_doc, f"office-hours routing must still name {route}"
+    assert "Mission Control" in office_doc, "office-hours must still name where an issue comes from"
     for verb in ("generate", "critique", "reject"):
         assert verb in ideate_doc.lower(), f"ideate must keep its {verb} identity"
     assert "docs/ideation/" in ideate_doc, "ideate's durable artifact path must survive"
-    assert "/handoff" in convergence_doc, "/ideate must still route to /handoff (Mission Control)"
+    assert "`mission-control`" in convergence_doc, (
+        "/ideate must still route to Mission Control for the issue; the `/handoff` command\n"
+        "that fronted that route was removed by issue 1030, and the destination was not"
+    )
 
     # --- SEEDED VIOLATION: the same check FAILS on a bare runnable `gh issue create`.
     # The seed keeps its token >60 chars away from any negation the doc happens to carry. ---

@@ -1324,7 +1324,7 @@ def _format_consult(
     decision: StaffingDecision, entry: dict[str, Any], floor: float | None
 ) -> list[str]:
     """The short human form: the default, the suggestion with its confidence, and what applies."""
-    lines = [f"default: {decision.tier} ({decision.source})"]
+    lines = [f"default: {_short_form(decision)} ({decision.source})"]
     suggested = entry.get("suggested")
     if not isinstance(suggested, dict):
         lines.append(f"suggestion: none ({entry.get('reason', 'no suggestion')})")
@@ -1336,7 +1336,7 @@ def _format_consult(
             f"suggestion: {suggested.get('model')}/{suggested.get('effort')} "
             f"at confidence {shown} (floor {floor_shown}); {entry.get('reason', '')}"
         )
-    lines.append(f"applies: {decision.tier}")
+    lines.append(f"applies: {_short_form(decision)}")
     return lines
 
 

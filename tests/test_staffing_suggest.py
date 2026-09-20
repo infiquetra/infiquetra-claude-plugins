@@ -463,6 +463,21 @@ def test_cli_suggest_below_floor_leaves_the_decision_alone(
     assert payload["consult"]["confidence"] == pytest.approx(0.40)
 
 
+def test_cli_suggest_role_names_the_vendor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A role's consult lines carry its vendor, like the plain short form."""
+    monkeypatch.chdir(tmp_path)
+    answers = _tier_answers("planner", "opus", 0.90, "high", 0.85)
+    _cli_modules(monkeypatch, result=_ok(answers))
+
+    assert staffing.main(["resolve", "--role", "planner", "--suggest"]) == 0
+    out = capsys.readouterr().out
+    assert "default: claude opus/high (policy)" in out
+    assert "suggestion: opus/high" in out
+    assert "applies: claude opus/high" in out
+
+
 def test_cli_suggest_without_key_falls_open(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

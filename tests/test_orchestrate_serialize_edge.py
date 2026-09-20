@@ -19,11 +19,54 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -82,26 +125,30 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(cwd: Path, units: list[dict[str, Any]], *, base: str | None = None) -> None:
-    if base is None:
-        base = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=cwd, check=True, capture_output=True, text=True
-        ).stdout.strip()
-    payload = {
-        "run_id": "r1",
-        "source": "a test",
-        "base": base,
-        "branch": "orch/r1",
-        "units": units,
-    }
-    path = cwd / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
+    ).stdout.strip()
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _read_run(cwd: Path) -> dict[str, Any]:
-    raw: dict[str, Any] = json.loads((cwd / ".orchestrate" / "run.json").read_text())
-    return raw
+    """The record in the shape the old run file was read in (issue #1025)."""
+    raw = _support.read_record(test_store(), _support.TEST_ISSUE)
+    return {**raw["orchestrate"], "units": raw["units"]}
 
 
 def _unit(name: str, **over: Any) -> dict[str, Any]:
@@ -211,7 +258,7 @@ class TestGoHonoursSerializeEdges:
             launched.append(unit.name)
 
         monkeypatch.setattr(orchestrate, "launch", fake_launch)
-        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert orchestrate.cmd_go(NS(limit=0)) == 0
 
         assert launched == []
         assert "nothing eligible" in capsys.readouterr().out
@@ -238,7 +285,7 @@ class TestGoHonoursSerializeEdges:
             launched.append(unit.name)
 
         monkeypatch.setattr(orchestrate, "launch", fake_launch)
-        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert orchestrate.cmd_go(NS(limit=0)) == 0
 
         assert launched == ["beta"]
 
@@ -264,7 +311,7 @@ class TestGoHonoursSerializeEdges:
             launched.append(unit.name)
 
         monkeypatch.setattr(orchestrate, "launch", fake_launch)
-        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert orchestrate.cmd_go(NS(limit=0)) == 0
 
         assert launched == ["beta"]
 
@@ -281,7 +328,7 @@ class TestStatusNamesTheKindOfWait:
     ) -> None:
         _write_run(tmp_path, [_unit("alpha"), _unit("beta", after=["alpha"])], base="0" * 40)
         monkeypatch.chdir(tmp_path)
-        assert orchestrate.cmd_status(argparse.Namespace()) == 0
+        assert orchestrate.cmd_status(NS()) == 0
 
         assert "needs output from alpha" in capsys.readouterr().out
 
@@ -294,7 +341,7 @@ class TestStatusNamesTheKindOfWait:
     ) -> None:
         _write_run(tmp_path, [_unit("alpha"), _unit("beta", serialize=["alpha"])], base="0" * 40)
         monkeypatch.chdir(tmp_path)
-        assert orchestrate.cmd_status(argparse.Namespace()) == 0
+        assert orchestrate.cmd_status(NS()) == 0
 
         out = capsys.readouterr().out
         assert "serialized behind alpha" in out
@@ -317,7 +364,7 @@ class TestStatusNamesTheKindOfWait:
             base="0" * 40,
         )
         monkeypatch.chdir(tmp_path)
-        assert orchestrate.cmd_status(argparse.Namespace()) == 0
+        assert orchestrate.cmd_status(NS()) == 0
 
         line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("beta"))
         assert "needs output from alpha" in line
@@ -337,7 +384,7 @@ class TestStatusNamesTheKindOfWait:
             base="0" * 40,
         )
         monkeypatch.chdir(tmp_path)
-        assert orchestrate.cmd_status(argparse.Namespace()) == 0
+        assert orchestrate.cmd_status(NS()) == 0
 
         out = capsys.readouterr().out
         assert "serialized behind" not in out
@@ -359,7 +406,7 @@ class TestExpandRejectsUnknownSerializeTargets:
         monkeypatch.chdir(tmp_path)
 
         with pytest.raises(SystemExit, match="serializes behind 'ghost'"):
-            orchestrate.cmd_expand(argparse.Namespace(plan=str(plan)))
+            orchestrate.cmd_expand(NS(plan=str(plan)))
 
     def test_an_unknown_after_target_is_still_rejected(
         self,
@@ -373,7 +420,7 @@ class TestExpandRejectsUnknownSerializeTargets:
         monkeypatch.chdir(tmp_path)
 
         with pytest.raises(SystemExit, match="waits on 'ghost'"):
-            orchestrate.cmd_expand(argparse.Namespace(plan=str(plan)))
+            orchestrate.cmd_expand(NS(plan=str(plan)))
 
     @pytest.mark.usefixtures("launcher_on_path")
     def test_a_serialize_target_already_in_the_run_is_accepted(
@@ -387,7 +434,7 @@ class TestExpandRejectsUnknownSerializeTargets:
         plan.write_text(json.dumps({"units": [_unit("beta", serialize=["alpha"])]}))
         monkeypatch.chdir(tmp_path)
 
-        assert orchestrate.cmd_expand(argparse.Namespace(plan=str(plan))) == 0
+        assert orchestrate.cmd_expand(NS(plan=str(plan))) == 0
         units = {u["name"]: u for u in _read_run(tmp_path)["units"]}
         assert units["beta"]["serialize"] == ["alpha"]
 
@@ -405,7 +452,7 @@ class TestExpandRejectsUnknownSerializeTargets:
         plan.write_text(json.dumps({"units": [_unit("beta", serialize=["gamma"]), _unit("gamma")]}))
         monkeypatch.chdir(tmp_path)
 
-        assert orchestrate.cmd_expand(argparse.Namespace(plan=str(plan))) == 0
+        assert orchestrate.cmd_expand(NS(plan=str(plan))) == 0
         assert "added 2" in capsys.readouterr().out
 
 
@@ -416,22 +463,22 @@ class TestRunFilesFromBeforeTheField:
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A run started before the field existed keeps working, and keeps gating correctly."""
-        payload = {
-            "run_id": "r1",
-            "source": "a test",
-            "base": "0" * 40,
-            "branch": "orch/r1",
-            "units": [
+        # A record whose unit rows predate the field: neither row carries `serialize`.
+        _support.write_record(
+            test_store(),
+            _support.TEST_ISSUE,
+            units=[
                 {"name": "alpha", "vendor": "claude", "task": "x", "status": "done"},
                 {"name": "beta", "vendor": "claude", "task": "x", "after": ["alpha"]},
             ],
-        }
-        path = tmp_path / ".orchestrate" / "run.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload))
+            run_id="r1",
+            source="a test",
+            base="0" * 40,
+            branch="orch/r1",
+        )
         monkeypatch.chdir(tmp_path)
 
-        run = orchestrate.Run.load()
+        run = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         assert run.unit("alpha").serialize == []
         assert run.unit("beta").serialize == []
         assert run.unit("beta").after == ["alpha"]
@@ -455,6 +502,8 @@ class TestRunFilesFromBeforeTheField:
                 )
             ],
         )
+        _support.attach_record(run, test_store())
+
         run.save()
 
         raw = _read_run(tmp_path)

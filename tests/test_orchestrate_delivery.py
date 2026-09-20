@@ -14,11 +14,54 @@ import argparse
 import importlib.util
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -90,7 +133,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent_status": "idle",
                 "agent": "claude",
@@ -128,7 +171,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent_status": "done",
                 "agent": "claude",
@@ -167,7 +210,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent_status": "working",
                 "agent": "claude",
@@ -233,7 +276,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent": "claude",
                 "interactive_ready": True,
@@ -267,7 +310,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent_status": "idle",
                 "agent": "claude",
@@ -307,10 +350,12 @@ class TestStatusCommandShowsNamedDeliveryFailureState:
             units=[unit],
         )
 
-        monkeypatch.setattr(orchestrate.Run, "load", lambda: run_record)
+        # `Run.load` takes the issue and the store now (issue #1025); the stub stands in for
+        # the record read, which is not what either of these tests is about.
+        monkeypatch.setattr(orchestrate.Run, "load", lambda *_a, **_kw: run_record)
         monkeypatch.setattr(orchestrate, "unit_commit_statuses", lambda _units, _r: [("-", "-")])
 
-        rc = orchestrate.cmd_status(argparse.Namespace())
+        rc = orchestrate.cmd_status(NS())
         assert rc == 0
         captured = capsys.readouterr().out
         assert "prompt_undelivered" in captured
@@ -347,21 +392,27 @@ class TestSettleNeverSweepsAnUndeliveredUnit:
             status=orchestrate.PROMPT_UNDELIVERED,
             note=orchestrate.DELIVERY_WARNING,
         )
-        run_record = orchestrate.Run(
-            run_id="test-run",
-            source="issue 779",
-            base="0" * 40,
-            units=[unit],
+        run_record = _support.attach_record(
+            orchestrate.Run(
+                run_id="test-run",
+                source="issue 779",
+                base="0" * 40,
+                units=[unit],
+            ),
+            test_store(),
         )
-        monkeypatch.setattr(orchestrate.Run, "load", lambda: run_record)
+        # `Run.load` takes the issue and the store now (issue #1025); the stub stands in for
+        # the record read, which is not what either of these tests is about.
+        monkeypatch.setattr(orchestrate.Run, "load", lambda *_a, **_kw: run_record)
         # An undelivered unit's session is alive and idle -- exactly the reading that used to be
         # taken for a finished turn.
         monkeypatch.setattr(
             orchestrate, "live_agents", lambda *_args, **_kwargs: [_idle_agent("alpha")]
         )
+
         monkeypatch.setattr(orchestrate.time, "sleep", lambda _seconds: None)
 
-        rc = orchestrate.cmd_settle(argparse.Namespace(once=False, interval=0))
+        rc = orchestrate.cmd_settle(NS(once=False, interval=0))
 
         assert rc == 0
         assert unit.status == orchestrate.PROMPT_UNDELIVERED

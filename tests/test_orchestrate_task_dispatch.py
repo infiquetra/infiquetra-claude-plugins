@@ -13,11 +13,53 @@ import argparse
 import dataclasses
 import importlib.util
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -351,7 +393,7 @@ class TestTheRosterBriefsEveryVendor:
         monkeypatch.setattr(orchestrate, "roster", lambda: [("muse", "model,effort")])
         monkeypatch.setattr(orchestrate, "launchable", lambda: ["muse"])
         monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: [])
-        orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
+        orchestrate.cmd_roster(NS(models=False, probe=False, limit=12))
 
         out = capsys.readouterr().out
         assert "--approval-mode never" in out
@@ -367,7 +409,7 @@ class TestTheRosterBriefsEveryVendor:
         monkeypatch.setattr(orchestrate, "roster", lambda: [("agy", "model,effort")])
         monkeypatch.setattr(orchestrate, "launchable", lambda: ["agy"])
         monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: [])
-        orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
+        orchestrate.cmd_roster(NS(models=False, probe=False, limit=12))
 
         assert "(vendor default)" in capsys.readouterr().out
 
@@ -381,7 +423,7 @@ class TestTheRosterBriefsEveryVendor:
         monkeypatch.setattr(orchestrate, "roster", lambda: [("muse", "model,effort")])
         monkeypatch.setattr(orchestrate, "launchable", lambda: ["muse"])
         monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: [])
-        orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
+        orchestrate.cmd_roster(NS(models=False, probe=False, limit=12))
 
         assert "arrives as prose" in capsys.readouterr().out
 
@@ -395,7 +437,7 @@ class TestTheRosterBriefsEveryVendor:
         monkeypatch.setattr(orchestrate, "roster", lambda: [("qwen", "model")])
         monkeypatch.setattr(orchestrate, "launchable", lambda: ["qwen"])
         monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: ["plan"])
-        orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
+        orchestrate.cmd_roster(NS(models=False, probe=False, limit=12))
 
         assert "--safe-mode" in capsys.readouterr().out
 
@@ -526,6 +568,7 @@ class TestAPlanOmittingPermissionSaysSo:
     def test_declared_permission_survives_a_run_record_round_trip(
         self, orchestrate: ModuleType
     ) -> None:
+
         unit = orchestrate.Unit(name="u", vendor="claude", task="x")
         unit.permission_declared = False
         raw = dataclasses.asdict(unit)

@@ -1,14 +1,14 @@
 # Changelog
 
-## [0.168.0] - 2026-09-20
+## [0.169.0] - 2026-09-20
 
-**Bumped from 0.167.0**, the saga version on `origin/parent/1018` at commit `54a526b1`, the merge
-of issue #938. This card first took 0.167.0 against `b98e94ea`, where saga read 0.166.0; issue #938
-took the same number and landed first, so this card renumbered above it at the merge turn rather
-than shipping a colliding version. The collision produced no conflict of its own — both sides wrote
-the identical string into `plugin.json` and `marketplace.json`, so git merged them silently, and
-only the changelog's prose and the version literal in `tests/test_saga_plugin.py` differed enough
-to stop the merge.
+**Bumped from 0.168.0**, the saga version on `origin/parent/1018` at commit `87a5329e`, the merge
+of issue #1025. This card took 0.167.0 against `b98e94ea` and then 0.168.0 against `54a526b1`;
+issue #938 took the first number and issue #1025 the second, each landing while this card's suite
+ran, so the card renumbered above them at each merge turn rather than shipping a colliding version.
+Neither collision produced a conflict of its own — both sides wrote the identical string into
+`plugin.json` and `marketplace.json`, so git merged them silently, and only the changelog's prose
+and the version literal in `tests/test_saga_plugin.py` differed enough to stop the merge.
 
 ### Added
 
@@ -60,9 +60,28 @@ to stop the merge.
 - `/loop`, `/resume`, `/handoff` and the handoff and intent envelope machinery are all still here.
   Issue #1030 removes them; this card removes nothing.
 
+## [0.168.0] - 2026-09-20
+
+**Bumped from 0.167.0**, the saga version on `origin/parent/1018` at commit `54a526b1`. This card
+had taken 0.166.0 and then 0.167.0; issues #1026 and #938 merged each of those numbers onto the
+integration branch while this card's suite ran, so the card renumbered above them at the merge
+turn rather than shipping a colliding version.
+
+### Changed
+
+- **The run record's `units` rows are documented as an extension point** (issue #1025).
+  `plugins/saga/references/run-record.md` gains a section naming the three keys the orchestrate
+  plugin adds to a unit row -- `merge_state`, `launch_started_at` and `shared_blockers` -- and
+  states the rule they are added under: a row's key set is deliberately not fixed, because a row is
+  one consumer's working state rather than a cross-consumer contract, and a key another consumer
+  does not know is left alone. The same section records that orchestrate keeps its own run-level
+  state under a top-level `orchestrate` key, which the module already preserves unchanged across a
+  read and a write, and that it never writes `admission`, `approval_scope`, `run_configuration`,
+  `review_cycles` or `roster`. No code changes; `run_record.v1` is unchanged.
+
 ## [0.167.0] - 2026-09-20
 
-**Bumped from 0.166.0**, the saga version on `origin/parent/1018` at commit `b98e94ea`.
+**Bumped from 0.166.0** by issue #938 on `origin/parent/1018`.
 
 ### Removed
 

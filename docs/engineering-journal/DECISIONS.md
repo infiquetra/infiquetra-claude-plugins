@@ -31,6 +31,84 @@
 **Rejected alternatives.** Leaving continuation to a driver command — `/loop`'s Drive mode was that, it had to be chosen, and issue #1030 removes it. Continuing `/plan` into `/work` unconditionally — the destination already records how far a run may go, and reading it costs nothing. Continuing `/doc-review` into `/work` from any document — a strategy or requirements document has no plan to execute, and an open `P0` or `P1` is the very finding `/work`'s gate enforces.
 
 **Revisit when** a repository wants a pause between planning and building that the destination cannot express. The answer is a value in the record, not a sentence in a skill.
+### A staged-input stop reports and stops; it no longer retries through the pane  {#1025-staged-stop-does-not-auto-redeliver}
+
+**Decision.** When the composer holds staged input, `go` returns the unit to `PENDING`, appends
+the stop message to the unit's note, and tells the operator to clear the composer and run
+`launcher.py redeliver` by hand. Orchestrate does not repeat the delivery itself.
+
+**Date:** 2026-09-20 · **Issue:** #1025 · **Supersedes in part:** `{#907-staged-input-redeliver}`
+
+**Why.** The automatic retry read the persisted launch receipt's `input_box` marker to decide
+that a `PENDING` unit was a staged stop rather than a fresh unit. This card stops persisting the
+receipt, so that marker is not in the record and the retry has nothing to key on. Reintroducing a
+field to carry it would re-add the run-file state this card exists to remove, and a retry that
+guesses wrong creates a second session in a live pane.
+
+**Rejected.** Persisting the receipt for this one field; inferring a staged stop from the note
+text; retrying unconditionally on every `PENDING` unit that records a pane.
+
+### A merge turn runs in its own detached worktree, created and removed inside the turn  {#1025-detached-worktree-per-merge-turn}
+
+**Decision.** `merge` creates one detached worktree on the parent branch's tip, merges the unit's branch there, advances the parent branch reference, and removes that worktree in a `finally`. A conflicting merge aborts in that worktree, removes it, leaves the unit at `ready` with the conflict named, and leaves the parent branch untouched.
+
+**Rationale.** The card removes "landing reservations", and it is worth being exact about what that names, because the worktree and the bookkeeping around it are different things. The bookkeeping is what goes: a `conflict_worktree` pointer persisted into the run file so it outlived the invocation, a numbered-sibling fallback with its preserved-path reporting, and a retained-merge recovery that inspected an earlier run's worktree and decided whether to publish what it found. That machinery is 470 lines and it exists to hand a half-finished merge from one invocation to the next. The worktree itself stays because the alternative is merging in whatever the operator has checked out, which is what `collect` did and what card 875 is about. Recovery is now the ordinary one the software-development-lifecycle repository's parent-branch chapter assigns: the merging worker resolves its own conflict on its own branch and takes the turn again.
+
+**Alternatives rejected.** Keeping the retained-conflict pointer "just for conflicts", rejected because a pointer that survives an invocation is precisely the record the card removes, and every defect in that family (issues 960, 979) is in the code that reads it. Merging in the coordinator's own checkout, rejected: it makes a conflict a dirty operator tree.
+
+**Revisit when.** A merge turn needs to survive the process that started it — at which point the thing to add is a record field git can confirm, not a pointer to a directory.
+
+### The `main` regression guard fetches before it compares, and refuses when the fetch fails  {#1025-guard-fetches-before-comparing}
+
+**Decision.** Before evaluating whether a merge would take a file backwards, the turn runs `git fetch <remote> <branch>` and refuses the turn when it fails, saying the guard could not be evaluated against a current reference.
+
+**Rationale.** The guard compares the merge result against `origin/main`. A remote-tracking reference is only as current as the last fetch, so a guard that reads it without refreshing passes silently on a stale copy — which is the same shape as the failure card 875 reported one level up: `collect` merged with no currency check and could revert work on `main` while reporting success. Refusing on a failed fetch is the safe direction: a merge turn not taken costs a retry, and a merge turn taken against a stale comparison costs the work the comparison existed to protect. Comparing against a local `main` was rejected for the same reason — it is whatever the operator last pulled.
+
+**Alternatives rejected.** Warning and comparing anyway, rejected as above. Fetching once per invocation rather than per turn, rejected because turns are serialised and a long run can outlive the freshness of one fetch; the cost is one network call per merge.
+
+**Revisit when.** A repository has no remote at all — today that refuses every turn, which is correct for this repository and would be wrong for a purely local one.
+
+### Orchestrate's state moves into the per-issue run record, and the issue number replaces the run identifier  {#1025-record-replaces-run-file}
+
+**Decision.** The orchestrate driver stops writing `.orchestrate/run.json` and reads and writes issue 1023's `run_record.v1` document for one issue, resolved through `run_record.resolve_store_root()`. Every mutating subcommand takes `--issue <N>`. Two issues driven in one repository have two record files and never contend for one path. The task-spill mechanism goes with the run file.
+
+**Rationale.** The fixed path was one file per repository, so a finished run blocked the next (card 878) and a unit's own worktree could not see it at all, because `.orchestrate/` is git-ignored and a repository-relative path resolves inside the worktree rather than in the primary checkout (issue 886's fifth finding). The record resolves its store root from the git *common* directory, which is the same directory from the primary checkout and from every linked worktree, so the same file is visible to the coordinator and to every unit. The record also already answers two defects the run file carried separately: an unknown version is a one-line refusal with exit 3 rather than a traceback (card 975), and an unknown top-level field round-trips and is named rather than silently dropped on save (card 989). The spill existed because the run file was rewritten whole on every save and 83% of a 75-unit record was task text; one issue's state is not that file.
+
+**Alternatives rejected.** Keeping a second orchestrate-owned file beside the record, rejected because it reintroduces the two-authorities problem the record exists to end. Keeping the fixed path with a `--run` selector, rejected because that is what card 878 asked for before the record existed and it solves the singleton without solving the worktree-visibility half.
+
+**Revisit when.** The record's `schema` token moves past `run_record.v1`.
+
+### A launch persisted immediately is what makes two `go` calls launch once — not a reservation  {#1025-immediate-persist-not-a-reservation}
+
+**Decision.** The launch loop writes the unit row with `status = running` and a `launch_started_at` stamp and saves *before* calling the launcher, persists the wrapper identity through a launcher callback at session creation rather than after delivery returns, and wraps the whole window so a `BaseException` saves the record and re-raises. There is no claim, no owner token, and no expiry.
+
+**Rationale.** Parent issue 1018 forbids a new lease, reservation, receipt, or ledger, and says to stop and report if a child needs one to pass its own tests. It does not: eligibility reads only `pending` units, so a repeated `go` in the launch window finds the unit `running` and skips it, which is the collision card 900 actually recorded — a polling driver calling twice in sequence. Card 990's half is the interrupt window: the identity was written onto the in-memory unit inside the launch and nothing persisted it until a second save after delivery, so a keyboard interrupt anywhere in a window of up to two minutes left the record claiming the unit was never launched while a real tab existed. A keyboard interrupt is a `BaseException`, which neither existing `except SystemExit` clause catches.
+
+**The residual is named rather than hidden.** Two `go` processes that read the record at the same instant can both see `pending`. That case is not in the record, and the *harm* it would cause — two sessions in one worktree — is separately impossible once every launch builds its own fresh worktree (`{#1025-fresh-worktree-per-launch}`).
+
+**Alternatives rejected.** A durable claim written before launch with an owner and an expiry, rejected as a reservation by another name.
+
+**Revisit when.** A simultaneous double launch is actually observed, at which point the answer is the simplest mechanism covering that demonstrated case, not the protective layer back.
+
+### Every launch gets a fresh worktree; the branch, not the directory, is the unit's identity  {#1025-fresh-worktree-per-launch}
+
+**Decision.** The worktree helper takes the canonical path and, when that path exists on disk or is registered with git, uses the lowest unused numbered sibling instead. It never checks out into an existing directory. The unit's branch is reused when it exists, because the branch holds that unit's history and a relaunch continues it; only the working directory is new. After creation the helper runs a declared setup command in the worktree: `ORCHESTRATE_WORKTREE_SETUP` when set, otherwise `uv sync --locked --extra dev` when a `uv.lock` exists at the worktree root, otherwise nothing, with one printed line saying so.
+
+**Rationale.** Reusing a worktree is what makes "fast-forward it, adopt or close the prior session, preserve the unknown fields" a question at all (card 886); a fresh directory removes the question rather than answering it. The environment step is the fifth recorded collision: a session in a worktree with no virtual environment produces confident work that cannot run its own tests, and the failure surfaces much later as a test result nobody can reproduce.
+
+**Alternatives rejected.** Fast-forwarding or refusing a reused worktree, rejected as above. Copying or symlinking the primary checkout's `.venv`, rejected because a virtual environment carries recorded absolute paths that then point at another directory.
+
+**Revisit when.** Worktree creation cost becomes the dominant cost of a launch.
+
+### The merge turn is ordinary record state, and it carries the guard against reverting a newer `main`  {#1025-merge-turn-carries-the-main-guard}
+
+**Decision.** Each unit row carries `merge_state`, one of `ready`, `merging`, `merged`. A merge refuses to open a second turn while any unit is `merging` and names that unit. Before the parent branch pointer advances, if `origin/main` is not an ancestor of the merge result, the files the merge changes are intersected with the files `origin/main` changed since their merge base, and a non-empty intersection refuses the turn and names every file in it.
+
+**Rationale.** The software-development-lifecycle repository's parent-branch chapter, at revision `5efc869f`, describes merge turns as execution state the Delivery Manager tracks — "not an operator approval, a receipt ceremony, or a separate lock service" — and records that a dedicated lock service was considered and explicitly rejected as overcomplicated race management. A status field with no expiry and no ownership token is that state. The regression guard is card 875 restated: that card reported `collect` merging a run branch into the operator's tree with no currency check, so a per-unit-pull-request run could silently revert work on `main`. The `collect` path is removed by this card, so the concern survives as a rule of the merge turn rather than as a check inside a command that no longer exists.
+
+**Alternatives rejected.** Refusing any merge whose parent branch is behind `main`, rejected because it makes ordinary parallel work unmergeable. A lock service or a turn token, rejected by the source-of-truth document itself.
+
+**Revisit when.** A merge turn needs to be handed between machines, where a status field with no owner stops being enough.
 ### The external seat's deferred claim lifecycle is moot, and is recorded rather than built  {#938-external-seat-claim-lifecycle-moot}
 
 **Decision.** The code-review parent deferred the external seat's claim lifecycle (its decision C-D10) behind two triggers: a first standalone use, and an observed duplicate launch. Issue 938 deleted the machinery both triggers depend on — `plugins/saga/scripts/second_opinion.py` and its `SecondOpinionClaimStore`, together with Work's offer, the only path that reached them. Neither trigger can now fire, so the lifecycle collapses to nothing. It is recorded here and not built.
@@ -50,8 +128,6 @@
 **Rejected alternative.** Deleting it in the same change on the grounds that a module whose only importer is its own test is dead. That reasoning is correct about the state and wrong about the authority: it is a removal decision, and removal decisions are made by cards.
 
 **Revisit when.** A card is filed for it, or a new caller appears — the second of which would close this residual without any removal at all. Note that it is not confusable with `lifecycle_state.py recommend-backend`, the execution-backend recommender the lifecycle skills actually call; that one has many live consumers and is untouched.
-
-## 2026-09-19
 
 ### The plan-review loop's bound lives in the run record, and the only override is the operator's word  {#1026-review-loop-bound-and-override}
 
@@ -94,6 +170,7 @@
 **Alternatives rejected.** Moving the generated regions too and teaching `plan_save_contract.py` a second target document — rejected: a generator contract this card does not own, with three tests and a proof script keyed to its single-target shape. Deleting the guards as belonging to removed prose — rejected as above.
 
 **How the second and third relocation misses were found.** Neither `tests/test_operator_choice_drift.py` nor `tests/test_saga_spec_consumer_row.py` was in the targeted test set; both surfaced only in the full suite, the first because the §3.2 purposes travelled with the offer and the second because a generated region's renderer could not follow it. The rule that falls out: after moving a section that contains a generated region or a marker pair, run the full suite before believing the move is finished — a targeted run over the files you edited cannot see a guard that names the file you edited *from somewhere else*.
+
 ### The lifecycle repository's roster generator is invoked, never reimplemented and never vendored  {#1001-invoke-the-generator}
 
 **Decision.** `plugins/saga/scripts/review_roster.py` runs `python3 <sdlc-checkout>/tools/docs/gen_review_roster.py --declaration <file>` as a subprocess and carries the document it prints through unchanged. This plugin holds no copy of that generator and reimplements no part of the resolution.
@@ -317,6 +394,7 @@ An abbreviated identifier or a symbolic reference such as `HEAD` is refused at c
 **Revisit when.** A second consumer appears that does not go through the session layer, or the plugin's manifest description has to stretch further than one sentence to cover both jobs. Either is the signal to move it.
 
 **Refs.** Issue #1022; a code-review finding that this was the one load-bearing placement choice with no journal entry.
+
 ### One staffing component in fleet-core: one data file, one resolver, the loaders repointed  {#1021-staffing-component}
 
 **Decision.** `staffing.json` becomes the single authoring source for the model palette, the effort vocabulary, the work-shape tier policy, the per-vendor palette, the capability ratings and trust tiers, and the per-role staffing defaults; `models.json` and `tier_policy.json` are deleted. `staffing.py` is the one resolver and composes `tier_palette` and `tier_resolver` rather than replacing them, so their public Python surface is frozen and the 61 files that reference the tier vocabulary do not move. The authoritative vendor kind list is agent-launcher's code-level `VENDOR_FLAGS` (seven vendors); `hermes` is excluded because it reconciles a profile workspace and owns its own routing, and a test pins that exclusion. The per-vendor effort-collapse table and model translation move from Python literals into the data file. Capability ratings are copied from `engine-registry.yaml` with a parity test holding them together until issue #1030 deletes the YAML. The executor-verification ledger is read from the sibling `infiquetra-sdlc` checkout through the `INFIQUETRA_SDLC_PATH` ladder, and an absent, unreadable, or empty ledger yields the lens catalogue's documented-policy outcome rather than an error. Roles map to rated capabilities: planner and plan-reviewer to long-form-writing, worker, release-worker and merging-worker to code-generation, lens-reviewer to adversarial-review, functional-tester to debug. `opencode` gets a palette row carrying `runtime_supported: false`, because `tier_resolver` knows six runtimes and nobody has verified opencode's launch-time model and effort arguments; `SUPPORTED_RUNTIMES` derives from the rows whose flag is true, so launch behavior is unchanged. Deleting `effort-convention.md` is a runtime change, not a documentation change: `plan_save_contract.py` holds its path in a constant and checks the file exists, so the constant is repointed at `staffing.md` in the same commit as the deletion.
@@ -328,6 +406,7 @@ An abbreviated identifier or a symbolic reference such as `HEAD` is refused at c
 **Revisit when.** Issue #1030 removes `/tier`, `/engines`, and `engine-registry.yaml`; issue #1022 lands the roles library and becomes the role vocabulary's authority; or `hermes` gains a model and effort and enters `VENDOR_FLAGS`.
 
 **Refs.** Issue #1021; plan `docs/plans/2026-09-19-issue-1021-staffing-component-plan.md` KTD1 through KTD11; `docs/analysis/2026-09-19-saga-simplification-review.md` section 6G recommendation R29.
+
 ### The board census keys `fields` by field name; a duplicate name raises rather than overwriting  {#1020-census-keyed-by-field-name}
 
 **Decision.** `plugins/mission-control/config/board-schema.json` records each board's `fields` as a
@@ -416,6 +495,9 @@ in `sdlc-schema.json` first and in the reference only as a transcription of it.
 
 **Refs.** Issue #1020 unit 4; `sdlc-schema.json` migration note `2026-09-07.1` decision E6;
 `sdlc_manager.py:1227-1228`, `:1409`.
+
+## 2026-09-19
+
 ### Saga owns its shaping question sets; fleet-core owns the client  {#shaping-judgments-live-in-saga-1037}
 
 **Context.** `docs/plans/2026-09-19-shaping-judgments-plan.md` (issue #1037). Issue #1032 shipped a
@@ -1423,6 +1505,9 @@ the first owned tab. Clearing identity to make the retry possible was the other 
 
 **Rejected.** A new run-file field; a `requeue` subcommand; a second create under any `go`
 branch.
+
+**Superseded in part** by `{#1025-staged-stop-does-not-auto-redeliver}`: the automatic retry is
+gone, the hand repair through `redeliver` stands.
 
 ### Treat unproven composer continuation geometry as inconclusive  {#907-composer-structural-continuations}
 

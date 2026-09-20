@@ -4144,7 +4144,12 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     assert "#907-composer-structural-continuations" in composer
     assert "#907-agent-launcher-floor-owner" in orchestrate_src
     assert "#907-input-box-visible-length" in composer
-    assert "#907-staged-input-redeliver" in orchestrate_src
+    # Issue #1025 removed orchestrate's automatic redelivery, so the driver no longer cites
+    # {#907-staged-input-redeliver}; it cites the decision that superseded it, at the staged-stop
+    # site. Both anchors stay asserted so neither the original nor its successor can go missing.
+    assert "#1025-staged-stop-does-not-auto-redeliver" in orchestrate_src
+    assert "#1025-staged-stop-does-not-auto-redeliver" in decisions
+    assert "Superseded in part" in decisions
 
 
 def test_shipped_launcher_defines_every_name_orchestrate_requires() -> None:

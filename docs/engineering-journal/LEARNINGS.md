@@ -25,6 +25,58 @@
 **Mechanism.** A path in a fenced command reads as verified because it is shaped like one — and pytest's failure for a missing file is a collection error, which an implementer in a hurry repairs by *creating* the file. An empty `tests/test_spore_hooks.py` would then pass, and the criterion would report green having proved nothing. The card's plausible-looking command was the danger, not its absence.
 
 **Generalizable rule.** Resolve every path a card's verification names against the tree before planning from it, and when one does not exist, say so in the plan and name the real one. Never create a file to make a criterion's literal text runnable: that converts a documentation error into a false green.
+### A card-scoped inner loop proves the card and nothing else  {#1025-card-scoped-inner-loop-is-not-the-suite}
+
+**Evidence.** Issue #1025, commit `d2f9c0b4`. The card's inner loop was
+`pytest tests/test_orchestrate*.py`, which was green at 896 passed. The first whole-repository run
+was 3 failed, 8,778 passed, and all three failures were real consequences of the card:
+`tests/test_lint_test_shape.py` (five new modules read as fake-only because the real driver was
+loaded inside a helper the static lint cannot follow), `tests/test_review_loop_end_to_end.py` (a
+hand-built `Run` calling `save()`, `Run.load()` and `cmd_land`, all three moved by the card), and
+`plugins/agent-launcher/tests/test_launcher_contract.py` (a cross-plugin guard asserting the driver
+cites a decision whose behaviour the card removed).
+
+**Mechanism.** The glob a card uses to iterate is named after the card, not after the blast radius
+of the module it edits. Every suite that imports the changed module is outside that glob by
+construction, and a cross-plugin guard is outside it twice over — different plugin, different
+pytest root. Three separate classes of breakage all hid in the same place for the same reason.
+
+**Generalizable rule.** When a card changes a module other suites import, run the whole repository
+before the merge, not after it — the card-scoped loop is the fast loop, never the proof.
+
+### Updating the existing tests was the larger half of the work, and the plan called it incidental  {#1025-updating-in-place-was-the-larger-half}
+
+**Evidence.** Issue 1025's plan, unit U8 (`docs/plans/2026-09-19-issue-1025-orchestrate-slim-run-driver-plan.md`), said four test modules would be deleted and named the rule for deleting them; everything else it called "updated in place where the record replaces the run file", in one clause, with no unit of its own. The driver rewrite was 6,450 lines going to 6,237. The test migration that followed touched 26 modules, needed ten mechanical passes plus per-test work, and ran from 276 failing tests to zero. It was reported honestly as unfinished once, mid-flight, because it could not be finished in the session that started it.
+
+**Mechanism.** The plan sized the work by the diff it expected to write, and a rewrite's diff is in the source file. What it did not size is that 17,953 lines of tests were written against the interface being replaced: every one that constructed a `Run`, called a command with a hand-built `argparse.Namespace`, or read `.orchestrate/run.json` had to move, and "move" is not one edit repeated — the mechanical passes got the shape right and then each module had a tail of tests whose *premise* had changed, not just their plumbing. Those are the ones that take judgment: a test asserting `land --clean` exits 0 on a close failure is not broken plumbing, it is a contract that moved, and deciding whether to move the assertion or keep it is the same work as writing the test the first time.
+
+**It also found four defects the driver's own new tests did not.** Dropping the persisted launch receipt took the launcher's tab-ownership proof with it; the saga resolver could not see a saga installed beside orchestrate in a versioned cache; a plan that was not JSON died in a decode error six frames deep once the companion floor stopped refusing earlier; and the unattended-worktree check read only a session's working directory. Every one surfaced in a legacy test, because legacy tests are the ones that exercise paths a rewrite's author is not thinking about.
+
+**Generalizable rule.** When a plan replaces an interface, count the tests written against that interface and give their migration its own unit with its own estimate. A plan that says "updated in place" about more lines than it is rewriting has not planned the larger half — and those tests are not overhead to get past, they are where a rewrite's real defects are found.
+
+### A card that cites a defect by line number can be citing a defect that has since been fixed  {#1025-issue-879-assert-review-transport-is-stale}
+
+**Evidence.** Issue 879 states that `assert_review_transport` "is **not** among" the assertions `start` runs, and warns that a validator aiming to match `start` "must not silently add it" — verified there against `origin/main` on 2026-08-28. At this card's base commit `4e951f0e` it is no longer true: `orchestrate.py:1103` calls `assert_review_transport(units)` inside `plan_units`, and `cmd_start` calls `plan_units(plan)` at `orchestrate.py:3441`. So `start` runs it today, by way of the plan parser.
+
+**Mechanism.** The card's author read the call list inside `cmd_start` and did not follow `plan_units` into its own body, and in the three weeks between that reading and this one the call moved into the parser. A line-numbered citation is a claim about a revision, and the card named the revision honestly; what it could not do is stay true. An implementer following the card's warning literally would have gone looking for a call to *remove* from the validation path, found none where the card said it was, and either added a deliberate exclusion (making the validator disagree with `start`, which is the exact failure issue 879 exists to prevent) or spent the time discovering this.
+
+**Generalizable rule.** Re-verify a card's code claims against the revision you are working on before you act on them, especially a claim of ABSENCE — an absent thing has no line number to check, so nothing about it looks stale.
+
+### Two of three names in an acceptance criterion had never existed in the file  {#1025-grep-criterion-named-absent-symbols}
+
+**Evidence.** Issue 1025's second acceptance criterion asks that `grep -c -E "reserved_landing_paths|launch_reservation|record_writeback_outcome"` over the driver print 0. Checked against base commit `4e951f0e`: `reserved_landing_paths` and `launch_reservation` appear nowhere in the 6,450-line file. Only `record_writeback_outcome` is present, at line 3389 with two call sites.
+
+**Mechanism.** The criterion was written from the card's prose — "launch reservations, landing reservations" — rather than from the symbols the code actually carries. The nearest real things are a local named `preserved_landing_paths` inside `cmd_land` and the "already has tab" skip in `cmd_go`, neither of which the grep names. The criterion therefore passed on two of its three terms before any work was done, and a reader checking it afterwards would conclude three subsystems had been removed when the evidence covers one.
+
+**Generalizable rule.** A grep-based acceptance criterion must name symbols that exist at the base revision; run it before you start, and say in the plan which terms it already satisfies. A criterion that is green before the work begins proves nothing about the work.
+
+### One concurrency number, two consumers, and no arithmetic between them  {#1025-width-must-count-role-panes-too}
+
+**Evidence.** `roster.py` refuses to stand up more role panes than the run record's `concurrency_allocation` allows (`plugins/agent-launcher/skills/agent-launcher/scripts/roster.py`, the allocation check in `up`). Orchestrate's own launch bound, written for card 901, initially counted only units with status `running`.
+
+**Mechanism.** Both readings are locally correct and together they are wrong: with an allocation of ten, six role panes and ten units are sixteen agent sessions on one account, against a number that exists for that account's rate limit. Neither consumer could see the error from inside itself, because each one's count was true. The repair is that orchestrate's `live` count is units plus the record's open `roster` rows — the record is where both consumers already meet, so the shared budget needs no new mechanism, only one of the two to stop counting half of it.
+
+**Generalizable rule.** When a limit is shared by two consumers, the one that adds its count second is the one that must add the other's; a limit each consumer reads independently is not a limit.
 ### A trust boundary held as a document plus a scanning guard survives losing one of its scanned call sites  {#938-trust-boundary-is-a-document-not-a-module}
 
 **Evidence.** Issue 938 deleted `plugins/saga/scripts/second_opinion.py` (2,076 lines). The card's stated risk was that the external-content trust boundary would go with it and break three consumers. It did not, and the reason is visible in two files: the boundary is `plugins/saga/references/engine-output-trust-boundary.md`, a contract document, enforced by `tests/test_engine_output_trust_boundary.py`, whose `PYTHON_CALL_SITES` tuple named exactly two modules — `engine_dispatch.py` and the deleted one. Removing the module narrowed that tuple to one entry and changed nothing else: the contract anchors, the three seeded-unsafe fixtures, the adversarial-payload test, and the two team-execution references all passed untouched.
@@ -40,8 +92,6 @@
 **Mechanism.** `admission.py` runs the card validator first by design — its own docstring says planning against a half-formed card is the failure the lifecycle's Shaping exit exists to prevent — so a card that fails the validator produces no run record at all. Cards filed before the template gained its three late sections therefore fail admission for a reason that is about the card's age, not its readiness: issue 938 named its risk in prose inside its Intent section ("its risk is removing one component too many") while having no heading the validator could see.
 
 **Generalizable rule.** When a validator gates a step, a card's filing date is part of its readiness. The repair is to amend the card, which is board authority and belongs to the operator; the wrong repairs are to hand-write the record the refused step would have written, or to edit the card yourself to make the tool pass. Record the refusal verbatim, answer the questions in the plan with their sources, and carry the amendment question to the operator.
-
-## 2026-09-19
 
 ### Removing a module breaks tests that never import it, because they assert the *shape of its output*  {#1026-tests-assert-output-shape-not-imports}
 
@@ -74,6 +124,7 @@
 **Mechanism.** In a plugin repository a script has two kinds of caller: Python that imports it, and a skill or command whose Markdown instructs an agent to execute it. Only the first appears in an import grep, and the second fails later and less legibly — the agent runs a command that is not there, mid-run, with no import error to read.
 
 **Generalizable rule.** Before removing a script from a plugin, scan for every syntax that reaches it — the import, the `spec_from_file_location`, the path expression, and the command line in Markdown — and make the guard that proves the removal scan all four, with a case proving the scanner fires on each.
+
 ### An empty verification ledger means the gate reports `review_incomplete` for every review, and that is the designed state  {#1001-empty-ledger-review-incomplete}
 
 **Context.** Issue #1001 made Saga's code review consume the lens roster that `infiquetra/infiquetra-sdlc` — the lifecycle repository — generates, instead of a policy file shipped inside the plugin. The expectation going in was that reviews would start producing catalogue-backed scores.
@@ -259,6 +310,7 @@ The repair pins the real function's shape directly (`test_real_lens_catalogue_re
 **Generalizable rule.** A hand-rolled frontmatter parser has to handle both spellings of an empty collection, or the one case that is semantically empty becomes indistinguishable from a syntax error — and it will be the case that is rarest and therefore least tested.
 
 **Refs.** Issue #1022; `tests/test_roles_library.py::parse_frontmatter`, `::test_seeded_inline_empty_list_parses`.
+
 ### A reference document can be load-bearing at runtime, and deleting one is a code change  {#1021-reference-documents-are-runtime}
 
 **Evidence.** Issue #1021, commit for U6. `plugins/saga/scripts/plan_save_contract.py:36` held
@@ -400,6 +452,7 @@ did, or silently stops exercising anything the day the data changes.
 **Generalizable rule.** When the property under test is a code path the shipped data cannot reach,
 construct the input instead of asserting the data has a gap. Monkeypatching the one lookup is
 cheaper than a fixture registry and does not rot when the real data moves.
+
 ### A grep for the retired ladder cannot find a retired name used alone  {#1020-sweep-names-not-ladders}
 
 **Context.** Issue #1020 replaced the retired board vocabulary across the mission-control plugin's
@@ -573,6 +626,9 @@ property, and prove the new guard red before you accept it green.
 
 **Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
 [[#1020-census-keyed-by-field-name]].
+
+## 2026-09-19
+
 ### A guard in a file your change never touches is invisible to every diff-scoped check  {#full-suite-catches-untouched-guards-1037}
 
 **Evidence.** Issue #1037, commit `4c0a2ac7`. The inner loop was green — `ruff check`, `ruff format --check`, `mypy plugins/ scripts/ tests/`, the whole new test file, both brainstorm guard files, release-surface parity, the release-surface diff guard, the marketplace sync check and the marketplace validator. The full suite across both pytest roots then failed one test: `tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module`.

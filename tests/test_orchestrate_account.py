@@ -16,11 +16,54 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -119,21 +162,24 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(repo: Path, units: list[dict[str, Any]], **overrides: Any) -> None:
-    base = subprocess.run(
-        ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
     ).stdout.strip()
-    payload: dict[str, Any] = {
-        "run_id": "r1",
-        "source": "a test",
-        "base": base,
-        "branch": "orch/r1",
-        "units": units,
-        **overrides,
-    }
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2))
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _unit(name: str, **over: Any) -> dict[str, Any]:
@@ -244,8 +290,10 @@ class TestAccountSchemaAndLifecycle:
         plan_file.write_text(json.dumps(plan))
         monkeypatch.chdir(repo)
 
-        orchestrate.cmd_start(argparse.Namespace(plan=str(plan_file), base=None))
-        r = orchestrate.Run.load()
+        # `start` requires the record and never creates one (issue #1025).
+        _support.write_record(test_store(), _support.TEST_ISSUE, units=None)
+        orchestrate.cmd_start(NS(plan=str(plan_file), base=None, branch=None))
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         assert r.account == "company"
         assert r.units[0].name == "u1"
 
@@ -261,8 +309,8 @@ class TestAccountSchemaAndLifecycle:
         plan_file.write_text(json.dumps(expand_plan))
         monkeypatch.chdir(repo)
 
-        orchestrate.cmd_expand(argparse.Namespace(plan=str(plan_file)))
-        r = orchestrate.Run.load()
+        orchestrate.cmd_expand(NS(plan=str(plan_file)))
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         assert r.account == "company"
         assert len(r.units) == 2
 
@@ -291,13 +339,13 @@ class TestAccountSchemaAndLifecycle:
             account="company",
         )
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         assert r.account == "company"
         assert r.units[0].account == "company"
         assert r.units[1].account == "personal"
 
         r.save()
-        reloaded = orchestrate.Run.load()
+        reloaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         assert reloaded.account == "company"
         assert reloaded.units[0].account == "company"
         assert reloaded.units[1].account == "personal"
@@ -545,7 +593,7 @@ class TestCmdGoAccountIntegration:
         monkeypatch.setattr(orchestrate, "took_the_task", lambda *args, **kwargs: True)
         monkeypatch.setattr(orchestrate, "check_unit_account", lambda *args, **kwargs: (True, None))
 
-        ret = orchestrate.cmd_go(argparse.Namespace(limit=None))
+        ret = orchestrate.cmd_go(NS(limit=None))
         assert ret == 0
 
         assert len(recorded_argvs) == 2
@@ -616,9 +664,9 @@ class TestCmdGoAccountIntegration:
             ],
         )
 
-        orchestrate.cmd_go(argparse.Namespace(limit=None))
+        orchestrate.cmd_go(NS(limit=None))
 
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         worker = r.unit("worker")
         assert worker.status == orchestrate.ACCOUNT_MISMATCH
         assert "account mismatch" in worker.note
@@ -873,6 +921,7 @@ class TestNoSilentAccountSubstitution:
             worktree=str(repo),
             account="enterprise-tier",
         )
+
         ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
         assert ok is False
         assert error is not None

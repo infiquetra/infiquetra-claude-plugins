@@ -46,13 +46,15 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.168.0"  # 0.168.0: every lifecycle skill ends by doing the
+    assert plugin_json["version"] == "0.169.0"  # 0.169.0: every lifecycle skill ends by doing the
     # next step in the same turn, a new SessionStart hook announces the run record's next_step for
     # a live run and nothing for a done step, a closed run, or no record, and a local-only
     # UserPromptSubmit hook names the command an operator's text is about (issue #1029). Bumped
-    # from 0.167.0, the saga version on origin/parent/1018 at 54a526b1. This card first took
-    # 0.167.0 against b98e94ea, where saga read 0.166.0; issue #938 took the same number and landed
-    # first, so this card renumbered above it at the merge turn.
+    # from 0.168.0, the saga version on origin/parent/1018 at 87a5329e. This card took 0.167.0
+    # against b98e94ea and then 0.168.0 against 54a526b1; issue #938 took the first number and
+    # issue #1025 the second, so this card renumbered above them at each merge turn.
+    # Predecessor 0.168.0: the run record reference documents the `units` rows as an extension
+    # point and names the three keys the orchestrate plugin adds to a unit row (issue #1025).
     # Predecessor 0.167.0: Work no longer offers an in-process external-engine second opinion; the
     # offer's prose and routing leave the work skill and its continuation reference, and
     # plugins/saga/scripts/second_opinion.py is deleted with no live consumer, while the

@@ -21,11 +21,54 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -88,21 +131,28 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(repo: Path, units: list[dict[str, Any]]) -> None:
-    payload = {
-        "run_id": "r1",
-        "source": "a test",
-        "base": _git_out(repo, "rev-parse", "main"),
-        "branch": "orch/r1",
-        "units": units,
-    }
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
+    ).stdout.strip()
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _read_run(repo: Path) -> dict[str, Any]:
-    raw: dict[str, Any] = json.loads((repo / ".orchestrate" / "run.json").read_text())
+    raw: dict[str, Any] = _support.read_record(test_store(), _support.TEST_ISSUE)
     return raw
 
 
@@ -125,7 +175,16 @@ def _run_diff(
     *argv: str,
 ) -> tuple[int, str]:
     monkeypatch.chdir(repo)
-    code: int = orchestrate.main(["diff", *argv])
+    code: int = orchestrate.main(
+        [
+            "diff",
+            "--issue",
+            str(_support.TEST_ISSUE),
+            "--store-root",
+            str(test_store()),
+            *argv,
+        ]
+    )
     return code, capsys.readouterr().out
 
 
@@ -313,9 +372,9 @@ class TestStartRejectsUnknownDependencies:
             ],
         )
         with pytest.raises(SystemExit, match="waits on 'ghost', which is in no run"):
-            orchestrate.cmd_start(argparse.Namespace(plan=str(plan), base=None))
+            orchestrate.cmd_start(NS(plan=str(plan), base=None))
         # nothing written, no branch created -- the refusal happens before any of it
-        assert not (repo / ".orchestrate" / "run.json").exists()
+        assert not (test_store() / f"issue-{_support.TEST_ISSUE}.json").exists()
         assert (
             subprocess.run(
                 ["git", "rev-parse", "--verify", "--quiet", "orch/r2"],
@@ -340,8 +399,8 @@ class TestStartRejectsUnknownDependencies:
             ],
         )
         with pytest.raises(SystemExit, match="serializes behind 'ghost', which is in no run"):
-            orchestrate.cmd_start(argparse.Namespace(plan=str(plan), base=None))
-        assert not (repo / ".orchestrate" / "run.json").exists()
+            orchestrate.cmd_start(NS(plan=str(plan), base=None))
+        assert not (test_store() / f"issue-{_support.TEST_ISSUE}.json").exists()
 
     def test_a_sibling_dependency_is_accepted(
         self,
@@ -360,7 +419,9 @@ class TestStartRejectsUnknownDependencies:
                 {"name": "beta", "vendor": "claude", "task": "x", "after": ["alpha"]},
             ],
         )
-        assert orchestrate.cmd_start(argparse.Namespace(plan=str(plan), base=None)) == 0
+        # `start` requires the record and never creates one (issue #1025).
+        _support.write_record(test_store(), _support.TEST_ISSUE, units=None)
+        assert orchestrate.cmd_start(NS(plan=str(plan), base=None, branch=None)) == 0
         assert [u["name"] for u in _read_run(repo)["units"]] == ["alpha", "beta"]
 
     def test_a_valid_plan_still_starts(
@@ -378,8 +439,13 @@ class TestStartRejectsUnknownDependencies:
                 {"name": "beta", "vendor": "claude", "task": "x"},
             ],
         )
-        assert orchestrate.cmd_start(argparse.Namespace(plan=str(plan), base=None)) == 0
-        assert (repo / ".orchestrate" / "run.json").exists()
+        # `start` requires the record and never creates one (issue #1025).
+        _support.write_record(test_store(), _support.TEST_ISSUE, units=None)
+        # `--branch` names the run branch; without it `start` derives `parent/<N>` or
+        # `issue/<N>` from the issue's sub-issues (issue #1025), which is not this test's
+        # subject -- that a valid plan starts and its branch is created.
+        assert orchestrate.cmd_start(NS(plan=str(plan), base=None, branch="orch/r2")) == 0
+        assert (test_store() / f"issue-{_support.TEST_ISSUE}.json").exists()
         assert (
             subprocess.run(
                 ["git", "rev-parse", "--verify", "--quiet", "orch/r2"],
@@ -400,7 +466,8 @@ class TestStartRejectsUnknownDependencies:
         plan = _write_plan(
             repo, [{"name": "beta", "vendor": "claude", "task": "x", "after": ["ghost"]}]
         )
+
         monkeypatch.chdir(repo)
         with pytest.raises(SystemExit, match="waits on 'ghost', which is in no run"):
-            orchestrate.cmd_expand(argparse.Namespace(plan=str(plan)))
+            orchestrate.cmd_expand(NS(plan=str(plan)))
         assert [u["name"] for u in _read_run(repo)["units"]] == ["alpha"]

@@ -2,6 +2,18 @@
 
 ## 2026-09-19
 
+### Adding a section to a saga skill has two contracts attached to it, and neither is visible from the section  {#1023-skill-section-hidden-contracts}
+
+**Context.** Issue #1023 added one section to `plugins/saga/skills/plan/SKILL.md` and wrote one plan document under `docs/plans/`. Both looked finished. The full test suite failed six tests across three files.
+
+**Evidence.** `tests/test_lint_gate_absence_contract.py` and `tests/test_brainstorm_continuity_contract.py` failed because the new section mentions `AskUserQuestion` without a `<!-- gate-record: … -->` marker, taking the skill's uncovered-gate count from the baselined six to seven. `tests/test_plan_artifact_conformance.py` failed because the plan document's headings read `## Key technical decisions` and `## Implementation units` while `plan_artifact_conformance.py:39-40` requires the markers `Key Technical Decisions` and `Implementation Units` exactly — the contract is case-sensitive and the document read as carrying neither.
+
+**Mechanism.** Both contracts live somewhere other than where they bind. The gate contract is a lint over the whole plugin with a checked-in count baseline, so a new mention anywhere is a violation in a file the author may not have opened. The marker contract is one sentence in the skill's own Phase 3 prose — "The body MUST use the exact section markers" — which an author writing a plan is not reading at the moment they choose a heading, and ordinary sentence casing is the natural thing to type.
+
+**Fix, and why the cheaper repair was wrong.** For the gate, declaring the marker beats raising the baseline: admission *is* a gate, so the repair is to say so and to state the absence behaviour the marker claims — if the question cannot be put, the run halts rather than filling the answers from the card, because a recorded approval-boundary grant the operator never made is worse than a missing one. Raising the baseline would have recorded the opposite: one more undeclared gate. For the markers, the headings changed to match.
+
+**Generalizable rule.** Before a full-suite run, check a new skill section for an `AskUserQuestion` mention and a new plan document's headings against `plan_artifact_conformance.py`'s marker constants. Both failures are silent at authoring time and cost a 16-minute suite to discover.
+
 ### Two different sets of thirteen sit in the lifecycle repository, and a count check passes on the wrong one  {#1023-two-sets-of-thirteen}
 
 **Context.** Issue #1023 asked for "the thirteen sdlc run-configuration parameters" in the new run record, citing `docs/lifecycle/run-model.md` lines 129 to 156.

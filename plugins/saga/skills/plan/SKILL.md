@@ -72,6 +72,8 @@ requirements doc, the issue, or describe the work." Do not proceed without one.
 
 ### 0.1b Admission — the first thing `/plan issue` does
 
+<!-- gate-record: id=plan-admission-questionnaire absence=HALT transport=ask-user-question -->
+
 When the input is an issue, run admission before anything else. It is where "answer the questions up
 front" lives: the card validator runs, every defaultable run-configuration parameter is filled from
 the per-repository profile, fleet-core's staffing component and the lifecycle repository's decided
@@ -91,6 +93,12 @@ remain. Then:
    channel-inline). One message, not one question at a time: the whole point is that the operator
    answers the run's shape once. Never invent an answer to any of them — the approval boundaries in
    particular are the operator's grant and nobody else's.
+
+   **If the question cannot be put** — no `AskUserQuestion`, no channel back to the operator —
+   **halt and say so.** Do not fill the answers from the card, do not take a default, and do not
+   plan past them. The unanswered set is the run's authority: the approval boundaries are a grant
+   only the operator can make, and a recorded grant nobody made is worse than a missing one, which
+   is why the absence behaviour here is a halt rather than a safe default.
 3. **Record the answers**, which writes the run record and clears the questions:
 
    ```bash

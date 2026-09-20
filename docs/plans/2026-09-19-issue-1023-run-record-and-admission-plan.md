@@ -111,7 +111,7 @@ it now or whether it stays until the removals child (issue 1030) deletes it.
 **R15.** Release surfaces move with the change in the same pull request: the saga plugin's
 `plugin.json` version, the marketplace registry entry, and the saga changelog.
 
-## Key technical decisions
+## Key Technical Decisions
 
 **KTD1 — the store root is the git common directory's parent, resolved at every call, never a
 relative path.** `git rev-parse --git-common-dir`, resolved to an absolute path, returns
@@ -301,7 +301,7 @@ Every requirement lands in a named unit, so a unit can be checked off against so
 | U6 release surfaces | R15 |
 | every unit | R13 (no test touches the live store), R14 (stated in its own section below) |
 
-## Implementation units
+## Implementation Units
 
 ### U1. The run record module
 

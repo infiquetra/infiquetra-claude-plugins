@@ -46,7 +46,12 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.168.0"  # 0.168.0: the run record reference documents the
+    assert plugin_json["version"] == "0.170.0"  # 0.170.0: the merge turn, the release step, the
+    # lifecycle-boundary board interface and the allowed-submission enforcement (issue #1028).
+    # Bumped from 0.169.0, the saga version on origin/parent/1018 at 23959a80 (issue #1029), not
+    # from this branch's own base of 0.168.0: two cards writing the same version string merge
+    # without a conflict, and the only signal left is two changelog sections under one number.
+    # Predecessor 0.168.0: the run record reference documents the
     # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
     # unit row (issue #1025). Bumped from 0.167.0, the saga version on origin/parent/1018 at
     # 54a526b1: issues #1001, #1026 and #938 took 0.165.0, 0.166.0 and 0.167.0 while this card's
@@ -3952,11 +3957,17 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # ABSENT: the non-canonical `pass|fail|skip` vocab would parse to *unknown* and silently drop the
     # verdict (the Tests card cell would render not-reached) — guard against that regression.
     assert "tests:<pass|fail|skip>" not in work_doc
-    # PRESENT (substantive): the card render is the LEAD status step (step 1) of §5.4 — proving the
-    # card is the operator status HEADER, not an afterthought — and the continuation-routing step that
-    # was step 3 is pushed to step 4 by the insertion (proves a real reorder, not a keyword sprinkle).
-    assert "1. **Render the operator status header**" in work_doc
-    assert "4. **Present continuation routing**" in work_doc
+    # PRESENT (substantive): the card render LEADS §5.4 — proving the card is the operator status
+    # HEADER, not an afterthought. The assertion used to pin the list NUMBER (`1. `) as well; issue
+    # 1028 rewrote §5.4 from a numbered list into the merge turn, the release, the functional test
+    # and the close, so the numbering is formatting the contract never depended on. What is pinned
+    # is that the header is rendered and that it comes first in the section.
+    assert "**Render the operator status header**" in work_doc
+    section = work_doc[work_doc.index("### 5.4 ") :]
+    body = section[section.index("\n") :]  # past the heading, which names the steps too
+    assert body.index("**Render the operator status header**") < body.index("Take the merge turn"), (
+        "the status card must lead §5.4, not trail the steps it heads"
+    )
     # STILL PRESENT (KTD5): detailed work-session evidence reference.
     assert "work-session" in work_doc
 

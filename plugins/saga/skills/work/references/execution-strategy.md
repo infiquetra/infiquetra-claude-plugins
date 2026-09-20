@@ -121,26 +121,15 @@ it would be 'WIP', wait." Use the plan's Implementation Units as a starting guid
 adapting to what you find. Stage only the files for that logical unit (not `git add .`). Use clean
 conventional messages with **no attribution footers**.
 
-## Effort-escrow accounting (#366)
+## Effort accounting — the run record, not an escrow ledger
 
-When a plan set per-unit effort allocations (`/plan` Step 1b), thread the escrow ledger
-(`plugins/saga/scripts/effort_ledger.py`) through execution so actual-vs-planned spend is accounted, not
-just planned. These are named CLI calls, not intent — the ledger state lives under the git-ignored
-`.claude/saga/`; never `git add` it.
+The effort-escrow ledger and its policy file are **removed** (issue 1028). What replaced them is the
+run record's `run_configuration.staffing_models_and_efforts`: the model and effort each role runs at,
+decided once at admission and readable by every later step from one file.
 
-- **Before dispatching a unit** whose declared work looks likely to exceed its allocation, consult the
-  ledger for an escalation-request:
-  `python3 plugins/saga/scripts/effort_ledger.py escalate --unit <U-ID> --requested <to_spend> --reason "<why>"`.
-  A returned `ESCALATION` surfaces to the operator **before** the unit runs (never after the overspend),
-  mirroring the #364 between-rounds gate — surfaced, never silently auto-approved.
-- **After a unit completes**, record its actual spend so an under-spending unit refunds the unused
-  budget to the run pool:
-  `python3 plugins/saga/scripts/effort_ledger.py record --unit <U-ID> --actual <to_spend>`.
-- `python3 plugins/saga/scripts/effort_ledger.py report` prints the current pool, allocations, and any
-  pending escalation-requests for the resume/handoff summary.
-
-Absent an `effort-policy.yaml`, the ledger uses the safe default (refund unused, surface escalations,
-never auto-approve).
+Nothing accrues, refunds or escalates per unit any more. A unit whose work looks likely to need a
+different tier is a staffing question, and it goes to the operator as one rather than through an
+allocation arithmetic nobody was reading.
 
 ## Already shipped → verify, don't reimplement
 

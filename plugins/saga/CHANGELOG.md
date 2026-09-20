@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.170.0] - 2026-09-20
+
+**Bumped from 0.169.0**, the saga version on `origin/parent/1018` at commit `23959a80` (issue
+#1029's continuation mechanics). This branch's own base carried 0.168.0; the number is taken above
+the integration branch rather than above the base, because two cards writing the same string merge
+without a conflict and the only signal left is two changelog sections under one number.
+
+### Added
+
+- `scripts/merge_turn.py` — the merge turn over the run record (issue #1028). Exactly one worker
+  merges at a time, derived from `units[].merge_state` and checked against git rather than held by
+  a lock: a row left at `merging` by a turn that died is released, not trusted. The destination
+  follows `admission.destination`. A merge that would take a file backwards relative to a freshly
+  fetched default branch is refused **by name**, and a failed fetch refuses the turn rather than
+  letting the guard read a stale remote-tracking reference. After a merge both re-integrations run
+  and are reported separately: the advanced destination branch into every surviving unit branch,
+  and the fetched default branch into the parent branch. No lock, lease, reservation or receipt.
+- `scripts/release_step.py` — the release, the functional test and the close. The parent pull
+  request is merged bound to the exact head its required checks ran against
+  (`gh pr merge --match-head-commit`), a refusal is classified from GitHub's `mergeStateStatus`
+  rather than from a watch command's exit status, and the reviewed head and the landed commit are
+  recorded separately because a squash or a rebase produces a different commit. Where the
+  repository profile declares `nonproduction_destination: none`, the absence is recorded with its
+  reason and nothing is deployed — a result, not an error. No production deployment exists on this
+  path.
+- `scripts/board_progression.py` — a lifecycle **boundary** interface:
+  `--record <path> --boundary <name> [--dry-run]`. A caller names one of the run's six boundaries
+  and a fixed table chooses the `(Stage, Status)` pair; `review-accepted` prints that no submission
+  is allowed there, because the lifecycle repository's allowed list carries no row for it.
+
+### Changed
+
+- **Board writes are bounded by value, not just by field.** Any `(Stage, Status)` pair outside
+  `lifecycle_field_mutation.allowed_submissions` is now refused before a board is touched. That
+  list is what the lifecycle repository calls the single authority on what a caller may submit, and
+  nothing in this repository read it: the certificate authorised the field names and said nothing
+  about the values. `Ready to merge` and `Closeout` are live Operations options that saga therefore
+  never submits.
+- `skills/work/SKILL.md` — sections 4.4, 5.4 and 5.5 now carry the merge turn, the release, the
+  functional-test hand-off and the close, with one board move per boundary. The two non-field
+  operations (progress comment, sub-issue close) are unchanged.
+- `skills/qa/SKILL.md` — the frozen criteria and the scenario results are read from and written to
+  the **run record** instead of the evidence ledger.
+- `skills/retro/SKILL.md` — the reconciliation-recipe, tier-efficacy and engine-registry
+  calibration passes are replaced by one pass over the run record and the journal. The engine
+  benchmark, calibration, staleness, capability-Elo, control-chart and spend readers go with the
+  machinery they read.
+
+### Removed
+
+- `scripts/effort_ledger.py` and `references/effort-policy.yaml`. Its only importer was its own
+  test; `run_configuration.staffing_models_and_efforts` holds the decision now.
+
+### Deferred (recorded, not done)
+
+- `evidence_ledger.py`, `run_ledger.py` and `dispatch_settlement.py` stay for issue #1030, each for
+  a reason now written into `references/run-record.md`. `evidence_ledger`'s sole production
+  importer is `closure_gate.py`, whose whole subject is that ledger and which issue #1030 deletes
+  along with its two dependents; removing it here would mean deleting or rewriting modules this
+  card does not name. Card #1028's `test ! -f evidence_ledger.py` criterion is therefore **not met
+  on this branch**, and that is reported rather than forced.
+
 ## [0.168.0] - 2026-09-20
 
 **Bumped from 0.167.0**, the saga version on `origin/parent/1018` at commit `54a526b1`. This card

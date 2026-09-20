@@ -2,6 +2,47 @@
 
 ## 2026-09-20
 
+### The release step is a module, because behaviour in a skill document has no test  {#1028-release-step-is-a-module}
+
+**Decision.** `plugins/saga/scripts/release_step.py` exists, although card 1028's file list names
+only one new module. It owns three things: merging the parent pull request bound to the head its
+checks ran against, recording the deployment or its declared absence, and composing the closeout
+comment.
+
+**Rationale.** Three of the card's requirements — wait for the required checks on the exact head,
+record "no destination" rather than failing, and compose a closeout that carries every required
+link — are behaviour. Left in the work skill as prose they would have shipped with no executable
+guard, and behaviour nobody can test is behaviour nobody can tell is broken.
+`tests/test_release_step.py` now covers each of them, including the case this repository actually
+has: `nonproduction_destination: none`, where the deploy handoff must not be called at all.
+
+**Rejected alternative.** Folding the three commands into `merge_turn.py` as extra subcommands.
+Taking a merge turn and releasing a parent are different jobs with different owners in the lifecycle
+repository's own role model, and one module would have had to hold both.
+
+**Revisit when** issue 1039 redesigns `/qa`: the functional-test half of this module is the seam
+that card will read, and it may belong there instead.
+
+### The release records an absent destination instead of failing  {#1028-no-destination-is-a-result}
+
+**Decision.** Where the repository profile declares `nonproduction_destination: "none"` — as
+`.saga-profile.json` does here — the release step records the absence with its reason, exits
+successfully, and never calls the deploy handoff. No deployment is recorded and no environment is
+named.
+
+**Rationale.** The lifecycle repository's closeout rule forbids fabricating an environment, a
+deployment record or an acceptance result to complete a comment; recording the absence *with a
+reason* is what it asks for instead. Treating "nowhere to deploy" as an error would block every run
+in a repository that has no lower environment, which is this one, so the run would fail for a
+reason that is a permanent property of the repository.
+
+**Rejected alternative.** Offering the handoff anyway and letting the deploy plugin decide. An
+offer with no destination is a baton handed to nobody, and `deploy_handoff` would then hold an
+unacknowledged offer for a deployment that can never happen.
+
+**Revisit when** this repository gains a non-production destination; the declared-destination path
+is already implemented and tested, and only the profile value changes.
+
 ### Saga's board moves are named by lifecycle boundary, and the allowed list is the only vocabulary  {#1028-board-boundaries}
 
 **Decision.** The board-move module takes a lifecycle boundary name, not a target status. A fixed

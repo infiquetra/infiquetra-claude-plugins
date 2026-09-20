@@ -530,158 +530,53 @@ path rather than forcing the write.
 Record durable learnings/decisions in the engineering journal as they surface. `/work` renders the
 comment and drives it through the controller; it does not mutate the issue by any other route.
 
-### 4.4 Post-merge board actions — the shared reconcile controller (#344/#450, bounded by W7)
+### 4.4 Post-merge board actions — one move, at the boundary it belongs to
 
-After a merge, three moves run through the shared **level-triggered reconcile controller** — the
-same reversibility contract and idempotency ledger `/outcome` uses, with the outside-drift detection
-`/work` previously lacked (#450). Two are lifecycle-field submissions, one is the sub-issue close.
-**Deciding and submitting is not writing:** Mission Control remains the only executor of a `Stage`
-or `Status` write, and this skill composes none — every submission below stops at the controller,
-which owns the certificate gate, the idempotency ledger and the replay key.
+After a merge, the card moves once, and the move is named by a **lifecycle boundary** rather than by
+a status a caller picked:
 
-**When the card may move to Verify (W8, SDLC R69/R71).** The move to the `Verify` stage, like every
-lifecycle-field move, is executed by Mission Control — and it happens only after the change is
-**merged** **and** a non-production deployment has **succeeded**, in that order, ahead of the
-delivered-terminal move. PR-ready, green checks, code review, and merge readiness never move the
-card to Verify, and `/work` submits no Verify move of its own at any point before merge. For work
-with **no deployable software**, the same merge precondition holds — the R71 no-deployable route
-relaxes the **deployment** requirement, never the **merge** requirement — so Verify is entered only
-after the change is merged **and** the delivered artifact exists in its real form and consumption
-context — the rendered published page for documentation, the installed version for a plugin — with
-the deployment non-applicability recorded **with a reason** and no environment or
-deployment record fabricated to satisfy the transition. The single authority for this condition is
-the `verify_entry` block of `config/sdlc-schema.json` in `infiquetra-sdlc`, resolved by
-`tools/docs/verify_entry.py`; this skill names when the move is permitted and submits it only then.
+```bash
+uv run python plugins/saga/scripts/board_progression.py \
+  --record <run record path> --boundary merge-and-deploy --dry-run
+```
 
-**Actor:** this skill. **Trigger:** merged, plus the applicable deployment or artifact verification
-above. **Move:** the live pair `Stage` = `Verify`, `Status` = `Awaiting verification`.
+The dry run prints the single move and writes nothing; without `--dry-run` the same command submits
+it. The boundary-to-pair table is the lifecycle repository's own
+`lifecycle_field_mutation.allowed_submissions`, which it calls the single authority on what a caller
+may submit, and a pair outside that list is refused before any board is touched.
+
+**Deciding and submitting is not writing.** Mission Control remains the only executor of a `Stage` or
+`Status` write. The submission goes through the reconcile controller, which owns the certificate
+gate, the idempotency ledger and the replay key, and from there into `flow set-field`.
+
+**When the card may move to Verify.** Only after the change is **merged** **and** the applicable
+non-production deployment has succeeded, in that order. Code review, green checks and merge
+readiness never move the card to Verify, and this skill submits no Verify move before merge. For
+work with **no deployable software**, the merge precondition still holds and only the deployment
+requirement relaxes: Verify is entered after the merge and after the delivered artifact exists in
+its real consumption context, with the deployment's non-applicability recorded **with a reason** and
+nothing fabricated to satisfy the transition.
+
+**Read the record by more than its status word.** `field` must read `Stage+Status`: a bare `Status`
+is a half-write, and `Awaiting verification` is a legal `Status` on its own, so a half-write looks
+like success while `Stage` stays put. `skipped` is not a synonym for success either — it also means
+"already keyed". A `failed` record names which half landed; a refused move is reported with the
+board's reason and never retried silently.
+
+**The two non-field operations are unchanged.** They write no project field, so the boundary
+contract does not govern them and they keep the controller's own path:
 
 ```bash
 python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> \
-  --target-state "Awaiting verification" \
-  --payload '{"assignments": [["Stage", "Verify"], ["Status", "Awaiting verification"]]}'
-```
+  --op issue-progress-comment --repo <owner/repo> --number <N> \
+  --payload '{"body": "<the progress comment>"}'
 
-Then the sub-issue close, which is an issue-state write rather than a lifecycle-field one:
-
-```bash
 python3 plugins/saga/scripts/reconcile_controller.py reconcile \
   --op sub-issue-close --repo <owner/repo> --number <N>
 ```
 
-**The delivered-terminal move.** **Actor:** this skill. **Trigger:** stated to the same standard
-as the Verify trigger above, because it follows it and a weaker gate here would let a card reach the
-terminal rung having skipped the one before it. **All four must hold**, in this order:
-
-1. the Verify move above was **submitted and its record read as landed** — `Retro` follows `Verify`
-   in the stage flow, so entering it without having entered `Verify` skips the merge-plus-deployment
-   condition rather than satisfying it;
-2. the sub-issue close below fired, so the child is actually **closed**;
-3. the repository gate is **green at the merged commit**, not at some earlier revision; and
-4. the merged pull request, the saga tick and the work-session path are all durable.
-
-If any one of the four is unknown, say which and stop — do not submit the move. **Move:** the live
-pair `Stage` = `Retro`, `Status` = `Ready to close`.
-
-```bash
-python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> \
-  --target-state "Ready to close" \
-  --payload '{"assignments": [["Stage", "Retro"], ["Status", "Ready to close"]]}'
-```
-
-**Submit both halves of every pair, and check both** by the contract in "Reading a lifecycle
-record" below. One invocation carries two assignments, and Mission Control does **not** roll the
-pair back if the second fails — so a `failed` record names the landed and the unlanded assignment,
-and the unlanded half is what to repair. A `Status`-only submission is the trap worth naming:
-`Awaiting verification` is a legal `Status` on its own, so the half-write reads as success while
-`Stage` stays where it was — and it reaches the board by two different routes, a mid-pair failure
-inside Mission Control and an installed saga too old to send the second assignment at all.
-
-The controller composes the certificate-gated idempotency writer (`board_progression`, #344) with a
-**level-triggered drift check**: every tick it re-reads the live board, so a rapid double tick
-collapses to one write and an outside edit made while `/work` was at rest is re-detected. The CLI
-prints a record JSON:
-
-- `{"status":"written"}` — the move fired with **no operator prompt**. For a lifecycle pair, read
-  `field` before believing it: see "Reading a lifecycle record" below.
-- `{"status":"skipped"}` — **not a synonym for `written`.** It means only that this exact
-  submission's replay key was already on disk, or that the live board already reads the way the
-  lifecycle asserted. It is also what the controller returns when it *cannot judge* — a submission
-  with no readable half, or a live board it could not read — and in both of those it carries a
-  `note` saying so. A `skipped` whose `note` names an unreadable field or an unreadable board is a
-  move nobody verified.
-- `{"status":"error", "may_reapply":true}` — the rarest and the most dangerous to misread: **the
-  board write committed and the replay key did not get recorded.** The move happened; the ledger
-  does not know it. A later tick therefore re-applies it, which is harmless on a field write
-  (setting an option to the value it already holds is a no-op) and is why this surfaces rather than
-  raising. Do not treat it as a failure to retry by hand, and do not treat it as clean: say so in
-  the phase note, because the ledger and the board disagree until the next tick reconciles them.
-- `{"status":"failed"}` — no ledger key was written, so the next tick retries. For a lifecycle
-  pair the message names which assignments landed and which did not; when Mission Control died
-  before printing its report it says so instead of claiming nothing landed, and **both fields need
-  checking by hand**.
-- `{"status":"halt", ...}` with a named `halt_reason` — the outside board changed away from what
-  the lifecycle asserted while `/work` was at rest. Since W7 the controller holds **no autonomous
-  write authority over `Stage` or `Status`**: every outside drift — including a reversible
-  Status-field edit — is surfaced with its named reason, never silently overwritten or
-  auto-corrected. Surface the `halt_reason` to the operator and fall back to the operator-prompted
-  `mission-control` path.
-- `{"status":"gated"}` — the reversibility certificate declining the op before anything is
-  attempted: an unauthorized merge or deploy, an unauthorized correction field, or a malformed
-  submission. Fall back to the operator-prompted `mission-control` path unchanged.
-
-`gated` and `halt` are the two withholding outcomes and they are **not the same decision**. `gated`
-is the certificate refusing the op; `halt` is the drift check finding the live board somewhere else
-and declining to overwrite it. Both are the controller correctly withholding an action that needs a
-human, never a failure — and **neither is cleared by re-running the same call**, which is why a
-caller must not offer a retry for either.
-
-`halt` is **not** an allowlist verdict, and the empty allowlist is easy to misread as one:
-`AUTO_CORRECT_OP_KINDS` is `frozenset()` and no conditional anywhere reads it, so nothing is
-classified by membership in it. What the empty allowlist records is that the auto-correct branch was
-**deleted**, leaving `halt` as the only outcome a drift can have — the controller holds no
-autonomous lifecycle-field write authority at all (W7).
-
-**Reading a lifecycle record — what proves a pair moved, and what does not.**
-
-A `(Stage, Status)` submission is one invocation carrying two assignments, and the record's `field`
-is the whole submission's identity: `Stage+Status` when both halves were executed, and a bare
-`Status` when they were not. That single field is the only proof available that the saga which
-*executed* the call was new enough to carry the pair at all — an older installed saga ignores the
-second assignment, writes `Status` alone, and still reports `written`. **A record whose `field` is
-not `Stage+Status` did not move the Stage half, whatever its `status` says.**
-
-Mission Control exposes **no read-back for the `Stage` field**: `board view` groups cards by
-`Status` only, and the reconcile controller's own drift check reads `Status` for the same reason.
-So "check both halves" is not a board read — it is these three, in order:
-
-1. the record's `field` names both halves;
-2. its `status` is `written`, or a `skipped` carrying **both** a `key` and no `note` — the `key` is
-   what distinguishes "this exact submission is already on disk" from a record that simply lacks a
-   note because the saga that wrote it is too old to emit one, and a note-free keyless `skipped` is
-   not evidence of anything;
-3. on a `failed`, the message's *landed / NOT landed* detail names which assignment to repair.
-
-When all three cannot be satisfied — an `error`, or a `failed` with no report — say so and open the
-card in a browser rather than asserting the move. Do not report a lifecycle move as complete on the
-strength of a `status` word alone.
-
-**The controller's exit code is coarser than its record; read the record.** `reconcile_controller.py
-reconcile` exits **0** for `written`, `skipped`, `corrected`, `gated` and `halt` — convergence and
-both withholding outcomes share one code, deliberately, because a gate is expected rather than a
-crash. It exits **1** for `failed` and for `error`, so those two are indistinguishable by exit code
-even though they are opposites: `failed` wrote nothing and the next tick retries, while `error`
-means the board write **did** commit and only the replay key is missing. `detect` exits 0 for every
-observation. An unknown subcommand exits **2**. A caller that branches on the exit code alone will
-treat a committed write as a failure and retry a move that already landed.
-
-`/work` still does **not** merge or deploy autonomously (permanently gated), and the controller
-never widens the autonomously-writable set beyond what `board_progression`/`reversibility_certificate`
-already establish (#450 non-goal).
-
----
+`sub-issue-close` closes a child whose parent is closing; it is an issue-state write, not a field
+write, and the certificate keeps `PARENT_ISSUE_CLOSE` with the operator regardless.
 
 ## Phase 5 — Code-review gate, PR-ready, continuation routing
 
@@ -747,56 +642,118 @@ via `--review-gate-override` for the review gate and `--doc-review-override` for
 each rendered through `issue_progress.py:_override_line` under its own gate's label, plus the
 work-session). Never a silent skip.
 
-### 5.4 Reach PR-ready and present continuation routing
+### 5.4 The merge turn, the release, the functional test, and the close
 
-On a clean gate (or recorded override):
+**Render the operator status header** first, via the shared card renderer
+(`plugins/saga/scripts/status_card.py`, `project_work`) — the single emitter of operator-facing
+status for `/work`. Pass the restored saga object; the card derives its cells on-read from durable
+state (`gate_verdicts`, `review_paths`, `pr_refs`, `phase_status`, `destination`) and renders as a
+fixed-position glyph card with an indexed footer pointing at the evidence. The work-session notes,
+the review findings and the test output stay as drill-down detail below the card; they are what the
+cells reference, not what the card replaces.
 
-1. **Render the operator status header** via the shared card renderer
-   (`plugins/saga/scripts/status_card.py`, `project_work`) — the single emitter of operator-facing
-   status for `/work`. Pass the restored saga object; the card derives its cells on-read from durable
-   state (`gate_verdicts`, `review_paths`, `pr_refs`, `phase_status`, `destination`) and renders as a
-   fixed-position glyph card with an indexed footer pointing to the underlying evidence. The detailed
-   work-session notes, code-review findings body, and test outputs remain as drill-down detail below
-   the card — they are the evidence the card cells reference, not replaced by the card.
-2. **Offer to open the PR + request review** by running `plugins/saga/scripts/ship_ceremony.py run`
-   through its `open_pr` and `request_review` transitions (issue #345) — outward-facing,
-   **offered/confirmed, never auto-fired**. If the operator declines, hand them the prepared PR body
-   (links the plan, work-sessions, and the code-review artifact) + branch and let them run
-   `ship_ceremony.py` themselves (or `git ship`, once installed).
-3. **Record `pr_refs`** — `ship_ceremony.py`'s `open_pr` transition writes this on the saga itself; set
-   `next_step="await review on PR #N"`; comment the PR status to the issue via the extended
-   `issue_progress.py` CLI (`--pr-url`, `--review-status`).
-4. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
-    transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
-    approved + clean + fresh, **offer to run the rest of the ceremony** — five separate
-    `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
-    a bare `run` for `checkout_main`, a bare `run` for `pull`,
-    `run --operator-confirmed branch_delete:<target>` naming the resolved head branch (issue
-    #635/KTD6), then a bare `run` for `teardown` (issue #347 — the terminal reclamation gate that
-    closes the opened-resource manifest; `teardown` is `CeremonyTier.REVERSIBLE` and structurally
-    required) — each explicitly confirmed, never silent; merge is a
-    git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
-    On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
-   See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.
-   When the destination includes deploy, route the merged item's ownership transfer through the
-   offer step in `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept
-   the handoff itself.
+Review acceptance is not a board move. The lifecycle repository's allowed-submission list carries no
+row for it, so saga submits nothing at that boundary and records it in the run record only:
+
+```bash
+uv run python plugins/saga/scripts/board_progression.py \
+  --record <run record path> --boundary review-accepted --dry-run
+```
+
+That prints the honest absence rather than a move. What follows it are four real steps.
+
+**Take the merge turn.** Exactly one worker merges at a time, and the turn is a field on the run
+record's `units` rows, not a lock. A row left at `merging` by a turn that died is released after
+being checked against git, never trusted:
+
+```bash
+uv run python plugins/saga/scripts/merge_turn.py \
+  --record <run record path> --repo-root <repo> --parent-branch <parent branch> \
+  merge --unit <unit name>
+```
+
+The turn merges onto the parent issue branch or the default branch according to
+`admission.destination`, in a detached worktree created and removed inside the turn. It refuses, by
+name, a merge that would take any file backwards relative to a freshly fetched default branch — and
+it refuses when that fetch fails, because a guard read against a stale remote-tracking reference
+passes silently. After a merge it re-integrates twice and reports both: the advanced destination
+branch into every surviving unit branch, and the fetched default branch into the parent branch. A
+branch that needs a real merge is reported `pending` for the worker who owns it, never forced.
+
+An ordinary conflict is the merging worker's own work. A conflict that is not mechanical is routed
+by kind and decided by nobody at the merge: a behaviour question that is technical under the
+recorded intent goes to the Architect, a product question the recorded intent already answers goes
+to Product, and a conflict that needs the plan changed returns to planning as that problem.
+
+**Release.** The Release Worker merges the parent pull request through the repository's configured
+merge method, bound to the exact head the required checks ran against:
+
+```bash
+uv run python plugins/saga/scripts/release_step.py --record <run record path> \
+  release --pull-request <N> --merge-method <merge|squash|rebase>
+```
+
+It waits by reading GitHub's own verdict, never a watch command's exit status, and it records the
+reviewed head and the landed commit separately because a squash or a rebase produces a different
+commit. Then the destination:
+
+```bash
+uv run python plugins/saga/scripts/release_step.py --record <run record path> deploy
+```
+
+Where the repository profile declares `nonproduction_destination: none` — as this repository does —
+that records the absence with its reason and deploys nothing. **That is a result, not an error**, and
+no environment or deployment record is ever fabricated to fill a closeout. Where a destination is
+declared, the deploy plugin's existing handoff carries the baton and the acknowledgement comes back
+before ownership is released. No production deployment exists on this path at all.
+
+**Submit the merge-plus-deploy move**, once, and check both halves:
+
+```bash
+uv run python plugins/saga/scripts/board_progression.py \
+  --record <run record path> --boundary merge-and-deploy
+```
+
+A record whose `field` reads a bare `Status` is a half-write and is reported as a failure: the
+`Status` half alone looks like success while `Stage` stays where it was. A refused move is reported
+with the board's reason and **never retried silently**.
+
+**Functional test.** The scenarios the plan prescribed run through `/qa` against the real
+environment, reading the run record rather than any ledger. A failure re-enters the build loop and
+counts against the post-merge allowance, which keeps its own counter of three standard and two
+escalated cycles plus exactly one recorded extension that no role may grant twice. An unrun scenario
+is never folded into a pass.
+
+**Close.** The closeout comment is composed from the record and refuses to state an environment, a
+deployment or an acceptance result the record does not carry:
+
+```bash
+uv run python plugins/saga/scripts/release_step.py --record <run record path> \
+  close --disposition <delivered|duplicate|superseded|declined|canceled>
+```
+
+The comment is posted before the close, carries every link the lifecycle repository requires, and
+records each inapplicable practice with a reason. The journal entries ship in the commit that ships
+the change — not afterwards, and not in a separate pass. Then the close move:
+
+```bash
+uv run python plugins/saga/scripts/board_progression.py --record <run record path> --boundary close
+```
+
+That resolves to `Verify` / `Ready to close` when no retro trigger fired and `Retro` /
+`Ready to close` when one did, from the record's own retro state.
 
 At thread completion set `status=done`.
 
 ### 5.5 Hard boundary
 
-`/work` builds, tests, gates, records, and coordinates the PR loop. It does **NOT** silently mutate
-GitHub (PR-open, review-request, and merge are each explicitly confirmed; merge is a git op `/work` owns
-only under confirmation). It does **NOT** own deploy or canary (`deploy` owns deployment
-mutation and production-health revert). It does **NOT** file SDLC issues (`mission-control` owns issue
-creation). It does **NOT** advance `lifecycle_phase` past `work` — the advance to `qa` is **`/qa`'s
-to make, and only on a PASS**; on a FAIL `/qa` keeps the phase at `work` and records the evidence.
-So the saga legitimately sits at `work` from merge until `/qa` runs and passes, and `/work`'s
-post-merge routing to `/qa` is advisory. (This is not a deferral awaiting a rebuild: the `/qa` skill
-exists at `plugins/saga/skills/qa/`. The advance is withheld because it is another skill's to make,
-which is a different claim and the one the preamble at the top of this document states.) Build,
-gate, record, coordinate the PR loop under confirmation — then stop.
+`/work` builds, tests, records, takes the merge turn, releases, and closes. It does **NOT** compose
+or execute a board write: every move above stops at mission-control's constrained lifecycle-field
+mutation, and this skill names the boundary and nothing else. It submits **no status the lifecycle
+repository's allowed list does not carry**, so `Ready to merge` and `Closeout` are never submitted
+even where a board offers them. It does **NOT** deploy to production, and no argument on this path
+produces a production deployment. It does **NOT** file SDLC issues (`mission-control` owns issue
+creation). Build, test, merge, release, test again, close — then stop.
 
 ---
 

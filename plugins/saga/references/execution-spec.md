@@ -231,9 +231,9 @@ absent-by-default (byte-identical round-trip):
 
 `execution_spec.py spend <spec.json>` reports per-unit spend, total, `cost_budget` headroom, and the
 `spend_envelope` — the surface `/plan` §5.2a invokes before locking a plan. The effort-escrow ledger
-(`effort_ledger.py` + `effort-policy.yaml`) records per-unit actual-vs-planned spend, refunds unused
-allocation to a run pool, and surfaces an escalation-request before a unit executes; `/work` drives it
-via the `allocate`/`record`/`escalate`/`report` CLI verbs. The cost-weighted spend-*delta* classifier
+(`effort_ledger.py` + `effort-policy.yaml`) is **removed** (issue 1028): the run record's
+`run_configuration.staffing_models_and_efforts` holds the model and effort each role runs at, decided
+once at admission, and nothing accrues or refunds per unit. The cost-weighted spend-*delta* classifier
 is the separate #367.
 
 ### Spend-delta machinery (#367): direction classifier, relative lever, worth-it receipts, spend authority

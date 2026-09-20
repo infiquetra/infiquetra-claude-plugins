@@ -1,5 +1,34 @@
 # Changelog
 
+## [5.1.0] - 2026-09-20
+
+**Bumped from 5.0.0**, the orchestrate version on `origin/parent/1018` at commit `23959a80`.
+
+### Removed
+
+- The board-writeback path (issue #1028): about 850 lines covering the schema-vocabulary resolver,
+  the rung mapping, the reconcile-controller shell-out, the announcement bodies, the writeback
+  failure reporting, and the `announce` subcommand. Saga submits each of the run's lifecycle
+  boundaries itself now, through mission-control's constrained lifecycle-field mutation, so this
+  driver has no board write to make. `tests/test_orchestrate_board_writeback.py` (1,278 lines) and
+  `tests/test_orchestrate_status_map_contract.py` are deleted with the behaviour they pinned.
+- `merge`'s exit status **2** ("merges landed but a board card was not updated"). No state produces
+  it any more; giving a retired code a new meaning would silently change what an existing caller
+  reads, so it is retired rather than reused.
+
+### Kept
+
+- The plugin-resolution helpers that lived inside the removed block — the version regex, the
+  version ranking, the install-root patterns and the candidate lister — because the run-record
+  lookup still uses them.
+- `fetch_default_branch` and `main_regression_files`, deliberately, rather than importing
+  fleet-core's shared `merge_guard`. This file documents at its resolver why it must not take a
+  resolution dependency on another plugin for something it needs when that plugin is absent, and a
+  safety guard is exactly that. `tests/test_merge_guard.py` drives both implementations through one
+  case table so the two cannot drift apart.
+- The `status_map` run-file field, loaded and saved unchanged so a run file written before this
+  release still round-trips.
+
 ## [5.0.0] - 2026-09-19
 
 Orchestrate slims to the run driver: it keeps the worktree, launch, wait, merge and clean half,

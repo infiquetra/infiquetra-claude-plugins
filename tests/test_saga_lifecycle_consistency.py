@@ -12,7 +12,8 @@ ROOT = Path(__file__).parent.parent
 
 
 # Canonical Think-phase command ordering — the single source of truth for this check.
-# Subset of dispatch-table's 17, ordered as they appear in the most complete block (loop).
+# Ordered as they appear in the most complete surviving block. The block was previously read from
+# /loop's skill, which issue 1030 removed with the command; /plan carries the same ordering.
 CANONICAL_ORDER = (
     "/office-hours",
     "/ideate",
@@ -23,14 +24,12 @@ CANONICAL_ORDER = (
     "/work",
     "/code-review",
     "/qa",
-    "/loop",
 )
 
 # Verified membership — discovered by block shape, not hardcoded line numbers.
 # The block is the near-identical three-line core: `/ideate` answers → `/brainstorm` answers → `/plan` answers
 VERIFIED_BLOCK_SKILLS = (
     ROOT / "plugins/saga/skills/ideate/SKILL.md",
-    ROOT / "plugins/saga/skills/loop/SKILL.md",
     ROOT / "plugins/saga/skills/office-hours/SKILL.md",
     ROOT / "plugins/saga/skills/plan/SKILL.md",
 )

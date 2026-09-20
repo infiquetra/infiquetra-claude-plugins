@@ -2,6 +2,29 @@
 
 ## 2026-09-20
 
+### A count is the weakest half of a surface guard  {#count-is-the-weak-half-1030}
+
+**Evidence.** `tests/test_command_surface.py`, added in issue 1030's first unit; the card's own
+acceptance criterion is `ls plugins/saga/commands | wc -l` printing 14.
+
+**Mechanism.** A count cannot distinguish a correct surface from a wrong one of the same size. A
+tree that deleted `/qa` and kept `/pulse` still prints fourteen and still passes the criterion. The
+guard that replaced it asserts three things a count cannot: which names survive, which names are
+gone — spelled exactly as the card spells them, so a partial revert fails on the name rather than on
+arithmetic — and that every surviving command resolves a skill whose frontmatter declares the same
+name. Watching it fail on the base commit is what proved the third assertion was live: 22 of its 37
+cases failed before a single file was deleted.
+
+This also let two older cases retire without losing coverage.
+`test_infiquetra_lifecycle_commands_are_packaged` and
+`test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior` in `tests/test_saga_plugin.py`
+each carried a hand-maintained list of every command and skill, which is the same weak shape one
+level up; the new guard subsumes both and is stricter, because theirs asserted only that the named
+files exist, never that nothing else does.
+
+**Generalizable rule.** When an acceptance criterion is a count, write the guard against the set.
+
+
 ### Two cards taking the same version merge silently; the changelog is the only place it shows  {#1028-identical-version-strings-merge-silently}
 
 **Evidence.** Issues 1027 and 1028 both bumped saga to `0.170.0` against the same integration head,

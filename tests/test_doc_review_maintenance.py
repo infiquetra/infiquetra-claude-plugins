@@ -21,11 +21,9 @@ DOC_REVIEW = SAGA / "skills" / "doc-review" / "SKILL.md"
 WORK_SKILL = SAGA / "skills" / "work" / "SKILL.md"
 PLAN_SKILL = SAGA / "skills" / "plan" / "SKILL.md"
 
-#: Issue 1030 deletes plugins/saga/skills/loop/ outright, so the third stale description is left
-#: alone on purpose: repairing a sentence in a file a sibling card removes is wasted work and a
-#: merge conflict on the integration branch. The exclusion is recorded here so it reads as a
-#: decision rather than an omission.
-EXCLUDED_BY_SIBLING_REMOVAL = SAGA / "skills" / "loop" / "SKILL.md"
+#: The third stale description lived in plugins/saga/skills/loop/SKILL.md, which issue 1030 has
+#: now deleted outright. The exclusion and the case that guarded it retired with the file, exactly
+#: as that case said it would.
 
 CORRECTED_DESCRIPTIONS = (SAGA_SPEC, WORK_SKILL, PLAN_SKILL)
 
@@ -64,13 +62,6 @@ def test_no_skill_describes_review_as_a_phase_the_capability_enters() -> None:
                 f"{path.relative_to(ROOT)}:{index + 1} names the `review` phase without saying "
                 f"nothing writes it: {line!r}"
             )
-
-
-def test_the_excluded_file_is_the_one_a_sibling_card_removes() -> None:
-    """The exclusion is real and narrow: it names one file, and that file is the one issue
-    1030 deletes. If it ever stops existing, this case retires with it."""
-    assert EXCLUDED_BY_SIBLING_REMOVAL.is_file()
-    assert EXCLUDED_BY_SIBLING_REMOVAL not in CORRECTED_DESCRIPTIONS
 
 
 def test_no_write_path_to_the_review_phase_was_added() -> None:

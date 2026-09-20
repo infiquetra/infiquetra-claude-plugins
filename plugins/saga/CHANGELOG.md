@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.173.0] - 2026-09-20
+**Bumped from 0.171.0**, the saga version on `origin/parent/1018` at commit `61da4b1c`. 0.172.0 is
+skipped on purpose: issue #1039 takes that number from the same base, and two cards writing an
+identical version string never conflict — the manifest and the marketplace entry come through a merge
+clean and the only signal is two bodies under one changelog heading.
+
+**This is not the 1.0.0 the card names.** Issue #1030 calls for saga 1.0.0 as the version of a
+release that removes eleven commands *and* the script families behind them. The command surface is
+gone; the script families are not, blocked on a finding recorded in
+`docs/work-sessions/2026-09-20-issue-1030-removals-and-release.md`. A version says what shipped, and
+taking 1.0.0 here would leave the complete release with no number to be.
+
+### Removed -- BREAKING
+
+- **Eleven commands and nine skills.** `/outcome`, `/loop`, `/resume`, `/handoff`, `/optimize`,
+  `/pulse`, `/delegation-audit`, `/promote`, `/engines`, `/tier` and `/fleet-doctor` are gone, with
+  the nine skill directories behind them. Fourteen command files remain: the thirteen surviving
+  commands plus the `/ceo-review` alias. The eleven removed commands were carried by **ten** files —
+  `/delegation-audit` was reached through its skill alone.
+- **Four hooks, and the three event keys that held only them.** The delegation tripwire, the
+  delegation stop audit, the team-spawn residency check and the team teardown hook are deregistered
+  and deleted; `SessionEnd`, `Stop` and `SubagentStop` leave `hooks.json` with them. Eight hooks
+  remain.
+- **Both agents.** `saga:mechanical-executor` and `saga:readonly-verifier`, with the
+  agent-registration canary entry and its guard.
+- **The generated documentation atlas.** Four SVGs, `docs/model/saga-docs-model.yaml`, the visuals
+  page and `scripts/render_docs_visuals.py`. A hand-maintained model of a command surface goes stale
+  the moment the surface moves; `tests/test_command_surface.py` now guards the surface directly.
+- **The spawn-site inventory**, `references/sandbox-spawn-sites.md`, with the project instruction it
+  supported.
+
+### Changed
+
+- **Review roles run as roster sessions in their own worktrees.** The `CLAUDE.md` rule that every
+  review-class Agent-tool spawn must name saga's read-only verifier and pass `isolation: "worktree"`
+  is replaced. The hazard is unchanged — a reviewer sharing the tree it reviews can clobber it — but
+  the roster helper gives each role its own worktree when it creates the session, so the property
+  holds by construction instead of depending on four mechanisms and every caller's memory.
+  `/code-review`, `/investigate`, `/brainstorm` and `/work`'s execution-strategy reference say it the
+  new way.
+- **`/spec` and `/strategy` stop citing the dispatch table** in the deleted `/loop` skill, and
+  `/spec`'s onward routing stops naming `/handoff`. `/retro` stops citing the promotion contract in
+  the deleted `/promote` skill and carries the promotability rule itself.
+
+### Tests
+
+- **`tests/test_command_surface.py` is new** and replaces two hand-maintained inventories in
+  `tests/test_saga_plugin.py`. It asserts the surviving set, the removed names in the card's own
+  spelling, and that every surviving command resolves a skill whose frontmatter declares the same
+  name — three things a file count cannot distinguish. It failed 22 of its 37 cases on the base.
+- **`tests/test_saga_hooks.py` is rewritten** around a re-add guard naming each retired hook by
+  filename and a set assertion over the eight survivors, plus both directions of the
+  registered-versus-on-disk check. Verified by breaking it: restoring one registration fails three of
+  its six cases.
+- Nine test files retired with their subjects. The suite goes from 302 files to 296. No test was
+  marked advisory, skipped or `xfail`, and the gate's coverage contract against `ci.yml` is
+  untouched.
+- The gate-absence ratchet baseline shrank by its four vanished skill files, which is the direction
+  the lint's own procedure allows. The check itself is unchanged.
+
+### Fixed
+
+- **Nineteen reference documents were deleted and restored in the same branch.** They describe the
+  families this card removes, but the families are the script removal and the script removal is
+  blocked, so fifteen of the nineteen were verified to document a module still on disk. Deleting the
+  documentation of live code is worse than leaving both: the next reader hits a module with no
+  contract. They go when their scripts go. Recorded as LEARNINGS
+  `{#docs-go-with-their-code-1030}`.
+
 ## [0.171.0] - 2026-09-20
 **Bumped from 0.170.0**, the saga version on `origin/parent/1018` at commit `25619cd1` (issue
 #1027's build loop). This card first took 0.170.0 against 23959a80 and issue #1027 took the same

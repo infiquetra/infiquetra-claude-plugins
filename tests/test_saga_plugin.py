@@ -46,9 +46,19 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.171.0"  # 0.171.0: the merge turn, the release step, the
-    # lifecycle-boundary board interface and the allowed-submission enforcement (issue #1028).
-    # Bumped from 0.170.0, the saga version on origin/parent/1018 at 25619cd1. This card and issue
+    assert plugin_json["version"] == "0.173.0"  # 0.173.0: the command-surface removals of issue
+    # #1030 — eleven commands and nine skills gone, four hooks deregistered and deleted, both saga
+    # agents gone, and the sandbox-spawn project instruction replaced. Bumped from 0.171.0, the saga
+    # version on origin/parent/1018 at 61da4b1c, skipping 0.172.0 because issue #1039 takes that
+    # number from the same base and two cards writing an identical version string merge silently.
+    #
+    # NOT 1.0.0, which the card names. 1.0.0 is that card's name for the complete release, and this
+    # is not it: the script families are still here, blocked on the cc-workflows finding recorded in
+    # docs/work-sessions/2026-09-20-issue-1030-removals-and-release.md. A version says what shipped,
+    # and taking 1.0.0 now would leave the complete release with no number to be.
+    #
+    # Predecessor 0.171.0 was issue #1028: the merge turn, the release step, the
+    # lifecycle-boundary board interface and the allowed-submission enforcement. This card and issue
     # #1027 BOTH took 0.170.0 against 23959a80, and the collision merged silently: two cards
     # writing an identical version string never conflict, so the manifest and the marketplace entry
     # came through clean and the only signal was two bodies under one changelog heading.

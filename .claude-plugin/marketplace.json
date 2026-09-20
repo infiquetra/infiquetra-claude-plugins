@@ -84,7 +84,7 @@
       "name": "saga",
       "source": "./plugins/saga",
       "version": "0.173.0",
-      "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
+      "description": "Infiquetra lifecycle plugin: one automatic run per issue \u2014 admission, plan, plan review, a build loop, a lensed code review, merge, release and retro capture.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -97,11 +97,11 @@
         "strategy",
         "ideation",
         "brainstorm",
-        "handoff",
+        "plan",
         "doc-review",
         "code-review",
-        "optimize",
-        "outcome-orchestration"
+        "qa",
+        "retro"
       ],
       "category": "development"
     },
@@ -200,7 +200,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.29.0",
+      "version": "0.30.0",
       "description": "Fleet-commons library: the one staffing component (work shape, role and lens to vendor, model and effort), shared primitives, liveness decisions, execution-class routing, and the delegation audit.",
       "author": {
         "name": "Infiquetra",

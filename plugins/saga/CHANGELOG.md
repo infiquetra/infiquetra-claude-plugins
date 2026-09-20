@@ -68,6 +68,73 @@ taking 1.0.0 here would leave the complete release with no number to be.
   documentation of live code is worse than leaving both: the next reader hits a module with no
   contract. They go when their scripts go. Recorded as LEARNINGS
   `{#docs-go-with-their-code-1030}`.
+## [0.172.0] - 2026-09-20
+
+**Bumped from 0.171.0**, the saga version on `origin/parent/1018` at commit `61da4b1c`
+(issue #1028). Re-read at the merge turn rather than above this branch's own base, per the
+identical-version-strings-merge-silently trap this changelog has recorded before.
+
+### Changed
+
+- **`/qa` is now the lifecycle's functional test: a prescribed strategy catalogue with declared
+  evidence and a computed verdict** (issue #1039). The nine-way risk router, the improvised
+  per-class checks, the model-assigned severity bands and the ship-shaped verdicts are gone.
+
+  In their place: ten strategies declared as data in `references/qa-catalogue.yaml`; a
+  per-repository profile in the optional `qa` block of `.saga-profile.json`
+  (`references/qa-profile.schema.json`); one advisory judgment that may only widen the computed
+  selection and never narrow it; drivers that return exactly one of `passed`, `failed` or
+  `blocked`; one evidence envelope per strategy appended to the run record
+  (`references/qa-envelope.schema.json`); and a verdict counted from those three values —
+  `pass`, `pass-with-proof-debt`, or `fail`.
+
+  The verdict words changed because the decision changed. The step now runs after the release
+  deployment, so it no longer decides whether to ship; it decides whether the shipped thing works.
+
+  Routing splits where it used to merge: a `fail` re-enters the build loop, and a **required**
+  `blocked` stops for the operator, because the causes of a block are environment, credential and
+  permission and no build loop repairs one. The two have distinct exit codes (`4` and `5`).
+
+  Five drivers ship — `cli-smoke`, `contract-check`, `deploy-boundary`, `installed-surface`, and
+  `api-workflow` by delegation to the executor the profile declares. **Five strategies are
+  declared without a driver and say so**, returning `blocked` with a stated reason and a revisit
+  condition: `data-check` and `infrastructure-read-back` (each needs a credential decision the
+  operator owns), `manual-runbook` (a person runs it by definition), and — a narrowing beyond the
+  specification's stated boundary, declared here rather than hidden — `app-ui` and
+  `hosted-surface`, because no application surface, hosted page or browser target exists in this
+  repository to exercise a driver against, and an unexercised driver is the silent skip this
+  redesign exists to remove wearing a new name. Both reopen with the first repository whose
+  profile declares them.
+
+  One runner serves two proof boundaries. The build loop's scenario smoke (issue #1027) names the
+  same command at `--boundary branch-preview`; no line of `build_loop.py` changed.
+
+- **`release_step.record_functional_test` no longer reports a blocked scenario as a pass.** It
+  validated all three scenario states and then computed its status from the failed list alone, so
+  a scenario list holding nothing but `blocked` entries returned `passed` — the silent skip
+  prescribed testing exists to remove, arriving through the back door. A required blocked scenario
+  now returns `blocked` and stops for the operator without counting a repair cycle; an optional one
+  returns `passed-with-proof-debt` carrying the debt by name; a scenario that does not say which it
+  is counts as required, because the safe default is the one that cannot pass unproved.
+
+- **The status card's `/qa` projection follows the functional test** rather than a health-scored
+  report. Its rows are Selection · Preflight · Evidence · Proof debt · Verdict. Evidence follows
+  the per-strategy results rather than the verdict word, so a run whose strategies could not run
+  never renders as a finished one, and Proof debt stays visible on a passing run.
+
+### Removed
+
+- **`scripts/qa_health_score.py` and its test.** The 0-100 number was computed from counts of
+  model-assigned severities. The new model assigns no severity, so there is nothing left to count,
+  and a number with no inputs is worse than no number.
+
+- **The evidence-custody ledger call from the `/qa` reference documents.** The three remaining
+  references to `evidence_ledger.py` under `skills/qa/` are gone; the module itself is removed by
+  its own card in the same release.
+
+- `skills/qa/references/risk-taxonomy.md` and `skills/qa/references/qa-report.md` are **renamed**,
+  not deleted, into `qa-catalogue-reference.md` and `qa-evidence-and-verdict.md`, so their history
+  stays attached to their successors and no file carries a name that lies about its contents.
 
 ## [0.171.0] - 2026-09-20
 **Bumped from 0.170.0**, the saga version on `origin/parent/1018` at commit `25619cd1` (issue

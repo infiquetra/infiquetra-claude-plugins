@@ -64,6 +64,90 @@ as the open question rather than taken.
 
 **Revisit when** the operator answers that question, or when the Workflow backend is invoked again
 and the move's import path is exercised for real.
+### The status card follows the functional test rather than the functional test keeping a score for the card  {#1039-status-card-follows-the-verdict}
+
+**Decision.** `status_card.project_qa` was retargeted with `/qa` in the same commit. Its rows are
+now Selection · Preflight · Evidence · Proof debt · Verdict, read from the frontmatter and results
+table of the comment the runner prints, rather than Risk class · Checks · Findings · Health score ·
+Ship verdict read from a `docs/qa/` report.
+
+**Rationale.** The single-emitter rule says every operator-facing status card comes from one
+renderer. The alternative was to drop `/qa` from that rule, which would have let the step draw its
+own status output by hand — the exact thing the rule exists to prevent. Keeping `/qa` inside the
+rule cost one projection rewrite and five retargeted tests, and it kept a cross-skill invariant
+whole. The plan had deferred this as a follow-up; the routing guard forced it, and the guard was
+right.
+
+**Rejected alternative.** Removing the `/qa` block from the single-emitter routing test. Cheaper by
+about eighty lines, and it would have quietly created the first status surface outside the emitter.
+
+**Revisit when.** A second surface needs a card shape the gate-sequence archetype cannot express.
+
+### Two rows carry the weight of the card, and neither may render as done  {#1039-evidence-and-debt-rows}
+
+**Decision.** The card's **Evidence** row follows the per-strategy results rather than the verdict
+word, and renders `BLOCKED` when any strategy could not run. The **Proof debt** row renders
+`BLOCKED` on a run that passed with debt, rather than `DONE`.
+
+**Rationale.** Both are the same guard against the same failure. A run that proved nothing must not
+look finished, and a debt that renders as done is a silent skip in a new place — the failure this
+whole card exists to remove. A verdict word alone cannot carry that, because
+`pass-with-proof-debt` is a pass.
+
+**Revisit when.** The operator says the blocked glyph on a passing run is noise rather than signal.
+
+### The `/qa` catalogue reuses the widen-only union rather than reimplementing it, at the cost of one fleet-core verb  {#1039-qa-widening-reuses-jev-widen}
+
+**Decision.** The widening judgment in the new `/qa` strategy catalogue calls
+`fleet_commons.jev_widen.widen()` and registers a `qa-strategies` verb in
+`plugins/fleet-core/scripts/fleet_commons/jev_verbs.py`, which moves fleet-core's release surfaces
+in the same pull request. It does not call the TypeSafe client directly with an inline question set.
+
+**Rationale.** The whole design rests on one property: the declared strategy set is a floor and the
+model may only raise it. `jev_widen.widen()` already implements exactly that union, already logs
+every probability with its threshold, and already degrades to the floor when the client raises,
+times out, or returns a non-ok status. Writing a second union inside the `/qa` script would put the
+guarantee in two places, and the specification's own failure table names a narrowing judgment as
+the way a required proof silently disappears.
+
+**Rejected alternative.** Calling `typesafe_client.ask` directly from the `/qa` script. It avoids
+one version bump and duplicates the guarantee the design most depends on. The verb's key set is the
+only thing duplicated, and a guard test asserts it equals the catalogue's strategy identifiers in
+both directions.
+
+**Revisit when.** A second consumer needs a widening judgment whose question set is genuinely
+dynamic, which a static verb registry cannot express.
+
+### One strategy runner, two proof boundaries, shared by command name rather than by import  {#1039-qa-runner-shared-by-command-name}
+
+**Decision.** The build loop's scenario smoke reaches the `/qa` strategy runner by naming its
+command line, not by importing it. The runner takes a `--boundary` flag defaulting to
+`non-production`; the build loop's smoke entries name it at `branch-preview`. No line of
+`plugins/saga/scripts/build_loop.py` changes.
+
+**Rationale.** The build loop already reads its scenario smoke as a list of `{name, command}`
+entries and runs each through an injected runner, so a command name is all the sharing the
+operator's decision ("one catalogue, two boundaries") actually requires. An import would couple two
+cards' merge turns for behaviour neither one needs.
+
+**Revisit when.** The smoke needs a value back from the runner that an exit code and a run-record
+block cannot carry.
+
+### The `/qa` step computes its own verdict and never hands a blocked run to the release step  {#1039-qa-routes-itself}
+
+**Decision.** `/qa` computes the verdict and the route itself, and calls
+`release_step.record_functional_test` only for a `pass` or a `fail`. A required `blocked` is
+written to the run record as an operator stop and never presented as a functional-test result.
+
+**Rationale.** That function computes its status from the failed list alone, so a scenario list
+holding only `blocked` entries returns `passed` — the silent skip this card exists to remove,
+arriving through the back door. Routing around it keeps the blast radius inside this card.
+
+**Rejected alternative.** Repairing the arithmetic in the release step. It reaches into a sibling
+card's merged work for a case only `/qa` can produce; recorded as a follow-up instead.
+
+**Revisit when.** A second caller can produce a blocked scenario, at which point the repair belongs
+in the release step rather than in each caller.
 
 ### Orchestrate 6.0.0: removing a subcommand is a major bump, by this plugin's own precedent  {#1028-orchestrate-subcommand-removal-is-major}
 

@@ -195,6 +195,47 @@ VERBS: dict[str, Verb] = {
             "reversible": _noul("Can `change` be reversed without data loss?"),
         },
     ),
+    "qa-strategies": Verb(
+        name="qa-strategies",
+        summary="Which prescribed testing strategies a change needs proof from",
+        state_help=(
+            'the change and the catalogue, as {"change": {"files": [...], "summary": "..."}, '
+            '"strategies": {"<id>": "<what selects it>"}}'
+        ),
+        # One yes/no question per catalogue row in plugins/saga/references/qa-catalogue.yaml.
+        # The KEYS are the contract: a test asserts this set equals the catalogue's strategy
+        # identifiers in BOTH directions, so a row added to one and not the other fails rather
+        # than silently going unasked.  The strategy DESCRIPTIONS stay in the catalogue and are
+        # passed as state, so only the key set is duplicated here.
+        #
+        # This verb is advisory and additive only.  Its caller computes the required set from the
+        # repository profile's file patterns FIRST and unions this answer with it, per the
+        # widen-only rule: an existing pattern rule is a floor a model may raise and never lower.
+        questions={
+            "api-workflow": _noul(
+                "Does `change` need proof of a deployed HTTP surface's workflow?"
+            ),
+            "contract-check": _noul(
+                "Does `change` need proof that a published contract did not drift?"
+            ),
+            "app-ui": _noul("Does `change` need proof of application widget or screen behaviour?"),
+            "hosted-surface": _noul("Does `change` need proof of a hosted page's behaviour?"),
+            "cli-smoke": _noul(
+                "Does `change` need proof that a command-line entry point still runs?"
+            ),
+            "deploy-boundary": _noul("Does `change` need proof that the deployed edge serves it?"),
+            "data-check": _noul("Does `change` need proof about persisted data or a write path?"),
+            "infrastructure-read-back": _noul(
+                "Does `change` need proof read back from infrastructure or cluster configuration?"
+            ),
+            "installed-surface": _noul(
+                "Does `change` need proof that an installed plugin surface resolves?"
+            ),
+            "manual-runbook": _noul(
+                "Does `change` need proof that only a person running a runbook can give?"
+            ),
+        },
+    ),
     "handoff-check": Verb(
         name="handoff-check",
         summary="Whether a handoff carries what its receiver needs",

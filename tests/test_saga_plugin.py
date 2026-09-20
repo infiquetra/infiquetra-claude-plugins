@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).parent.parent
 PLUGIN_ROOT = ROOT / "plugins" / "saga"
@@ -48,17 +49,24 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     assert plugin_json["name"] == "saga"
     assert plugin_json["version"] == "0.173.0"  # 0.173.0: the command-surface removals of issue
     # #1030 — eleven commands and nine skills gone, four hooks deregistered and deleted, both saga
-    # agents gone, and the sandbox-spawn project instruction replaced. Bumped from 0.171.0, the saga
-    # version on origin/parent/1018 at 61da4b1c, skipping 0.172.0 because issue #1039 takes that
-    # number from the same base and two cards writing an identical version string merge silently.
+    # agents gone, and the sandbox-spawn project instruction replaced. Bumped over 0.172.0, the saga
+    # version on origin/parent/1018 at b264f154, re-read at this merge turn. 0.172.0 was chosen from
+    # the same base by issue #1039, which is why this card skipped it rather than colliding: two
+    # cards writing an identical version string never conflict, and the collision merges silently.
     #
     # NOT 1.0.0, which the card names. 1.0.0 is that card's name for the complete release, and this
     # is not it: the script families are still here, blocked on the cc-workflows finding recorded in
     # docs/work-sessions/2026-09-20-issue-1030-removals-and-release.md. A version says what shipped,
     # and taking 1.0.0 now would leave the complete release with no number to be.
     #
+    # Predecessor 0.172.0 was issue #1039: /qa becomes the lifecycle's functional test — ten
+    # prescribed strategies as data, a per-repository profile, a widen-only advisory judgment,
+    # three-status drivers, one evidence envelope each in the run record, and a counted verdict.
+    # The health score and its test are removed; the release step no longer reports a blocked
+    # scenario as a pass.
+    #
     # Predecessor 0.171.0 was issue #1028: the merge turn, the release step, the
-    # lifecycle-boundary board interface and the allowed-submission enforcement. This card and issue
+    # lifecycle-boundary board interface and the allowed-submission enforcement. That card and issue
     # #1027 BOTH took 0.170.0 against 23959a80, and the collision merged silently: two cards
     # writing an identical version string never conflict, so the manifest and the marketplace entry
     # came through clean and the only signal was two bodies under one changelog heading.
@@ -140,7 +148,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
-    assert {"lifecycle", "strategy", "handoff", "doc-review", "code-review"} <= set(
+    # "handoff" and "optimize" were in the manifest's keywords until issue 1030 removed both
+    # commands. The keywords are a search surface, so they must not advertise a command that is
+    # gone; this set names five that survive.
+    assert {"lifecycle", "strategy", "plan", "doc-review", "code-review"} <= set(
         plugin_json["keywords"]
     )
 
@@ -822,170 +833,180 @@ def test_document_review_second_opinion_contract_is_intact() -> None:
     )
 
 
-def test_qa_engine_merge_contract() -> None:
-    """Mechanism FLOORS for the rebuilt engine-merge /qa acceptance-evidence gate (0.13.0).
+def test_qa_functional_test_step_contract() -> None:
+    """Mechanism FLOORS for the /qa functional-test step: the prescribed strategy catalogue (#1039).
 
-    HONEST SCOPE: presence proves the contract was AUTHORED, not that runtime is mutation-free.
-    "Never fix / never commit / never deploy" is enforced only by Claude reading the prose at
-    runtime — the SKILL emits no runnable mutation command, but token presence cannot prove a
-    given run respects the boundary. These floors prove the SKILL/refs EMIT the runnable lines
-    the gate stands on (saga restore/advance, issue-progress with evidence, the diff mechanic),
-    that the gate-only boundary prose is present (and mutation verbs appear ONLY inside negation
-    windows, like /resume and /founder-review), that failures route by merge state, that the
-    ce-debug falsifiable-prediction graft is grafted, and that the 0-100 health score is the
-    deterministic gstack-formula PORT (via the runnable `qa_health_score.py` CLI) reported alongside
-    the banded verdict — a real score, not faked. A thin port of the prior 19-line stub (a 9-way
-    router + "store notes", no severity model / verdict / saga wiring / routing) fails these floors.
+    RETARGETED, not deleted. This guard used to pin the nine-way risk router, the ship verdicts,
+    the model-assigned severity bands and the runnable `qa_health_score.py` scorer. Issue 1039
+    removed every one of those, so a guard that still asserted them would have blocked the change
+    it was meant to protect. It now pins what replaced them, at the same strength: the catalogue as
+    data, the profile, the three result values, the counted verdict, the routing split between a
+    failure and a block, and the absence of any score.
 
-    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
+    HONEST SCOPE: presence proves the contract was AUTHORED, not that a given run respects it.
+    "Never fix / never commit / never deploy" is enforced by Claude reading the prose at runtime;
+    what these floors prove is that the documents EMIT the runnable lines the step stands on, that
+    the boundary prose is present with mutation verbs only inside negation windows, and that the
+    removed model — score, severity, ship verdicts, nine-way router — is gone from the corpus
+    rather than merely unused.
+
+    Tokens are taken from the actual SKILL.md + its 2 references on disk.
     """
     qa = PLUGIN_ROOT / "skills" / "qa"
     skill_doc = _read(qa / "SKILL.md")
-    risk_doc = _read(qa / "references" / "risk-taxonomy.md")
-    report_doc = _read(qa / "references" / "qa-report.md")
-    corpus = "\n".join((skill_doc, risk_doc, report_doc))
+    catalogue_doc = _read(qa / "references" / "qa-catalogue-reference.md")
+    evidence_doc = _read(qa / "references" / "qa-evidence-and-verdict.md")
+    corpus = "\n".join((skill_doc, catalogue_doc, evidence_doc))
 
-    # --- MECHANISM FLOOR 1: the saga restore CLI (qa is a pure consumer — restore, never mint). ---
-    assert "saga.py restore --saga-id" in corpus, (
-        "the gate must restore the work-thread saga (`saga.py restore --saga-id`)"
+    # --- MECHANISM FLOOR 1: one runnable command, not a procedure to reproduce by hand. ---
+    assert "qa_strategies.py" in skill_doc, (
+        "the SKILL must emit the runnable strategy runner `qa_strategies.py`"
     )
+    run_blocks = re.findall(r"qa_strategies\.py.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL)
+    assert any("--issue" in block for block in run_blocks), (
+        "the runner invocation must carry --issue (the run whose record it reads and writes)"
+    )
+    assert any("--boundary" in block for block in run_blocks), (
+        "the SKILL must show the --boundary flag: one runner serves the build loop's narrower "
+        "proof boundary as well as the functional test's"
+    )
+    for subcommand in ("select", "run", "verdict"):
+        assert re.search(rf"qa_strategies\.py {subcommand}\b", corpus), (
+            f"the {subcommand!r} subcommand must be shown"
+        )
 
-    # --- MECHANISM FLOOR 2: the qa-track ADVANCE write — a runnable `saga.py save` carrying the
-    # qa lifecycle phase AND --qa-paths. A bare "ticks the saga" mention cannot satisfy this; the
-    # block must carry both flags (the deferred work->qa advance /work left to this rebuild). ---
-    save_blocks = re.findall(r"saga\.py save.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL)
-    assert any(
-        "--lifecycle-phase qa" in block and "--qa-paths" in block for block in save_blocks
-    ), (
-        "the PASS tick must be a runnable `saga.py save` carrying --lifecycle-phase qa AND --qa-paths"
+    # --- MECHANISM FLOOR 2: the catalogue is DATA, and all ten rows are named. ---
+    assert "qa-catalogue.yaml" in corpus, "the catalogue file must be cited by path"
+    ten = (
+        "api-workflow",
+        "contract-check",
+        "app-ui",
+        "hosted-surface",
+        "cli-smoke",
+        "deploy-boundary",
+        "data-check",
+        "infrastructure-read-back",
+        "installed-surface",
+        "manual-runbook",
     )
-    # The advance pins --phase to the restored integer (so --phase-status complete cannot advertise
-    # a phantom counter advance) and sets --phase-status complete.
-    assert any(
-        "--phase " in block and "--phase-status complete" in block for block in save_blocks
-    ), "the qa advance must pin --phase to the restored value and mark --phase-status complete"
-    # The never-mint guard must be pinned at the dangerous save call-site (not only in Phase 0.2),
-    # mirroring the shipped /code-review which states `saga.py save mints unconditionally` right at
-    # its save block: `saga.py save` mints an unknown id unconditionally, so the SKILL must reinforce
-    # the scan-first / never-mint guard near the qa-advance save block, not just upstream in restore.
-    assert "mints unconditionally" in skill_doc, (
-        "the SKILL must pin the never-mint guard at the save call-site "
-        "(`saga.py save` mints unconditionally — only tick when a saga was restored)"
+    for strategy in ten:
+        assert strategy in corpus, f"strategy {strategy!r} must be named in the corpus"
+    # The data file itself carries exactly those ten and no eleventh.
+    catalogue = yaml.safe_load(
+        (PLUGIN_ROOT / "references" / "qa-catalogue.yaml").read_text(encoding="utf-8")
     )
-    save_idx = skill_doc.find("saga.py save")
-    mints_idx = skill_doc.find("mints unconditionally")
-    assert save_idx != -1 and mints_idx != -1 and abs(mints_idx - save_idx) <= 600, (
-        "the `mints unconditionally` never-mint caveat must sit next to the `saga.py save` block "
-        "(the /code-review call-site-guard pattern), not in a distant section"
-    )
+    assert {row["id"] for row in catalogue["strategies"]} == set(ten)
+    assert len(catalogue["strategies"]) == 10
 
-    # --- MECHANISM FLOOR 3: the issue-progress evidence emission with BOTH evidence flags. ---
-    progress_blocks = re.findall(
-        r"issue_progress\.py.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL
-    )
-    assert any(
-        "--checks-run" in block and "--evidence-link" in block for block in progress_blocks
-    ), "the gate must emit `issue_progress.py` with --checks-run AND --evidence-link"
-
-    # --- MECHANISM FLOOR 4: the diff-aware mechanic — merge-base + diff (reused from /code-review,
-    # fetch-first, two-dot to avoid the empty post-merge three-dot diff). ---
-    assert "git merge-base" in corpus, "the diff-aware scope must use `git merge-base`"
-    assert re.search(r"git diff[^\n]*DIFF_BASE", corpus), (
-        "the diff-aware scope must run `git diff` against the computed merge-base"
+    # --- MECHANISM FLOOR 3: three result values, and the corpus says there is no fourth. ---
+    for result in ("passed", "failed", "blocked"):
+        assert result in corpus, f"the result value {result!r} must be named"
+    assert re.search(r"no fourth value|there is no fourth", corpus, re.IGNORECASE), (
+        "the corpus must state that the three result values are the whole set"
     )
 
-    # --- MECHANISM FLOOR 5: the ce-debug falsifiable-PREDICTION graft (the distinct ce-debug
-    # import — the rest of evidence discipline already lives in /code-review principle 2). ---
-    assert "falsifiable prediction" in corpus.lower(), (
-        "the ce-debug falsifiable-prediction mechanic must be grafted"
+    # --- MECHANISM FLOOR 4: the counted verdict, in the post-deploy vocabulary. ---
+    for verdict in ("pass-with-proof-debt", "fail"):
+        assert verdict in corpus, f"the verdict {verdict!r} must be named"
+    assert re.search(r"`pass`", corpus), "the verdict 'pass' must be named"
+    # The ship-shaped words describe a decision this step no longer makes. They may appear only
+    # where the corpus explains what was REPLACED, never as this step's own verdict.
+    flat_corpus = re.sub(r"\s+", " ", corpus)
+    for gone in ("ship-with-deferred", "no-ship"):
+        for match in re.finditer(re.escape(gone), flat_corpus):
+            window = flat_corpus[max(0, match.start() - 1400) : match.start()]
+            assert re.search(
+                r"What replaced what|replaced|used to|no longer", window, re.IGNORECASE
+            ), f"the retired verdict {gone!r} may appear only in the what-replaced-what window"
+
+    # --- MECHANISM FLOOR 5: the score, the severity model and the nine-way router are GONE. ---
+    assert "qa_health_score" not in corpus, "the deterministic scorer is removed, not renamed"
+    assert "Health Score Rubric" not in corpus
+    for match in re.finditer(r"(?i)health score", flat_corpus):
+        window = flat_corpus[max(0, match.start() - 1400) : match.start()]
+        assert re.search(
+            r"What replaced what|replaced|used to|no longer|gone", window, re.IGNORECASE
+        ), "the health score may be named only where the corpus records that it was removed"
+    assert "9-way risk router" not in corpus, "the nine-way risk router is removed, not renamed"
+    assert "risk-taxonomy.md" not in corpus, (
+        "the risk taxonomy reference was renamed into the catalogue reference; no path may still "
+        "cite the old name"
     )
-    assert "if this is the real cause" in corpus, (
-        "the prediction must be the concrete ce-debug shape ('if this is the real cause, X ...')"
+    assert re.search(r"no severity|nothing assigns a severity", corpus, re.IGNORECASE), (
+        "the corpus must state that nothing assigns a severity"
+    )
+    assert re.search(r"Nothing is scored|no score", corpus, re.IGNORECASE), (
+        "the corpus must state that nothing is scored"
     )
 
-    # --- MECHANISM FLOOR 6: the 9-way risk router + browser-as-ONE-MCP-class fold. ---
-    nine_classes = (
-        "behavior",
-        "security",
-        "infra",
-        "API",
-        "deployment",
-        "data",
-        "docs",
-        "config",
-        "trivial",
+    # --- MECHANISM FLOOR 6: the widen-only rule, in both directions. ---
+    assert re.search(r"may only widen|only widen|never narrow", corpus, re.IGNORECASE), (
+        "the advisory judgment's widen-only rule must be stated"
     )
-    for klass in nine_classes:
-        assert klass in risk_doc, f"risk class {klass!r} must be in the 9-way router"
-    # The gstack 7-web-categories fold: browser is ONE MCP-driven class under behavior, not a
-    # separate 7-category surface, and uses the installed MCP (no gstack $B/browse daemon).
-    assert "one MCP" in risk_doc or "ONE MCP" in risk_doc, (
-        "browser must fold into a single MCP-driven class (the gstack 7-category fold)"
+    assert re.search(r"never remove|may never remove", corpus, re.IGNORECASE), (
+        "the corpus must say the judgment may never remove a declared strategy"
     )
-    assert "chrome-devtools" in risk_doc and "playwright" in risk_doc, (
-        "the browser class is driven by the installed chrome-devtools / playwright MCP"
+    assert re.search(r"act band", corpus, re.IGNORECASE), (
+        "the act band must be named as a declared number, not a literal in code"
     )
 
-    # --- MECHANISM FLOOR 7: the SEVERITY-BANDED verdict (ship / ship-with-deferred / no-ship +
-    # critical/high/medium/low) AND the deterministic gstack-PORTED health score (re-added in
-    # 0.13.x: Jeff re-opened Q2 to port gstack's REAL formula, not invent one). ---
-    for verdict in ("ship-with-deferred", "no-ship"):
-        assert verdict in corpus, f"the ship verdict {verdict!r} must be named"
-    assert re.search(r"\bship\b", corpus), "the ship verdict 'ship' must be named"
-    for severity in ("critical", "high", "medium", "low"):
-        assert severity in corpus, f"severity band {severity!r} must be named"
-    # The P0-P3 cross-walk to /code-review is documented.
-    for prio in ("P0", "P1", "P2", "P3"):
-        assert prio in risk_doc, f"the severity <-> {prio} cross-walk must be documented"
-    # The deterministic scorer is wired: the SKILL emits a runnable `qa_health_score.py` CLI line
-    # carrying --findings-json, and the report ref documents the model. A bare "compute the score"
-    # mention cannot satisfy this — the runnable line must be present.
-    assert "qa_health_score.py" in skill_doc, (
-        "the SKILL must emit the runnable deterministic scorer `qa_health_score.py`"
+    # --- MECHANISM FLOOR 7: the two profile refusals — never an empty selection that passes. ---
+    assert ".saga-profile.json" in corpus, "the profile must be cited by path"
+    assert re.search(r"all optional", corpus, re.IGNORECASE), (
+        "a profile whose strategies are all optional must be documented as blocked"
     )
-    assert "qa_health_score.py" in report_doc, (
-        "the report ref must carry the runnable `qa_health_score.py` line + the score model"
-    )
-    score_blocks = re.findall(r"qa_health_score\.py.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL)
-    assert any("--findings-json" in block for block in score_blocks), (
-        "the scorer invocation must pass --findings-json (the per-class severity counts)"
-    )
-    # Baseline-from-prior-report: the score is regression-aware via --baseline-score (read from the
-    # prior report the saga's qa_paths points at — no baseline.json, no saga field).
-    assert "--baseline-score" in corpus, (
-        "the scorer must support baseline-from-prior-report via --baseline-score"
-    )
-    assert "baseline" in skill_doc.lower() and "qa_paths" in skill_doc, (
-        "the SKILL must read the prior overall from the saga's qa_paths as the baseline"
-    )
-    # The score is reported alongside the verdict, with the honest LLM-assigned-inputs caveat (the
-    # score is a signal, the verdict is the gate decision).
-    assert "Health Score Rubric" in corpus or "Health Score" in corpus, (
-        "the health score must be named (the gstack-ported model)"
-    )
-    flat = re.sub(r"\s+", " ", corpus)
-    assert re.search(r"signal[^.]*?verdict|verdict[^.]*?(?:decision|gate)", flat, re.IGNORECASE), (
-        "the score is one signal; the verdict is the gate decision — both must be reported"
+    assert re.search(r"never an empty selection", corpus, re.IGNORECASE), (
+        "the corpus must say a missing profile is blocked rather than an empty selection"
     )
 
-    # --- MECHANISM FLOOR 8: gate-only negatives via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
-    # The positive boundary prose (E1 bolds the NOT). ---
+    # --- MECHANISM FLOOR 8: the ROUTING SPLIT — a failure and a block go to different places. ---
+    assert "build loop" in corpus, "a failure must route to the build loop"
+    assert re.search(
+        r"required[^\n.]*block(?:ed)?[^\n.]*operator|operator[^\n.]*required[^\n.]*block",
+        flat_corpus,
+        re.IGNORECASE,
+    ), "a required blocked strategy must route to the operator"
+    assert re.search(
+        r"(?:no|never|cannot|which no)[^.]*build loop[^.]*repair|build loop[^.]*(?:cannot|never|no)[^.]*repair",
+        flat_corpus,
+        re.IGNORECASE,
+    ), "the corpus must say WHY a block does not go to the build loop"
+    # The exit codes are the routing decision in numeric form, and 4 and 5 are distinct.
+    assert re.search(r"\| 4 \|", skill_doc) and re.search(r"\| 5 \|", skill_doc), (
+        "the SKILL must document distinct exit codes for a failure and a required block"
+    )
+
+    # --- MECHANISM FLOOR 9: evidence is an ENVELOPE in the run record, and the ledger is gone. ---
+    assert "evidence_ledger" not in corpus, (
+        "the evidence-custody ledger call must be gone from the qa corpus"
+    )
+    assert "qa-envelope.schema.json" in corpus, "the envelope schema must be cited by path"
+    assert re.search(r"run record", corpus, re.IGNORECASE), (
+        "the envelopes' home — the run record — must be named"
+    )
+    assert re.search(r"before the envelope exists", corpus, re.IGNORECASE), (
+        "redaction must be documented as happening INSIDE the driver, before the envelope exists"
+    )
+
+    # --- MECHANISM FLOOR 10: the published comment, which is what makes the run legible. ---
+    assert "gh issue comment" in skill_doc, (
+        "the SKILL must emit the runnable line that publishes the per-strategy statuses"
+    )
+
+    # --- MECHANISM FLOOR 11: reports-never-repairs, via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
     for negative in (
         "does **NOT** fix",
         "does **NOT** commit",
         "does **NOT** push",
         "does **NOT** deploy",
     ):
-        assert negative in skill_doc, f"gate-only boundary prose {negative!r} must be present"
+        assert negative in skill_doc, f"boundary prose {negative!r} must be present"
     assert "merge a PR" in skill_doc and "does **NOT**" in skill_doc
 
-    # Negation-window: a FAITHFUL gate-only SKILL mentions mutation VERBS only inside "does NOT"
-    # clauses (the /resume + /founder-review pattern), so a flat token-absence assert would fail it.
-    # "push" is the unambiguous mutation verb here — it never appears as a benign noun in this
-    # corpus — so every "push" occurrence must sit inside a negation window. ("commit" is excluded
-    # from this window check because it doubles as the benign noun "merge commit"; the commit
-    # boundary is pinned by the positive prose above + the no-runnable-`git commit` assert below,
-    # exactly the founder-review pattern for a token that doubles as an innocent word.) ---
+    # Negation-window: "push" is the unambiguous mutation verb in this corpus, so every occurrence
+    # must sit inside a negation window (the /resume + /founder-review pattern). "commit" is
+    # excluded because it doubles as the benign noun "merge commit"; its boundary is pinned by the
+    # positive prose above plus the no-runnable-mutation asserts below.
     flat_skill = re.sub(r"\s+", " ", skill_doc)
     for match in re.finditer(r"\bpushe?[sd]?\b", flat_skill, flags=re.IGNORECASE):
         window = flat_skill[max(0, match.start() - 70) : match.start()]
@@ -994,59 +1015,18 @@ def test_qa_engine_merge_contract() -> None:
             f"found positive use near: {flat_skill[match.start() - 50 : match.start() + 30]!r}"
         )
 
-    # No runnable mutation command anywhere. `git add` appears ONLY inside "Never `git add`"
-    # negations, so pin the mechanism: no positive git-mutation / gh-PR-mutation invocation.
+    # No runnable mutation command anywhere.
     assert not re.search(r"(?<!Never )(?<!never )`?git commit", skill_doc)
     assert "git push" not in skill_doc
     assert "gh pr merge" not in skill_doc and "gh pr create" not in skill_doc
-    # Every `git add` occurrence is a "Never git add" negation (saga state is git-ignored).
-    for match in re.finditer(r"git add", flat):
-        window = flat[max(0, match.start() - 30) : match.start()]
+    # Every `git add` occurrence is a "Never git add" negation (the run record is git-ignored).
+    for match in re.finditer(r"git add", flat_corpus):
+        window = flat_corpus[max(0, match.start() - 30) : match.start()]
         assert re.search(r"\bNever\b", window), (
             "any `git add` mention must be inside a 'Never git add' negation"
         )
 
-    # --- MECHANISM FLOOR 9: MERGE-STATE FAILURE ROUTING. Pre-merge -> /work; post-merge SPLITS into
-    # a two-target branch: a clear/trackable defect -> /handoff, and a DEEP / uncertain root cause ->
-    # /investigate (NOW LIVE — /investigate shipped this rebuild, so /qa's FLOOR-9 FLIPPED from the
-    # 0.13.0 "future prose only" form to a live post-merge root-cause route). The earlier
-    # negative-route-arrow + future-prose-window loop are GONE; /investigate is now asserted PRESENT
-    # as a routable post-merge destination. ---
-    assert "Pre-merge" in skill_doc and "/work" in skill_doc, "pre-merge failure routes to /work"
-    assert "Post-merge" in skill_doc and "/handoff" in skill_doc, (
-        "post-merge clear/trackable defect failure routes to /handoff"
-    )
-    # /investigate is now a LIVE post-merge root-cause route. Assert (a) it appears as a route-arrow /
-    # routing target for a deep/uncertain root-cause failure, and (b) the SKILL frames it as a real
-    # routable target that ships and is on the dispatch-table's routable list.
-    flat_skill_inv = re.sub(r"\s+", " ", skill_doc)
-    assert re.search(
-        r"(?:->|→|\broute[sd]?\b[^\n]*\bto\b|root cause[^\n]*?)[^\n]*?/investigate", flat_skill_inv
-    ), "/investigate must now appear as a LIVE post-merge root-cause route target"
-    assert re.search(
-        r"/investigate[^\n]*?(?:real routable target|routable|ships|systematic-debugging engine)",
-        flat_skill_inv,
-        re.IGNORECASE,
-    ), "the SKILL must frame /investigate as a real, shipped, routable target"
-    # The deep/uncertain root-cause failure is the discriminator that sends a post-merge thread to
-    # /investigate rather than /handoff.
-    assert re.search(
-        r"Deep / uncertain root cause|deep[^\n]*root cause", skill_doc, re.IGNORECASE
-    ), "the post-merge split must route DEEP / uncertain root-cause failures to /investigate"
-    # But there is still NO /investigate -> /qa verify loop (/qa routes root-cause work TO
-    # /investigate, never the reverse, and /investigate does its OWN verification).
-    assert re.search(
-        r"no\b[^\n]*/investigate[^\n]*?(?:->|→)[^\n]*/qa[^\n]*verify", flat_skill_inv, re.IGNORECASE
-    ) or ("no `/investigate` → `/qa` verify" in skill_doc), (
-        "there must be no /investigate -> /qa verify loop (/qa routes TO /investigate, never reverse)"
-    )
-    # PASS routes to /handoff or /retro (the clean-exit route).
-    assert "/handoff" in skill_doc and "/retro" in skill_doc
-
-    # --- MECHANISM FLOOR 10: dispatch-table is REFERENCED, never restated (one source of truth,
-    # no /qa<->/loop duplication). The path is cited; the table's own unique H1 title + lead
-    # sentence (which live ONLY in loop/references/dispatch-table.md) must NOT appear in the qa
-    # corpus. ---
+    # --- MECHANISM FLOOR 12: dispatch-table is REFERENCED, never restated. ---
     assert "loop/references/dispatch-table.md" in skill_doc, (
         "outbound routing must REFERENCE the dispatch-table by path"
     )
@@ -1055,20 +1035,19 @@ def test_qa_engine_merge_contract() -> None:
     )
     assert "The designed routing map for `/loop`" not in corpus
 
-    # --- MECHANISM FLOOR 11: own durable artifact dir (evidence ledger, #398),
-    # no classifier collision. ---
-    assert "docs/qa/" in skill_doc
-    assert "docs/evidence/" in report_doc and "classifier collision" in report_doc
-
-    # --- Operator-choice citation at the plugin-root path + the 3 backend enums (large/parallel
-    # verification is OFFERED, never auto-spawned; generic agents only — no agents/ dir). ---
-    assert "references/operator-choice.md" in skill_doc
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert backend in skill_doc
-    assert "Explore" in skill_doc and "Task" in skill_doc  # generic-agent dispatch
+    # --- MECHANISM FLOOR 13: the two strategies declared WITHOUT a driver say so, with the
+    # condition that reopens each. A narrowing declared openly is not the same as a silent gap. ---
+    for narrowed in ("app-ui", "hosted-surface"):
+        row = next(r for r in catalogue["strategies"] if r["id"] == narrowed)
+        assert row["driver"] is None
+        assert row["no_driver_reason"].strip()
+        assert row["revisit_when"].strip()
+    assert re.search(r"ships no driver|declared without a driver", corpus, re.IGNORECASE), (
+        "the corpus must say out loud which strategies ship no driver"
+    )
 
     # --- ref-floor: both reference files exist and carry real content (>= 60 lines). ---
-    for ref in ("risk-taxonomy.md", "qa-report.md"):
+    for ref in ("qa-catalogue-reference.md", "qa-evidence-and-verdict.md"):
         ref_path = qa / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60

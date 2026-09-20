@@ -15,5 +15,49 @@
     "the plan cleared /doc-review with nothing above P3 open",
     "the work branch exists and is not the default branch",
     "the release surfaces named in CLAUDE.md move in the same pull request"
-  ]
+  ],
+  "qa": {
+    "schema": "qa_profile.v1",
+    "ceiling": {
+      "max_duration_seconds": 600,
+      "max_direct_cost": 0
+    },
+    "strategies": {
+      "cli-smoke": {
+        "required": true,
+        "commands": [
+          {
+            "name": "the run record answers for its own store",
+            "command": "uv run python plugins/saga/scripts/run_record.py --help"
+          },
+          {
+            "name": "the strategy runner answers for its selection subcommand",
+            "command": "uv run python plugins/saga/scripts/qa_strategies.py select --help"
+          }
+        ],
+        "scenarios": [
+          "plugin-scripts-answer-their-own-help"
+        ]
+      },
+      "installed-surface": {
+        "required": true,
+        "plugins": [
+          "saga",
+          "fleet-core"
+        ],
+        "expected_surfaces": {
+          "saga": [
+            "skills/qa/SKILL.md",
+            "commands/qa.md"
+          ],
+          "fleet-core": [
+            "scripts/fleet_commons/jev_verbs.py"
+          ]
+        },
+        "scenarios": [
+          "both-installed-plugin-roots-agree"
+        ]
+      }
+    }
+  }
 }

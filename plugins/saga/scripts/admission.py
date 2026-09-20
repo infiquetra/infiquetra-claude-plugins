@@ -305,7 +305,18 @@ def fill_defaults(
             _fill(configuration, "staffing_models_and_efforts", resolved, "staffing")
             catalogue = _resolve_catalogue(staffing)
             for parameter in CATALOGUE_PARAMETERS:
-                if catalogue.get(parameter) is not None:
+                # The operator guard every other fill site applies, and that this
+                # function's own docstring promises. It was missing here and could
+                # not be observed: `_resolve_catalogue` returned an empty mapping for
+                # every checkout because of the shape defect above, so this loop never
+                # filled anything. Repairing the read made the clobber reachable — a
+                # re-run of admission replaced an operator's lens declaration with the
+                # catalogue's always-on proposal, discarding the conditional lenses and
+                # their recorded reasons.
+                if (
+                    catalogue.get(parameter) is not None
+                    and configuration[parameter]["source"] != "operator"
+                ):
                     _fill(configuration, parameter, catalogue[parameter], "staffing")
 
     return run_record.RunRecord(

@@ -792,3 +792,69 @@ def test_resolve_catalogue_survives_an_absent_checkout(adm: ModuleType) -> None:
 
     assert resolved["applicable_lenses"]["always_on"] == ["correctness"]
     assert "per_lens_score_threshold" not in resolved
+
+
+def test_the_catalogue_never_overwrites_an_operator_lens_declaration(
+    adm: ModuleType, tmp_path: Path
+) -> None:
+    """A re-run of admission must not discard the operator's answer.
+
+    `fill_defaults`'s own docstring promises it never overwrites a value carrying an
+    `operator` source, and every other fill site honours that. The catalogue loop did
+    not — and the omission could not be observed, because `_resolve_catalogue` returned
+    an empty mapping for every checkout (see the shape tests above). Repairing that
+    read made the clobber reachable: a second `admission.py --issue N` replaced an
+    operator's lens declaration, conditional lenses and recorded reasons included, with
+    the catalogue's four always-on names.
+    """
+    checkout = tmp_path / "sdlc"
+    (checkout / "config").mkdir(parents=True)
+    (checkout / "config" / "lens-catalogue.json").write_text(
+        json.dumps({"strictness_ladder": {"levels": []}}), encoding="utf-8"
+    )
+
+    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
+        return {"correctness": {"always_on": True}, "security": {"always_on": True}}, "1.0.0"
+
+    def roles() -> dict[str, Any]:
+        return {"planner": {}}
+
+    def resolve_role(_role: str, **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(vendor="claude", model="opus", effort="high")
+
+    staffing = SimpleNamespace(
+        roles=roles,
+        resolve_role=resolve_role,
+        lens_catalogue=lens_catalogue,
+        sdlc_root=lambda: checkout,
+    )
+
+    run_record = _load("run_record")
+    record = run_record.RunRecord(
+        issue=1001,
+        repo="infiquetra/infiquetra-claude-plugins",
+        run_configuration=run_record.empty_run_configuration(),
+        approval_scope=run_record.empty_approval_scope(),
+        admission=run_record.empty_admission(),
+    )
+    operator_answer = {
+        "always_on": ["architecture-maintainability", "correctness", "security", "testing"],
+        "conditional_applies": {"adversarial": "the change is a gate"},
+        "conditional_does_not_apply": {"privacy": "no personal data is touched"},
+    }
+    record.run_configuration["applicable_lenses"] = {
+        "value": operator_answer,
+        "chosen_by": "planner",
+        "source": "operator",
+    }
+
+    filled = adm.fill_defaults(record, {}, staffing)
+
+    kept = filled.run_configuration["applicable_lenses"]
+    assert kept["source"] == "operator"
+    assert kept["value"] == operator_answer, (
+        "the catalogue proposal overwrote the operator's lens declaration; the "
+        "conditional lenses and their recorded reasons would be lost on a re-run"
+    )
+    # The parameter the operator did NOT answer still fills from the catalogue.
+    assert filled.run_configuration["per_lens_score_threshold"]["source"] == "staffing"

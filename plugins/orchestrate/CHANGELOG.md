@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.6.0] - 2026-09-19
+
+### Consume `review_result.v2` (issue #1001)
+
+`REVIEW_RESULT_SCHEMA` moves from `review_result.v1` to `review_result.v2`, following Saga's code
+review as it became a policy-free executor of the lifecycle repository's lens catalogue. The pair
+of schema identifiers is the only persistent compatibility contract across that boundary, so this
+is a named constant rather than an inline string: a consumer handed an identifier it does not
+recognise refuses rather than guessing.
+
+No routing behaviour changes. The four typed outcomes and the fix-request routing are unchanged.
+
 ## [4.5.0] - 2026-09-16
 
 ### Fixed

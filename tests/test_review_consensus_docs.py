@@ -78,12 +78,28 @@ def test_module_docstring_worked_example_via_doctest() -> None:
 
 def test_worked_example_end_to_end_state_machine_drive() -> None:
     """Execute the worked example end-to-end as documented in the module docstring."""
-    policy = CONSENSUS.DEFAULT_SCORING_POLICY
+    roster = {
+        "schema": "review_roster.v1",
+        "hash": "sha256:docs-example",
+        "lenses": [
+            {
+                "id": "correctness",
+                "scorable": True,
+                "threshold": {
+                    "strictness": "standard",
+                    "derived_overall_minimum": 9.0,
+                    "applicable_dimension_minimum": 7,
+                },
+                "dimensions": [{"id": "behaviour-under-the-plan"}],
+            }
+        ],
+    }
+    policy = CONSENSUS.policy_from_roster(roster)
     correctness_dims = dict.fromkeys(policy.dimensions_for("correctness"), 9.5)
-    correctness_score = CONSENSUS.score_lens_review("correctness", correctness_dims)
+    correctness_score = CONSENSUS.score_lens_review("correctness", correctness_dims, policy=policy)
     assert correctness_score.accepted is True
 
-    state = CONSENSUS.ReviewCycleState(["correctness"])
+    state = CONSENSUS.ReviewCycleState(["correctness"], policy=policy)
     assert state.next_lenses == ("correctness",)
 
     finding = CONSENSUS.ReviewFinding(
@@ -179,8 +195,14 @@ def test_documented_exception_hierarchy_matches_the_real_one() -> None:
     init_doc = CONSENSUS.ReviewCycleState.__init__.__doc__
     assert init_doc is not None
     assert "ReviewScoringError" in init_doc
+    declaring_policy = CONSENSUS.policy_from_roster(
+        {
+            "schema": "review_roster.v1",
+            "lenses": [{"id": "correctness", "dimensions": [{"id": "d1"}]}],
+        }
+    )
     with pytest.raises(CONSENSUS.ReviewScoringError) as unknown_lens:
-        CONSENSUS.ReviewCycleState(["not-a-real-lens"])
+        CONSENSUS.ReviewCycleState(["not-a-real-lens"], policy=declaring_policy)
     assert not isinstance(unknown_lens.value, CONSENSUS.ReviewConsensusError)
 
 

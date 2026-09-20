@@ -148,7 +148,27 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
     )
     run.save()
 
-    policy = consensus.load_scoring_policy()
+    # The thresholds come from a resolved roster since issue 1001; the plugin
+    # ships no policy file of its own to load.
+    policy = consensus.policy_from_roster(
+        {
+            "schema": "review_roster.v1",
+            "hash": "sha256:loop-test",
+            "lenses": [
+                {
+                    "id": lens_id,
+                    "scorable": True,
+                    "threshold": {
+                        "strictness": "standard",
+                        "derived_overall_minimum": 9.0,
+                        "applicable_dimension_minimum": 7,
+                    },
+                    "dimensions": [{"id": f"{lens_id}-d{i}"} for i in range(1, 4)],
+                }
+                for lens_id in ("correctness", "testing")
+            ],
+        }
+    )
     review = consensus.ReviewCycleState(
         ("correctness", "testing"),
         policy=policy,

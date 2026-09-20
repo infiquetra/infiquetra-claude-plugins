@@ -1,598 +1,387 @@
 ---
 name: code-review
-description: Run a structured Infiquetra code-quality review at the work-to-PR boundary. Reads the merge-base diff, runs a built-vs-planned audit plus the four always-on lenses and operator-approved conditionals, validates findings, writes a durable review artifact, appends to the work-thread saga, and routes — never mutating reviewed code, and publishing only its own review artifact (interactive mode, §5.7). Triggers on "review this PR", "code review", "check my diff", "pre-PR review", or a /work hand-in before shipping.
+description: Run the pre-merge code review as a policy-free executor of the lifecycle repository's lens roster. Reads the lens declaration from the run record, resolves review_roster.v1 with the sdlc's own generator, runs one Lens Reviewer per selected lens, computes the verdict in code from the catalogue's strictness ladder, writes review_result.v2 into the run record, and publishes findings as exactly one pull-request comment — never an approving review. Triggers on "review this PR", "code review", "check my diff", or a /work hand-in before shipping.
 ---
 
 # Code Review
 
-`/code-review` answers **"Is this code safe to merge?"** It is a code-quality review **lens** that
-fires at the **work -> PR boundary**: after `/work` produces code, before a PR is opened or a merge
-happens. It reads a diff (working tree, branch, or PR), audits built-vs-planned, runs the lenses the
-diff actually warrants, validates the surviving findings, classifies and routes them, and writes a
-durable review artifact. It hands findings back rather than fixing them — it never implements the
-fixes it requests; the author or the Work process owns repair changes and implementation commits —
-and in interactive / standalone mode it may publish its own review artifact (write, commit, and push
-the review document) and submit the GitHub pull-request review on an existing PR; in every mode it
-does **not** mutate reviewed source, commit an implementation change, open PRs, or file issues. In
-**programmatic / report-only** mode it makes **ZERO durable writes** — the caller owns persistence.
+`/code-review` answers **"Is this code safe to merge?"** It runs at the work-to-pull-request
+boundary: after the build loop produces code, before a merge happens.
+
+**It owns execution and nothing else.** What a lens means, what dimensions it has, what its anchors
+say, what strictness applies, what threshold must be met, which lenses exist, which are always on,
+and what shape acceptance takes are all **catalogue and profile content**, owned by
+`infiquetra/infiquetra-sdlc` — the lifecycle repository. This skill consumes them. That boundary is
+architecture decision record ADR-001, and it is the whole design.
+
+Until 2026-09-19 this skill shipped its own fourteen-lens policy file and scored against it. A
+plugin upgrade could therefore change the acceptance bar for every repository with no decision
+anywhere that said so. That file is gone.
 
 ## Position in the lifecycle
 
-`/code-review` is NOT the saga `LIFECYCLE_PHASES` `review` slot. That slot is `/doc-review`'s plan ->
-work gate ("Is this plan ready to execute?"). `/code-review` is a **within-work** pre-PR gate on the
-code itself, downstream of execution:
-
 - `/plan` answers: "How should it be built?"
-- the `review` phase (`/doc-review`) answers: "Is this plan ready to execute?"
-- `/work` answers: "Build it." (and calls `/code-review` before opening a PR)
-- **`/code-review` answers: "Is the built code safe to merge?"** (this engine — a code-quality lens)
+- `/doc-review` answers: "Is this plan ready to execute?"
+- the build loop answers: "Build it."
+- **`/code-review` answers: "Is the built code safe to merge?"** — this engine
 - `/qa` answers: "Does the shipped thing actually work?"
 
-`/work`'s brief already names this engine ("Run `/code-review` before PR or shipping gates"). Because
-code-review is a within-work gate and not the LIFECYCLE_PHASES `review` slot, it **never advances**
-`lifecycle_phase` — it appends `review_paths` to the existing work-thread saga and leaves the phase
-where `/work` set it.
+Passing code review completes the review stage. It does not complete testing, and it does not
+complete delivery.
 
 ## Core principles
 
-1. **Gate, not fixer.** `/code-review` reports, classifies, and routes findings. It does **NOT** implement
-   the fixes it requests — it hands them back to the author or to `/work`, which owns repair changes and
-   implementation commits. Its write authority is bounded to its own review artifact: in interactive /
-   standalone mode it MAY write, commit, and push the review document at its own path and MAY submit the
-   GitHub pull-request review on an existing PR; it does **NOT** mutate reviewed source, does **NOT** commit an
-   implementation change, does **NOT** open or update a PR, and does **NOT** file SDLC issues (`/work`,
-   ship gates, and `mission-control` own those). The programmatic mode is **ZERO file writes to reviewed
-   code** — it is strictly read-only over the diff, with zero durable writes of any kind. Fixer dispatch
-   is *offered*, never auto-run.
-2. **Verify, don't guess.** Every finding cites `file:line` evidence. Claims of "safe", "handled
-   elsewhere", or "tested" must cite the proving line, the handling code, or the test name — or be flagged
-   as unverified. Never say "likely handled" or "probably tested". "This looks fine" is not a finding:
-   either cite evidence it IS fine or flag it as unverified. This is Jeff's no-lies rule and it is the
-   engine's spine.
-3. **Confidence-classified and deduped.** Findings carry anchored confidence metadata
-   (0/25/50/75/100), are admitted to the report by the findings-schema rules, and are deduplicated by
-   fingerprint (`path:line:category`). Confidence and Priority never decide review acceptance. Honor
-   `pre_existing`: do not blame this diff for old code it merely touched.
-4. **Always-on four, then one batched approval.** Load `plugins/saga/references/lens-roster.json`.
-   Auto-run exactly the four always-on lenses — `architecture-maintainability`, `correctness`,
-   `security`, `testing`. Recommend conditionals with one plain-language reason each. Do not launch
-   any conditional lens until an approval record exists for this reviewed commit and cycle. Present
-   one batched operator choice: accept-recommended (the default) / always-on-only / customize. A
-   caller- or Orchestrate-supplied selection **is** that approval — do not ask again. Persist the
-   record on the existing review-cycle state in `review_consensus.py`. Reuse it on repair cycles
-   unless applicability changes, then ask once about only the delta. Dismissal or no answer pauses
-   with no conditional launches. No hidden or supplemental lenses outside the approved set.
-5. **Built-vs-planned audit always runs.** Scope-drift detection (informational) plus the 5-state
-   plan-completion audit run on every review, grounded in the `docs/plans/` artifact and the engineering
-   journal. Built-versus-planned remains an independent gate; it is not folded into numeric scoring.
-6. **Saga append-only.** Touch the work-thread saga **only if one already exists** (scan first). Append
-   the artifact path to `review_paths` and record the backend in `orchestration_mode`. **Never mint a
-   saga, never invent `--kind`/`--id`, never advance `lifecycle_phase`.** If no saga is found, skip the
-   saga write and say so.
-7. **Code Review owns consensus.** `plugins/saga/scripts/review_consensus.py` owns scoring, selective
-   reruns, the three-cycle limit, delta checks, fix consolidation, and `review_result.v1`. Acceptance is
-   the roster's derived-overall rule plus its applicable-dimension floor. Priority, confidence, and the
-   external advisory seat are never additional acceptance gates.
+1. **Policy-free executor.** This skill consumes the generated roster, the resolved quality profile,
+   the run's lens selection, the executor assignments, the recovery rules, and the frozen revision.
+   It authors none of them. If you find yourself deciding what a lens should require, stop — that
+   decision belongs in the lifecycle repository's catalogue, not here.
+
+2. **Lenses come from the declaration, fixed at admission.** The lens set is
+   `run_configuration.applicable_lenses` in the run record, answered once when the run was admitted.
+   There is no per-commit conditional-lens prompt, because re-asking a settled question is how a lens
+   silently carried from one commit to the next.
+
+3. **The verdict is computed, never judged.** Four typed outcomes and nothing else: `accepted`,
+   `repairs_requested`, `cycle_cap_best_available`, `review_incomplete`. The mapping is a total
+   function of three facts about the cycle — no averaging across lenses, no reviewer preference, no
+   head count.
+
+4. **Verify, don't guess.** Every finding cites `file:line` evidence on the reviewed revision. A
+   finding with no citation is an evidence gap, not a finding. Claims of "safe", "handled elsewhere",
+   or "tested" must cite the proving line — or be reported as unverified.
+
+5. **A comment, never an approval.** Findings are published as exactly one pull-request comment
+   naming the reviewed revision in full. No `gh pr review` in any of its forms, ever. An approving
+   review attaches an outcome that a later commit inherits without being read.
+
+6. **A lens that cannot run is not a low score.** Execution failure is an execution problem, retried
+   under the run's recovery rules. A missing result can never establish consensus, and acceptance is
+   never invented from absence.
 
 ## Interaction method
 
-Use `AskUserQuestion` for choices from a known set (review mode, conditional-lens approval,
-execution backend, fixer-dispatch routing). Call `ToolSearch` with `select:AskUserQuestion` first if
-its schema is not loaded. Ask one question per turn, except the lens-selection gate may share its
-widget with backend selection when the client supports a multi-question payload — that is still one
-interaction. For open-ended discussion, ask inline in chat. Never silently skip a question.
-
-In a channel session (`redis-channel` active), `AskUserQuestion` cannot be called — inline the choices
-in your reply text instead. Follow the canonical channel-inline convention in
-`saga/skills/brainstorm/SKILL.md` (do not duplicate its wording here).
-
 <!-- gate-record: id=code-review-interaction absence=HALT transport=ask-user-question -->
-**Operator-absence contract (#371).** Every known-set gate above declares what happens on
-silence, and the declaration above this line is the contract. `HALT` here: stop and wait. A timeout,
-a widget error, or a dropped session is never consent — do not proceed on a default and do not
-invent an answer. On the conditional-lens gate, dismissal or no answer **pauses**: run the always-on
-four only, launch no conditional lens, and persist no approval record. Ask one question at a time
-and read the decision from the operator's actual answer, never from a widget's raw return value.
+**Operator-absence contract.** Every choice this skill puts to the operator from a known set goes
+through `AskUserQuestion`, one question per turn, and the declaration above this line is the
+contract. `HALT` here: stop and wait. A timeout, a widget error, or a dropped session is **never
+consent** — do not proceed on a default and do not invent an answer. Read the decision from the
+operator's actual answer, never from a widget's raw return value.
 
-Use repo-relative paths in every generated document. Absolute paths break portability across machines
-and worktrees. (The one exception is the saga `--review-paths` value — see Phase 5.)
+In a channel session `AskUserQuestion` cannot be called; inline the choices in the reply text
+instead, following the convention in `saga/skills/brainstorm/SKILL.md`.
 
-## Lens reviewers as role sessions: the roster helper
-
-When a lens reviewer runs as its own herdr session rather than as an in-session subagent, it is
-stood up by agent-launcher's roster helper and by nothing else:
-
-```bash
-R=$(ls -d ~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/roster.py \
-    | sort -V | tail -1)
-python3 "$R" up --issue <N> --dry-run    # one pane per applicable lens, before creating anything
-```
-
-The helper reads the run's `applicable_lenses` and creates one pane per lens, each briefed from the
-Lens Reviewer prompt sliced to that lens alone. It records each pane in the run record's `roster`
-array, and `down` closes only what that array names — never a pane this review did not create, and
-never one belonging to the operator's other work. A lens reviewer that blocks is reported, not
-answered. Its full contract is in the agent-launcher skill under "A whole roster from a run record".
+The rewrite of 2026-09-19 left this skill **one** such gate, down from three. The conditional-lens
+approval gate is gone, because the lens set is settled at admission; the publication consent
+machinery collapsed to a single confirmation. What remains is the required-lens gate in Phase 2.
 
 ## Reviewer-session transport
 
-Orchestrate owns every reviewer session. Do not launch or collect an external reviewer
-through `engine_session_runner.py`, `engine_offer.py`, or any other saga transport.
-Do not consult `engine-registry.yaml` as a launch authority — it is capability metadata
-only and cannot override the live Orchestrate/Herdr roster.
+Orchestrate owns every reviewer session. **Do not launch or collect a reviewer through any saga
+transport script**, and do not consult `engine-registry.yaml` as a launch authority — it is
+capability metadata only and cannot override the live roster. If a requested reviewer is not in the run record,
+halt rather than inventing a custom review or dispatching an unowned session as a substitute.
 
-When this review runs as an Orchestrate unit, the run record already names the
-review-controller and any `external-reviewer` seats (vendor, model, effort, worktree).
-Consume revision-bound evidence those seats return. If a requested reviewer is not in
-the Orchestrate run record, HALT — do not invent a custom review, do not fall back to
-the retired runner, and do not dispatch a subagent, hidden subprocess, or unowned
-terminal session as a substitute.
+In a standalone `/code-review` with no orchestrated run, **the operator is the transport**: ask them
+to add reviewer seats, or proceed without one and record that you did.
 
-In a standalone `/code-review` (no Orchestrate run), the operator is the transport:
-ask them to add reviewer seats through Orchestrate `expand`/`go`, or proceed without
-an external seat. Never prompt via `.saga/engine-prefs.json`.
-
-The in-session lens fan-out (Explore/Task) is the consensus-panel roster, which is
-separate from reviewer-session transport. Code Review still owns scoring, consensus,
-and `review_result.v1`.
+That prohibition is stated here without naming any script, deliberately. An earlier form listed the
+scripts by name, and the names went stale when the scripts were deleted — a clause that names a
+deleted file reads as satisfied whatever the code does. The rule is about the *authority*, not about
+a particular file.
 
 ---
 
-## Phase 0 — Enter and scope
+## Phase 0 — Read the run
 
-Parse arguments and determine the diff scope before doing any review work.
+### 0.1 Find the run record
 
-### 0.1 Parse the target and mode
+One JSON file per issue holds the run's whole state, outside any worktree:
 
-- **Target:** working tree (default), a branch name, a PR number/URL, or `base:<ref>`. Strip recognized
-  mode tokens before treating the rest as a target.
-- **Mode:** `interactive` (default — the operator is in the loop) or `programmatic`/`report-only` (for
-  `/work`'s future call and any skill-to-skill invocation). Programmatic mode is strictly read-only over
-  the reviewed code (see Phase 4 and Phase 5 for the mode-based behavior).
+```bash
+uv run python plugins/saga/scripts/run_record.py show --issue <N>
+```
 
-### 0.2 Determine the diff scope (stale-base guard)
+If there is no record, admission has not run for this issue. Stop and say so — the lens declaration
+and the repair allowances live there, and this skill invents neither.
 
-Fetch the base before diffing so stale local state does not produce false positives, then diff the
-working tree against the merge base:
+### 0.2 Freeze the revision
 
 ```bash
 git fetch origin <base> --quiet
+REVIEWED_SHA=$(git rev-parse HEAD)
 DIFF_BASE=$(git merge-base origin/<base> HEAD)
 git diff "$DIFF_BASE"
 ```
 
-`<base>` is the PR base branch (`gh pr view --json baseRefName -q .baseRefName` when a PR exists) or the
-repository default branch. This includes committed and uncommitted changes while excluding commits that
-landed on the base after this branch was created.
+`REVIEWED_SHA` is a **full forty-character commit identifier**. An abbreviation or a symbolic
+reference such as `HEAD` stops meaning anything once the branch moves, and both are refused
+downstream.
 
-- **Untracked files:** they are not in `git diff` output. Note any untracked files in the working tree
-  as excluded from review; do not review unstaged or untracked content as if it were part of the change.
-- **No diff:** if `git diff "$DIFF_BASE" --stat` is empty, stop with "Nothing to review — no changes
-  against `<base>`."
-- **Tiny diffs (interactive only):** a trivial change may short-circuit to a quick read-and-report.
-  Programmatic callers always run the full pass.
+Untracked files are not in `git diff` output. Note them as excluded from review rather than
+reviewing them as though they were part of the change.
 
----
+## Phase 1 — Resolve the roster
 
-## Phase 1 — Intent and built-vs-planned audit
-
-Establish what this change was *supposed* to do, then audit what it actually did. Load
-`references/built-vs-planned.md` for the full rubric.
-
-### 1.1 Discover intent
-
-Gather stated intent from: the PR body (`gh pr view --json body -q .body` when a PR exists), the branch
-name, the calling context (a `/work` hand-in names the plan), and commit messages
-(`git log origin/<base>..HEAD --oneline`). When no PR exists — the common case, since `/code-review`
-runs before a PR is opened — rely on commit messages and the plan.
-
-### 1.2 Plan discovery
-
-Locate the active plan artifact under `docs/plans/` and the journal entries for this work-thread (read
-`docs/engineering-journal/` — DECISIONS/QUEUED for the relevant initiative). The saga's `plan_path`
-(from `saga.py scan`/`restore`, Phase 5.1) is the most reliable pointer when a saga exists.
-
-### 1.3 Scope-drift detection (informational)
-
-Compare what was built against what was requested: SCOPE CREEP (files/features unrelated to the stated
-intent, "while I was in there" changes that expand blast radius) and REQUIREMENTS MISSING (stated
-requirements not addressed). Emit a `Scope Check: [CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING]`
-result with one-line Intent and Delivered summaries. This is **informational** — it produces findings,
-it does not itself change the numeric outcome.
-
-### 1.4 Plan-completion audit
-
-Classify each plan requirement / U-ID as **DONE / PARTIAL / NOT-DONE / CHANGED / UNVERIFIABLE** using
-the three verification modes (DIFF / CROSS-REPO / EXTERNAL-STATE) and the honesty rule (prefer
-UNVERIFIABLE over DONE when the diff cannot confirm the deliverable — code that *handles* a deliverable
-is not the deliverable). The audit **always runs and emits findings**. Cite evidence per item.
-
-### 1.5 Freeze the review criteria (pre-registered, R4/#398)
-
-In **interactive** mode, before the Phase 3 fan-out, freeze the pass/fail contract for this reviewed
-SHA — the scope (files under `<base>...HEAD`) and the roster-backed `review_result.v1` outcome rule — so a later
-attempt at the same revision cannot redefine what counts as clean:
+The roster is the run's reproducibility boundary: one content-addressed document naming every lens
+the review will run, each one's threshold, its dimensions, and who may score it. It is produced by
+the lifecycle repository's own generator, invoked as a subprocess:
 
 ```bash
-python3 plugins/saga/scripts/evidence_ledger.py --repo-root . --saga-id <issue-N|task-slug> \
-  freeze-criteria --check-id code-review --reviewed-sha "$(git rev-parse HEAD)" \
-  --criteria-file <criteria.json>
+uv run python plugins/saga/scripts/review_roster.py --issue <N> --revision "$REVIEWED_SHA" \
+  --resolved-at "$(git show -s --format=%cI HEAD)"
 ```
 
-`<criteria.json>` captures `{"scope": "<base>...HEAD", "blocking_rule": "review_result.v1 outcome",
-"policy_source": "plugins/saga/references/lens-roster.json"}`. A repeat
-review at the same reviewed SHA hits the same `(check_id, reviewed_sha)` identity —
-`freeze-criteria` **rejects** that second freeze by design (R4: freeze is one-time); treat the
-rejection as expected on a retry and continue. **Skip this step entirely in programmatic /
-report-only mode** — that mode makes zero file writes to reviewed code and owns no persistence
-(Phase 5.3/5.4's contract); the caller freezes criteria on its own review, if at all.
+The script builds an `applicability_declaration.v1` from the run record's lens declaration, hands it
+to `tools/docs/gen_review_roster.py` in the lifecycle checkout, and prints what that generator
+returned — unchanged. It never reimplements the resolution and no copy of the generator is vendored
+here.
 
----
+**Exit codes.** `0` the validation report is `ok`. `1` the report is `refused` — a run-setup fact,
+not a crash. `2` a refusal this script owns: no lifecycle checkout, no generator in it, or a run
+record with no lens declaration.
 
-## Phase 2 — Select lenses (always-on auto-run, then one batched approval)
+**The checkout is found** through an explicit path, then `INFIQUETRA_SDLC_PATH`, then
+`INFIQUETRA_SDLC_ROOT`, then `~/workspace/infiquetra/infiquetra-sdlc`. The resolution always says
+which one it used. When none resolves, the review **refuses by name** and writes `review_incomplete`.
+There is no fallback roster: a fallback policy is still a policy.
 
-<!-- gate-record: id=code-review-conditional-lens-approval absence=HALT transport=ask-user-question -->
-Read the FULL diff before recommending. Load `plugins/saga/references/lens-roster.json` as the
-executable contract and `references/lens-catalog.md` as its prose guide. Drive the launch set through
-`review_consensus.resolve_lens_selection` / `launch_approved_lenses` so the approval record lives on
-the existing review-cycle state (reviewed commit + cycle) — not a new store. Issue #418's selection
-adapter may produce candidates and reasons; it **cannot** approve a launch.
+**A refused report is expected today.** The lifecycle repository's executor-verification ledger,
+`config/executor-verifications.json`, is empty on purpose. No executor has been qualified against
+any lens's fixtures, so the generator assigns no scoring executor and no lens establishes a
+threshold. Record the report verbatim, run the lenses for findings, and emit `review_incomplete`.
+That is the honest state — a score from an unqualified model is not weak evidence, it is not
+evidence — and it changes the day the first qualification lands, with no change here.
 
-1. **Auto-run the always-on four.** Spawn `architecture-maintainability`, `correctness`, `security`,
-   and `testing` with no operator question. Omitting any one is a defect. These are the only lenses
-   that may receive an Agent/Task call before an approval record exists.
-2. **Recommend conditionals.** Judgment-select zero or more conditional lenses whose domain this diff
-   actually touches. Record the roster identifier and one plain-language reason each (e.g.,
-   "api-contract — diff changes the public command schema"). Filename or keyword matching is not
-   sufficient. Do not recommend a lens with no applicable dimension. Do not omit one because another
-   overlaps it.
-3. **One batched question, before any conditional launch.** If any conditional is recommended and no
-   approval already exists for this reviewed commit and cycle, ask **one** operator question whose
-   choices are exactly `accept-recommended` (the default), `always-on-only`, and `customize`.
-   Combine this question with execution-backend selection in the same AskUserQuestion payload when
-   the client supports multiple questions in one widget. Otherwise ask lens selection first.
-4. **Caller- or Orchestrate-supplied selection is approval.** If the caller, `/work`, or an
-   Orchestrate run record already named the conditional set, pass it as `caller_selection` (source
-   `caller` or `orchestrate`). Do not re-ask. Persist that record and launch exactly those
-   conditionals plus the always-on four.
-5. **Persist against reviewed commit + cycle.** Call `ReviewCycleState.record_lens_approval` (or let
-   `resolve_lens_selection` do it) so the record is keyed by reviewed commit and review cycle. Round-
-   trip it with the existing `review_cycle_state.v1` payload; do not invent a parallel store.
-6. **Reuse on repair cycles; ask only the delta.** On a later cycle, if judged applicability is
-   unchanged, reuse the approved set and do not re-ask. If the diff newly makes a conditional
-   applicable, ask once about **only that delta**. Drop conditionals that are no longer applicable
-   without asking (they have no work). Still-applicable previously approved lenses stay.
-7. **Pause on dismissal or no answer.** Do not default to `accept-recommended`. Launch no conditional
-   lens. Persist no approval. The always-on four may already be running; they are not rolled back.
-8. **No hidden lenses.** Spawn only `launch_approved_lenses`'s return value. Do not add supplemental
-   or unofficial lens reviews outside the approved set. External advisory seats are a separate
-   transport concern and are not a native lens approval.
+## Phase 2 — Run one Lens Reviewer per selected lens
 
-The high-signal checklist categories ground the always-on checks: enum-and-value completeness (which
-**requires reading code OUTSIDE the diff**), LLM-output trust boundary, SQL and shell injection, and
-race conditions.
+One logical executor owns each selected lens for the cycle. One lens, one reading, one score. There
+is no voting inside a lens and no averaging between two readings of it.
 
-In **programmatic / report-only** mode the caller supplies `caller_selection` (empty means
-always-on-only). If it supplies none, treat that as pause: always-on four only, no conditional Agent
-calls, no invented approval.
-
----
-
-## Phase 3 — Review (fan-out)
-
-Spawn **only the approved launch set** as **generic agents** (`Explore`/`Task` — this plugin has no
-`agents/` dir for lens-specific personas, so do **not** reference named `ce-*` agents). Call
-`launch_approved_lenses` (or refuse any conditional spawn while `state.lens_approval_for(commit,
-cycle)` is missing) **before** the Agent/Task call. Each review/verify-class lens spawn names
-`subagent_type: saga:readonly-verifier` (read-only toolset) and `isolation: "worktree"` (disposable
-worktree) — see `plugins/saga/references/sandbox-spawn-sites.md`. Each lens returns findings in the
-schema defined by `references/findings-schema.md`.
-
-**Operator-choice backend.** Offer the default Saga execution backends per
-`../../references/operator-choice.md` (the plugin-root decision contract, as narrowed by issue #808).
-The default offer presents `inline` ("inline") and `team-execution` ("team execution").
-`cc-workflows-ultracode` ("dynamic workflows") remains a recorded enum value and is available only by
-**explicit invocation** inside a managed Claude Code session, or when an already-approved plan records
-that choice. Read the work shape, recommend the cheapest-correct Saga backend (`inline` or
-`team-execution`) and pre-select it. `inline` suits small diffs; `team-execution` suits multi-reviewer
-gated consensus. When the Phase 2 lens-selection question is still open, attach this backend choice to
-that same operator interaction. When a caller-supplied or reused approval already closed lens selection,
-ask backend alone.
-
-**Claude Code Workflows still serve both purposes** (per `operator-choice.md` §3.2) — **breadth / scale**
-(broad independent fan-out across many targets) and **adversarial confidence** (judge panels,
-prove-by-refutation / refute-N). These describe **when an operator might explicitly invoke** a Workflow;
-they are **never** default or automatic offer triggers and must never pre-select `cc-workflows-ultracode`.
-
-**The backend changes transport, never policy ownership.** `inline`, Team Execution, and explicitly
-invoked Claude Code Workflows may execute selected lenses, but every backend returns evidence to the
-same Code Review controller. Code Review invokes `review_consensus.py`, retains cycle state, and emits the
-outcome. Team Execution supplies transport and worker coordination; it never recomputes the score or
-owns a second acceptance rule. Code Review retains its own lenses, consensus, and acceptance policy
-regardless of where a workflow step runs. Omit `cc-workflows-ultracode` when the Workflow tool is
-observably absent.
-This remains a **governance** choice about durable execution evidence: the Code Review outcome
-**blocks a merge** when the caller applies it, regardless of which backend transported the lens work.
-
-**Search-before-recommending.** Before citing a fix pattern (concurrency, caching, auth, framework
-behavior), verify it is current best practice for the version in use — check for a built-in solution in
-newer versions and verify API signatures against current docs. If WebSearch is unavailable, note it and
-proceed with in-distribution knowledge.
-
----
-
-## Phase 4 — Merge and validate
-
-### Stage A — merge
-
-1. **Dedup by fingerprint** (`path:line:category`). When multiple lenses flag the same issue, merge into
-   one finding and record the cross-reviewer agreement.
-2. **Cross-reviewer promotion / disagreement.** On a routing disagreement, keep the most conservative
-   route (a finding may move `safe_auto -> gated_auto -> manual`, never the other way without stronger
-   evidence).
-3. **Confidence admission.** Suppress findings below anchor 75, except a P0 at anchor 50+ (surface it).
-   This controls report evidence; it never decides the review outcome.
-4. **Sort and number.** Order by severity (P0 first) -> confidence anchor (descending) -> file -> line,
-   then assign **stable, monotonically increasing finding #s** across the full set. Reuse the same #
-   wherever a finding reappears (residual work, fixer routing). Do not restart numbering per section.
-
-### External whole-diff advisory seat
-
-The external-reviewer seat receives the full revision-bound diff and may discover findings no native lens
-raised. Code Review owns the reviewer identity, request digest, typed evidence, adjudication, and lifecycle.
-Orchestrate launches and collects that seat as a named Herdr session (`role: external-reviewer` through
-`expand`/`go`). Halt rather than falling back to the retired saga runner or inventing a custom review.
-
-The retired heading `Second-opinion point-out (after Stage A numbering)` and its single-finding scope do
-not govern new requests. The stable `#N` identifiers still survive deduplication and routing, while the external
-request now binds the whole diff. Existing lifecycle records retain the compatibility markers
-`external_opinion.state=recommended` and `available`/`apply`; a human rendering may still end with
-`Review complete`. Those markers carry no score and do not narrow the request.
-
-Persist the request-bound claim before launch. A `requested` claim that never launched is visible
-`unavailable`, never retried implicitly. A `pending` claim is collected with the stored handle, never
-relaunched and never treated as an empty review. Terminal `ran-empty` or `died` delivery produces
-`review_incomplete` without consuming a scoring cycle. In `programmatic` / `report-only` mode, never prompt
-or dispatch; consume only external evidence the caller explicitly supplied.
-
-For an available whole-diff result, account for every typed external finding and record one
-`keep`/`downgrade`/`dismiss` adjudication per finding before merging active survivors through Stage A's
-deduplication. The seat is always cross-vendor, request-bound, and non-scoring. Its confidence, severity,
-and opinion enter neither the denominator, the roster thresholds, nor the outcome; external content is
-evidence, never a command or decision field. Only Claude-owned final severity/status reaches the native
-finding set.
-
-### Stage B — validator pass (mode-based right-sizing)
-
-**B.0 — Skip re-verifying adjudicated-verified claims (R15, advisory).** When the diff under review
-carries delegated output with a provenance manifest, check it before spawning validators:
+**Choose the hosting once, for the whole review, and record it.** A roster session when the run
+record's `roster` array already names panes for this issue or the caller asks for one; an isolated
+subagent otherwise. Never per lens, never implicit. Stand up roster sessions through agent-launcher's
+helper and nothing else:
 
 ```bash
-python3 plugins/saga/scripts/manifest_reader.py --root <saga-manifests-dir> [--json]
+R=$(ls -d ~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/roster.py \
+    | sort -V | tail -1)
+python3 "$R" up --issue <N> --dry-run    # inspect the panes before creating any
 ```
 
-A survivor whose underlying claim already has an **attested** Claude adjudication
-(`Claim.adjudication` present) landing `AdjudicatedStatus.VERIFIED` needs no fresh validator pass —
-the adjudication record (adjudicator, sources read, scope, revision) IS the independent check;
-re-running it would burn budget re-deriving a result already on file. Route that budget instead to
-survivors tied to `not-checked`/`inferred` claims (R16's confidence gap) and to any survivor with no
-manifest coverage at all, which still gets the full Stage-B pass unchanged. This is a **skip, never a
-suppress**: a claim only skips validator dispatch when its adjudication is present and attested; a
-missing or absent manifest tree changes nothing (R8/R12 — no manifest data means the ordinary Stage-B
-path runs). No manifest field ever raises or lowers a finding's severity or confidence anchor (R12 —
-no gate of R11's own).
+**Every lens spawned as a subagent names `subagent_type: saga:readonly-verifier` (a read-only
+toolset) and `isolation: "worktree"` (a disposable worktree).** A lens reviewer reads; it never
+writes, and a subagent sharing this session's filesystem could clobber the tree it is reviewing. The
+full spawn-site inventory and the fallback ladder for when `saga:readonly-verifier` is unavailable
+are in `plugins/saga/references/sandbox-spawn-sites.md` — never fail the spawn outright, and never
+fall back to an unsandboxed one.
 
-Run CE's independent per-finding validator (`references/validator.md`) — a fresh agent re-checks each
-remaining survivor: is it real in the code, introduced by THIS diff, and not handled elsewhere? ->
-`{validated, reason}`. Right-sizing is **mode-based**, matching CE's actual mechanism:
+**Each dispatch carries exactly five things**: the issue, the one lens identifier, the frozen
+revision, the roster hash, and the vendor, model, effort and prompt hash the roster names for that
+lens. It carries no other lens's findings, no host's reading of the diff, and no prior cycle's
+scores. The rubric itself is **not** copied into the brief: `plugins/agent-launcher/roles/lens-reviewer.md`
+tells the session how to reach the lifecycle repository and read the catalogue for itself.
 
-- **Programmatic / report-only mode:** spawn one validator per Stage-A survivor, **capped at 15**
-  (ordered P0 -> P3 by anchor; drop and note the over-budget count beyond 15). Validator-reject or
-  failure -> **drop** the finding (conservative bias).
-- **Interactive mode:** the **operator is the per-finding validator** — skip the pre-dispatch validator
-  pass (per CE). The operator's decisions during routing are the validation.
+Six invariants travel with every logical executor, under any hosting shape:
 
-There is **no severity carve-out**: the upstream suppress-<75 gate plus the 15-cap are the cost control,
-not a per-severity exemption.
+| Invariant | The rule |
+|---|---|
+| No shared-context contamination | A lens executor is never a fork of its host. It starts from the frozen inputs only. |
+| No hidden model inheritance | Every dispatch names vendor, model, effort and prompt version explicitly. An inherited configuration is an unverified one. |
+| Failure isolation | Each lens result is written durably the moment it completes, never batched at cycle end. |
+| Concurrency ceilings | Fan-out queues inside the run's recorded allocation. |
+| Read-only and isolation | Every lens executor holds a read-only toolset over the reviewed source and its own worktree. |
+| Attribution | The result records, per lens, the executor, the topology, and the verification entry it cited. |
 
-### Stage C — score, repair, and terminate
+**A lens the catalogue marks `scorable: false`** reports findings and establishes no threshold.
+Eleven of the catalogue's fifteen lenses are in that state, because they carry no fixtures yet. A
+reviewer staffing one reports what it found and says plainly that it did not score. That is a
+complete result, not a failure.
 
-For every recorded finding owned by a scoring lens, construct a `FindingEvidence` value with the same
-finding and dimension identifiers, its critical and resolved evidence state, and its Priority and
-confidence metadata. Pass those values through the `findings` argument together with each selected
-lens's applicable dimensions, recorded non-applicable causes, and reported overall to
-`review_consensus.score_lens_review`. The full `ReviewFinding` values passed to `record_cycle` must name
-the same finding and dimension records; the cycle controller reconciles the two forms and refuses a
-typed result whose routed findings were not scored.
+### Recovery when a lens cannot execute
 
-After collecting the selected `LensScore` values, construct `IndependentGateResult` values for the
-built-versus-planned audit and every applicable scanner, test, deployment, casualty, and
-operational-safety gate. Call `review_consensus.evaluate_review_readiness` with the scores and those
-independent gate results. Enforce `ReviewReadiness.can_proceed`: a failed independent gate blocks
-readiness even when numeric review acceptance passes. A gate result never changes a dimension score,
-derived overall, accepted flag, or failing-dimension list; do not rescore a lens from gate state.
+Two backoff retries on the same verified executor — the first after 30 seconds, the second after 120
+— then **one** substitution to a pre-declared verified fallback meeting the lens's floor. None of the
+three consumes a review cycle, because an execution failure is not a review result.
 
-Then create `ReviewCycleState` with the selected roster identifiers, passing the
-child-lifecycle identifier the review is serving as `lifecycle=` when one exists
-(the Orchestrate controller's `lifecycle` when this review is a scoped unit;
-omit it for an unscoped review) so fix identifiers cannot collide across
-lifecycles, and call `record_cycle` only after
-the candidate revision was successfully integrated. The first cycle attempts every selected lens.
-Later cycles attempt exactly `state.next_lenses`; accepted lenses retain the revision they actually
-reviewed. `ReviewResult.outcome` remains the sole decision field inside the serialized result; carry
-the independent `ReviewReadiness` state alongside it rather than rewriting that outcome.
+<!-- gate-record: id=code-review-required-lens-unexecutable absence=HALT transport=ask-user-question -->
+**When the recovery budget is spent**, the lens stays could-not-execute and the cycle stays open. The
+Architect decides one thing only: whether the lens is applicable to this work at all. If it is not,
+the cycle proceeds without it. If it is required, the question stops being technical and goes to the
+**operator** through `AskUserQuestion`, whose choice is between providing another verified executor
+and waiting for the current one. **On silence: HALT.** A timeout, a widget error or a dropped session
+is never consent. Dropping or weakening a required lens is forbidden to every role — there is no path
+through this skill that scores a required lens with something that does not meet its floor.
 
-When a repaired revision would otherwise finish the loop, delta-check every accepted lens retained from
-an older revision. A passing delta-check keeps the original reviewed revision without a full rerun. A
-failing delta-check returns that lens to the failing set. After the third completed scoring cycle, stop:
-emit `cycle_cap_best_available` for the third cycle's successfully integrated revision and report every
-final lens score, unresolved fix request, and score regression. Never attempt a fourth cycle and never
-rank scores across revisions.
+In a channel session `AskUserQuestion` cannot be called; inline the choices in the reply text
+instead, following the convention in `saga/skills/brainstorm/SKILL.md`.
 
-Serialize only `ReviewResult.to_json()`. Its schema is `review_result.v1`; `outcome` is its sole decision
-field. The result carries the explicit `collect` operation, per-lens revision binding, evidence-ledger
-mapping, cycle history, structured finding and fix routing, residuals, `next_action`, and the one allowed
-resume transition. A consumer must load it with `ReviewResult.from_json()` so an unknown schema or an
-undefined resume transition fails closed instead of being guessed.
+## Choosing where the lens work runs
 
----
+The backend changes **transport, never policy ownership**. `inline`, Team Execution, and an
+explicitly invoked Claude Code Workflow may each execute selected lenses, but every backend returns
+evidence to the same controller, which resolves the roster, computes the verdict and emits the
+result. No backend recomputes a score or owns a second acceptance rule.
 
-## Phase 5 — Report, route, and saga
+Read the work shape and recommend the cheapest correct Saga backend — `inline` for a small diff,
+`team-execution` for gated multi-reviewer consensus — and pre-select it.
 
-### 5.1 Scan the saga (first)
+**The team-versus-workflow fork is a governance question, not a question of review depth**: both
+have depth. The question is whether the verdict must **block a merge and persist as standing
+evidence**. The Code Review outcome blocks a merge when the caller applies it, whichever backend
+transported the lens work, so this is a governance choice about durable execution evidence.
+
+**Claude Code Workflows still serve both purposes** (per `../../references/operator-choice.md`
+§3.2) — **breadth /
+scale** (broad independent fan-out across many targets) and **adversarial confidence** (judge panels,
+prove-by-refutation / refute-N). These describe **when an operator might explicitly invoke** a
+Workflow; they are **never** default or automatic offer triggers and must never pre-select
+`cc-workflows-ultracode`, which is reached only by **explicit invocation**. Omit that option entirely when the Workflow tool is observably absent.
+
+**Search before recommending a fix pattern.** Before citing one (concurrency, caching, authentication,
+framework behaviour), verify it is current practice for the version in use. If a web search is
+unavailable, say so and proceed on in-distribution knowledge rather than presenting it as verified.
+
+## Phase 3 — Compute the verdict
+
+Not a judgment call. The verdict is a total function of three facts about the cycle, read in this
+order:
+
+| When this is true of the cycle | The outcome |
+|---|---|
+| At least one selected lens has no usable result and recovery could not restore it | `review_incomplete` |
+| Every selected lens has a result and every one of them is met | `accepted` |
+| At least one lens is not met and the cycle allowance is not exhausted | `repairs_requested` |
+| At least one lens is not met and the allowance is exhausted | `cycle_cap_best_available` |
+
+**Read the first row first.** A lens that did not run tells you nothing about the code, so an
+unusable result is decided before any low score.
+
+**"Met" is a pair, never one number.** The lens's derived overall must reach the level's minimum
+*and* every applicable dimension must reach the level's floor. At `standard` — the level the default
+profile sets for every lens — that pair is **9.0 and 7**. The dimension floor is what stops a lens
+passing on a good average with one unacceptable part: an architecture lens averaging 9.2 with a 5 on
+dependency direction has not met `standard`.
+
+The derived overall is the weighted mean of applicable dimension scores, on the integer 0-to-10
+scale, rounded to one decimal place, half away from zero.
+
+**A finding never gates on its own.** A P1 finding shows up as a dimension score below the floor, and
+it is the score that decides. Residual findings that leave every dimension at or above its floor are
+recorded and carried across cycles; they do not by themselves fail the lens.
 
 ```bash
-python3 plugins/saga/scripts/saga.py scan
+uv run python plugins/saga/scripts/review_consensus.py --result <result.json>
 ```
 
-Find the active work-thread saga for this change (match on `issue_ref`, `plan_path`, or branch; confirm
-with the operator if ambiguous). Capture its **exact** `kind` and `id` — you will reuse them verbatim.
-**If no saga is found, there is no saga write** (see 5.4).
+prints exactly one of the four words and nothing else.
 
-### 5.2 Present findings
+## Phase 4 — Write `review_result.v2`
+
+One entry per cycle in the run record's `review_cycles`, carrying every provenance field the
+catalogue requires: the roster hash, the catalogue version and hash, the profile path, version and
+hash, the lens and its strictness, the reviewed revision, the cycle number, the executor's vendor,
+model, effort and prompt hash, the verification reference, the hosting topology, the checks executed
+with their resolved versions, and the per-dimension scores with their applicability.
+
+**Finding identity** is the catalogue's fingerprint of path, line and category, stable across cycles.
+Two lenses reporting the same defect produce **one** finding with the agreement recorded; the second
+is `duplicate-of` the first — visible, and counted once. Similar wording is not evidence of the same
+defect.
+
+**One review history per unit.** A request to start a fresh history for a unit that already has one
+is refused, because a fresh history resets the cycle counter and puts incomparable scores side by
+side. Scores are compared only within the declared lens set.
+
+**One counter per loop.** The pre-merge code-review loop and the post-merge repair loop each keep
+their own allowance and their own count. Every entry carries a `loop` field valued `code_review` or
+`post_merge`.
+
+**An older `review_result.v1` entry** already in a record is reported by name, preserved unchanged,
+and counted toward no allowance: its cycle accounting used a different acceptance rule and is not
+comparable.
+
+## Phase 5 — Present, publish, and route
+
+### 5.1 Present the findings
 
 Render the operator status header through the shared `status_card.py` renderer's
-`project_code_review` projection, using the typed outcome and independent-gate state as inputs. Include
-the scope-check result, finding counts, current cycle, and outcome. The card is presentation only; it
-does not derive a decision from Priority or confidence.
+`project_code_review` projection, using the typed outcome and independent-gate state as inputs.
+Include the scope-check result, the finding counts, the current cycle, and the outcome. The card is
+**presentation only**: it derives no decision from priority or confidence.
 
-Below the card, lead with P-level findings (P0 first), grouped by severity, using the CE output shape: a
-pipe-delimited table per severity (`# | File | Issue | Reviewer | Confidence | Route`). Include the
-built-vs-planned summary, the scope-check result, suppressed-count, and coverage (residual risks,
-testing gaps). See `references/findings-schema.md` for the full output and artifact contract.
+Below the card, lead with the findings, P0 first, grouped by severity, as a pipe-delimited table per
+severity (`# | File | Issue | Reviewer | Confidence | Route`). Include the built-versus-planned
+summary, the scope-check result, the suppressed count, and coverage — residual risks and testing
+gaps. `references/findings-schema.md` carries the full output contract.
 
-### 5.3 Write the durable artifact through the evidence ledger
+### 5.2 One comment
 
-Compose the review-result contract (mirroring `/doc-review`'s shape):
+Exactly one pull-request comment, naming the reviewed revision as a full forty-character commit
+identifier. **No pull-request review, in any of its forms.** Publication commits nothing, pushes
+nothing, and does not advance `HEAD`, so a caller's freshness check stays valid. The evidence lands
+in the run record — not in a review document, and not through the evidence ledger.
 
-- target (diff/branch/PR) and reviewed revision (commit SHA or "working tree")
-- the complete `review_result.v1` JSON, with `outcome` as its only decision field
-- selected and attempted lenses, their actual revisions, dimensions, scores, and delta checks
-- cycle history, failing lenses, consolidated fix requests, residuals, and the next action
-- finding priorities and statuses
-- plan-completion results and independent-gate state
-- coverage stats (suppressed count, residual risks, testing gaps)
-- linked issue, plan, and work-session paths when available
+One confirmation before publishing, and no further consent machinery.
 
-In **interactive** mode, persist it through the evidence ledger (#398) instead of a bare file write —
-content-addressed, write-once, and custody-logged so a later pass can never silently overwrite an
-earlier outcome:
+**In programmatic / report-only mode — the mode the build loop calls this skill in — publication does
+not happen at all.** That mode makes **ZERO durable writes**: ZERO file writes to reviewed code, no
+commit, no push, no comment, and no review submission. It returns the serialised `review_result.v2`
+and the caller owns persistence and routing. The staleness gate in the build loop depends on exactly
+this split: it counts commits since its captured reviewed revision, and that count stays at zero
+because the in-loop call writes nothing.
 
-```bash
-REVIEWED_SHA=$(git rev-parse HEAD)
-python3 plugins/saga/scripts/evidence_ledger.py --repo-root . \
-  --saga-id <issue-N|task-slug|adhoc-work-<slug>> \
-  write --check-id code-review --reviewed-sha "$REVIEWED_SHA" --producer code-review-gate \
-  --verdict "<review-result outcome>" --artifact-file <path-to-composed-review.md>
-```
+### 5.3 Repair, and the cycle cap
 
-`--verdict` is the evidence ledger's generic command-line field. It stores the Code Review `outcome`;
-the typed result itself never gains a second `verdict` field.
+The allowance is **three standard cycles, then two escalated**. A cycle is one completed review
+result followed by one repair batch; an execution retry or a substitution consumes none. Escalation
+fires when the standard allowance is exhausted without every lens meeting its acceptance, or when
+two consecutive standard cycles pass with no progress on the same below-threshold lens.
 
-The ledger prints the resulting `artifact_path` (under `docs/evidence/<saga-id>/artifacts/`, **not**
-`docs/reviews/`, which the handoff/sdlc classifiers `handoff_envelope.py` tag as plan-ready) — that
-path is the durable code-review artifact for 5.4's `--review-paths`. When Phase 5.1 found no
-work-thread saga, use `--saga-id adhoc-<branch-slug>` (the branch-or-pr stem) so the write still lands
-in the ledger — only the saga *tick* (5.4) is skipped in that case, never the custody entry.
+An unsuccessful review routes to **repair planning**, never to an implementer directly: the Planner
+writes a durable amendment from the authoritative plan, the reviewed revision, the full finding
+history, and any dispute. Reviewers stay read-only throughout — they classify and route findings;
+they never implement, commit, or repair code.
 
-Publishing the artifact is **interactive / standalone only**: after the ledger write, commit and push
-the review document at its own path (`docs/code-reviews/`, plus the evidence-ledger artifact path
-above — never anything else) on the branch under review — with a `reviewed_revision:` frontmatter
-field naming the exact revision reviewed as a full 40-character commit SHA, and a commit subject
-naming it too — and submit the GitHub pull-request review on the existing PR. An abbreviated SHA or a
-symbolic ref like `HEAD` is not a valid reviewed revision — it stops meaning anything once the branch
-moves. A review-artifact commit is evidence only, never an implementation commit. That commit moves
-`HEAD`, which is expected and safe here: the in-loop caller (Work, Phase 5.1) runs this skill in
-**programmatic / report-only** mode, where no publishing step exists and nothing durable is written,
-so Work's captured reviewed SHA stays valid.
+**At the cap there is no further cycle.** The open findings are prepared as linked defect issues,
+mission-control files them, their numbers are listed in the result, and the run proceeds with
+`cycle_cap_best_available`. Merging is not production promotion, so remaining quality problems can
+still be investigated in testing with the findings preserved.
 
-In **programmatic / report-only** mode, return the serialized `review_result.v1` plus the optional human
-rendering grouped by `autofix_class`. Write **ZERO file writes to reviewed code and ZERO ledger writes**;
-the caller owns durable persistence and downstream routing.
+The narrow exception has **two categories and the catalogue is closed at them**. A merge stays
+blocked only by *reproduced* evidence of data loss or destructive behaviour, or of a security
+exposure — an authorisation bypass, a tenant-isolation breach, or disclosure of protected data or a
+secret. *Reproduced* is the whole standard: speculation, an unsupported priority label, and a
+below-threshold score on its own do not qualify.
 
-### 5.4 Append the saga tick (only if a saga exists and in interactive mode)
+### 5.4 Route
 
-In **programmatic / report-only** mode, SKIP this step entirely — the caller owns durable persistence
-(the Phase 5.3 contract), and no ledger artifact was written for a tick to reference.
+- **`accepted`** — continue to the next lifecycle step.
+- **`repairs_requested`** — the findings go to repair planning.
+- **`cycle_cap_best_available`** — proceed with the best-available revision and surface every residual.
+- **`review_incomplete`** — report that delivery did not establish a review. Never invent a score.
 
-In **interactive** mode, **if and only if** Phase 5.1 found an active work-thread saga, append a tick —
-reusing its exact `kind` and `id`, passing the artifact path to `--review-paths` and the chosen backend
-to `--orchestration-mode`. **OMIT `--lifecycle-phase`** so the existing phase carries forward (verified:
-omitting it sends the argparse default `ideation`, which equals the dataclass default, so `saga.py`'s
-`_merge` scalar carry-forward preserves the prior phase — code-review never advances the phase). Never
-`git add` the tick (saga state is git-ignored, machine-local):
+### 5.5 Hard boundary
 
-```bash
-python3 plugins/saga/scripts/saga.py save \
-  --kind <issue|task> \
-  --id <the-existing-saga-id> \
-  --review-paths "<the ledger artifact_path from 5.3>" \
-  --orchestration-mode <inline|team-execution|cc-workflows-ultracode>
-```
-
-**If no saga was found in 5.1, SKIP this command entirely and say so** ("No work-thread saga found —
-skipping the saga write; never minting one from code-review"). `saga.py save` mints unconditionally, so
-this scan-first / never-mint guard lives here in prose — do **not** invent a `--kind`/`--id` to satisfy
-the CLI.
-
-### 5.5 Offer fixer dispatch (never auto-run)
-
-When the typed result says `repairs_requested`, route its consolidated `safe_auto`/`gated_auto`/`manual`
-fix requests to Work (`dispatch_repairs` in `review_consensus.py` is the existing hand-back path).
-`/code-review` never applies the fix itself and never authors a fix for a finding it raised: **the
-author or the Work process owns repair changes and implementation commits**, and the reviewer hands
-findings back. `advisory` findings are report-only, and Priority or confidence never changes this
-outcome.
-
-### 5.6 Route
-
-- **`accepted`** — continue to the caller's next independent gate.
-- **`repairs_requested`** — hand the structured fix requests to Work, then resubmit only after landing.
-- **`cycle_cap_best_available`** — continue with the cycle-three revision and surface all residuals.
-- **`review_incomplete`** — report that delivery did not establish a review; do not invent a score or
-  relaunch a terminal request.
-- **`/handoff`** — when the work should become or update an SDLC issue.
-
-### 5.7 Hard boundary
-
-`/code-review` reviews, classifies, and routes. Fix custody: it does **NOT** implement the fixes it
-requests — findings route to the author or to `/work`, which owns repair changes and implementation
-commits. Publication lane (interactive / standalone only): it MAY write, commit, and push its own
-review document at its own path (`docs/code-reviews/`, plus the ledger path under
-`docs/evidence/<saga-id>/artifacts/` — never anything else) and MAY submit the GitHub pull-request
-review on an existing PR; the artifact records the exact reviewed revision as a full 40-character
-commit SHA in its frontmatter (`reviewed_revision:`), the commit subject names it too, and a
-review-artifact commit is evidence only — never an implementation commit. It does **NOT** mutate
-reviewed source, does **NOT** commit an implementation change, does **NOT** open or update a PR
-(submitting a review on an existing PR is a different operation from creating one), and does
-**NOT** file SDLC issues. When `/work` is the caller the review runs in **programmatic / report-only**
-mode, where nothing changes: ZERO durable writes, no commit, no push, no review submission — `/work`
-persists through the evidence ledger, which does not advance `HEAD`, so its `REVIEWED_SHA` staleness
-check stays valid. In interactive mode: review, write the artifact, publish it (commit and push) when
-publishing is in scope, append the saga tick (if one exists), submit the pull-request review, route —
-then stop. In programmatic mode: review and return `review_result.v1` — the caller owns persistence
-and routing; the reviewer commits nothing and `HEAD` does not move. The `/work` staleness gate
-depends on exactly this split: it counts commits since its captured reviewed SHA, which stays at zero
-because the in-loop call is programmatic and writes nothing durable.
+`/code-review` reviews, classifies, and routes. It does **NOT** implement the fixes it requests —
+they go to repair planning. It does **NOT** mutate reviewed source. It does **NOT** commit an
+implementation change. It does **NOT** open or update a PR. It does **NOT** file issues itself:
+filing the residual defects is mission-control's ownership lane, and this skill only prepares them.
+It publishes one comment and never a review approval.
 
 ---
 
 ## Reference files
 
-- `../../references/lens-roster.json` — the versioned executable lens, dimension, anchor, and acceptance
-  contract used by both Code Review and Team Execution.
-- `../../scripts/review_consensus.py` — the scorer, selective-rerun state machine, delivery mapping,
-  delta-check enforcement, fix consolidation, `review_result.v1` serializer, and the conditional-lens
-  approval record bound to reviewed commit + cycle (`resolve_lens_selection`,
-  `launch_approved_lenses`).
-- `references/lens-catalog.md` — prose guidance for judgment-based selection and lens execution.
-- `references/findings-schema.md` — severity (P0-P3), anchored confidence, `autofix_class`, `owner`, the
-  `suggested_fix` rule, `pre_existing` honesty, evidence, fingerprint dedup, merge/sort/stable-# rules,
-  and the output + durable-artifact contract.
-- `references/validator.md` — the independent per-finding validator: the three questions, mode-based
-  right-sizing, conservative bias, read-only constraint, `{validated, reason}` return.
-- `references/built-vs-planned.md` — scope-drift detection (informational) + the 5-state plan-completion
-  audit + the three verification modes + the honesty rule, reading `docs/plans/` and the journal.
-- `../../scripts/manifest_reader.py` — R7/R16/R18 provenance-manifest reader consumed by Stage B.0 to
-  skip re-verifying attested adjudicated-verified claims. Advisory-only (R8/R12); `--json` for
-  machine-readable output.
+- `../../scripts/review_roster.py` — builds the declaration from the run record and invokes the
+  lifecycle repository's generator; named refusal when the checkout is absent.
+- `../../scripts/review_consensus.py` — the scorer, the cycle state machine, and the verdict computed
+  from the catalogue's strictness ladder.
+- `../../scripts/review_result.py` — the `review_result.v2` writer, finding fingerprints, one history
+  per unit, the residual preparation, and publication.
+- `../../../agent-launcher/roles/lens-reviewer.md` — the prompt each lens session receives.
+- `references/lens-execution.md` — how to execute a resolved roster. The catalogue itself lives in the
+  lifecycle repository; this plugin holds no copy of it.
+- `references/findings-schema.md` — the shared finding schema, its severity and status vocabularies,
+  and the fingerprint rule.
+- `references/validator.md` — the independent per-finding validator.
+- `references/built-vs-planned.md` — scope-drift detection and the plan-completion audit.

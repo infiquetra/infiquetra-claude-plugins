@@ -94,7 +94,7 @@ def _request(fix_id: str, owner: str, *paths: str) -> dict[str, Any]:
 
 def _result(outcome: str, *requests: dict[str, Any], **extra: Any) -> str:
     payload: dict[str, Any] = {
-        "schema": "review_result.v1",
+        "schema": "review_result.v2",
         "outcome": outcome,
         "fix_requests": list(requests),
         **extra,
@@ -422,7 +422,7 @@ def test_typed_result_round_trips_byte_identically_without_policy_parsing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw = (
-        '{\r\n  "schema": "review_result.v1",\r\n  "outcome": "accepted",\r\n'
+        '{\r\n  "schema": "review_result.v2",\r\n  "outcome": "accepted",\r\n'
         '  "fix_requests": [],\r\n  "lens_results": {"derived_overall": "not a number",'
         ' "dimensions": null},\r\n  "finding_metadata": {"priority": "P0",'
         ' "confidence": 100}\r\n}\r\n'
@@ -548,7 +548,7 @@ def test_unknown_result_schema_is_persisted_verbatim_but_never_routed(
     raw = _result(
         "repairs_requested",
         _request("must-not-route", "review-fixer", "src/file.py"),
-    ).replace("review_result.v1", "review_result.v99")
+    ).replace("review_result.v2", "review_result.v99")
     result_path.write_text(raw)
     run.save(run_path)
     monkeypatch.chdir(tmp_path)
@@ -1514,7 +1514,7 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     """#893: a cycle-1 accepted artifact cannot overwrite a stored cycle-cap result."""
     stored = json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "cycle_cap_best_available",
             "cycle_history": [{"cycle": 1}, {"cycle": 2}, {"cycle": 3}],
             "fix_requests": [],
@@ -1523,7 +1523,7 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     )
     incoming = json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "accepted",
             "cycle_history": [{"cycle": 1}],
             "fix_requests": [],
@@ -1550,7 +1550,7 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
 
     shorter = json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "repairs_requested",
             "cycle_history": [{"cycle": 1}],
             "fix_requests": [],
@@ -1559,7 +1559,7 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     )
     longer = json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "repairs_requested",
             "cycle_history": [{"cycle": 1}, {"cycle": 2}],
             "fix_requests": [],

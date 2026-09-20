@@ -141,7 +141,22 @@ def _run_wait(
 ) -> tuple[subprocess.CompletedProcess[str], float, list[list[str]]]:
     root = tmp_path / "repo"
     root.mkdir()
-    _write_run(root)
+    _write_run(
+        root,
+        [
+            {
+                "name": "alpha",
+                "vendor": "claude",
+                "task": "test wait",
+                "agent_name": "alpha",
+                "status": "running",
+                "branch": None,
+            }
+        ],
+        run_id="wait-contract",
+        base="HEAD",
+        branch="",
+    )
     fake_bin = _install_fake_herdr(root)
     log = root / "herdr.jsonl"
     state = root / "state"
@@ -160,7 +175,16 @@ def _run_wait(
     )
     started = time.monotonic()
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "wait", *args],
+        [
+            sys.executable,
+            str(SCRIPT),
+            "wait",
+            "--issue",
+            str(_support.TEST_ISSUE),
+            "--store-root",
+            str(root.parent / "orch-test-store"),
+            *args,
+        ],
         cwd=root,
         env=env,
         capture_output=True,

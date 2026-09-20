@@ -150,9 +150,7 @@ def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **override
 
 
 def _read_unit(repo: Path, name: str) -> dict[str, Any]:
-    payload: dict[str, Any] = _support.read_record(
-        test_store(), _support.TEST_ISSUE
-    )
+    payload: dict[str, Any] = _support.read_record(test_store(), _support.TEST_ISSUE)
     return next(unit for unit in payload["units"] if unit["name"] == name)
 
 

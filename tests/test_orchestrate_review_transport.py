@@ -383,25 +383,28 @@ def test_review_transport_refuses_every_retired_transport_name(
 def test_review_transport_loads_legacy_run_files_without_engine_prefs(
     orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True)
-    path.write_text(
-        json.dumps(
-            {
-                "run_id": "legacy",
-                "source": "old",
-                "base": "0" * 40,
-                "engine_prefs": {"code-review": {"intent": "none"}},
-                "units": [_controller_row()],
-            }
-        )
+    # A record carrying the retired `engine_prefs` key: the record preserves an unknown
+    # top-level field, and orchestrate ignores this one on load exactly as it always has.
+    _support.write_record(
+        test_store(),
+        _support.TEST_ISSUE,
+        units=[_support.fill_unit_row(_controller_row())],
+        run_id="legacy",
+        source="old",
+        base="0" * 40,
+        branch="",
+        extra_top_level={"engine_prefs": {"code-review": {"intent": "none"}}},
     )
     monkeypatch.chdir(tmp_path)
     loaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert not hasattr(loaded, "engine_prefs")
     loaded.save()
-    saved = json.loads(path.read_text())
-    assert "engine_prefs" not in saved
+    # The retired key is PRESERVED by the record rather than dropped -- that is the record's own
+    # unknown-top-level-field rule -- and orchestrate never reads it. Both halves matter: the
+    # key survives a newer writer, and this plugin ignores it.
+    saved = _support.read_record(test_store(), _support.TEST_ISSUE)
+    assert "engine_prefs" not in saved["orchestrate"]
+    assert saved["engine_prefs"] == {"code-review": {"intent": "none"}}
 
 
 def test_engine_registry_is_explicitly_non_transport() -> None:

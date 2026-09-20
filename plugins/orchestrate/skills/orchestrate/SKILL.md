@@ -93,19 +93,16 @@ companion below the floor still serves them; they refuse, with the install remed
 companion was ingested at all. `status` and `check` survive a missing or unusable companion by
 reading liveness as `unknown` and printing the fault once; `wait`, `settle`, and `adopt` need the
 companion's Herdr reads and refuse without it.
-**A staged-input stop is retryable through the same pane.** When a launch refuses to prompt because
-the pane's composer holds an unsent operator draft, the unit stops `PENDING` with its tab, pane and
-launch receipt recorded and the draft's size — never its text — in the note. The recovery has two
-exits. Clear the composer and rerun `go`: the retry re-prompts that same pane and creates no
-session, and `already has tab` never applies to a staged unit, so nothing needs editing by hand.
-Or give the unit up: `clean` closes the tab when Orchestrate owns it and reports a tab it does not
-own as left open, never as closed.
-**A launch that stops on staged input keeps its recorded tab and is reported.** `redrive` is gone
-with issue #1025: `go` skips a unit that already has a tab and names it, and the repair is to clear
-the composer and use the launcher's own `redeliver` by hand — never a second launch, which would
-put a second session on one worktree. Ordinary recovery for a unit that failed is simply `go`
-again: it builds a FRESH worktree from the unit's branch, so nothing is inherited from the attempt
-that failed, and the stale tree is released first rather than reused.
+**A staged-input stop keeps its pane and is reported.** When a launch refuses to prompt because the
+pane's composer holds an unsent operator draft, the unit stops `PENDING` with its tab and pane
+recorded and the draft's size — never its text — in the note. The recovery has two exits, and
+neither is a second launch, which would put a second session on one worktree. Clear the composer
+and redeliver into that same pane by hand with the launcher's own `redeliver`: it creates no
+session. Or give the unit up: `clean` closes the tab when Orchestrate owns it and reports a tab it
+does not own as left open, never as closed. `go` reports the unit as `already has tab` and leaves
+it alone; `redrive` is gone with issue #1025, and ordinary recovery for a unit that FAILED is
+simply `go` again — it builds a FRESH worktree from the unit's branch, releasing the stale one
+first, so nothing is inherited from the attempt that failed.
 Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step, not a license to bypass `expand` or `go`. A branch in the run's
 `orch/<run-id>-<unit>` series with no row in the table is flagged as unrecorded drift by `status` and

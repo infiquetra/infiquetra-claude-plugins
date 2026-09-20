@@ -419,7 +419,9 @@ class TestStartRejectsUnknownDependencies:
                 {"name": "beta", "vendor": "claude", "task": "x", "after": ["alpha"]},
             ],
         )
-        assert orchestrate.cmd_start(NS(plan=str(plan), base=None)) == 0
+        # `start` requires the record and never creates one (issue #1025).
+        _support.write_record(test_store(), _support.TEST_ISSUE, units=None)
+        assert orchestrate.cmd_start(NS(plan=str(plan), base=None, branch=None)) == 0
         assert [u["name"] for u in _read_run(repo)["units"]] == ["alpha", "beta"]
 
     def test_a_valid_plan_still_starts(
@@ -437,7 +439,12 @@ class TestStartRejectsUnknownDependencies:
                 {"name": "beta", "vendor": "claude", "task": "x"},
             ],
         )
-        assert orchestrate.cmd_start(NS(plan=str(plan), base=None)) == 0
+        # `start` requires the record and never creates one (issue #1025).
+        _support.write_record(test_store(), _support.TEST_ISSUE, units=None)
+        # `--branch` names the run branch; without it `start` derives `parent/<N>` or
+        # `issue/<N>` from the issue's sub-issues (issue #1025), which is not this test's
+        # subject -- that a valid plan starts and its branch is created.
+        assert orchestrate.cmd_start(NS(plan=str(plan), base=None, branch="orch/r2")) == 0
         assert (test_store() / f"issue-{_support.TEST_ISSUE}.json").exists()
         assert (
             subprocess.run(

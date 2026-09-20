@@ -151,8 +151,17 @@ ADDED_UNIT_FIELDS: dict[str, Any] = {
 
 
 def fill_unit_row(row: dict[str, Any]) -> dict[str, Any]:
-    """A migrated test's unit row, with only this card's added fields defaulted."""
-    return {**ADDED_UNIT_FIELDS, **row}
+    """A migrated test's unit row, with only this card's added fields defaulted.
+
+    A row that expresses tab ownership the old way -- ``launch_receipt={"owned": True}`` -- has it
+    carried onto the ``owned`` field, which is where that fact lives now that the receipt is not
+    persisted. The test keeps saying what it meant; only the storage moved.
+    """
+    filled = {**ADDED_UNIT_FIELDS, **row}
+    receipt = filled.get("launch_receipt")
+    if isinstance(receipt, dict) and "owned" in receipt and "owned" not in row:
+        filled["owned"] = receipt["owned"] is True
+    return filled
 
 
 def write_record(

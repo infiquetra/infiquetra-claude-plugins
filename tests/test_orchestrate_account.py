@@ -290,7 +290,9 @@ class TestAccountSchemaAndLifecycle:
         plan_file.write_text(json.dumps(plan))
         monkeypatch.chdir(repo)
 
-        orchestrate.cmd_start(NS(plan=str(plan_file), base=None))
+        # `start` requires the record and never creates one (issue #1025).
+        _support.write_record(test_store(), _support.TEST_ISSUE, units=None)
+        orchestrate.cmd_start(NS(plan=str(plan_file), base=None, branch=None))
         r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         assert r.account == "company"
         assert r.units[0].name == "u1"

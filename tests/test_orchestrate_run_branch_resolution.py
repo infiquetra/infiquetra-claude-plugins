@@ -244,13 +244,9 @@ def test_go_refuses_a_missing_run_branch_even_when_no_unit_is_eligible(
 @pytest.mark.parametrize(
     ("command", "args", "expected"),
     [
-        ("status", argparse.Namespace(), 0),
-        ("check", argparse.Namespace(), 1),
-        (
-            "clean",
-            argparse.Namespace(merged=True, branches=False, all=False),
-            0,
-        ),
+        ("status", {}, 0),
+        ("check", {}, 1),
+        ("clean", {"merged": True, "branches": False}, 0),
     ],
 )
 def test_diagnostic_commands_still_run_and_name_an_unresolvable_branch(
@@ -259,7 +255,7 @@ def test_diagnostic_commands_still_run_and_name_an_unresolvable_branch(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     command: str,
-    args: argparse.Namespace,
+    args: dict[str, object],
     expected: int,
 ) -> None:
     repo = _repo(tmp_path, ("alpha",))
@@ -268,7 +264,7 @@ def test_diagnostic_commands_still_run_and_name_an_unresolvable_branch(
     monkeypatch.chdir(repo)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
 
-    result = getattr(orchestrate, f"cmd_{command}")(args)
+    result = getattr(orchestrate, f"cmd_{command}")(NS(**args))
 
     output = capsys.readouterr().out
     assert result == expected
@@ -290,7 +286,7 @@ def test_land_and_go_refuse_an_unresolvable_run_branch(
     _write_run(repo, units)
     _rename_run_branch(repo)
     monkeypatch.chdir(repo)
-    args = NS(clean=False) if command == "merge" else argparse.Namespace(limit=0)
+    args = NS(clean=False) if command == "merge" else NS(limit=0)
 
     with pytest.raises(SystemExit, match=rf"orch/r1.*does not resolve.*cannot {command}"):
         getattr(orchestrate, f"cmd_{command}")(args)
@@ -334,7 +330,7 @@ def test_legacy_record_without_a_branch_keeps_the_head_based_go_path(
             _unit("alpha"),
             _unit("beta", branch=None, status="pending", after=["alpha"]),
         ],
-        include_branch=False,
+        branch="",
     )
 
     monkeypatch.chdir(repo)
@@ -358,5 +354,7 @@ def test_legacy_record_without_a_branch_keeps_the_head_based_go_path(
     assert launched == ["beta"]
     assert "does not resolve" not in output
     assert "committed nothing" not in output
-    with pytest.raises(SystemExit, match=r"predates `land`"):
+    # The message moved with the command: `land` is `merge`, and a run with no parent
+    # branch is told `start` creates one (issue #1025).
+    with pytest.raises(SystemExit, match=r"no parent branch"):
         orchestrate.cmd_merge(NS(clean=False))

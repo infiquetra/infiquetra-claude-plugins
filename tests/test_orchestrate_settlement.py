@@ -681,7 +681,7 @@ class TestIncidentShape4ParkedPushSucceededPRBlocked:
         with pytest.raises(SystemExit, match="has no branch recorded"):
             orchestrate.cmd_park(args)
 
-        args_empty = argparse.Namespace(
+        args_empty = NS(
             unit="pushed-unit",
             evidence="   ",
             remote="origin",

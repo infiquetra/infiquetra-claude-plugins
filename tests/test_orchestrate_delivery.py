@@ -19,6 +19,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
 
 # --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
@@ -132,7 +133,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent_status": "idle",
                 "agent": "claude",
@@ -170,7 +171,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent_status": "done",
                 "agent": "claude",
@@ -209,7 +210,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent_status": "working",
                 "agent": "claude",
@@ -275,7 +276,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent": "claude",
                 "interactive_ready": True,
@@ -309,7 +310,7 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {
+            lambda _unit=None, _agents=None, **_kw: {
                 "pane_id": "pane-1",
                 "agent_status": "idle",
                 "agent": "claude",
@@ -349,7 +350,9 @@ class TestStatusCommandShowsNamedDeliveryFailureState:
             units=[unit],
         )
 
-        monkeypatch.setattr(orchestrate.Run, "load", lambda: run_record)
+        # `Run.load` takes the issue and the store now (issue #1025); the stub stands in for
+        # the record read, which is not what either of these tests is about.
+        monkeypatch.setattr(orchestrate.Run, "load", lambda *_a, **_kw: run_record)
         monkeypatch.setattr(orchestrate, "unit_commit_statuses", lambda _units, _r: [("-", "-")])
 
         rc = orchestrate.cmd_status(NS())
@@ -389,13 +392,18 @@ class TestSettleNeverSweepsAnUndeliveredUnit:
             status=orchestrate.PROMPT_UNDELIVERED,
             note=orchestrate.DELIVERY_WARNING,
         )
-        run_record = orchestrate.Run(
-            run_id="test-run",
-            source="issue 779",
-            base="0" * 40,
-            units=[unit],
+        run_record = _support.attach_record(
+            orchestrate.Run(
+                run_id="test-run",
+                source="issue 779",
+                base="0" * 40,
+                units=[unit],
+            ),
+            test_store(),
         )
-        monkeypatch.setattr(orchestrate.Run, "load", lambda: run_record)
+        # `Run.load` takes the issue and the store now (issue #1025); the stub stands in for
+        # the record read, which is not what either of these tests is about.
+        monkeypatch.setattr(orchestrate.Run, "load", lambda *_a, **_kw: run_record)
         # An undelivered unit's session is alive and idle -- exactly the reading that used to be
         # taken for a finished turn.
         monkeypatch.setattr(

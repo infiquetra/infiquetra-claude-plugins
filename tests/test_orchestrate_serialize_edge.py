@@ -146,8 +146,9 @@ def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **override
 
 
 def _read_run(cwd: Path) -> dict[str, Any]:
-    raw: dict[str, Any] = json.loads((cwd / ".orchestrate" / "run.json").read_text())
-    return raw
+    """The record in the shape the old run file was read in (issue #1025)."""
+    raw = _support.read_record(test_store(), _support.TEST_ISSUE)
+    return {**raw["orchestrate"], "units": raw["units"]}
 
 
 def _unit(name: str, **over: Any) -> dict[str, Any]:
@@ -462,19 +463,19 @@ class TestRunFilesFromBeforeTheField:
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A run started before the field existed keeps working, and keeps gating correctly."""
-        payload = {
-            "run_id": "r1",
-            "source": "a test",
-            "base": "0" * 40,
-            "branch": "orch/r1",
-            "units": [
+        # A record whose unit rows predate the field: neither row carries `serialize`.
+        _support.write_record(
+            test_store(),
+            _support.TEST_ISSUE,
+            units=[
                 {"name": "alpha", "vendor": "claude", "task": "x", "status": "done"},
                 {"name": "beta", "vendor": "claude", "task": "x", "after": ["alpha"]},
             ],
-        }
-        path = tmp_path / ".orchestrate" / "run.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload))
+            run_id="r1",
+            source="a test",
+            base="0" * 40,
+            branch="orch/r1",
+        )
         monkeypatch.chdir(tmp_path)
 
         run = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
@@ -501,6 +502,7 @@ class TestRunFilesFromBeforeTheField:
                 )
             ],
         )
+        _support.attach_record(run, test_store())
 
         run.save()
 

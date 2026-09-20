@@ -380,6 +380,15 @@ class Unit:
     flight (see ``stale_merge_turn``). The software-development-lifecycle repository's
     parent-branch chapter describes merge turns exactly this way and explicitly rejects a lock
     service for them."""
+    owned: bool = False
+    """Did this run's launcher create the tab this unit records?
+
+    The launcher proves ownership from its launch receipt and refuses to close a tab it did not
+    create. The receipt itself is no longer persisted (issue #1025 removes the receipt records),
+    so the one FACT the close needs is kept as its own field -- an identity fact like ``tab_id``,
+    not a record of the launch. Without it a reload left orchestrate unable to close a tab it had
+    made, and every later sweep reported a borrowed tab it should have closed.
+    ``session_owned`` reads this whenever the receipt is absent."""
     merge_worktree: str | None = None
     """The detached worktree this unit's merge turn is running in, while a turn is in flight.
 
@@ -927,7 +936,26 @@ def _run_record_candidates() -> list[Path]:
     ``orchestrate/``, not ``saga/``.
     """
     here = Path(__file__).resolve()
-    paths = [_plugin_root(here).parent / "saga" / "scripts" / "run_record.py"]
+    root = _plugin_root(here)
+    # 1. The repository layout: this file ships beside the saga plugin in one checkout.
+    paths = [root.parent / "saga" / "scripts" / "run_record.py"]
+    # 2. The SIBLING CACHE layout, which the repository probe cannot reach: an install cache holds
+    #    `<marketplace>/orchestrate/<version>/` and `<marketplace>/saga/<version>/`, so the sibling
+    #    of this plugin's root is `orchestrate/`, not `saga/`, and the version directory sits
+    #    between them. Newest version first, the same ordering `_install_candidates` uses and for
+    #    the same reason: a stale saga resolved here would read the record with an older contract.
+    marketplace = root.parent.parent
+    paths.extend(
+        sorted(
+            (
+                Path(hit)
+                for hit in glob.glob(str(marketplace / "saga" / "*" / "scripts" / "run_record.py"))
+            ),
+            key=lambda path: (_version_rank(path, "saga"), str(path)),
+            reverse=True,
+        )
+    )
+    # 3. Every vendor's own install cache, newest version first.
     paths.extend(_install_candidates("saga", "scripts/run_record.py"))
     return paths
 
@@ -3481,6 +3509,26 @@ def report_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> None:
 # ----------------------------------------------------------------- commands
 
 
+def load_plan(path: str) -> dict[str, Any]:
+    """Read a plan file, refusing by name rather than by traceback.
+
+    Since the companion floor warns instead of refusing (issue #1025), a plan read is now
+    reachable in states that used to stop earlier -- so "this file is not a plan" has to be a
+    sentence the operator can act on rather than a JSONDecodeError six frames deep.
+    """
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"cannot read the plan at {path}: {exc}") from None
+    try:
+        loaded = json.loads(raw)
+    except ValueError as exc:
+        raise SystemExit(f"the plan at {path} is not JSON: {exc}") from None
+    if not isinstance(loaded, dict):
+        raise SystemExit(f"the plan at {path} is not a JSON object")
+    return loaded
+
+
 def validate_plan(plan: Mapping[str, Any]) -> list[Unit]:
     """Every check ``start`` runs before it creates anything, and NOTHING else (issue 879).
 
@@ -3511,7 +3559,7 @@ def cmd_plan_check(args: argparse.Namespace) -> int:
     read or write any run record at all.
     """
     assert_agent_launcher_ingested()
-    plan = json.loads(Path(args.plan).read_text())
+    plan = load_plan(args.plan)
     units = validate_plan(plan)
     order = " -> ".join(u.name for u in units)
     print(f"plan {plan.get('run_id', '?')}: {len(units)} units validate clean  ({order})")
@@ -3555,7 +3603,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     which every later reader would have to treat as "not asked yet".
     """
     assert_agent_launcher_available()
-    plan = json.loads(Path(args.plan).read_text())
+    plan = load_plan(args.plan)
     units = validate_plan(plan)
     store_root = Path(args.store_root) if args.store_root else resolve_record_store_root()
     record = load_record(store_root, args.issue)
@@ -3860,7 +3908,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     """
     assert_agent_launcher_available()
     r = Run.load(args.issue, args.store_root)
-    added = json.loads(Path(args.plan).read_text())
+    added = load_plan(args.plan)
     assert_no_engine_prefs(added)
     incoming = plan_units(added)
     assert_safe_unit_names(incoming)
@@ -4042,6 +4090,9 @@ def record_launch_identity(unit: Unit, r: Run) -> None:
     check, in which an interrupt left the record claiming the unit was never launched while a real
     tab existed, and the next ``go`` made a second session.
     """
+    receipt = unit.launch_receipt if isinstance(unit.launch_receipt, dict) else {}
+    if "owned" in receipt:
+        unit.owned = receipt["owned"] is True
     with contextlib.suppress(RecordError):
         r.save()
 

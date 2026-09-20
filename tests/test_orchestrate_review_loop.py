@@ -785,6 +785,9 @@ def test_clean_merged_keeps_a_landed_worker_with_an_outstanding_fix(
         branch="orch/review-run",
         units=[worker],
     )
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     run.resolve_branch_once()
     assert orchestrate.reapable(worker, run) is True
@@ -830,7 +833,11 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
         task="work",
         worktree=str(worktree),
         tab_id="w1:t1",
+        # The receipt is no longer persisted, so the ownership fact the close needs lives on the
+        # unit itself (issue #1025). Both are set here: the receipt for the in-memory path, the
+        # field for everything after a reload.
         launch_receipt={"tab_id": "w1:t1", "owned": True},
+        owned=True,
         status="done",
     )
     run_record = orchestrate.Run(run_id="review-run", source="test", base="main", units=[unit])
@@ -845,11 +852,16 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
         return real_run(cmd, **kwargs)
 
     monkeypatch.setattr(orchestrate, "run", selective_run)
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
-    run_record.save()
+    _support.save_run(run_record, test_store())
 
     args = NS(merged=False, branches=False, all=False, remote="origin")
-    assert orchestrate.cmd_clean(args) == 0
+    # Exit 3: the close was attempted on a tab this run owns and could not be made, so something
+    # this run owns was left behind and the status says so (issue #1025).
+    assert orchestrate.cmd_clean(args) == 3
     first_output = capsys.readouterr().out
     saved = orchestrate.Run.load(_support.TEST_ISSUE, test_store()).unit("worker")
 
@@ -859,7 +871,7 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
     assert f"kept worker: {failure}" in first_output
     assert "kept (not done, or its work not on the run branch): worker" not in first_output
 
-    assert orchestrate.cmd_clean(args) == 0
+    assert orchestrate.cmd_clean(args) == 3
     second_output = capsys.readouterr().out
     assert f"kept worker: {failure}" in second_output
     assert orchestrate.Run.load(_support.TEST_ISSUE, test_store()).unit("worker").note == failure
@@ -916,6 +928,9 @@ def test_clean_merged_keeps_the_review_controller_while_review_work_is_outstandi
         review_resubmit_pending=review_resubmit_pending,
         operator_fix_requests=[operator_request] if operator_request is not None else [],
     )
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     run.resolve_branch_once()
 
@@ -955,6 +970,9 @@ def test_land_names_the_operator_request_holding_review_resubmission(
         operator_fix_requests=[_request(fix_id, "human", "src/operator.txt")],
     )
     _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
 
     assert orchestrate.cmd_merge(NS(clean=False)) == 4
@@ -1011,6 +1029,9 @@ def test_land_retries_a_failed_review_resubmission_after_the_repair_is_already_l
         review_resubmit_pending=True,
     )
     _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     attempts: list[str] = []
 
@@ -1033,7 +1054,7 @@ def test_land_retries_a_failed_review_resubmission_after_the_repair_is_already_l
     second_output = capsys.readouterr().out
     retried = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert "resubmitted landed revision" in second_output
-    assert "landed on orch/review-run: nothing new" in second_output
+    assert "merged onto orch/review-run: nothing new" in second_output
     assert _git_out(repo, "rev-parse", "orch/review-run") == landed_tip
     assert len(attempts) == 2
     assert all(landed_tip in prompt for prompt in attempts)
@@ -1423,6 +1444,9 @@ def test_land_exits_4_when_the_resubmission_is_withheld_on_staged_input(
         review_resubmit_pending=True,
     )
     _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     dumps = iter(
         [_claude_composer_pane("❯ operator draft that was never sent"), _claude_composer_pane("❯ ")]
@@ -1747,19 +1771,37 @@ def test_land_exit_4_outranks_leftover_landing_path_exit_3(
         operator_fix_requests=[_request("held", "human", "src/x.py")],
     )
     _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
-    land_path = repo / ".orchestrate" / f"land-{run.run_id}"
+    # The landing worktree went with the landing bookkeeping (issue #1025); the turn's own
+    # detached worktree is what can now be left behind, so that is the cleanup failure to
+    # simulate. It only exists when a unit actually merges, so one does.
+    _git(repo, "checkout", "-q", "-b", "orch/review-run-worker", "orch/review-run")
+    _commit(repo, "worker.txt")
+    _git(repo, "checkout", "-q", "main")
+    run.units.append(
+        orchestrate.Unit(
+            name="worker",
+            vendor="claude",
+            task="x",
+            branch="orch/review-run-worker",
+            status=orchestrate.DONE,
+        )
+    )
+    _support.save_run(run, test_store())
     original_run = orchestrate.run
 
     def fail_remove(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if cmd[:4] == ["git", "worktree", "remove", "--force"] and cmd[-1] == str(land_path):
+        if cmd[:4] == ["git", "worktree", "remove", "--force"] and "merge-review-run" in cmd[-1]:
             return subprocess.CompletedProcess(cmd, 1, "", "simulated cleanup failure")
         return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
     monkeypatch.setattr(orchestrate, "run", fail_remove)
     assert orchestrate.cmd_merge(NS(clean=False)) == 4
     output = capsys.readouterr().out
-    assert "LANDING CLEANUP FAILED" in output
+    assert "CLEANUP FAILED" in output
     assert "operator-owned fix" in output
 
 
@@ -1790,6 +1832,9 @@ def test_land_exits_4_when_resubmission_is_held_by_operator_fix_requests(
         operator_fix_requests=[_request("held-fix", "human", "src/op.py")],
     )
     _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     assert orchestrate.cmd_merge(NS(clean=False)) == 4
     assert "operator-owned fix" in capsys.readouterr().out

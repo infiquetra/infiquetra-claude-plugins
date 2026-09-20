@@ -1244,12 +1244,7 @@ class TestARealTimeoutReturnsTheSafetyRecord:
 # `announce` is the retry, so there is no record to outlive an invocation.
 
 
-
-
-
 class TestTheRunFileNamesItsOwnContract:
-
-
     def test_a_legacy_row_without_the_permission_key_reads_as_not_declared(
         self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1263,8 +1258,6 @@ class TestTheRunFileNamesItsOwnContract:
             .permission_declared
             is False
         )
-
-
 
 
 class TestProvenanceIsRecorded:

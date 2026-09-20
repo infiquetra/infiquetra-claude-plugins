@@ -52,14 +52,18 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     # (issue #1027). The five ship-ceremony modules are removed with their tests, the hook entry
     # and their importers. Bumped from 0.169.0, the saga version on origin/parent/1018 at
     # 23959a80: issue #1029 took 0.169.0 while this card's suite ran.
-    # Predecessor 0.169.0 was issue #1029: every lifecycle skill ends by invoking the next step.
+    # Predecessor 0.169.0 was issue #1029: every lifecycle skill ends by doing the next step in the
+    # same turn, a SessionStart hook announces the run record's next_step for a live run and
+    # nothing for a done step, a closed run, or no record, and a local-only UserPromptSubmit hook
+    # names the command an operator's text is about.
     # Predecessor 0.168.0: the run record reference documents the
     # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
-    # unit row (issue #1025). Bumped from 0.167.0, the saga version on origin/parent/1018 at
-    # 54a526b1: issues #1001, #1026 and #938 took 0.165.0, 0.166.0 and 0.167.0 while this card's
-    # suite ran, so this card renumbered above them rather than shipping a colliding version.
-    # 0.167.0 was issue #938: Work no longer offers an in-process external-engine second opinion,
-    # and plugins/saga/scripts/second_opinion.py is deleted with no live consumer.
+    # unit row (issue #1025).
+    # Predecessor 0.167.0: Work no longer offers an in-process external-engine second opinion; the
+    # offer's prose and routing leave the work skill and its continuation reference, and
+    # plugins/saga/scripts/second_opinion.py is deleted with no live consumer, while the
+    # external-content trust boundary survives with its guard narrowed to the one remaining call
+    # site (issue #938).
     # Predecessor 0.166.0: /plan ends by dispatching the plan
     # review to the Plan Reviewer and looping on repair until no P0 or P1 remains, the /work floor
     # gate stays blocking on the operator's one-word override alone, the Workflow-backend and
@@ -3970,13 +3974,14 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # was step 3 is pushed to step 4 by the insertion (proves a real reorder, not a keyword sprinkle).
     assert "1. **Render the operator status header**" in work_doc
     # Step 4 is the last step of the section, and its presence proves the card render is a real
-    # reorder rather than a keyword sprinkle. Issue #1027 renamed it: the ship ceremony that used
-    # to run there was removed, and the merge turn belongs to the integrate step. The guard holds
-    # the position, not the old wording.
+    # reorder rather than a keyword sprinkle. BOTH sides of this guard's history changed its
+    # wording -- issue #1029 made the step continue the run rather than present routing, and issue
+    # #1027 removed the ship ceremony it used to continue into -- which is the argument for holding
+    # the POSITION and not the prose. The literal is kept as a second, weaker check.
     assert re.search(r"^4\. \*\*[^*]+\*\*", work_doc, flags=re.MULTILINE), (
         "section 5.4 must still carry a fourth step after the status-card render"
     )
-    assert "4. **Hand over to the integrate step.**" in work_doc
+    assert "4. **Hand over to the integrate step, and continue into `/qa` on merge.**" in work_doc
     # STILL PRESENT (KTD5): detailed work-session evidence reference.
     assert "work-session" in work_doc
 

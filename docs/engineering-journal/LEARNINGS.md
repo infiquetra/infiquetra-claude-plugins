@@ -56,6 +56,29 @@ announce themselves.
 against the base commit before planning from it, and say in the plan which revision each number was
 read at.
 
+### A sibling taking the same version number produces no conflict, because both sides write the identical string  {#1029-same-version-collision-merges-silently}
+
+**Evidence.** Issue 1029 bumped saga to 0.167.0 against `origin/parent/1018` at `b98e94ea`, where saga read 0.166.0, and the release-surface diff guard passed at that head. Issue 938 took the same number and merged first, as `54a526b1`. Merging it in produced exactly two conflicts — `plugins/saga/CHANGELOG.md` and the version literal in `tests/test_saga_plugin.py` — and **none** in `plugins/saga/.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json`, which git merged clean to a single `"version": "0.168.0"`-shaped line that both sides had written as `0.167.0`.
+
+**Mechanism.** A version bump is a one-line replacement to a specific literal. When two branches replace it with the *same* literal, that is not a conflict in git's terms — it is agreement — so the merge succeeds and the tree carries one plugin at one version with two changelog sections claiming it. The only reason the merge stopped at all is that the two cards wrote *different prose* beside the number: the changelog body and the trailing comment on the test assertion. Prose is what made the collision visible; the machine-read fields did not.
+
+**Generalizable rule.** After merging a sibling that touched the same plugin, re-read the version literal rather than trusting that a clean merge means no collision. The signal to look for is two changelog sections under one heading number, not a conflict marker. Two guards that would have caught it late: `check_release_surface_parity.py` compares the manifest to the marketplace, and both were wrong in the same way, so it stays green; `release_surface_diff_guard.py` asks only whether a changed plugin bumped at all, not whether it bumped above its base.
+
+### The plugin had no session-start reader of the run record, and a "stale next step" looked like one that had leaked  {#1029-no-session-start-reader-of-the-record}
+
+**Evidence.** Issue 1029. `plugins/saga/hooks/hooks.json` before this change registered the spore reader under `"matcher": "compact"` alone; the three `startup|resume` entries were the stale-default-branch warning, the teardown reclaim, and the team teardown. Issue 1023 had already made the run record authoritative over the saga envelope log for `next_step` (`plugins/saga/scripts/saga.py:1043`) and had taught the compaction spore to freeze and re-inject it (`saga_spore.py:253`). Nothing read it at a cold start.
+
+**Mechanism.** The session that produced this card opened carrying a `next_step` from an old saga tick, which read as "the record's value leaked into a new session". It had not: the record was never read there at all, and the value came from the envelope log, which is append-only history whose older ticks are *meant* to hold stale values. Two different absences produce the same symptom — a value that is read from the wrong place, and a value that is read from no place — and they have opposite fixes. The fix here was to add the reader and give it a suppression rule, not to change who wins.
+
+**Generalizable rule.** When state arrives stale, establish which reader produced it before deciding the authority is wrong. "The authority is being ignored" and "nothing consults the authority here" look identical from the operator's chair, and only one of them is a bug in the authority.
+
+### An acceptance criterion can name a file the repository does not have, and the command still looks runnable  {#1029-acceptance-criterion-named-a-nonexistent-test-file}
+
+**Evidence.** Issue 1029's card carried `uv run pytest tests/test_spore_hooks.py -q` in both its acceptance criteria and its verification block. No such file exists on `origin/parent/1018` at `b98e94ea` or anywhere in the history of this branch; the spore's tests are `tests/test_compact_spore_session_hook.py`, `tests/test_precompact_spore_hook.py` and `tests/test_spore_hooks_registration.py`. The plan's document review caught it as a `P1` and resolved the criterion to the four files that actually carry the suppression cases (`docs/reviews/doc-review-issue-1029-2026-09-20.md`, finding F1).
+
+**Mechanism.** A path in a fenced command reads as verified because it is shaped like one — and pytest's failure for a missing file is a collection error, which an implementer in a hurry repairs by *creating* the file. An empty `tests/test_spore_hooks.py` would then pass, and the criterion would report green having proved nothing. The card's plausible-looking command was the danger, not its absence.
+
+**Generalizable rule.** Resolve every path a card's verification names against the tree before planning from it, and when one does not exist, say so in the plan and name the real one. Never create a file to make a criterion's literal text runnable: that converts a documentation error into a false green.
 ### A card-scoped inner loop proves the card and nothing else  {#1025-card-scoped-inner-loop-is-not-the-suite}
 
 **Evidence.** Issue #1025, commit `d2f9c0b4`. The card's inner loop was

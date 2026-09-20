@@ -470,7 +470,7 @@ Interaction-rules contract above: open before prompting, satisfy on answer, `res
 silence (`HALT`).
 
 When the run ends or hands off, close with the requirements doc's absolute path, the key decisions, and
-the recommended next step (`/plan` when ready, or `/office-hours` if it bounced back). When paused with
+the step to take next (`/plan` when ready, or `/office-hours` if it bounced back). When paused with
 blocking questions still open, state that planning is blocked by those questions and that the operator
 can resume with `/brainstorm`.
 

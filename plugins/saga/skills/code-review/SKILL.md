@@ -353,12 +353,24 @@ exposure — an authorisation bypass, a tenant-isolation breach, or disclosure o
 secret. *Reproduced* is the whole standard: speculation, an unsupported priority label, and a
 below-threshold score on its own do not qualify.
 
-### 5.4 Route
+### 5.4 Continue on the verdict
 
-- **`accepted`** — continue to the next lifecycle step.
-- **`repairs_requested`** — the findings go to repair planning.
-- **`cycle_cap_best_available`** — proceed with the best-available revision and surface every residual.
-- **`review_incomplete`** — report that delivery did not establish a review. Never invent a score.
+**Each verdict performs its own next step in the same turn** (issue #1029); none of them is a
+recommendation the caller is left to act on. `/code-review` is almost always entered from `/work`
+§5.1, so "continue" usually means returning the verdict to that caller and letting it proceed —
+say which of the two you did.
+
+- **`accepted`** — continue into the next lifecycle step: return to `/work`'s gate when it called
+  you, and otherwise run the step the run record's `next_step` names.
+- **`repairs_requested`** — **run repair planning now** on the findings you just wrote. Do not stop
+  at naming it.
+- **`cycle_cap_best_available`** — continue with the best-available revision and surface every
+  residual in the same message. The cap is a stated limit, not a pass.
+- **`review_incomplete`** — **stop and report** that delivery did not establish a review. Never
+  invent a score and never continue past a review that did not happen.
+
+Continuation changes which step runs next, never what is confirmed: nothing here opens, updates,
+approves, or merges a pull request, and the boundary below is unchanged.
 
 ### 5.5 Hard boundary
 

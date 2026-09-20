@@ -320,6 +320,18 @@ def record_functional_test(
 
     An unrun scenario is never folded into a pass: every prescribed scenario ends the pass with a
     terminal state, and a scenario carrying anything else is refused by name.
+
+    Three states go in and five statuses come out, because ``blocked`` routes differently from
+    both of its neighbours. A **required** blocked scenario returns ``blocked``: it proved nothing,
+    and its causes — environment, credential, permission — are the operator's approval boundaries,
+    which no build loop can repair, so it stops for him and never counts a repair cycle. An
+    **optional** blocked scenario returns ``passed-with-proof-debt``, carrying the debt by name.
+    A scenario that does not say which it is counts as required, because the safe default is the
+    one that cannot pass unproved.
+
+    This arithmetic was originally computed from the failed list alone, which reported a scenario
+    list holding nothing but blocked entries as ``passed`` — the silent skip prescribed testing
+    exists to remove (LEARNINGS ``{#1039-record-functional-test-counts-only-failures}``).
     """
     for scenario in scenarios:
         state = str(scenario.get("state") or "")
@@ -337,10 +349,47 @@ def record_functional_test(
     cycles = int(existing.get("post_merge_cycles") or 0)
     extension_taken = bool(existing.get("extension_taken"))
     failed = [s for s in scenarios if s.get("state") == "failed"]
+    blocked = [s for s in scenarios if s.get("state") == "blocked"]
+    required_blocked = [s for s in blocked if s.get("required", True)]
+    optional_blocked = [s for s in blocked if not s.get("required", True)]
     allowance = post_merge_allowance(record)
     budget = allowance["standard"] + allowance["escalated"]
 
+    # A required block outranks a failure: the loop can repair the failure and cannot repair the
+    # block, so sending this to the loop would spend a cycle on work that cannot clear the stop.
+    if required_blocked:
+        named = "; ".join(
+            f"{s.get('name', '?')}: {s.get('cause', '')}".strip() for s in required_blocked
+        )
+        return {
+            "status": "blocked",
+            "scenarios": scenarios,
+            "post_merge_cycles": cycles,
+            "extension_taken": extension_taken,
+            "reason": (
+                f"{len(required_blocked)} required scenario(s) could not run, so nothing was "
+                f"proved about them: {named}. The causes of a block are environment, credential "
+                "and permission, none of which the build loop can repair, so this goes to the "
+                "operator and no repair cycle is counted"
+            ),
+        }
+
     if not failed:
+        if optional_blocked:
+            return {
+                "status": "passed-with-proof-debt",
+                "scenarios": scenarios,
+                "post_merge_cycles": cycles,
+                "extension_taken": extension_taken,
+                "proof_debt": [
+                    {"name": str(s.get("name", "?")), "cause": str(s.get("cause", ""))}
+                    for s in optional_blocked
+                ],
+                "reason": (
+                    f"every required scenario passed and {len(optional_blocked)} optional "
+                    "scenario(s) could not run; the debt is recorded rather than hidden"
+                ),
+            }
         return {
             "status": "passed",
             "scenarios": scenarios,

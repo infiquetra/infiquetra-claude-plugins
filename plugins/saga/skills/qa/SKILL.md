@@ -1,416 +1,217 @@
 ---
 name: qa
-description: Run a risk-driven Infiquetra acceptance-evidence QA gate on shipped work. Restores the work-thread saga, classifies the change into risk classes, runs acceptance checks (including browser behavior via the installed MCP), gathers evidence, assigns severity, derives a ship verdict, writes a durable QA artifact, advances the saga qa-track on pass, and routes by merge state — without fixing, committing, or deploying. Triggers on "qa", "run QA", "does this actually work", "acceptance check", "ship-readiness", or a /work or /code-review hand-in after merge.
+description: Run the lifecycle's functional test — the prescribed strategy catalogue. Reads the repository profile and the run record, computes the required strategies from file patterns, lets one advisory judgment widen that set and never narrow it, runs each strategy's driver to passed, failed, or blocked, appends one evidence envelope each to the run record, counts the verdict, publishes the per-strategy statuses, and routes. It never fixes anything. Triggers on "qa", "functional test", "does the shipped thing work", "run the strategies", or the release step's hand-off after a non-production deployment.
 ---
 
-# QA
+# QA — the functional test
 
-`/qa` answers **"Does the shipped thing actually work?"** It is the **acceptance-evidence GATE**
-downstream of `/work` and `/code-review`: after code is built, reviewed, and (usually) merged, `/qa`
-runs the acceptance checks the change actually warrants, gathers evidence, assigns severity, derives a
-ship verdict, and routes. It reports and routes — it does **not** fix, commit, push, open or merge a
-PR, deploy, file SDLC issues, or set readiness labels.
+`/qa` answers **"Does the shipped thing actually work?"** It runs after the release step has
+merged the change and deployed it to the non-production destination, and it decides whether what
+was shipped works. It reports, it verdicts, and it routes. It does **NOT** fix.
+
+It is the only step in the chain with no prescribed method — which is exactly why its method is
+prescribed here, as data, rather than improvised per run.
+
+## What replaced what
+
+This skill used to classify a change into nine risk classes, improvise the checks for each, ask a
+language model for a severity per finding, and turn those counts into a number. Every part of that
+is gone. In its place:
+
+| Then | Now |
+|---|---|
+| Nine risk classes, checks improvised per class | Ten prescribed strategies, declared as data in `saga/references/qa-catalogue.yaml` |
+| The checks a run performed were whatever it thought of | The strategies come from the repository's profile, matched by file pattern, by code |
+| A check that could not run was a "graceful no-op" | A check that cannot run is `blocked`, and a required `blocked` stops the run |
+| A model assigned a severity per finding | Nothing assigns a severity; there is no severity |
+| A number was computed from those severities | The verdict is counted from three result values |
+| `ship` / `ship-with-deferred` / `no-ship` | `pass` / `pass-with-proof-debt` / `fail` |
+| Advisory: it never blocked the router | Authoritative: a failure re-enters the build loop |
+
+The verdict words changed because the decision changed. This step runs **after** the deployment,
+so it no longer decides whether to ship; it decides whether the shipped thing works.
 
 ## Position in the lifecycle
 
-`/qa` is the saga `LIFECYCLE_PHASES` `qa` slot — the gate after execution:
+```
+build loop  →  code review  →  merge turn  →  release + non-production deploy  →  /qa  →  close
+                    ▲                                                              │
+                    └──────────────── fail re-enters the build loop ───────────────┘
+                                      a required block stops for the operator
+```
 
-- `/plan` answers: "How should it be built?"
-- the `review` phase (`/doc-review`) answers: "Is this plan ready to execute?"
-- `/work` answers: "Build it." (and calls `/code-review` before opening a PR)
-- `/code-review` answers: "Is the built code safe to merge?" (a within-work code-quality lens)
-- **`/qa` answers: "Does the shipped thing actually work?"** (this engine — the acceptance gate)
-
-`/code-review` reads the *diff*; `/qa` reads the *running behavior and acceptance evidence*. `/qa` is an
-**advisory router node**: it produces a verdict and routes, but it **never blocks the router** (`/loop`
-treats a `/qa` route as advisory) and it normally runs **post-merge**. `/work` (`work/SKILL.md`) routes
-here advisorily after merge and explicitly **deferred the `qa` phase advance to this rebuild** — `/qa`
-lands that advance (Phase 6).
-
-**This skill is what the board's `Verify` stage holds (W8, SDLC R69/R71).** A card enters `Verify`
-only after the change is merged plus a succeeded non-production deployment. For work with no
-deployable software, the same merge precondition still applies — the no-deployable route relaxes
-the **deployment** requirement, never the **merge** requirement — so the card enters `Verify` only
-after the change is merged **and** the delivered artifact exists in its real form and consumption
-context (`Deploying to non-production` is applicable-only and never set for it). There is no
-pre-merge entry route: PR-ready never moves a card to `Verify`; the single authority for the
-condition is the `verify_entry` block of `config/sdlc-schema.json` in `infiquetra-sdlc`. When a
-card is in `Verify`, the activity it holds is this acceptance gate.
+The Functional Tester is a herdr session created from the roles library. Its prompt names one
+command and one issue. It makes **no selection decisions of its own**: the selection is computed.
 
 ## Core principles
 
-1. **Gate, not fixer.** `/qa` reports, assigns severity, derives a verdict, and routes. It does **NOT**
-   fix bugs, does **NOT** edit reviewed code, does **NOT** commit, does **NOT** push, does **NOT** open,
-   update, or merge a PR, does **NOT** deploy, does **NOT** file SDLC issues, and does **NOT** set
-   readiness labels. All fixing and deep root-cause work belongs to `/work` (round-N), the existing
-   fixers, and `/investigate` (the systematic-debugging engine). Fixer dispatch is *routed*, never run
-   here.
-2. **Risk-driven.** Classify the change into the **9-way risk router** — behavior, security, infra, API,
-   deployment, data, docs, config, trivial — and run only the classes the change actually touches,
-   narrow before broad. Browser behavior folds into the **behavior** class as one MCP-driven check
-   (`references/risk-taxonomy.md`), a graceful no-op for non-UI repos.
-3. **Evidence + falsifiable prediction.** Every finding cites concrete evidence — a `file:line`, a check
-   command's output, a log line, a network response, or an MCP screenshot/console capture. "It looks
-   broken" is not a finding. For each failure whose **cause is uncertain**, state a `ce-debug`-style
-   **falsifiable prediction**: "if this is the real cause, then X in a different path/scenario must also
-   fail." A wrong prediction means you found a symptom, not the cause — and the prediction gives the
-   routed fixer a head start. When the cause is obvious (clear stack trace, explicit null), the evidence
-   itself is sufficient; the prediction is for uncertain links only.
-4. **Score AND severity-banded verdict.** Each finding carries a severity
-   (critical / high / medium / low) with a documented cross-walk to `/code-review`'s P0-P3. `/qa`
-   reports **both** a deterministic 0-100 health **score** *and* a **ship verdict**, and they play
-   different roles. The score is a **real PORT of gstack's Health Score Rubric formula** — not an
-   invented number: `qa_health_score.py` applies gstack's verbatim per-finding deductions
-   (critical -25 / high -15 / medium -8 / low -3, floored at 0 per class) over documented infiquetra
-   ship-risk class weights, re-normalized across the in-scope classes (`references/qa-report.md`). The
-   honest caveat: the score's *inputs* are LLM-assigned severity counts, so the number is **one
-   signal**, not the gate. The **gate decision** is the severity-banded ship verdict — `ship` /
-   `ship-with-deferred` / `no-ship` — **derived** from the tier's blocking threshold; pass/fail is
-   stated **per risk class**. Report the score alongside the verdict; the verdict decides.
-5. **Saga qa-track consumer.** `restore` the work-thread saga, write `qa_paths`, and **on PASS advance**
-   `lifecycle_phase` from `work` to `qa` (the deferred advance). On FAIL, keep `lifecycle_phase=work`
-   and record the evidence. `/qa` never edits `saga.py` — every flag it uses already exists.
-6. **Route, don't execute.** PASS routes to `/handoff` or `/retro`. FAIL routes by **merge state**:
-   pre-merge to `/work` (re-enter the round-N loop), post-merge to `/handoff` to open a new defect
-   thread. Routing **reads** `loop/references/dispatch-table.md` — it never restates the table.
+1. **Reports, never repairs.** `/qa` does **NOT** fix bugs, does **NOT** edit code, does
+   **NOT** commit, does **NOT** push, does **NOT** open, update, or merge a PR, does **NOT**
+   deploy, and does **NOT** file SDLC issues. Every repair belongs to the build loop. Never
+   `git add` anything under `.claude/saga/` — the run record is git-ignored on purpose.
+2. **Prescribed, not improvised.** The strategies, their tools, their evidence fields, their proof
+   boundaries and their thresholds are catalogue rows. A new strategy is a row plus a driver, not
+   a rewrite of this document.
+3. **Three results, and there is no fourth.** `passed`, `failed`, `blocked`. A strategy the
+   boundary excludes is recorded in the selection as out-of-boundary, never as a result. A silent
+   skip has nowhere to hide.
+4. **Nothing is scored.** No severity is assigned by anything, and no number is derived from
+   counting severities. The verdict is arithmetic over three values.
+5. **The judgment may only widen.** The required set is computed first, from the profile's file
+   patterns. The advisory typed judgment may add a strategy the patterns under-selected; it may
+   never remove one, and it never computes the verdict.
+6. **Evidence is declared before it is gathered.** Each strategy's catalogue row names the fields
+   its envelope must carry, and every envelope validates against the envelope schema.
+7. **Explicit invocation.** `/qa` runs when the chain reaches it or when the operator asks for it
+   by name. It is never launched implicitly from inside another skill's phase.
 
-## Interaction method
+## The one command
 
-Use `AskUserQuestion` for choices from a known set (tier, execution backend for large/parallel
-verification, FAIL routing target). Call `ToolSearch` with `select:AskUserQuestion` first if its schema
-is not loaded. Ask one question per turn; never silently skip a question.
-
-In a channel session (`redis-channel` active), `AskUserQuestion` cannot be called — inline the choices
-in your reply text instead, following the canonical channel-inline convention in
-`saga/skills/brainstorm/SKILL.md` (do not duplicate its wording here).
-
-Use repo-relative paths in every generated document. Absolute paths break portability across machines
-and worktrees. (The one exception is the saga `--saga-id` value — a derived id, not a path.)
-
----
-
-## Phase 0 — Enter, parse, restore, scope the diff
-
-Parse arguments and establish the change scope before running any check.
-
-### 0.1 Parse the target and tier
-
-- **Target:** the issue/PR (`#N`), a branch name, a diff, or a free-text scope. Strip recognized tier
-  tokens before treating the rest as a target.
-- **Tier (default Standard):** `Quick` / `Standard` / `Exhaustive` — these set which severities **block**
-  the ship verdict and the verification depth (`references/risk-taxonomy.md` and `references/qa-report.md`).
-
-### 0.2 Restore the work-thread saga
-
-Find and restore the saga for this change so the gate advances the same thread `/work` built. Use the
-exact `kind` and `id` (or run `saga.py scan` first to locate the active thread, then restore by id):
+Everything below is done by one runnable command. Read its output; do not reproduce its logic by
+hand.
 
 ```bash
-python3 plugins/saga/scripts/saga.py restore --saga-id <issue-N|task-slug>
+# Print what would run and why, with one reason per entry. Runs no driver.
+uv run python plugins/saga/scripts/qa_strategies.py select --issue <N>
+
+# The whole procedure: select, preflight, dispatch, count, record.
+uv run python plugins/saga/scripts/qa_strategies.py run --issue <N>
+
+# The same runner at the build loop's narrower boundary (issue 1027's scenario smoke).
+uv run python plugins/saga/scripts/qa_strategies.py run --issue <N> --boundary branch-preview
+
+# Recompute the verdict from what the record already holds, changing nothing.
+uv run python plugins/saga/scripts/qa_strategies.py verdict --issue <N>
 ```
 
-Capture the restored `lifecycle_phase`, the integer `phase`, `issue_ref`, `plan_path`, `branch`, and
-`pr_refs` — you reuse them verbatim in Phase 6. If no saga is found, `/qa` still runs and writes the
-artifact, but the saga tick is skipped (say so) — never mint a saga from `/qa`.
+Exit codes, which are the routing decision in numeric form:
+
+| Code | Meaning | Where the run goes |
+|---|---|---|
+| 0 | `pass` or `pass-with-proof-debt` | close |
+| 1 | an internal error | the operator |
+| 2 | a refusal: no profile, a profile that proves nothing, or a preflight refusal | the operator |
+| 3 | an unknown run-record version | the operator |
+| 4 | `fail` | the build loop |
+| 5 | a required strategy is `blocked` | the operator |
+
+4 and 5 are separate because they route to different places. A failure is something the build loop
+can repair. A block is an environment, a credential or a permission, and no build loop repairs one.
+
+## The procedure, step by step
+
+1. **The release step records the deployment** in the run record: the destination, the base URL,
+   the deployed revision and the version marker. `/qa` reads that identity; it never invents one.
+2. **Code computes the required strategies** from the profile's file patterns against the change's
+   file list, then filters by the proof boundary this run can reach.
+3. **The advisory judgment is asked, and its answer is unioned with the floor.** Its absence, its
+   timeout and its error all degrade to the declared set. No run fails because it was unavailable.
+4. **Code preflights** the environments, the secret handles, the estimated duration and the
+   estimated cost. Over the profile's ceiling, or missing a credential, the **whole** selection is
+   refused. The affordable subset is never run on its own and reported as a partial pass.
+5. **Each selected strategy's driver runs** and appends exactly one evidence envelope. Secrets are
+   redacted inside the driver, before the envelope exists.
+6. **Code counts the verdict and writes it** to the run record under the top-level `qa` key.
+7. **Publish one comment** carrying the selection, the per-strategy statuses and the artifact
+   pointers, so the operator can see which checks ran and which did not:
+
+   ```bash
+   uv run python plugins/saga/scripts/qa_strategies.py run --issue <N> > /tmp/qa-<N>.md
+   gh issue comment <N> --repo <owner/repo> --body-file /tmp/qa-<N>.md
+   ```
+
+8. **Route by the exit code**, per the table above.
+
+## The status card
+
+The operator-facing card for this surface is rendered by the single emitter,
+`saga/scripts/status_card.py`, through its `project_qa` projection — never hand-drawn here. It
+reads the frontmatter and the results table of the comment the runner prints, and renders five
+rows: Selection · Preflight · Evidence · Proof debt · Verdict.
+
+Two of those rows are the reason the card is worth having. **Evidence** follows the per-strategy
+results rather than the verdict word, so a run whose strategies could not run never renders as a
+finished one. **Proof debt** stays visible on a passing run, because a debt that rendered as done
+would be a hidden skip in a new place.
+
+## The catalogue
+
+Ten strategies. Their situations, tools, evidence fields, boundaries and thresholds live in
+`references/qa-catalogue-reference.md`, and the data itself in
+`saga/references/qa-catalogue.yaml`.
+
+| Strategy | The situation that selects it |
+|---|---|
+| `api-workflow` | a change to a deployed HTTP surface, handler, route, or authorization rule |
+| `contract-check` | a change to an OpenAPI document, event schema, generated client, or pinned contract |
+| `app-ui` | a change to application widget or screen behaviour |
+| `hosted-surface` | a change touching a non-application hosted page |
+| `cli-smoke` | a change to a command-line entry point, console script, or plugin script |
+| `deploy-boundary` | any change that reaches a deployed environment |
+| `data-check` | a change to a schema, migration, write path, or idempotency key |
+| `infrastructure-read-back` | a change to infrastructure roles, cluster or network configuration |
+| `installed-surface` | a change to a Claude plugin's skills, commands, agents, or metadata |
+| `manual-runbook` | automation is unavailable, unsafe, or needs operator-held credentials |
+
+Five ship with drivers in the first release: `cli-smoke`, `contract-check`, `deploy-boundary`,
+`installed-surface`, and `api-workflow` by delegation to the executor the profile declares. The
+other five are declared and ship no driver; selecting one yields `blocked` carrying the reason the
+catalogue row states and the condition that reopens it. That is deliberate and it is honest: an
+unexercised driver is the "graceful no-op" this redesign exists to remove, wearing a new name.
+
+## The repository profile
+
+Each repository declares its own strategies in the optional `qa` block of the tracked
+`.saga-profile.json` at its root. `references/qa-evidence-and-verdict.md` carries the field list;
+`saga/references/qa-profile.schema.json` is the shape.
+
+Two refusals, both deliberate:
+
+- **A repository with no `qa` block is `blocked`,** naming the file and the missing key. It is
+  never an empty selection that reports a pass.
+- **A profile whose strategies are all optional is `blocked`.** Such a profile would let a run
+  report a pass having proved nothing, which is the failure this design exists to remove.
+
+The Planner writes a new scenario into the profile at plan time. `/qa` never writes its own
+scenarios: a functional test that authored its own scenarios would be grading its own homework.
+
+## The verdict
+
+| Verdict | When |
+|---|---|
+| `pass` | every required strategy returned `passed` |
+| `pass-with-proof-debt` | every required strategy returned `passed`, and at least one optional strategy returned `blocked`; the debt, its reason and its revisit condition are recorded |
+| `fail` | anything else |
+
+## Where the judgment helps, and where it would mislead
+
+One advisory judgment ships: strategy widening. Its act band is a declared number in the catalogue
+file, not a literal in code and not a value an implementer chose — the evaluation harness sets the
+operating band from recorded real uses. Every call is logged with its probability and any override.
 
-### 0.3 Determine the diff (diff-aware mode)
+The judgment must never: compare timestamps or freshness windows; count findings, failures or
+coverage; decide whether a threshold is met; screen driver output for adversarial content; or read
+live external state. Each of those is a documented weakness of the model, and each of those jobs
+belongs to code here.
 
-**Pre-merge / branch case** — reuse `/code-review`'s stale-base merge-base mechanic (fetch first so
-stale local state does not produce false positives), then map changed files to risk classes:
+Three further judgments — target variant, scenario ranking, failure triage — ship only after the
+evaluation harness has recorded agreement for the widening judgment at the chosen band.
 
-```bash
-git fetch origin <base> --quiet
-DIFF_BASE=$(git merge-base origin/<base> HEAD)
-git diff --name-only "$DIFF_BASE"
-```
+## What this skill does not do
 
-`<base>` is the PR base branch (`gh pr view <N> --json baseRefName -q .baseRefName` when a PR exists) or
-the repository default branch.
+`/qa` does **NOT** fix bugs, does **NOT** edit code, does **NOT** commit, does **NOT** push, does
+**NOT** open, update, or merge a PR, does **NOT** deploy, does **NOT** file SDLC issues, and does
+**NOT** set readiness labels. It reports, verdicts, and routes — then stops.
 
-**Post-merge case** — the work is already on `main`, so `<base>...HEAD` (three-dot) is **empty**. Read
-the merge commit's changeset from the PR instead:
+Outbound routing is the chain's, and the map is referenced rather than restated:
+`saga/skills/loop/references/dispatch-table.md`.
 
-```bash
-gh pr view <N> --json files
-```
+## References
 
-Map the changed file paths to risk classes with the file-pattern map in `references/risk-taxonomy.md`.
-
-### 0.4 Read the prior overall score (baseline-from-prior-report)
-
-If the restored saga carries a most-recent `qa_paths` entry, **read that prior QA report** and extract
-its `## Health Score` overall (0-100). Pass it to the Phase 4 scorer as `--baseline-score <prior>` so
-the run emits a `delta`. There is **no `baseline.json`** and **no saga baseline field** — the baseline
-is read straight from the prior report the saga points at (the gstack regression-daemon is dropped).
-First run for a thread has no prior `qa_paths`: omit `--baseline-score` (the scorer emits
-`delta: null`).
-
----
-
-## Phase 1 — Risk classification
-
-Decide which of the 9 risk classes are in scope. Combine three signals:
-
-1. The diff-aware file→class map from Phase 0.3.
-2. The plan's verification section (`saga.plan_path` → `docs/plans/...`) — the acceptance criteria the
-   build was supposed to satisfy.
-3. `references/risk-taxonomy.md` — the per-class acceptance/evidence checklist.
-
-A change usually lands in 1-3 classes. **trivial** short-circuits to a quick read-and-confirm.
-**behavior** with a UI surface pulls in the browser MCP check (one class, not seven web categories).
-
----
-
-## Phase 2 — Run checks per class
-
-**Freeze the pass/fail criteria before running any check** (pre-registered criteria, R4/#398): the
-in-scope risk classes and the tier's blocking threshold from Phase 1/0.1 are the criteria contract for
-this run, and they must be frozen before the first check runs so a later attempt cannot redefine what
-counts as passing:
-
-Write the criteria into the **run record** — `{"tier": "<Quick|Standard|Exhaustive>", "in_scope":
-["<class>", ...], "blocking_threshold": "<per §4.2>"}` under the run's functional-test state, keyed
-by the reviewed revision. The run record is the one file every role reads, and reading the criteria
-from it is what stops a later attempt redefining what counts as passing:
-
-```bash
-uv run python plugins/saga/scripts/run_record.py path <issue>   # where the record lives
-```
-
-A repeat run against the same reviewed revision reads back the criteria already recorded rather
-than writing new ones. Criteria already present for that revision are the contract; differing
-criteria for the same revision are a refusal, not an update.
-
-For each in-scope class, run the acceptance checks from `references/risk-taxonomy.md`, narrow before
-broad, and gather **evidence** for every result:
-
-- **behavior** — repo test commands; for a UI surface, drive the running app with the installed
-  **chrome-devtools / playwright MCP** (navigate, interact, read console + network) and capture
-  screenshots/console as evidence. Graceful no-op for serverless / SDK / Ansible / plugin repos.
-- **security** — the per-class checklist; **offer** an `appsec-audit` (operator-choice) for a real trust
-  boundary; never run a destructive probe.
-- **deployment / infra** — **READ** deploy state / inventory and confirm acceptance evidence; **never
-  mutate** infrastructure or deploy.
-- **API / data / config / docs** — contract/shape/migration/render checks per the reference.
-
-**Operator-choice for large/parallel verification.** When several risk classes warrant independent,
-parallel verification, **OFFER** a backend per `../../references/operator-choice.md` (the narrow default
-offer: `inline` / `team-execution`; `cc-workflows-ultracode` only on explicit invocation) — never
-auto-spawn. Parallel verification uses **generic `Explore` / `Task` agents** (this plugin has no
-`agents/` dir for class-specific personas — do not reference named `ce-*` agents); each read-only
-verification spawn names `subagent_type: saga:readonly-verifier` and `isolation: "worktree"` per
-`plugins/saga/references/sandbox-spawn-sites.md`.
-
----
-
-## Phase 3 — Findings
-
-Turn evidence into findings. Each finding records:
-
-- **severity** — critical / high / medium / low (defs + the P0-P3 cross-walk in `references/risk-taxonomy.md`).
-- **risk class** — which of the 9 it belongs to.
-- **evidence** — the proving `file:line`, check output, log, network response, or MCP capture.
-- **repro** — the minimal steps to reproduce.
-- **falsifiable prediction** — *only for failures whose cause is uncertain*: a concrete claim about
-  another path/scenario that must also fail if this is the real cause (principle 3). Obvious-cause
-  findings skip it.
-
-`/qa` does **not** fix anything here — it documents.
-
----
-
-## Phase 4 — Score + verdict
-
-Report **two** things — the deterministic health **score** (a signal) and the **ship verdict** (the
-gate decision). They are separate: the score is a continuous 0-100 number; the verdict is the
-pass/fail gate.
-
-### 4.1 Compute the deterministic health score
-
-Roll the per-class severity counts from Phase 3 into the deterministic scorer — a faithful **PORT of
-gstack's Health Score Rubric** (the deduction values are gstack's verbatim; the class weights are a
-documented infiquetra ship-risk adaptation — see `references/qa-report.md`):
-
-```bash
-python3 plugins/saga/scripts/qa_health_score.py \
-  --findings-json '{"<class>": {"<severity>": <count>, ...}, "<checked-clean-class>": {}}' \
-  --baseline-score <prior-overall-from-Phase-0.4>
-```
-
-`--findings-json` accepts a file path or an inline JSON string keyed by the in-scope risk classes (a
-checked-but-clean class is an empty `{}` map and scores 100; an absent class is N/A and excluded).
-`--baseline-score` is the prior run's `overall` (Phase 0.4); when present the scorer also emits
-`delta`. The scorer prints `{"per_class": {...}, "overall": N, "in_scope": [...], "baseline": N,
-"delta": D}` — report the overall, the per-class table, and the baseline delta.
-
-The score is **one signal**, not the gate: its inputs are LLM-assigned severities (principle 4).
-
-### 4.1b Provenance-manifest confidence input (R16, advisory)
-
-When the change under QA carried delegated execution(s) with recorded provenance manifests, pull
-the adjudicated verified ratio as a second, independent confidence signal alongside the health score:
-
-```bash
-python3 plugins/saga/scripts/manifest_reader.py --root <saga-manifests-dir> [--json]
-```
-
-The reader's `verified_ratio` is `verified / (verified + inferred + not-checked)` among claims
-Claude has adjudicated (R16) — a measure of how much of the delegated output's claim surface has
-actually been checked and confirmed, distinct from the LLM-assigned severity counts the health score
-is built from. A low ratio (little has been adjudicated, or much of what has been checked came back
-`inferred`/`not-checked` rather than `verified`) is a reason to widen Phase 2's acceptance checks
-before trusting a clean severity count; a nonzero `parroting_count` (R7) is a reason to re-verify the
-specific claims a producer over-asserted. **Zero-data ("no data yet") is not a failure** — most
-changes have no delegated executions and no manifest tree; treat it as "no additional signal," never
-as a deduction. This input is **advisory only** (R8/R12): it never changes the score formula or the
-verdict threshold, it informs how much Phase 2/3 evidence-gathering to spend before trusting a clean
-result.
-
-### 4.2 Derive the ship verdict
-
-State **pass/fail per risk class**, then derive the overall **ship verdict** from the tier's blocking
-threshold (`references/qa-report.md`):
-
-- **Quick:** critical + high block.
-- **Standard:** critical + high + medium block.
-- **Exhaustive:** all severities block + a broad sweep.
-
-A class with no blocking finding **passes**; any blocking finding makes its class **fail**. The ship
-verdict is `ship` (no blocking findings), `ship-with-deferred` (only non-blocking findings, recorded
-with repro), or `no-ship` (any blocking finding). The **verdict is the gate decision**; the score
-above rides alongside it as the continuous health signal.
-
----
-
-## Phase 5 — Report + emit evidence
-
-Render the operator status header via the shared card renderer (`plugins/saga/scripts/status_card.py`,
-`project_qa`) — the single emitter of the operator-facing ship-verdict summary for `/qa`. Pass the
-artifact text and the reviewed ref; the card derives its cells on-read from the artifact's frontmatter
-(`verdict:`, `health_score:`) and the per-class pass/fail table. The card is the status header only —
-the full evidence detail that follows (per-finding list, per-class table, verdict derivation) is the
-drill-down body the card cells reference, not replaced by the card.
-
-The ship verdict values (`ship`, `ship-with-deferred`, `no-ship`) derived in §4.2 are the card's data
-source; they remain authoritative in the artifact.
-
-### 5.1 Write the durable artifact, and record the result on the run record
-
-Compose the report using the shape in `references/qa-report.md` (adapted from gstack's template,
-browser-decoupled): header (target / tier / scope / reviewed revision), overall health score +
-per-class table + baseline delta from Phase 4, top findings, summary-by-severity, per-finding
-(severity / class / evidence / repro / falsifiable-prediction), **recommended** regression tests
-(recommend — do **not** generate them), the ship verdict with its derivation, and
-deferred-with-repro.
-
-Write the report to `docs/qa/qa-<saga-id-or-issue>-<date>.md`, and record the result on the **run
-record** rather than in an evidence ledger (issue 1028): each prescribed scenario's terminal state —
-`passed`, `failed`, or `blocked` **with its cause named** — the reviewed revision, the verdict, and
-the artifact's path. An unrun scenario is never folded into a pass.
-
-```bash
-REVIEWED_SHA=$(git rev-parse HEAD)
-uv run python plugins/saga/scripts/run_record.py show <issue>   # read the record back
-```
-
-The recorded path is the durable QA artifact, and it is what Phase 5.2's evidence link, Phase 6's
-`--qa-paths` and the issue progress all point at. A failure does not overwrite an earlier result:
-it is a new entry, and it re-enters the build loop against the post-merge allowance, which
-`release_step.py` counts. When Phase 0.2 found no work-thread saga there is no record to write to;
-say so in the report rather than inventing a run.
-
-### 5.2 Emit issue progress with evidence
-
-Post a progress update linking the artifact and listing the checks run:
-
-```bash
-python3 plugins/saga/scripts/issue_progress.py \
-  --event qa \
-  --issue-ref <owner/repo#N> \
-  --destination <plan-only|pr|merge|nonprod-deploy> \
-  --checks-run "<class:check | class:check | ...>" \
-  --evidence-link "<the artifact path recorded in 5.1>"
-```
-
-`--checks-run` is pipe-separated. Skip this command when there is no issue ref (a `task-` thread).
-
----
-
-## Phase 6 — Tick the saga + route
-
-### 6.1 PASS — advance the qa-track
-
-On a `ship` (or `ship-with-deferred`) verdict, append a tick that writes `qa_paths` and **advances**
-`lifecycle_phase` from `work` to `qa` (the deferred advance). **Pin `--phase` to the restored integer
-`phase`** so `--phase-status complete` does not advertise a phantom counter advance, and reuse the
-restored `kind`/`id` verbatim:
-
-```bash
-python3 plugins/saga/scripts/saga.py save \
-  --kind <issue|task> \
-  --id <the-restored-saga-id-suffix> \
-  --lifecycle-phase qa \
-  --phase-status complete \
-  --phase <restored-phase> \
-  --qa-paths "<the artifact path recorded in 5.1>" \
-  --checks-run "<class:check | ...>" \
-  --next-step "<route to /handoff or /retro>" \
-  --summary "<one-line ship verdict>"
-```
-
-`saga.py save` **mints unconditionally**, so run this tick **only if Phase 0.2 restored a saga** — never
-invent a `--kind`/`--id` to satisfy the CLI (the scan-first / never-mint guard `/qa` shares with
-`/code-review`). Never `git add` the tick — saga state is git-ignored and machine-local.
-
-Then **run `/retro` in the same turn** (issue #1029). A pass is the end of the build, and the
-learnings are worth most while the evidence is still in the session — a retro an operator has to
-remember to ask for is a retro that happens on the calm weeks and not the instructive ones. Say in
-one line that you are running it. `/handoff` remains the operator's to take when the work should
-become or update an SDLC issue; name it, do not run it.
-
-### 6.2 FAIL — keep work phase, continue by merge state
-
-On a `no-ship` verdict, **keep `lifecycle_phase=work`** (omit `--lifecycle-phase`, which carries the
-prior phase forward), tick with `--qa-paths "<the artifact path recorded in 5.1>"` and the evidence,
-then **continue into the step the merge state names**, in the same turn (issue #1029) — run it,
-having said in one line which branch you took and why:
-
-- **Pre-merge (PR still open)** → **`/work`** — hand the findings back and re-enter the round-N PR loop.
-  `/work`'s Phase 0.4 re-entry keys on the saga's `pr_refs`, so the thread resumes cleanly.
-- **Post-merge (merged to `main`)** → a **two-target branch**. Do **not** route a merged thread back to
-  `/work` round-N: its `pr_refs` PR is merged, so Phase 0.4 would cycle the merged PR straight back to
-  `/qa`. Instead route by what the failure needs:
-  - **Deep / uncertain root cause** (the cause is unknown or the falsifiable prediction failed) →
-    **`/investigate`** — the systematic-debugging engine owns the causal-chain work `/qa` does not do.
-  - **Clear / trackable defect** (the cause is understood, just not fixing it now) → **`/handoff`** —
-    open a **new defect thread**. This is the one branch that is named rather than run: opening a
-    defect thread is an outward-facing write, so it stays the operator's to take.
-
-`/investigate` is a real routable target — it ships and is on the dispatch-table's routable list, so
-emit it for deep post-merge root-cause failures. `/qa` still does **not** debug: it routes the
-root-cause work TO `/investigate`, never runs it, and there is **no `/investigate` → `/qa` verify
-loop`. Routing **reads** `loop/references/dispatch-table.md`.
-
----
-
-## Hard boundary
-
-`/qa` gathers acceptance evidence, assigns severity, derives a verdict, writes the artifact, ticks the
-saga, and continues into the step its verdict names — then stops. Starting the next step is not
-doing it: it does **NOT** fix bugs, does **NOT** edit reviewed code, does **NOT**
-commit, does **NOT** push, does **NOT** open, update, or merge a PR, does **NOT** deploy, does **NOT**
-file SDLC issues, does **NOT** set readiness labels, and does **NOT** run a fix loop or deep root-cause
-debugging (`/work` and `/investigate` own those). It never blocks the router.
-
----
-
-## Reference files
-
-- `references/risk-taxonomy.md` — the 9-way risk router with per-class acceptance/evidence checklists,
-  the browser-as-one-MCP-class fold, the file-pattern → risk-class map for diff-aware mode, the severity
-  definitions (critical / high / medium / low), and the critical/high/medium/low ↔ P0-P3 cross-walk.
-- `references/qa-report.md` — the QA artifact shape (browser-decoupled, including the health-score
-  block), the health-score model (the gstack-ported deductions + infiquetra class weights +
-  re-normalization + baseline-from-prior-report) with its runnable `qa_health_score.py` line, the
-  ship-verdict derivation (severity bands → ship / ship-with-deferred / no-ship), the
-  tier → blocking-threshold table, and the falsifiable-prediction finding shape.
+- `references/qa-catalogue-reference.md` — the ten strategies with their situation, tool, proof
+  boundary, required evidence and threshold.
+- `references/qa-evidence-and-verdict.md` — the evidence envelope, the repository profile's field
+  list, the verdict arithmetic and the routing table.
+- `saga/references/qa-catalogue.yaml`, `saga/references/qa-profile.schema.json`,
+  `saga/references/qa-envelope.schema.json` — the data and the two shapes.
+- `saga/references/run-record.md` — where the evidence and the verdict are written.

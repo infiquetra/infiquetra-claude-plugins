@@ -2,6 +2,38 @@
 
 ## 2026-09-20
 
+### The status card follows the functional test rather than the functional test keeping a score for the card  {#1039-status-card-follows-the-verdict}
+
+**Decision.** `status_card.project_qa` was retargeted with `/qa` in the same commit. Its rows are
+now Selection · Preflight · Evidence · Proof debt · Verdict, read from the frontmatter and results
+table of the comment the runner prints, rather than Risk class · Checks · Findings · Health score ·
+Ship verdict read from a `docs/qa/` report.
+
+**Rationale.** The single-emitter rule says every operator-facing status card comes from one
+renderer. The alternative was to drop `/qa` from that rule, which would have let the step draw its
+own status output by hand — the exact thing the rule exists to prevent. Keeping `/qa` inside the
+rule cost one projection rewrite and five retargeted tests, and it kept a cross-skill invariant
+whole. The plan had deferred this as a follow-up; the routing guard forced it, and the guard was
+right.
+
+**Rejected alternative.** Removing the `/qa` block from the single-emitter routing test. Cheaper by
+about eighty lines, and it would have quietly created the first status surface outside the emitter.
+
+**Revisit when.** A second surface needs a card shape the gate-sequence archetype cannot express.
+
+### Two rows carry the weight of the card, and neither may render as done  {#1039-evidence-and-debt-rows}
+
+**Decision.** The card's **Evidence** row follows the per-strategy results rather than the verdict
+word, and renders `BLOCKED` when any strategy could not run. The **Proof debt** row renders
+`BLOCKED` on a run that passed with debt, rather than `DONE`.
+
+**Rationale.** Both are the same guard against the same failure. A run that proved nothing must not
+look finished, and a debt that renders as done is a silent skip in a new place — the failure this
+whole card exists to remove. A verdict word alone cannot carry that, because
+`pass-with-proof-debt` is a pass.
+
+**Revisit when.** The operator says the blocked glyph on a passing run is noise rather than signal.
+
 ### The `/qa` catalogue reuses the widen-only union rather than reimplementing it, at the cost of one fleet-core verb  {#1039-qa-widening-reuses-jev-widen}
 
 **Decision.** The widening judgment in the new `/qa` strategy catalogue calls

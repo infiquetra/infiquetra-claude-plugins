@@ -2,6 +2,45 @@
 
 ## 2026-09-20
 
+### The first live run of a new check is worth more than the test suite that passed before it  {#1039-live-run-found-two-driver-bugs}
+
+**Evidence.** The `/qa` strategy runner's eighty-six tests were green when the first end-to-end run
+against this repository's own profile reported `fail` for two reasons that were both the checker's
+fault. The `installed-surface` driver pooled every plugin's version into one set and required the
+set to have one member, so saga at `0.161.0` beside fleet-core at `0.27.0` read as "the roots do
+not agree" on a machine where both roots were perfectly consistent. It also applied
+`expected_surfaces` to every declared plugin, so it demanded saga's `commands/qa.md` of fleet-core.
+
+**Mechanism.** Both bugs need a profile naming **two** plugins to appear, and every unit test wrote
+a fixture naming one. The fixtures were not lazy — they were written from the shape the driver
+expected, which is exactly the shape that hides a bug about relationships between two things. The
+live run used the real profile, which names two plugins, because that is what this repository
+actually has.
+
+**Generalizable rule.** A check whose subject is agreement between N things needs a test with N
+greater than one, and the first live run against real data is the cheapest place to discover that
+N was one everywhere. Run the new check against the real thing before calling it finished, and
+write the regression test from what the live run reported.
+
+### A corpus guard can block the change it was written to protect, and retargeting it is not weakening it  {#1039-retargeting-a-corpus-guard}
+
+**Evidence.** `tests/test_qa_engine_merge_contract` pinned the `/qa` skill's nine-way risk router,
+its ship verdicts, its severity bands and the runnable `qa_health_score.py` line. Issue 1039 removed
+every one of those by design, so the guard asserted the absence of the change. The same held for
+`test_ae10_status_card_single_emitter_routing`, which required the skill to name a projection that
+parsed a health score, and for five `project_qa` tests whose fixtures carried one.
+
+**Mechanism.** A contract test over prose pins the contract as it stood when it was written. When
+the contract is replaced deliberately, the test's failure is information about the test, not about
+the change — but only if someone reads it that way. Deleting it loses the protection; disabling it
+loses it silently; keeping it blocks the work. The fourth option is the right one: rewrite the body
+to assert the new contract at the same strength, and rename the function to say what it now guards
+(`test_qa_functional_test_step_contract`).
+
+**Generalizable rule.** When a removal reds a contract test, retarget it in the same commit and
+rename it to match its new subject, then watch it fail against a deliberately broken version before
+trusting it. A guard that survives a rewrite unexamined is a guard that has stopped guarding.
+
 ### A function that validates three result states can still compute its status from one of them  {#1039-record-functional-test-counts-only-failures}
 
 **Evidence.** `plugins/saga/scripts/release_step.py:316-381`, read at commit `61da4b1c` while
@@ -17,6 +56,12 @@ validation asks "is this a legal result?", which needs all three states. The ari
 anything fail?", which needs only one. Nothing was wrong at the time it was written, because the
 only caller then could not produce a blocked scenario; the gap opens the moment a caller can. That
 is why it does not read as a bug on the page — every line is individually correct.
+
+**Repaired in the same release.** `record_functional_test` now returns `blocked` for a required
+blocked scenario and stops for the operator without counting a repair cycle,
+`passed-with-proof-debt` for an optional one, and treats a scenario that does not say which it is
+as required. Five tests were written first and watched fail on the old code — every one reported
+`assert 'passed' == 'blocked'`, which is the hazard reproducing exactly.
 
 **Generalizable rule.** When a function accepts an enumeration, check that its arithmetic mentions
 every member of that enumeration. A member that appears in the validation and nowhere in the

@@ -5,6 +5,30 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0] - 2026-09-20
+
+**Bumped from 0.29.0**, the fleet-core version on `origin/parent/1018` at commit `61da4b1c`
+(issue #1028). Re-read at the merge turn rather than above this branch's own base: two cards
+writing an identical version string merge silently, with the changelog heading as the only
+surviving signal.
+
+### Added
+
+- **A `qa-strategies` judgment verb in the named-verb registry** (issue #1039), carrying one
+  yes/no question per row of saga's testing-strategy catalogue. It is advisory and additive only:
+  its caller computes the required strategy set from the repository profile's file patterns first
+  and unions this answer with it, through the existing widen-only union, so the declaration is a
+  floor the model may raise and never lower.
+
+  The verb carries the ten question KEYS and nothing else; the strategy descriptions stay in
+  saga's catalogue file and are passed as state. A guard test asserts the key set equals the
+  catalogue's strategy identifiers in both directions, so a row added to one and not the other
+  fails rather than silently going unasked.
+
+  The registry entry is the whole change: the `jev` tool builds its subcommands from the mapping,
+  and the completeness tests parametrize over it, so the verb is reachable and covered without a
+  line of command-line code.
+
 ## [0.29.0] - 2026-09-20
 
 **Bumped from 0.28.1**, the fleet-core version on `origin/parent/1018` at commit `23959a80`.

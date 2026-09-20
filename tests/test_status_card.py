@@ -415,71 +415,128 @@ Scope Check: DRIFT DETECTED
 
 Reviewers: Claude.
 """
-
 # ── Fixture text for /qa tests (based on real qa-issue-201-2026-06-07.md format) ──────────────────
+# ── Fixture text for /qa tests ────────────────────────────────────────────────────────────────────
+# These are functional-test comments as `qa_strategies.py` prints them (issue 1039), not the
+# `docs/qa/` report with a health score that `/qa` used to write. The projection was retargeted
+# with them: a fixture that still carried a score would have kept the old contract alive in a test
+# while the shipped surface had moved on.
 
-_QA_SHIP = """\
+_QA_PASS = """\
 ---
-date: 2026-06-29
-target: infiquetra/infiquetra-claude-plugins#278
-tier: Standard
-reviewed_revision: abc1234
-verdict: ship-with-deferred
-health_score: 95
 type: qa
+verdict: pass
+boundary: non-production
+route: close
 ---
 
-# QA: Gate Status Card (#278)
+## Functional test
 
-## Health Score
+**Verdict: `pass`** — every required strategy passed
 
-Overall **95 / 100**.
+Boundary: `non-production`. Route: `close`.
 
-| risk class | score | result |
-|------------|:-----:|--------|
-| docs       | 90    | pass   |
-| config     | 100   | pass   |
-| behavior   | 95    | pass   |
+### Selection
 
-## Ship Verdict
+| Strategy | Required | Why it was selected |
+|---|---|---|
+| `cli-smoke` | yes | the profile marks this strategy required |
+| `installed-surface` | yes | the profile pattern 'plugins/*/skills/**' matched |
 
-**`ship-with-deferred`** at Standard tier.
+### Results
 
-## Findings
-
-No P0 or P1 findings.
+| Strategy | Result | What it proved, or why it did not |
+|---|---|---|
+| `cli-smoke` | `passed` | 2 declared invocation(s) exited zero |
+| `installed-surface` | `passed` | 2 installed plugin root(s) resolve 1.0.0 |
 """
 
 _QA_FAIL = """\
 ---
-date: 2026-06-29
-target: infiquetra/infiquetra-claude-plugins#278
-tier: Standard
-reviewed_revision: abc1234
-verdict: fail
-health_score: 40
 type: qa
+verdict: fail
+boundary: non-production
+route: build-loop
 ---
 
-# QA: Gate Status Card (#278)
+## Functional test
 
-## Health Score
+**Verdict: `fail`** — these required strategies ran and did not meet their threshold: cli-smoke
 
-Overall **40 / 100**.
+Boundary: `non-production`. Route: `build-loop`.
 
-| risk class | score | result |
-|------------|:-----:|--------|
-| docs       | 30    | fail   |
-| behavior   | 50    | pass   |
+### Selection
 
-## Ship Verdict
+| Strategy | Required | Why it was selected |
+|---|---|---|
+| `cli-smoke` | yes | the profile marks this strategy required |
 
-**`fail`** — P1 unresolved.
+### Results
 
-## Findings
+| Strategy | Result | What it proved, or why it did not |
+|---|---|---|
+| `cli-smoke` | `failed` | these declared invocations did not exit zero: help |
+"""
 
-### F1 — P1 critical regression
-Evidence: tests broken.
+_QA_BLOCKED = """\
+---
+type: qa
+verdict: fail
+boundary: non-production
+route: operator-stop
+---
+
+## Functional test
+
+**Verdict: `fail`** — these required strategies could not run
+
+Boundary: `non-production`. Route: `operator-stop`.
+
+### Selection
+
+| Strategy | Required | Why it was selected |
+|---|---|---|
+| `deploy-boundary` | yes | the profile marks this strategy required |
+
+### Results
+
+| Strategy | Result | What it proved, or why it did not |
+|---|---|---|
+| `deploy-boundary` | `blocked` | the environment variable QA_BASE_URL is unset |
+"""
+
+_QA_PROOF_DEBT = """\
+---
+type: qa
+verdict: pass-with-proof-debt
+boundary: non-production
+route: close
+---
+
+## Functional test
+
+**Verdict: `pass-with-proof-debt`** — every required strategy passed; 1 optional strategy could
+not run and the debt is recorded
+
+Boundary: `non-production`. Route: `close`.
+
+### Selection
+
+| Strategy | Required | Why it was selected |
+|---|---|---|
+| `cli-smoke` | yes | the profile marks this strategy required |
+| `contract-check` | no | the profile pattern '**/openapi.yaml' matched |
+
+### Results
+
+| Strategy | Result | What it proved, or why it did not |
+|---|---|---|
+| `cli-smoke` | `passed` | 1 declared invocation(s) exited zero |
+| `contract-check` | `blocked` | the profile names no contract-diff command to run |
+
+### Proof debt
+
+- `contract-check`: the profile names no contract-diff command to run
 """
 
 
@@ -667,69 +724,96 @@ def test_project_code_review_ae7_missing_scope_is_not_reached() -> None:
 
 
 # ── project_qa tests ──────────────────────────────────────────────────────────────────────────────
+# Retargeted by issue 1039 with the rows they now guard. The projection reads the functional-test
+# comment instead of a health-scored report, so these tests moved with it rather than being
+# deleted: the surface still has a card, and the card still has to tell the truth about it.
 
 
 def test_project_qa_rows_complete() -> None:
-    """project_qa produces exactly 5 rows."""
-    spec = SC.project_qa(_QA_SHIP, ref="docs/qa/qa-278.md")
+    """project_qa produces exactly 5 rows, in the functional test's own vocabulary."""
+    spec = SC.project_qa(_QA_PASS, ref="qa-1039.md")
     assert spec.archetype == "gate-sequence"
     assert len(spec.rows) == 5
     labels = [r.label for r in spec.rows]
-    assert labels == ["Risk class", "Checks", "Findings", "Health score", "Ship verdict"]
+    assert labels == ["Selection", "Preflight", "Evidence", "Proof debt", "Verdict"]
 
 
-def test_project_qa_ship_verdict_done() -> None:
-    """'verdict: ship-with-deferred' → Ship verdict row is done with ref."""
-    spec = SC.project_qa(_QA_SHIP, ref="docs/qa/qa-278.md")
-    ship_row = next(r for r in spec.rows if r.key == "ship")
-    assert ship_row.state == SC.CardState.DONE
-    assert ship_row.ref == "docs/qa/qa-278.md"
+def test_project_qa_pass_verdict_done() -> None:
+    """'verdict: pass' → the Verdict row is done with ref."""
+    spec = SC.project_qa(_QA_PASS, ref="qa-1039.md")
+    verdict_row = next(r for r in spec.rows if r.key == "verdict")
+    assert verdict_row.state == SC.CardState.DONE
+    assert verdict_row.ref == "qa-1039.md"
+
+
+def test_project_qa_proof_debt_verdict_is_done_and_the_debt_row_is_blocked() -> None:
+    """Proof debt passes the run AND stays visible; a debt that rendered done would be hidden."""
+    spec = SC.project_qa(_QA_PROOF_DEBT, ref="qa-debt.md")
+    verdict_row = next(r for r in spec.rows if r.key == "verdict")
+    debt_row = next(r for r in spec.rows if r.key == "debt")
+    assert verdict_row.state == SC.CardState.DONE
+    assert debt_row.state == SC.CardState.BLOCKED
+    assert debt_row.ref == "qa-debt.md"
 
 
 def test_project_qa_ae9_fail_verdict_is_failed_not_blocked() -> None:
-    """AE9: 'verdict: fail' → Ship verdict row is FAILED (not blocked, not not-reached) with ref."""
-    spec = SC.project_qa(_QA_FAIL, ref="docs/qa/qa-fail.md")
-    ship_row = next(r for r in spec.rows if r.key == "ship")
-    assert ship_row.state == SC.CardState.FAILED, (
-        f"expected FAILED for 'verdict: fail', got {ship_row.state!r}"
+    """AE9: 'verdict: fail' → the Verdict row is FAILED (not blocked, not not-reached) with ref."""
+    spec = SC.project_qa(_QA_FAIL, ref="qa-fail.md")
+    verdict_row = next(r for r in spec.rows if r.key == "verdict")
+    assert verdict_row.state == SC.CardState.FAILED, (
+        f"expected FAILED for 'verdict: fail', got {verdict_row.state!r}"
     )
-    assert ship_row.state != SC.CardState.BLOCKED
-    assert ship_row.state != SC.CardState.NOT_REACHED
-    assert ship_row.ref == "docs/qa/qa-fail.md", "AE9: failure ship verdict must carry ref"
+    assert verdict_row.state != SC.CardState.BLOCKED
+    assert verdict_row.state != SC.CardState.NOT_REACHED
+    assert verdict_row.ref == "qa-fail.md", "AE9: a failed verdict must carry ref"
 
 
-def test_project_qa_risk_class_pass_is_done() -> None:
-    """Risk class row is done when all table rows have 'pass' result."""
-    spec = SC.project_qa(_QA_SHIP, ref="r.md")
-    risk_row = next(r for r in spec.rows if r.key == "risk")
-    assert risk_row.state == SC.CardState.DONE
+def test_project_qa_evidence_is_done_when_every_strategy_passed() -> None:
+    """The Evidence row follows the per-strategy results, not the verdict word."""
+    spec = SC.project_qa(_QA_PASS, ref="r.md")
+    evidence_row = next(r for r in spec.rows if r.key == "evidence")
+    assert evidence_row.state == SC.CardState.DONE
 
 
-def test_project_qa_risk_class_fail_is_failed() -> None:
-    """Risk class row is failed when any table row has 'fail' result."""
+def test_project_qa_evidence_is_failed_when_a_strategy_failed() -> None:
     spec = SC.project_qa(_QA_FAIL, ref="r.md")
-    risk_row = next(r for r in spec.rows if r.key == "risk")
-    assert risk_row.state == SC.CardState.FAILED
+    evidence_row = next(r for r in spec.rows if r.key == "evidence")
+    assert evidence_row.state == SC.CardState.FAILED
 
 
-def test_project_qa_health_score_from_frontmatter() -> None:
-    """Health score row is done and ref encodes the score value."""
-    spec = SC.project_qa(_QA_SHIP, ref="docs/qa/qa-278.md")
-    health_row = next(r for r in spec.rows if r.key == "health")
-    assert health_row.state == SC.CardState.DONE
-    assert "95" in (health_row.ref or ""), f"expected score in ref, got {health_row.ref!r}"
+def test_project_qa_a_blocked_strategy_never_renders_done() -> None:
+    """The card must not show a run that proved nothing as a finished one."""
+    spec = SC.project_qa(_QA_BLOCKED, ref="r.md")
+    evidence_row = next(r for r in spec.rows if r.key == "evidence")
+    assert evidence_row.state == SC.CardState.BLOCKED
+    assert evidence_row.state != SC.CardState.DONE
+    assert evidence_row.ref == "r.md"
+
+
+def test_project_qa_selection_counts_the_strategies_it_selected() -> None:
+    spec = SC.project_qa(_QA_PASS, ref="r.md")
+    selection_row = next(r for r in spec.rows if r.key == "selection")
+    assert selection_row.state == SC.CardState.DONE
+    assert "2" in (selection_row.ref or ""), f"expected the count in {selection_row.ref!r}"
+
+
+def test_project_qa_preflight_carries_the_boundary_the_run_reached() -> None:
+    spec = SC.project_qa(_QA_PASS, ref="r.md")
+    preflight_row = next(r for r in spec.rows if r.key == "preflight")
+    assert preflight_row.state == SC.CardState.DONE
+    assert "non-production" in (preflight_row.ref or "")
 
 
 def test_project_qa_ae7_missing_frontmatter_is_not_reached() -> None:
-    """AE7: qa artifact with no frontmatter → health_score/ship rows are not-reached with no ref."""
-    no_frontmatter = "# QA Report\n\n## Findings\n\nNo issues.\n"
+    """AE7: a comment with no frontmatter → the Verdict and Preflight rows are not-reached."""
+    no_frontmatter = "## Functional test\n\nnothing parseable here\n"
     spec = SC.project_qa(no_frontmatter, ref="r.md")
-    health_row = next(r for r in spec.rows if r.key == "health")
-    ship_row = next(r for r in spec.rows if r.key == "ship")
-    assert health_row.state == SC.CardState.NOT_REACHED
-    assert health_row.ref is None
-    assert ship_row.state == SC.CardState.NOT_REACHED
-    assert ship_row.ref is None
+    verdict_row = next(r for r in spec.rows if r.key == "verdict")
+    preflight_row = next(r for r in spec.rows if r.key == "preflight")
+    assert preflight_row.state == SC.CardState.NOT_REACHED
+    assert preflight_row.ref is None
+    assert verdict_row.state == SC.CardState.NOT_REACHED
+    assert verdict_row.ref is None
 
 
 # ── AE5: shared-concept label+glyph consistency across surfaces ───────────────────────────────────
@@ -1101,9 +1185,9 @@ def test_ae5_done_glyph_consistent_across_work_and_qa() -> None:
         )
     )
 
-    # Render project_qa with passing verdict (checks row will be DONE)
-    qa_spec = SC.project_qa(_QA_SHIP, ref="qa.md")
-    checks_row = next(r for r in qa_spec.rows if r.key == "checks")
+    # Render project_qa with a passing verdict (the Evidence row will be DONE)
+    qa_spec = SC.project_qa(_QA_PASS, ref="qa.md")
+    checks_row = next(r for r in qa_spec.rows if r.key == "evidence")
     qa_checks_card = SC.render(
         SC.CardSpec(
             archetype="gate-sequence",
@@ -1114,7 +1198,7 @@ def test_ae5_done_glyph_consistent_across_work_and_qa() -> None:
 
     done_glyph = SC.GLYPH_MAP["done"]
     assert done_glyph in work_tests_card, "DONE glyph missing from project_work Tests row"
-    assert done_glyph in qa_checks_card, "DONE glyph missing from project_qa Checks row"
+    assert done_glyph in qa_checks_card, "DONE glyph missing from project_qa Evidence row"
 
 
 # ── project_arc (#344 U3): idea->deploy lifecycle arc ─────────────────────────────────────────────

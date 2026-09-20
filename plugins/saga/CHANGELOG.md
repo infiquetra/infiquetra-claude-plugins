@@ -59,14 +59,17 @@ card branched.
 
 ### Added
 
-- `plugins/saga/references/workflow-backend.md` — the new home of the Claude Code Workflow and
-  team-execution-emission instructions, moved out of `/plan` Phase 5.2 and 5.2a and `/work` §1.4
-  and §1.5 (card #808's NARROW ruling, issue #1026). The two skills keep the contract a reader
-  needs in order to decide whether to open it: the backend's name, that it is reached only by
-  explicit operator invocation, and the file's path. The extraction took `/plan` from 772 lines to
-  567 and `/work` from 1,142 to 837; the new Phase 5.4 and the rewritten `/work` §1.3 then put some
-  back, so the files end at 629 and 864 — a net 143 and 278 lines lighter, with 603 lines of backend
-  instructions now one hop away instead of in the entry path of every run.
+- `plugins/saga/references/workflow-backend.md` (515 lines) — the new home of the Claude Code
+  Workflow and team-execution-emission instructions, moved out of `/plan` Phase 5.2 and the
+  Workflow-specific half of 5.2a, and `/work` §1.4 and §1.5 (card #808's NARROW ruling, issue
+  #1026). The two skills keep the contract a reader needs in order to decide whether to open it:
+  the backend's name, that it is reached only by explicit operator invocation, and the file's path.
+  `/plan` ends at 728 lines against 772 and `/work` at 864 against 1,142, after the new Phase 5.4
+  and the rewritten `/work` §1.3 added their own text back.
+- **The per-unit tier derivation stayed in `/plan`**, as §5.2a, and is no longer gated on the
+  Workflow backend. It is the staffing heuristic for any backend that spawns per-unit agents — its
+  effort-honoring note covers the `agent`, `external-engine` and `workflow` spawn kinds alike — and
+  both of the generated regions inside it are rendered by generators that target that file.
 - `--doc-review-fixes` on `issue_progress.py`, with its forwarding line in `/work`'s Phase-4
   command. The parameter had existed and been rendered since the beginning with no flag able to
   populate it, so the issue comment recorded a review's findings and silently dropped what was done

@@ -11,7 +11,7 @@ Nine units, as planned, with one addition the implementation found (see "What th
 
 | Unit | What | Card |
 |---|---|---|
-| U1 | The Claude Code Workflow and team-execution prose moved to `plugins/saga/references/workflow-backend.md` (603 lines). The extraction alone took `/plan` 772 → 567 and `/work` 1,142 → 837; U2's Phase 5.4 and U4's §1.3 then added back, so the files end at 629 and 864 | 808, 1026 |
+| U1 | The Claude Code Workflow and team-execution prose moved to `plugins/saga/references/workflow-backend.md` (515 lines). `/plan` ends at 728 lines against 772, `/work` at 864 against 1,142, after U2's Phase 5.4 and U4's §1.3 added their own text back. The per-unit tier derivation stayed in `/plan` as §5.2a — see "What the full suite caught" | 808, 1026 |
 | U2 | `/plan` Phase 5.4 dispatches the plan review and loops on repair; the Ready-for-Active board move follows it as §5.5 | 1026, 933 |
 | U3 | `/doc-review` carries the loop contract, the cycle definition, and reviews a submitted path as given | 933 |
 | U4 | `/work` §1.3 keeps refusing, now with a gate-record marker and a named evidence order | 933, 1026 |
@@ -87,10 +87,35 @@ Three inventory failures, each surfaced by a guard rather than at runtime:
    the rubric library was absent, so a reviewer read "no rubrics apply" for a broken install. The
    `read` subcommand had always failed loud, which is why it survived. Both listings now raise.
 
-A fourth was found by the suite: `tests/test_saga_plugin.py` asserted the *path string*
+A fourth was found by the targeted run: `tests/test_saga_plugin.py` asserted the *path string*
 `../code-review/references/findings-schema.md`, which is exactly the defect card 931 names. Removing
 the dangling reference reddened it, and it is replaced by a guard that resolves the target and reads
 it.
+
+## What the full suite caught that the targeted runs could not
+
+Two more guards named the moved section from files I had not thought to run, and both are the same
+shape: a test that pins content in `plan/SKILL.md` while living somewhere unrelated.
+
+1. **`tests/test_operator_choice_drift.py`** pins that `/plan`'s offer surface names both §3.2
+   purposes and frames the team-versus-Workflow fork on governance. The offer moved, so the guard
+   followed it to `references/workflow-backend.md` — the contract is the purposes and the framing,
+   not the file.
+2. **`tests/test_saga_spec_consumer_row.py`** failed because the `GENERATED EFFORT HONORING NOTE`
+   marker pair moved out of the file its renderer targets. `plan_save_contract.py` renders that note
+   *and* the §5.3 save examples against one `SKILL` constant, so the note could not move without
+   teaching that generator a second target document.
+
+That second one changed the design, not just a constant: **the per-unit tier derivation came back
+to `/plan` as §5.2a**, no longer gated on the Workflow backend, taking both generated regions with
+it. It reads better there anyway — the effort note covers the `agent`, `external-engine` and
+`workflow` spawn kinds alike, so it was never Workflow-only in substance. Only the spend guards,
+the authoring steps and the spec naming stayed in the reference file, and the tier-table drift
+guard and its renderer docstring were reverted to name `plan/SKILL.md` again.
+
+**The rule this earns:** after moving a section that contains a generated region or a marker pair,
+run the full suite before believing the move is finished. A targeted run over the files you edited
+cannot see a guard that names the file you edited from somewhere else.
 
 ## Proof
 

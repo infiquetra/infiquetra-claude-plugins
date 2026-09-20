@@ -446,6 +446,105 @@ the spend guards, authoring the specification, and the naming convention for the
 artifacts — is in [`references/workflow-backend.md`](../../references/workflow-backend.md). Go
 there only after an explicit invocation; nothing in this skill needs it otherwise.
 
+#### 5.2a Derive the per-unit tiers
+
+This applies to **any** backend that spawns a per-unit agent, not only to a Claude Code
+Workflow: the honoring seam below names the `agent`, `external-engine` and `workflow` spawn
+kinds alike. Where admission already recorded a staffing plan for the run, that plan is the
+authority for the roles it names and this step fills in only the units it does not cover.
+
+**Step 1 — Derive per-unit tiers.** For each Implementation Unit in the plan, assign a `{model, effort}`
+tier from the work-shape heuristic (R10). Surface the tier table for operator override before locking:
+
+<!-- BEGIN GENERATED TIER TABLE (rendered from staffing.json via render_tier_table.py — do not hand-edit; a seeded divergence fails tests/test_tier_resolver.py::test_skill_registry_sync) -->
+| Work shape | Default tier | Rationale |
+|---|---|---|
+| Judgment, design, adversarial review, architectural decisions | `opus / high` | Judgment, design, adversarial review, architectural decisions — deep reasoning needed; cost-justified. |
+| Mechanical, deterministic, scripted transforms, scaffolding | `sonnet / medium` (or `haiku / low` for purely mechanical) | Mechanical, deterministic, scripted transforms, scaffolding — bounded output, predictable steps.; Purely mechanical work within the mechanical work-shape — cheapest tier still safe for bounded, predictable steps. |
+| Read-only survey, search, grep, sampling, census | `sonnet / low` | Read-only survey, search, grep, sampling, census — low-effort read, no write risk. |
+| External-engine delegation, `intent=offload`, `verifiability=test-gated` (ratify-only) | `haiku / low` | External-engine delegation, intent=offload, verifiability=test-gated — chaperone ratifies the declared test oracle and provenance; keep the chaperone cheap unless evidence size escalates. |
+| External-engine delegation, `intent=offload`, `verifiability=unverifiable` or absent | `sonnet / medium` | External-engine delegation, intent=offload, verifiability=unverifiable or absent — chaperone performs full review; a heavier default would erase the token savings that motivated delegation (KTD2). |
+| External-engine delegation, `intent=second-opinion` (U12) | `opus / high` | External-engine delegation, intent=second-opinion — adversarial verification IS the product; extra spend assumed; fable/xhigh available as a per-unit override, never a default (KTD2). |
+| External-engine delegation, `intent=divergence` (adversarial review) | `opus / high` | External-engine delegation, intent=divergence — agreement and disagreement are both explicit adversarial-review outcomes; use the high-tier chaperone posture. |
+<!-- END GENERATED TIER TABLE -->
+
+Apply the heuristic per unit, then present the full tier table (U-ID, label, proposed tier, rationale)
+and ask the operator to confirm or override before proceeding. Do not lock tiers silently.
+
+**Run-start posture seeds the defaults (#380).** When the run carries a committed intent envelope
+(`ExecutionSpec.intent`, or the parent outcome's `OutcomeSpec.intent` — see
+`plugins/saga/references/intent-envelope.md`), derive each unit's PROPOSED tier through
+`intent_envelope.seeded_tier(spec, work_shape)` (equivalently `intent_envelope.py recommend
+--work-shape <shape> --run-mode <mode>`): the posture was asked ONCE at run start, and an
+unattended posture proposes one rung cheaper than the attended default for the same work shape.
+This changes only the table's proposed defaults — the table itself, the operator-override flow,
+and the `VERIFY_N_CAP` mechanics are unchanged, and no per-unit posture question is ever asked
+(the fleet drift guard fails on one).
+
+**Estimate column (#402).** Add a fourth `Estimate` column to this per-plan table (the U-ID/label/
+tier/rationale table above, never the GENERATED work-shape registry table) — the ordinal, index-weighted
+spend the assigned tier costs (never a dollar amount). Once the per-unit tiers are locked into a draft
+`ExecutionSpec`, run
+
+```bash
+python3 plugins/saga/scripts/spend_estimate.py estimate --spec <spec.json>
+```
+
+and fold its per-unit figures into the Estimate column so the operator sees relative cost alongside the
+tier they are confirming, not as a separate lookup. The estimator is read-only (it renders a table; it
+writes nothing to the ledger or the spec) — see `spend_estimate.py`'s own module docstring for the
+reconcile-side (post-run) companion this authoring-time render feeds into.
+
+**The `/plan`-authored tier table is not the only lever (#365).** The operator can adjust tier
+**mid-run** without aborting and re-planning via `/tier`: a run-scoped ceiling
+(`.claude/saga/tier-session-override.json`) that the emitters clamp every unit down to, or a mid-run
+patch of a not-yet-run unit's tier that re-validates and re-emits the spec. The authored table is the
+starting point; `/tier` is the live adjustment. A ceiling only ever clamps down, and an up-ladder
+mid-run change is gated (asks) before it re-emits.
+
+**Persisted tier preferences (#368).** Before deriving cold from the registry table above, resolve
+each work-shape through `scripts/tier_defaults.py` — precedence is **repo overlay > issue band >
+shared registry**:
+
+1. **Repo overlay** — a committed `.saga/tier-defaults.json` (`{"<work-shape>": {"model", "effort"}}`)
+   pins repo-tuned defaults. `resolve_tier_with_overlay(work_shape)` returns the pinned tier when
+   present. Missing file → clean registry fallback; malformed (bad JSON, unknown shape, off-palette or
+   unrunnable tier) → `TierDefaultsError`, halt and surface (never degrade silently).
+2. **Issue band** — when the driving issue carries a `### Recommended Tier Band` section
+   (auto-stamped by `mission-control:issue` at creation), parse it with `parse_tier_band(body)` and
+   pass it to `resolve_tier_for_plan(work_shape, issue_band=band)`. The band seeds the proposed tier
+   only where no repo override exists; an absent band is normal (`None`), a present-but-invalid one
+   fails loud.
+3. **Write-back** — when the operator confirms a tier override in the Step 1 table, persist it with
+   `write_tier_default(work_shape, model, effort)` so the next `/plan` proposes the accreted
+   preference. Read-merge-write: never clobbers other keys. The file is **tracked** — commit the
+   dirtied overlay with the run's changes (the repo accretes tier judgment). Every persisted override
+   originates from an explicit operator confirmation; never auto-promote silently.
+
+<!-- BEGIN GENERATED EFFORT HONORING NOTE -->
+<!-- Source: plugins/saga/references/plan-save-contract.yaml; renderer: plugins/saga/scripts/plan_save_contract.py.
+Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract. -->
+<!--
+The honoring seam is `fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)`.
+For `external-engine`, `workflow`: effort already rides on real controls; injecting a rider would double-count it.
+For `agent`: prepend an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.
+See `plugins/fleet-core/references/staffing.md`.
+The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`
+and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.
+Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.
+-->
+<!-- END GENERATED EFFORT HONORING NOTE -->
+
+For a unit carrying `engine`/`capability` (U12 chaperone-worker units), the recommendation row also
+carries the unit's `intent` and a **plan-time resolution preview**: for a capability-routed unit, call
+`engine_resolver.resolve({"role_kind": "worker", "capability": <value>}, mode="advisory", registry=…)`
+(`mode="advisory"` — R7 — since this is a non-binding preview, not the run-time dispatch) and surface
+"resolves today to `<engine_id>/<variant>`" alongside the tier row; an explicit-engine unit has no
+preview to show (naming the engine already fixes it — R26 halts rather than substitutes if it becomes
+unavailable). This preview is the baseline the chaperone's `substituted-engine` disposition compares
+the run-time resolution against (KTD4, `references/external-engine-workers.md` §4 in team-execution) —
+record it in the saga tick / emitted plan alongside the tier so it survives to `/work`.
+
 ### 5.3 Write the saga tick
 
 Emit a **runnable** saga `save` command — never prose like "write a saga", and never `git add` the

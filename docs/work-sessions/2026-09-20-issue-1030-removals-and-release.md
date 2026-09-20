@@ -206,6 +206,64 @@ lands. Cases this stage retired were deleted, never marked.
 - The check that found all three is worth keeping: a grep from every surviving skill, command, hook
   and reference for `plugins/saga/**` paths that no longer resolve. Run it after any deletion pass.
 
+## The team-execution archive (U6), landed while the cc-workflows question is with the operator
+
+Unblocked under all three answers and named by the card, so it landed: the plugin's final 4.0.0
+changelog entry at commit `005e7e70`, then the directory, the marketplace entry and the vendored
+shim. `tests/test_team_execution_archived.py` guards it in every syntax a caller could use, with the
+two self-tests that keep a scanner honest; it failed 8 of its 17 cases before the removal.
+`tests/test_team_emitter_and_spec_table_removed.py` was kept, as recorded.
+
+**The backend enumeration lost one value and keeps two**, `inline` and `cc-workflows-ultracode`,
+which does not decide the cc-workflows question by implication. The strings stay a durable wire
+contract: a persisted tick recording `team-execution` still loads and still renders its label, and a
+new case proves both halves -- refused at the command line, read back at rest -- with a
+canary-registry mutation that re-adds the value so the guard is exercised for real.
+`recommend_execution_backend()` now returns `inline` under every trigger, and the size, risk and
+gated-consensus signals select the recorded rationale rather than a different backend.
+
+The three modules, the engine family and the ledgers are untouched. saga stays at **0.173.0** with
+its changelog entry extended for the archive; the final version is decided with the operator's
+answer. deploy went to 0.2.2 and cc-workflows to 1.0.2, both demanded by the release-surface diff
+guard for prose I changed about the archived backend.
+
+**Full suite green at the merged head: 8446 passed, 12 skipped, 1 xfailed, 0 failed**, against parent
+head `b264f154`. Skips fell from 34 to 12 because the twenty-two consensus tests went with the plugin
+they named. No skip was added at any point.
+
+### Three findings from the archive worth keeping
+
+**A duplicated enum survives a rename.** The suite found 61 failures after the archive, and two were
+production modules the archive commit had missed: the plan-save contract's YAML placeholders still
+offered the archived backend to anyone filling a template, and `plan_artifact_conformance.py`
+carried its own second copy of `BACKEND_ENUM` beside `plan_pre_answers.py`'s. Neither is reachable
+by grepping for the module that defines the enum.
+
+**My own removal guard reported clean and the suite then failed at collection.**
+`tests/test_intent_envelope.py` built the path to the archived posture-check script by joining
+segments across seven lines, matching none of the guard's patterns. Adding the bare filename as a
+pattern found four more readers immediately. The lesson is narrower than "scan more": a guard over a
+*path* must match the filename, because a path can be assembled and a filename cannot.
+
+**A frozen-contract test can be right about its rationale and wrong about its assertion.** The
+orchestration enum's guard asserted the tuple byte-for-byte because a rename or reorder would
+corrupt a persisted saga. It never anticipated a removal -- which is safe for exactly the reason its
+own rationale gives, since nothing on the read path validates against the enum. The fix was to
+restate what is frozen (a surviving value is never renamed or reordered; a removed value is never
+reused) rather than to delete the guard or weaken it.
+
+### U8 has nothing to land, and this is the evidence
+
+Every one of the 22 modules in `plugins/fleet-core/scripts/fleet_commons/` has a live non-test
+importer, including the two a first grep flagged as removable: `effort_rider` is loaded by
+`plan_save_contract.py` and `plan_save_proof.py`, and `render_tier_table` renders `/plan`'s generated
+tier table under two guards. Every candidate the plan named -- `audit_store`, `bridge_receipt`,
+`delegation_audit`, `delegation_state`, `liveness_engine`, `output_attestation`,
+`concurrency_policy` -- is held by `engine_dispatch`, `concurrency_governor`, `execution_spec`,
+`liveness_events`, `outcome_liveness`, `delegation_audit_query` or `envelope_token`, all of which are
+behind the cc-workflows blocker. U8 is not "the part that does not touch `audit_store.py`"; it is
+entirely downstream of that decision, so nothing was removed.
+
 ## What did not land, and what is still owed
 
 Four of the plan's thirteen units landed: U1 the command and skill surface, U4 the hooks and agents,

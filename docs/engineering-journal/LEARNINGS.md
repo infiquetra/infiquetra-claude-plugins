@@ -2,6 +2,47 @@
 
 ## 2026-09-20
 
+### A guard over a path must also match the bare filename  {#guard-paths-by-filename-1030}
+
+**Evidence.** Issue 1030's `tests/test_team_execution_archived.py`, which reported clean; the full
+suite then failed at collection because `tests/test_intent_envelope.py` built the path to a deleted
+script by joining `ROOT / "plugins" / "team-execution" / ... / "posture_check.py"` across seven
+lines. Adding `\b<module>\.py\b` as a pattern found four more readers the same minute.
+
+**Mechanism.** A removal guard that enumerates syntaxes -- import, `from`, `spec_from_file_location`,
+a slash-separated path literal -- is matching *how the reference is written*, and a path is the one
+form that can be assembled rather than written. A filename cannot: whatever expression builds the
+directories, the last segment is a literal string. So the filename is the invariant and the path is
+the variable, and a guard that matches only the path is guarding the easy half.
+
+The guard's own self-tests did not catch this either, because they test that the scanner fires on
+each syntax the author thought of. A self-test proves a scanner is not vacuous; it cannot prove the
+syntax list is complete.
+
+**Generalizable rule.** When guarding that a file is gone, match its bare filename, not only the
+paths you can imagine someone writing.
+
+### A frozen-contract test can be right about its rationale and wrong about its assertion  {#frozen-contract-assertion-vs-rationale-1030}
+
+**Evidence.** `tests/test_saga_saga.py::test_orchestration_modes_enum_is_frozen`, restated by issue
+1030 when `team-execution` left `ORCHESTRATION_MODES`.
+
+**Mechanism.** The test asserted the tuple byte-for-byte, and its docstring gave the reason:
+persisted sagas carry the raw enum string, so a rename or reorder would silently corrupt a saga
+saved before the change. That reasoning is correct and still holds. But it licenses a byte-for-byte
+assertion only against renames and reorders -- and a *removal* is safe for exactly the reason given,
+because nothing on the read path validates against the enum. The assertion was stricter than the
+invariant it was defending, so a safe change read as a contract break.
+
+The repair is to restate the invariant, never to delete the guard or relax it to a substring check:
+a surviving value is never renamed and never reordered, and a removed value is never reused to mean
+something else. The removal's real property -- refused at the write path, accepted at the read path
+-- became its own case with a canary mutation behind it.
+
+**Generalizable rule.** When a frozen-contract test fails, read its docstring before its assertion.
+If the rationale does not cover the change, the assertion is too strict and needs restating -- which
+is not the same as weakening it.
+
 ### Documentation is deleted in the same commit as the code it documents, never ahead of it  {#docs-go-with-their-code-1030}
 
 **Evidence.** Issue 1030, commits `bc05521b` (the mistake) and `00e38cd1` (the correction), caught by

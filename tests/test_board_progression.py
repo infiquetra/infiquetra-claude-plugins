@@ -529,3 +529,155 @@ def test_default_writer_allows_stage_by_name_without_new_op_kind(tmp_path: Path)
     assert cmd[cmd.index("--field") + 1] == "Stage"
     assert "--correction" in cmd
     assert "set-field-stage" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# The lifecycle boundaries (issue 1028)
+# ---------------------------------------------------------------------------
+
+SDLC_SCHEMA = ROOT / "plugins" / "mission-control" / "config" / "sdlc-schema.json"
+
+
+def _run_record_file(tmp_path: Path, **overrides: Any) -> Path:
+    payload = {
+        "schema": "run_record.v1",
+        "issue": 1028,
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        **overrides,
+    }
+    path = tmp_path / "issue-1028.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+class TestTheAllowedList:
+    """The list the lifecycle repository calls the single authority, read and enforced."""
+
+    def test_the_mirror_matches_the_vendored_schema_exactly(self) -> None:
+        raw = json.loads(SDLC_SCHEMA.read_text(encoding="utf-8"))
+        rows = raw["lifecycle_field_mutation"]["allowed_submissions"]
+        from_schema = tuple((row["stage"], row["status"]) for row in rows)
+        assert from_schema == BP.ALLOWED_SUBMISSIONS
+        assert BP.allowed_submissions() == from_schema
+
+    def test_an_allowed_pair_is_not_refused(self) -> None:
+        pair = [("Stage", "Active"), ("Status", "Implementing")]
+        assert BP.allowed_submission_refusal(pair) is None
+
+    @pytest.mark.parametrize("status", ["Ready to merge", "Closeout", "Code review", "Integrating"])
+    def test_a_live_board_option_outside_the_allowed_list_is_refused_by_name(
+        self, status: str
+    ) -> None:
+        refusal = BP.allowed_submission_refusal([("Stage", "Active"), ("Status", status)])
+        assert refusal is not None
+        assert status in refusal
+        assert "Active / Implementing" in refusal
+
+    def test_a_single_field_submission_is_not_judged_by_the_pair_rule(self) -> None:
+        """The legacy single-field path carries non-boundary states; issue 1030 removes it."""
+        assert BP.allowed_submission_refusal([("Status", "Done")]) is None
+
+    def test_authorize_and_write_gates_a_pair_outside_the_allowed_list(
+        self, tmp_path: Path
+    ) -> None:
+        writer = RecordingWriter()
+        record = BP.authorize_and_write(
+            "set-field-status",
+            "infiquetra/x",
+            42,
+            "Ready to merge",
+            board_writer=writer,
+            ledger_dir=tmp_path / "ledger",
+            payload={"assignments": [["Stage", "Active"], ["Status", "Ready to merge"]]},
+        )
+        assert record["status"] == "gated"
+        assert "Ready to merge" in record["error"]
+        assert writer.calls == []
+
+
+class TestBoundaryResolution:
+    def test_every_boundary_but_review_acceptance_resolves_to_one_allowed_pair(self) -> None:
+        for name in BP.BOUNDARIES:
+            move = BP.resolve_boundary(name)
+            if name == "review-accepted":
+                assert move["submits"] is False
+                continue
+            assert move["submits"] is True
+            assert (move["stage"], move["status"]) in BP.allowed_submissions()
+
+    def test_review_acceptance_submits_nothing_and_says_why(self) -> None:
+        move = BP.resolve_boundary("review-accepted")
+        assert move["submits"] is False
+        assert move["stage"] is None and move["status"] is None
+        assert "carries no row for review acceptance" in move["note"]
+
+    def test_close_takes_the_verify_row_with_no_trigger_and_the_retro_row_with_one(self) -> None:
+        assert BP.resolve_boundary("close")["stage"] == "Verify"
+        fired = BP.resolve_boundary("close", retro_trigger_fired=True)
+        assert fired["stage"] == "Retro"
+        assert fired["status"] == "Ready to close"
+
+    def test_an_unknown_boundary_is_refused_with_the_six_names(self) -> None:
+        with pytest.raises(ValueError) as caught:
+            BP.resolve_boundary("merged-probably")
+        for name in BP.BOUNDARIES:
+            assert name in str(caught.value)
+
+    def test_the_payload_carries_both_halves(self) -> None:
+        payload = BP.boundary_payload(BP.resolve_boundary("build-start"))
+        assert payload == {"assignments": [["Stage", "Active"], ["Status", "Implementing"]]}
+
+
+class TestBoundaryCommandLine:
+    def test_the_dry_run_prints_one_move_and_writes_nothing(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        record = _run_record_file(tmp_path)
+        code = BP.main(["--record", str(record), "--boundary", "build-start", "--dry-run"])
+        assert code == 0
+        printed = json.loads(capsys.readouterr().out)
+        assert printed["stage"] == "Active"
+        assert printed["status"] == "Implementing"
+        assert printed["number"] == 1028
+        assert printed["dry_run"] is True
+        assert not (tmp_path / "ledger").exists()
+
+    def test_the_review_accepted_dry_run_prints_the_honest_absence(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        record = _run_record_file(tmp_path)
+        code = BP.main(["--record", str(record), "--boundary", "review-accepted", "--dry-run"])
+        assert code == 0
+        printed = json.loads(capsys.readouterr().out)
+        assert printed["submits"] is False
+        assert "no allowed submission at this boundary" in printed["note"]
+
+    def test_the_close_dry_run_follows_the_records_retro_trigger(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        record = _run_record_file(tmp_path, retro={"trigger_fired": True})
+        BP.main(["--record", str(record), "--boundary", "close", "--dry-run"])
+        printed = json.loads(capsys.readouterr().out)
+        assert printed["stage"] == "Retro"
+
+    def test_an_unknown_boundary_exits_two_with_one_line(self, tmp_path: Path, capsys: Any) -> None:
+        record = _run_record_file(tmp_path)
+        code = BP.main(["--record", str(record), "--boundary", "shipped", "--dry-run"])
+        assert code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "unknown boundary 'shipped'" in captured.err
+
+    def test_a_boundary_without_a_record_is_refused(self, capsys: Any) -> None:
+        code = BP.main(["--boundary", "build-start", "--dry-run"])
+        assert code == 2
+        assert "--boundary needs --record" in capsys.readouterr().err
+
+    def test_a_record_of_an_unknown_version_is_refused_by_name(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        record = _run_record_file(tmp_path)
+        record.write_text(json.dumps({"schema": "run_record.v2", "issue": 1}), encoding="utf-8")
+        code = BP.main(["--record", str(record), "--boundary", "close", "--dry-run"])
+        assert code == 2
+        assert "run_record.v2" in capsys.readouterr().err

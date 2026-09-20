@@ -5,6 +5,19 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] - 2026-09-20
+
+**Bumped from 0.28.1**, the fleet-core version on `origin/parent/1018` at commit `23959a80`.
+
+### Added
+
+- `scripts/fleet_commons/merge_guard.py` — the shared "never publish a merge that reverts a newer
+  branch" guard (card #875's rule, issue #1028). Two functions and the order between them:
+  `fetch_comparison_branch` refuses the turn when the fetch fails, because a guard evaluated
+  against a stale remote-tracking reference passes silently, and `regression_files` names the files
+  the merge would take backwards. The reading is narrow on purpose — a branch merely behind the
+  comparison branch is not refused, or ordinary parallel work would be unmergeable.
+
 ## [0.28.1] - 2026-09-19
 
 ### Changed

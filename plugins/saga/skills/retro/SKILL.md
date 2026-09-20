@@ -269,68 +269,28 @@ This surfaces three R7/R16/R18 signals:
 verbatim, never fabricate a rate. This pass is **read-only and advisory-only** (R8/R12): a low
 verified ratio or a nonzero parroting count is signal for the interview, never a gate.
 
-**1.9 Reconciliation recipe proposals (read-only, issue #393).** Resolve the repository's
-`run_ledger.RunLedger`, then call `reconcile.derive_recipe_update_proposal(ledger)`. The reader verifies
-the hash chain before selecting reconciliation facts, validates every selected typed result, and
-deduplicates reconcile/apply events by stable `reconciliation_id`. Its structured
-`recipe_update_proposal.v1` output contains:
+**1.9 What the run itself recorded (read-only).** Read the run record for this issue —
+`uv run python plugins/saga/scripts/run_record.py show <issue>` — and take the run's own account of
+what happened: the review cycles and their results, each unit's merge-turn state and merged tip, the
+release state with its reviewed head and landed commit, the functional-test scenarios with their
+terminal states, and the post-merge cycle count. Read the journal entries the change shipped with
+beside it.
 
-- `status`: `proposal` or the explicit zero-data result `no-proposal`;
-- `approval_required`: `true` for every proposal (a proposal is never an authorization to edit);
-- `proposed_updates`: per-intent current recipe, deduplicated outcome count, finding-status counts,
-  evidence identities, and the requested `review-intent-recipe` action;
-- `evidence`: reconciliation/execution/result identities plus the source ledger fact hashes.
+The engine-benchmark, calibration, staleness, capability-Elo, control-chart, spend and
+tier-efficacy readers that used to sit here are **gone** (issue 1028). They read ledgers and an
+engine registry that the simplification removes, and each one produced a proposal nobody applied.
+What replaced them is narrower and true: one file per run, written by the run, plus the journal.
 
-Treat any chain break, non-trailing corruption, or invalid reconciliation fact as a visible evidence
-failure; only the ledger's existing torn trailing-line tolerance is allowed. This pass is derive-on-read:
-it does not append to the ledger, rewrite `RECIPE_REGISTRY`, or apply a recipe change. Carry proposals
-into the interview and retro doc as **PROPOSE-DIFF-AND-WAIT** input. `/retro` remains terminal and
-advisory: it writes no saga tick, and even an approved recipe proposal must be handed to a separate
-authorized implementation path.
+This pass is derive-on-read: it writes nothing back to the record and applies no change. Carry what
+it finds into the interview and the retro doc as **PROPOSE-DIFF-AND-WAIT** input. `/retro` remains
+terminal and advisory: it writes no saga tick, and even an approved proposal must be handed to a
+separate authorized implementation path — a proposal is never an authorization to edit, which is
+what the retired readers' `approval_required` flag said and what still holds without them.
 
-**1.10 Tier-efficacy evidence (read-only, issue #402).** Beside the R24 realized-economics pass (1.7),
-gather the cost-vs-outcome evidence the Phase-5(e) tier-efficacy proposal needs. First fetch each
-outcome node's linked issue body so tiers resolve from real `### Recommended Tier Band` stamps: for
-every `github.issue` ref in the committed `docs/outcomes/*/outcome-spec.json` files, run
-`gh issue view <ref> --json body -q .body` and assemble a `{"<ref>": "<body>"}` JSON object file.
-Then run `scripts/spend_retro.py report --root . --json --issue-bodies <that-file>` for the
-repo-wide tier-mix / premium-spend-share aggregation — without `--issue-bodies` every node's tier
-falls back to the SPEND_BASELINE default and the output flags `tiers_defaulted: true`, meaning the
-premium share is a floor, not a derived fact (each row's `tier_provenance` shows the split). Join
-the result per work-shape against each check's verdict history from
-`scripts/evidence_ledger.py`'s `latest()` reader (a `superseded_fail` or a multi-attempt history is a
-nonzero "marginal findings"/"rework" signal; a run whose only attempt passed clean is zero). Assemble
-the joined rows as `tier_efficacy.RunRecord` dicts in a JSON list file and pass it to
-`scripts/tier_efficacy.py --history <json-file>` (the CLI wrapper over `propose_downgrades`) — this
-is a **reader only**, it never proposes or applies anything itself; Phase 5(e) below is where a
-resulting proposal is surfaced.
+**Zero-data contract** (same as 1.6/1.7): a run with no record — work done before the record
+existed, or outside a saga run — contributes nothing here. Carry that as "no run record for this
+work," never a reconstruction.
 
-**Zero-data contract** (same as 1.6/1.7/1.9): a work-shape with no recorded runs, or fewer than the
-resolver's `min_samples` threshold, contributes no proposal — carry that as "insufficient evidence yet,"
-never a fabricated recommendation. Both real committed `docs/outcomes/*/outcome-spec.json` examples in
-this repo roll up empty today, so expect "no data yet" until real telemetry accrues.
-
-**1.11 Engine-registry calibration evidence (read-only, issue #459).** Run the earned-ratings
-calibration aggregator over the run-fact ledger:
-
-```bash
-python3 plugins/saga/scripts/engine_calibration.py report --root . --json
-```
-
-The reader **chain-verifies the run-fact ledger first** — a chain break is a **visible evidence
-failure** (1.9's rule), never a silent skip. It aggregates the four earned-ratings signal families
-into one `registry_calibration_proposal.v1`: benchmark contradictions (`engine_benchmark.py`, the
-active fixed-suite harness), per-cell staleness verdicts (`engine_stale_report.py` —
-corroborated / contradicted / unexercised), Elo divergences from live reconciliation outcomes
-(`capability_elo.py`), and SPC cost/latency drift flags (`provider_control_chart.py`). Include the
-output verbatim in the Phase-1 evidence block; cells with `contradicted` or `unexercised`
-staleness verdicts are calibration candidates worth raising in the Phase-2 interview.
-
-**Zero-data contract** (same as 1.6/1.7/1.9/1.10): `status: "no-proposal"` or an all-`unexercised`
-report is carried as **"no dispatch evidence yet"** — never a fabricated calibration. This pass is
-**read-only and derive-on-read**: it appends nothing to the ledger and **never writes
-`engine-registry.yaml`** — every signal terminates in the Phase-5(f) proposal below, which only a
-human applies ({#external-engines-never-gatekeepers}, #283).
 
 ---
 
@@ -423,24 +383,6 @@ The passes neither source had, all gated (`references/retro-passes.md`):
   `~/.claude` directives** (global carries the cross-project warning, per the contract).
 - **(d) memory pruning** — propose curation of the `.claude` auto-memory (`MEMORY.md` + topic files) per
   the journal-rule + staleness + contradiction sweeps.
-- **(e) tier-efficacy (issue #402)** — when Phase 1.10's `propose_downgrades` returns one or more
-  `DowngradeProposal`s (a work-shape running consistently above baseline tier with zero marginal
-  findings across enough runs), render `scripts/tier_efficacy.py`'s diff preview against
-  `.saga/tier-defaults.json` and show it with `AskUserQuestion` (apply / skip / modify) — **exactly**
-  like (b)/(c), never an auto-append. This pass **never calls** `tier_defaults.write_tier_default()`
-  itself; an "apply" answer means the operator (or a follow-up `/plan` run) performs the write-back,
-  not this pass. No proposal (insufficient samples or mixed cost-vs-outcome evidence) is a normal,
-  silent no-op — never force a downgrade from thin evidence.
-- **(f) engine-registry calibration (issue #459)** — when Phase 1.11's aggregated report returned
-  `status: "proposal"`: render `scripts/engine_calibration.py`'s diff preview
-  (`python3 plugins/saga/scripts/engine_calibration.py preview --root .`) and present each cell
-  with `AskUserQuestion` (apply / skip / modify) — **exactly** like (e), never an auto-append.
-  **This pass never writes `engine-registry.yaml`** — every earned-ratings signal (benchmark,
-  staleness, Elo, SPC) terminates in a proposal, and an "apply" answer means the **operator** (or
-  a follow-up `/plan` run) performs the hand-edit of the named `rating` / `last_validated` cells,
-  not this pass ({#external-engines-never-gatekeepers}, #283 — external engines and automated
-  reducers never gain write access to the registry's own data). `status: "no-proposal"` is a
-  normal, silent no-op — never force a calibration from thin evidence.
 
 A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`inline` ("inline") /
 `team-execution` ("team execution"); `cc-workflows-ultracode` only on explicit invocation) per
@@ -502,27 +444,6 @@ It never blocks the router.
   tree for parroting count, disposition rate, and the adjudicated verified ratio (Phase 1.8).
   Zero-data reports "no data yet"; read-only and advisory-only (R8/R12); `--json` for
   machine-readable output.
-- `../../scripts/spend_retro.py` — cross-run spend aggregator: tier-mix and premium-spend-share
-  across every committed `docs/outcomes/*/outcome-spec.json` (Phase 1.10). Read-only; `report
-  --json` for machine-readable output.
-- `../../scripts/tier_efficacy.py` — the tier-efficacy pass's proposal engine (Phase 1.10 reads,
-  Phase 5(e) proposes). `propose_downgrades()` never writes; `render_diff_preview()` only reads
-  `.saga/tier-defaults.json` to show what would change.
-- `../../scripts/engine_calibration.py` — the earned-ratings calibration aggregator (Phase 1.11
-  reads, Phase 5(f) proposes; **never writes `engine-registry.yaml`**). Chain-verifies the
-  run-fact ledger first; `report` emits `registry_calibration_proposal.v1`; `render_diff_preview`
-  reads the registry only to show what would change.
-- `../../scripts/engine_stale_report.py` — per-(engine, capability) staleness verdicts
-  (corroborated / contradicted / unexercised) joined against `last_validated` (Phase 1.11 input).
-  Read-only; `report --json` for machine-readable output.
-- `../../scripts/capability_elo.py` — derive-on-read Elo from live reconciliation outcomes
-  (Phase 1.11 input; the runtime reorder-within-band signal). No persisted score file; zero-data
-  reports no matches yet.
-- `../../scripts/provider_control_chart.py` — SPC (XmR) cost/latency drift flags per provider
-  (Phase 1.11 input; the runtime deprioritization signal — deprioritize, never exclude).
-  Read-only; thin series report `no-data`, never a flag.
-- `../../scripts/engine_benchmark.py` — the active fixed-suite benchmark harness (operator-invoked;
-  measured-vs-claimed contradictions feed Phase 1.11). Deterministic graders only; proposal-only.
 - `../../references/benchmark-loop.md` — the benchmark propose-not-commit gate: suite versioning
   (immutable `suite_id`), threshold semantics, and how a contradiction becomes a Phase-5(f)
   proposal a human applies by hand.

@@ -168,17 +168,18 @@ in-scope risk classes and the tier's blocking threshold from Phase 1/0.1 are the
 this run, and they must be frozen before the first check runs so a later attempt cannot redefine what
 counts as passing:
 
+Write the criteria into the **run record** — `{"tier": "<Quick|Standard|Exhaustive>", "in_scope":
+["<class>", ...], "blocking_threshold": "<per §4.2>"}` under the run's functional-test state, keyed
+by the reviewed revision. The run record is the one file every role reads, and reading the criteria
+from it is what stops a later attempt redefining what counts as passing:
+
 ```bash
-python3 plugins/saga/scripts/evidence_ledger.py --repo-root . --saga-id <issue-N|task-slug> \
-  freeze-criteria --check-id qa --reviewed-sha "$(git rev-parse HEAD)" --criteria-file <criteria.json>
+uv run python plugins/saga/scripts/run_record.py path <issue>   # where the record lives
 ```
 
-`<criteria.json>` is a small object capturing `{"tier": "<Quick|Standard|Exhaustive>", "in_scope":
-["<class>", ...], "blocking_threshold": "<per §4.2>"}`. A repeat run against the same reviewed SHA
-reuses the same frozen block — `freeze-criteria` **rejects a second freeze** for the same
-`(check_id, reviewed_sha)` by design (R4: freeze is one-time). Treat that specific rejection as
-expected on a retry (the criteria are already locked in from attempt 1) and continue to Phase 2's
-checks; any other `evidence_ledger.py` error is a real failure and should surface.
+A repeat run against the same reviewed revision reads back the criteria already recorded rather
+than writing new ones. Criteria already present for that revision are the contract; differing
+criteria for the same revision are a refusal, not an update.
 
 For each in-scope class, run the acceptance checks from `references/risk-taxonomy.md`, narrow before
 broad, and gather **evidence** for every result:
@@ -293,7 +294,7 @@ drill-down body the card cells reference, not replaced by the card.
 The ship verdict values (`ship`, `ship-with-deferred`, `no-ship`) derived in §4.2 are the card's data
 source; they remain authoritative in the artifact.
 
-### 5.1 Write the durable artifact through the evidence ledger
+### 5.1 Write the durable artifact, and record the result on the run record
 
 Compose the report using the shape in `references/qa-report.md` (adapted from gstack's template,
 browser-decoupled): header (target / tier / scope / reviewed revision), overall health score +
@@ -302,23 +303,21 @@ per-class table + baseline delta from Phase 4, top findings, summary-by-severity
 (recommend — do **not** generate them), the ship verdict with its derivation, and
 deferred-with-repro.
 
-Persist it through the evidence ledger (#398) instead of a bare file write — content-addressed,
-write-once, and custody-logged so a later PASS can never silently overwrite an earlier FAIL:
+Write the report to `docs/qa/qa-<saga-id-or-issue>-<date>.md`, and record the result on the **run
+record** rather than in an evidence ledger (issue 1028): each prescribed scenario's terminal state —
+`passed`, `failed`, or `blocked` **with its cause named** — the reviewed revision, the verdict, and
+the artifact's path. An unrun scenario is never folded into a pass.
 
 ```bash
 REVIEWED_SHA=$(git rev-parse HEAD)
-python3 plugins/saga/scripts/evidence_ledger.py --repo-root . \
-  --saga-id <issue-N|task-slug|adhoc-work-<slug>> \
-  write --check-id qa --reviewed-sha "$REVIEWED_SHA" --producer qa-gate \
-  --verdict "<ship|ship-with-deferred|no-ship>" --artifact-file <path-to-composed-report.md>
+uv run python plugins/saga/scripts/run_record.py show <issue>   # read the record back
 ```
 
-The ledger prints the resulting `artifact_path` (under `docs/evidence/<saga-id>/artifacts/`) — that
-path is the durable QA artifact; reference it exactly as `docs/qa/qa-<saga-id-or-issue>-<date>.md` was
-referenced before (Phase 5.2's evidence link, Phase 6's `--qa-paths`, and issue progress all point at
-this ledger artifact path now). When Phase 0.2 found no work-thread saga, use
-`--saga-id adhoc-<branch-slug>` (the branch-or-pr stem) so the write still lands in the ledger —
-only the saga *tick* is skipped in that case (Phase 6), never the custody entry.
+The recorded path is the durable QA artifact, and it is what Phase 5.2's evidence link, Phase 6's
+`--qa-paths` and the issue progress all point at. A failure does not overwrite an earlier result:
+it is a new entry, and it re-enters the build loop against the post-merge allowance, which
+`release_step.py` counts. When Phase 0.2 found no work-thread saga there is no record to write to;
+say so in the report rather than inventing a run.
 
 ### 5.2 Emit issue progress with evidence
 
@@ -330,7 +329,7 @@ python3 plugins/saga/scripts/issue_progress.py \
   --issue-ref <owner/repo#N> \
   --destination <plan-only|pr|merge|nonprod-deploy> \
   --checks-run "<class:check | class:check | ...>" \
-  --evidence-link "<the ledger artifact_path from 5.1>"
+  --evidence-link "<the artifact path recorded in 5.1>"
 ```
 
 `--checks-run` is pipe-separated. Skip this command when there is no issue ref (a `task-` thread).
@@ -353,7 +352,7 @@ python3 plugins/saga/scripts/saga.py save \
   --lifecycle-phase qa \
   --phase-status complete \
   --phase <restored-phase> \
-  --qa-paths "<the ledger artifact_path from 5.1>" \
+  --qa-paths "<the artifact path recorded in 5.1>" \
   --checks-run "<class:check | ...>" \
   --next-step "<route to /handoff or /retro>" \
   --summary "<one-line ship verdict>"
@@ -372,7 +371,7 @@ become or update an SDLC issue; name it, do not run it.
 ### 6.2 FAIL — keep work phase, continue by merge state
 
 On a `no-ship` verdict, **keep `lifecycle_phase=work`** (omit `--lifecycle-phase`, which carries the
-prior phase forward), tick with `--qa-paths "<the ledger artifact_path from 5.1>"` and the evidence,
+prior phase forward), tick with `--qa-paths "<the artifact path recorded in 5.1>"` and the evidence,
 then **continue into the step the merge state names**, in the same turn (issue #1029) — run it,
 having said in one line which branch you took and why:
 

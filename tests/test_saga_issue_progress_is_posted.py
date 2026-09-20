@@ -23,6 +23,26 @@ from types import ModuleType
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
+
+
+def _load_board_progression() -> ModuleType:
+    """Load the module this guard resolves boundaries through, by path like its siblings."""
+    import importlib.util
+
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location(
+        "board_progression", SCRIPTS / "board_progression.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["board_progression"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+BP = _load_board_progression()
 SKILL = ROOT / "plugins" / "saga" / "skills" / "work" / "SKILL.md"
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
 
@@ -132,13 +152,39 @@ class TestTheCardMovesAtPhaseBoundaries:
 
         combined = skill_text + plan_text
         states = re.findall(r'--target-state\s+"([^"]+)"', combined)
-        assert len(states) == 5, f"five permitted boundaries, found {len(states)}: {states}"
-        for state in states:
-            assert state in live_statuses, f"--target-state {state!r} is not a live board option"
+        # The boundary spelling names no state at all (issue 1028): the allowed-submission table
+        # chooses the pair, which is why a boundary cannot carry a typo'd one. Resolve each
+        # boundary the skills name through that same table so this guard counts every move.
+        # Per fenced block, because a `--dry-run` block prints a move and submits nothing; counting
+        # the whole text would double-count a boundary the skills also demonstrate as a dry run.
+        boundaries = [
+            name
+            for block in combined.split("```")
+            if "--dry-run" not in block
+            for name in re.findall(r"--boundary\s+([a-z-]+)", block)
+            if BP.resolve_boundary(name)["submits"]
+        ]
+        resolved = [BP.resolve_boundary(name)["status"] for name in boundaries]
+        every_state = states + resolved
+        assert len(every_state) == 5, (
+            f"five permitted boundaries, found {len(every_state)}: {every_state}"
+        )
+        for state in every_state:
+            assert state in live_statuses, f"the submitted state {state!r} is not a live option"
 
+        # The typed pairs, plus the pairs the boundary spelling resolves to. A boundary carries
+        # both halves by construction — `boundary_payload` builds the pair — which is the same
+        # property this guard was pinning about the typed form, reached a safer way.
         pairs = re.findall(
             r'\[\s*"Stage",\s*"([^"]+)"\s*\],\s*\[\s*"Status",\s*"([^"]+)"\s*\]', combined
         )
+        for name in boundaries:
+            move = BP.resolve_boundary(name)
+            assignments = dict(BP.boundary_payload(move)["assignments"])
+            assert set(assignments) == {"Stage", "Status"}, (
+                f"the {name} boundary resolves to a submission that is not a Stage/Status pair"
+            )
+            pairs.append((assignments["Stage"], assignments["Status"]))
         assert len(pairs) == 5, f"every submission must carry both halves, found {len(pairs)}"
         for pair in pairs:
             assert pair in live_pairs, f"{pair} is not an option combination the board carries"

@@ -57,8 +57,8 @@ def bed(orch, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     store = tmp_path / "store"
     store.mkdir()
     monkeypatch.setattr(orch, "assert_agent_launcher_available", lambda: None)
-    monkeypatch.setattr(orch, "announce_units", lambda r, names: [])
-    monkeypatch.setattr(orch, "report_announcements", lambda records, **kw: None)
+    # The two board-writeback stand-ins that used to sit here are gone with the writeback itself
+    # (issue 1028): `merge` makes no board write at all now, so there is nothing left to stub.
     monkeypatch.setattr(orch, "live_agents", lambda **kw: [])
     monkeypatch.setattr(orch, "append_unit_note", _append)
     # A real bare remote, so `origin/main` is a real remote-tracking ref and the guard reads

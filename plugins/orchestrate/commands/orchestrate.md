@@ -513,16 +513,16 @@ exit-code table:
 
 | Exit | Meaning |
 |---|---|
-| 0 | Every unit that was ready merged, its card was updated, and any owed review resubmission was made. |
+| 0 | Every unit that was ready merged and any owed review resubmission was made. |
 | 1 | The merge into the run branch could not complete: a conflict worktree is retained or the landing ref could not be updated; the reason and the retained path are printed and the unit is left untouched. |
-| 2 | Merges landed but a board card was not updated, or an earlier writeback is still outstanding. |
 | 3 | Merges landed but a landing worktree could not be removed. Not returned when exit 4 also applies. |
 | 4 | A review resubmission that was owed was not made: the prompt failed, the controller's composer held staged input, or operator-owned fix requests held the resubmission. Outranks exit 3. |
 
-The codes are pinned against the command's own return statements by a test. A failure survives
-the invocation: a later `merge` re-reports any unit still outstanding rather than exiting 0 over a
-card it never fixed. Each writeback also names, on stderr, which saga executed it and which schema
-validated the rung — several copies of each are usually installed.
+The codes are pinned against the command's own return statements by a test. Exit 2 is retired: it
+meant "merges landed but a board card was not updated", and this command no longer writes to a
+board at all — saga submits each lifecycle boundary itself, through mission-control's constrained
+mutation (issue 1028). Giving a retired code a new meaning would silently change what an existing
+caller reads, so it is gone rather than reused.
 
 ## Phase 6 — report
 

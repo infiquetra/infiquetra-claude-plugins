@@ -237,18 +237,22 @@ that needs to know it holds the newest copy re-reads and compares `updated_at`.
 
 ## What this record replaces
 
-Nothing in this table is deleted by the card that introduced the record. The record becomes the
-place the state belongs; the removals card (issue 1030) deletes the modules once every reader has
-moved.
+Nothing in this table was deleted by the card that introduced the record. The record becomes the
+place the state belongs; a module is deleted once every reader has moved, and the removals card
+(issue 1030) takes the rest.
 
-| Store | Module | Replaced by |
-|---|---|---|
-| Run-fact ledger | `run_ledger.py` | `units` and `review_cycles` |
-| Evidence-custody ledger | `evidence_ledger.py` | `review_cycles` and the functional-test state in `units` |
-| Dispatch-settlement ledger | `dispatch_settlement.py` | `roster`, with its pane identifiers |
-| Effort ledger | `effort_ledger.py` | `run_configuration.staffing_models_and_efforts` |
-| Envelope tokens | `envelope_token.py` | `approval_scope` and the merge-turn field in `units` |
-| Ship receipts | `ship_receipt.py` *(removed in #1027 with the ship ceremony)* | the merge and release state in `units` |
+The **Status** column is what actually happened, so a reader can tell a plan from a fact. Issue 1028
+removed one module and deferred three, each for a reason recorded here rather than left to be
+rediscovered; issue 1027 removed a fifth with the ship ceremony.
+
+| Store | Module | Replaced by | Status |
+|---|---|---|---|
+| Run-fact ledger | `run_ledger.py` | `units` and `review_cycles` | deferred to issue 1030 — sixteen production importers, fifteen of them modules that card deletes |
+| Evidence-custody ledger | `evidence_ledger.py` | `review_cycles` and the functional-test state in `units` | deferred to issue 1030 — its sole production importer is `closure_gate.py`, whose whole subject is this ledger and which issue 1030 deletes along with its two dependents |
+| Dispatch-settlement ledger | `dispatch_settlement.py` | `roster`, with its pane identifiers | deferred to issue 1030 — its importers are the outcome coordinator and the archived team-execution plugin, and it reads `run_ledger` |
+| Effort ledger | `effort_ledger.py` | `run_configuration.staffing_models_and_efforts` | **removed by issue 1028**, with `effort-policy.yaml`; its only importer was its own test |
+| Envelope tokens | `envelope_token.py` | `approval_scope` and the merge-turn field in `units` | issue 1030 |
+| Ship receipts | `ship_receipt.py` | the merge and release state in `units` | **removed by issue 1027**, with the ship ceremony |
 
 Two things stay and are not replaced at all: the saga envelope log under `.claude/saga/sagas/`,
 which is the append-only history this single mutable file deliberately does not keep, and the spore

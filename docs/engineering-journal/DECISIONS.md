@@ -2,6 +2,116 @@
 
 ## 2026-09-20
 
+### Orchestrate 6.0.0: removing a subcommand is a major bump, by this plugin's own precedent  {#1028-orchestrate-subcommand-removal-is-major}
+
+**Decision.** Removing the `announce` subcommand and retiring `merge`'s exit status 2 takes
+orchestrate to **6.0.0**, not the 5.1.0 this card first wrote.
+
+**Rationale.** The plugin already ruled on this. Version 5.0.0 was a major bump *because* it removed
+the `redrive`, `collect` and `land` subcommands, under a changelog heading that reads
+"Changed -- BREAKING". Removing `announce` is the same class of change to the same surface, and the
+exit code is worse: a caller that reads exit 2 from `merge` gets a different answer than before,
+silently, because a status that used to mean "the board write did not land" is now unreachable.
+A minor bump would tell a consumer that nothing they depend on moved.
+
+**Rejected alternative.** 5.1.0, on the reasoning that the removal is small and nothing in this
+repository calls `announce`. Size is not the test; what a released interface promises is. And "no
+caller in this repository" says nothing about an operator's shell history or another machine's
+installed copy.
+
+**Revisit when** the plugin adopts a written versioning policy; until then the precedent in its own
+changelog is the policy, and this entry is part of it.
+
+### The release step is a module, because behaviour in a skill document has no test  {#1028-release-step-is-a-module}
+
+**Decision.** `plugins/saga/scripts/release_step.py` exists, although card 1028's file list names
+only one new module. It owns three things: merging the parent pull request bound to the head its
+checks ran against, recording the deployment or its declared absence, and composing the closeout
+comment.
+
+**Rationale.** Three of the card's requirements — wait for the required checks on the exact head,
+record "no destination" rather than failing, and compose a closeout that carries every required
+link — are behaviour. Left in the work skill as prose they would have shipped with no executable
+guard, and behaviour nobody can test is behaviour nobody can tell is broken.
+`tests/test_release_step.py` now covers each of them, including the case this repository actually
+has: `nonproduction_destination: none`, where the deploy handoff must not be called at all.
+
+**Rejected alternative.** Folding the three commands into `merge_turn.py` as extra subcommands.
+Taking a merge turn and releasing a parent are different jobs with different owners in the lifecycle
+repository's own role model, and one module would have had to hold both.
+
+**Revisit when** issue 1039 redesigns `/qa`: the functional-test half of this module is the seam
+that card will read, and it may belong there instead.
+
+### The release records an absent destination instead of failing  {#1028-no-destination-is-a-result}
+
+**Decision.** Where the repository profile declares `nonproduction_destination: "none"` — as
+`.saga-profile.json` does here — the release step records the absence with its reason, exits
+successfully, and never calls the deploy handoff. No deployment is recorded and no environment is
+named.
+
+**Rationale.** The lifecycle repository's closeout rule forbids fabricating an environment, a
+deployment record or an acceptance result to complete a comment; recording the absence *with a
+reason* is what it asks for instead. Treating "nowhere to deploy" as an error would block every run
+in a repository that has no lower environment, which is this one, so the run would fail for a
+reason that is a permanent property of the repository.
+
+**Rejected alternative.** Offering the handoff anyway and letting the deploy plugin decide. An
+offer with no destination is a baton handed to nobody, and `deploy_handoff` would then hold an
+unacknowledged offer for a deployment that can never happen.
+
+**Revisit when** this repository gains a non-production destination; the declared-destination path
+is already implemented and tested, and only the profile value changes.
+
+### Saga's board moves are named by lifecycle boundary, and the allowed list is the only vocabulary  {#1028-board-boundaries}
+
+**Decision.** The board-move module takes a lifecycle boundary name, not a target status. A fixed
+table maps each of the run's six boundaries onto a `(Stage, Status)` pair drawn from
+`lifecycle_field_mutation.allowed_submissions` in the vendored schema, and nothing outside that list
+can be submitted. A caller that wants a different status has no way to ask for one.
+
+**Rationale.** The lifecycle repository calls that list "the single authority" and renders it into
+two prose chapters as a generated region so the chapters cannot disagree with it. Nothing in this
+repository read it: `grep -rn "allowed_submissions" --include=*.py plugins/ tests/` returned zero
+hits at base commit `87a5329e`, while `board_progression.py` accepted any `--target-state` a caller
+typed. A free-text target is how a card ends up in a status the lifecycle never authorised, and the
+certificate gate does not catch it because the certificate authorises the *field*, not the *value*.
+
+**The map is not one-to-one, and that is the finding.** Six boundaries, six rows, and they do not
+pair off: review acceptance has no allowed row at all, and close has two, chosen by whether a retro
+trigger fired. The module therefore reports "no allowed submission at this boundary" for review
+acceptance rather than inventing a move. Two statuses the live Operations board carries —
+`Ready to merge` and `Closeout` — are not in the allowed list, so saga never submits them even
+though card 1028's own acceptance criterion names them.
+
+**Rejected alternatives.** Submitting `Ready to merge` at review acceptance because the board offers
+it: that is saga granting itself board authority the lifecycle withholds. Deriving the table from
+the board census instead of the schema: the census says what the board *can* hold, never what a
+caller *may* submit.
+
+**Revisit when** the lifecycle repository's allowed list gains an `Active` / `Ready to merge` row —
+the repair proposed to the operator on `infiquetra/infiquetra-sdlc#170` — at which point review
+acceptance gains a move and the table gains a row.
+
+### Two of saga's four ledgers are removed with their card; two wait for the removals card  {#1028-ledger-removal-split}
+
+**Decision.** Card 1028 removes `effort_ledger.py` and `evidence_ledger.py` and repairs every
+importer. It defers `run_ledger.py` and `dispatch_settlement.py` to the removals card, issue 1030.
+The rule: remove a ledger when every importer can be repaired; defer it when removal would require
+deleting modules the card does not name.
+
+**Rationale.** `effort_ledger` has one importer and it is its own test. `evidence_ledger` has two
+production importers, one of which (`review_consensus.py`) survives the removals card and is
+repaired onto the run record. `run_ledger` has sixteen, fifteen of them modules issue 1030 deletes
+outright — repairing them is work thrown away, and deleting them here is another card's scope.
+`dispatch_settlement` imports `run_ledger`, so it cannot outlive that deferral.
+
+**Rejected alternative.** Removing all four and deleting whatever broke. That turns a bounded card
+into the largest deletion in the repository's history a card early, without the command-surface and
+importability guards issue 1030 brings with it.
+
+**Revisit when** issue 1030 lands; the deferral list is discharged there, and card 1028's own test
+asserts the two deferred modules are still importable so a premature removal fails loudly.
 ### The exit criterion is read from the run record, never judged at the end of the work  {#1027-exit-criterion-is-read-not-judged}
 
 **Decision.** `/work` reads what a unit must clear from the run record — the mechanical baseline,

@@ -32,10 +32,10 @@ CHANGELOG = PLUGIN_ROOT / "CHANGELOG.md"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 #: Orchestrate's version at this card. Named with its predecessor so a bump is deliberate.
-ORCHESTRATE_VERSION = "5.0.0"
-# Issue 1001 took 4.6.0 on the integration branch while this card's suite ran; its
-# section is folded under 5.0.0 rather than renumbered.
-ORCHESTRATE_PREDECESSOR = "4.6.0"
+ORCHESTRATE_VERSION = "6.0.0"
+# 6.0.0 is issue 1028: the board-writeback path is removed and `merge`'s exit status 2 is retired
+# with it. 5.0.0 was issue 1025, the slim to the run driver.
+ORCHESTRATE_PREDECESSOR = "5.0.0"
 
 REMOVED_SUBCOMMANDS = ("redrive", "collect", "land")
 KEPT_SUBCOMMANDS = ("plan-check", "start", "go", "merge", "clean")
@@ -133,12 +133,34 @@ class TestReleaseSurfacesMoveTogether:
         assert headings[0] == ORCHESTRATE_VERSION
         assert headings[1] == ORCHESTRATE_PREDECESSOR
 
+    @staticmethod
+    def _section(version: str) -> str:
+        """One changelog entry, found by its own heading.
+
+        These two guards used to read "the latest entry", which was the 5.0.0 entry only for as
+        long as 5.0.0 stayed the newest release. Issue 1028 shipped 5.1.0 and both guards began
+        asserting that a release which removed nothing must name three removals. What they are
+        actually pinning is that **the 5.0.0 entry** keeps naming what 5.0.0 removed, so they now
+        find that entry by heading.
+        """
+        text = CHANGELOG.read_text()
+        start = text.index(f"## [{version}]")
+        rest = text[start + 1 :]
+        end = rest.find("\n## [")
+        return rest if end == -1 else rest[:end]
+
     @pytest.mark.parametrize("name", REMOVED_SUBCOMMANDS)
     def test_the_changelog_names_every_removed_subcommand(self, name: str) -> None:
-        latest = CHANGELOG.read_text().split("## [", 2)[1]
-        assert f"`{name}`" in latest, f"the 5.0.0 entry must name {name} by name"
+        section = self._section("5.0.0")
+        assert f"`{name}`" in section, f"the 5.0.0 entry must name {name} by name"
 
     def test_the_changelog_names_the_record_replacement_as_breaking(self) -> None:
-        latest = CHANGELOG.read_text().split("## [", 2)[1]
-        assert "run record" in latest.lower()
-        assert "breaking" in latest.lower()
+        section = self._section("5.0.0").lower()
+        assert "run record" in section
+        assert "breaking" in section
+
+    def test_this_releases_entry_names_what_it_removed(self) -> None:
+        """5.1.0's own claim: the board writeback is gone and exit status 2 went with it."""
+        section = self._section(ORCHESTRATE_VERSION).lower()
+        assert "board-writeback" in section or "board writeback" in section
+        assert "exit status" in section and "2" in section

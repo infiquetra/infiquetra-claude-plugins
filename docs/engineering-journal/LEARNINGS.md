@@ -2,6 +2,104 @@
 
 ## 2026-09-20
 
+### Two cards taking the same version merge silently; the changelog is the only place it shows  {#1028-identical-version-strings-merge-silently}
+
+**Evidence.** Issues 1027 and 1028 both bumped saga to `0.170.0` against the same integration head,
+`23959a80`. At the merge, `plugins/saga/.claude-plugin/plugin.json` and the saga row in
+`.claude-plugin/marketplace.json` came through with **no conflict at all** — both read `0.170.0`
+afterwards, and `check_release_surface_parity.py` and `sync_marketplace.py --check` both passed,
+because the manifest and the registry agreed with each other. The only conflict was in
+`plugins/saga/CHANGELOG.md`: two entry bodies under one `## [0.170.0]` heading.
+
+**Mechanism.** Git conflicts on differing lines. Two writers who produce the *identical* line have
+not diverged in git's terms, so a same-version bump is a clean merge by construction. Every
+parity check downstream compares the manifest against the registry, and both carry the same wrong
+number, so they agree — which is exactly what they are built to check. The changelog conflicts only
+because the two bodies differ, and if a card ever writes a thin enough entry that the bodies merge
+too, nothing catches it.
+
+**Generalizable rule.** After merging an integration branch, **re-read every `plugin.json` and
+marketplace entry you bumped** rather than trusting a clean merge. The signal for a collision is two
+changelog sections under one number, never a conflict on the version itself. This card's own
+`0.170.0` changelog body contains the sentence warning about it — written one merge turn before the
+collision it describes arrived.
+
+### A deletion that runs to a conflict marker takes whatever sits between  {#1028-deleting-to-a-conflict-marker}
+
+**Evidence.** Issue 1028's merge with issue 1027. A resolution script deleted from a named paragraph
+through the `>>>>>>>` marker to drop a block issue 1027 had removed upstream. The close step sat
+between the two, so it went as well. Nothing failed at the merge; the loss surfaced four commands
+later when `tests/test_saga_no_direct_write.py` reported the work skill submitting two boundaries
+where three were expected.
+
+**Mechanism.** A conflict marker is a position, not a boundary of meaning. Slicing to it deletes
+every line in between, and in a hand-resolved section those lines are frequently the other side's
+content, which is why nothing complains. The guards caught it only because one of them counts
+something.
+
+**Generalizable rule.** Resolve a conflict by writing the section you want, not by deleting to a
+marker. When a slice is unavoidable, print what falls inside it before applying, and re-run the
+guards that count rather than the guards that match.
+
+### A card can name a board move the lifecycle forbids, and only reading the allowed list catches it  {#1028-card-named-a-forbidden-board-move}
+
+**Evidence.** Issue #1028, planning and build. The card's fourth acceptance criterion asks that a
+real run move its card through `Implementing`, `Ready to merge` and `Closeout`. All three are live
+options on the Operations board (`gh project field-list 3 --owner infiquetra`). Only `Implementing`
+is in `lifecycle_field_mutation.allowed_submissions` in
+`plugins/mission-control/config/sdlc-schema.json`, which the lifecycle repository's own
+`allowed_submissions_note` calls "the single authority" on what a caller may submit. The card's
+first criterion has the same shape from the other direction: it asks the dry run at the
+review-acceptance boundary to print "the single move it would submit", and the allowed list carries
+no row for review acceptance at all.
+
+**Mechanism.** A board field's options and a caller's permitted submissions are two different sets,
+and the larger one is the visible one. Anyone writing a card reads the board, sees `Ready to merge`,
+and writes it down; the smaller set lives in a schema block that, before this card,
+`grep -rn "allowed_submissions" --include=*.py plugins/ tests/` matched **zero** times. The
+certificate that gates board writes authorises the *field names* `Stage` and `Status` and says
+nothing about the *values*, so nothing anywhere refused an out-of-vocabulary move — the card would
+simply have been written, and the wrong status would have looked like a working feature.
+
+**Generalizable rule.** When a permission is expressed as a list in a schema, grep for the list's
+name before trusting that anything enforces it. An unread allowlist is not a control; it is a
+comment. And when a card names a value from the visible set, check it against the permitted set
+before implementing it — then report the discrepancy rather than quietly satisfying either side.
+
+### A field named after a module is not an import of it  {#1028-field-named-after-a-module}
+
+**Evidence.** Issue #1028. `grep -rn "evidence_ledger"` over the repository returned eight hits in
+`plugins/saga/scripts/review_consensus.py`, which read as eight production usages and made the
+ledger look impossible to remove. Every one of them is the dataclass field
+`evidence_ledger: Mapping[str, str]` — a plain mapping of evidence keys to values that has nothing
+to do with the module. Parsing imports instead (`ast.Import` / `ast.ImportFrom`) showed the module
+has exactly **one** production importer, `closure_gate.py`.
+
+**Mechanism.** A ledger, a store and a registry all tend to get a field named after themselves in
+the things that carry their data, so the module name and the field name collide by convention. A
+textual grep cannot tell a name from a reference, and the error is asymmetric: it inflates the
+apparent blast radius, which makes a correct removal look reckless and a deferral look prudent.
+
+**Generalizable rule.** Count importers by parsing, not by grepping, before sizing a removal.
+`tests/test_ledger_removal.py` does the parse, and its module docstring records why.
+
+### An admission answer's recorded source says "operator" whoever supplied it  {#1028-admission-source-is-always-operator}
+
+**Evidence.** Issue #1028's admission run. `plugins/saga/scripts/admission.py:444` writes
+`{"value": value, "source": "operator"}` for every answer an answers file carries. Eight of this
+run's thirteen parameters were answered from the card body, the lifecycle repository at its pinned
+revision, the lens catalogue and a run driver's carrier — not from a live operator, who could not
+be asked because `AskUserQuestion` was unavailable. The record cannot tell those apart afterwards.
+
+**Mechanism.** The module distinguishes `operator`, `profile`, `staffing`, `lifecycle-default` and
+`unset` precisely so a later reader can tell an answer someone gave from one a default filled — and
+then collapses every supplied answer into the strongest of those five. The file-supplied path was
+built for a caller that already asked; a caller that *derived* the answers has no way to say so.
+
+**Generalizable rule.** When a provenance field has a value that means "a human decided this",
+check that the code cannot write it for an answer no human gave. Until `admission.py` learns a
+per-answer source, the true source belongs in the plan document beside each answer, which is where
+this run put it.
 ### A scanner a repository runs advisory cannot be promoted to a blocking check without measuring it first  {#1027-measure-before-promoting-an-advisory-scanner}
 
 **Evidence.** Issue #1027, `plugins/saga/references/mechanical-baseline.md`. The card asked for

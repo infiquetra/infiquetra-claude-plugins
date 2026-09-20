@@ -137,10 +137,10 @@ first; the steps below price them.
 - Set an optional `spend_envelope` when the operator wants "ask once, at the crossing" rather than a
   prompt per expensive choice; `/work`'s #364 between-rounds escalation consults it before proposing a
   climb (`SpendEnvelope.consider`).
-- Author per-unit effort allocations with
-  `python3 plugins/saga/scripts/effort_ledger.py allocate --unit <U-ID> --amount <to_spend>` (ordinal
-  spend units, so escrow and the budget speak one currency). `/work` records actuals and refunds unused
-  budget; a unit that would exceed its allocation surfaces an escalation-request **before** it runs.
+- Per-unit effort allocations are gone with the effort-escrow ledger (issue 1028). The model and
+  effort each role runs at live in the run record's
+  `run_configuration.staffing_models_and_efforts`, decided once at admission; a unit that needs a
+  different tier is a staffing question for the operator, not an allocation to escalate.
 
 Weights are ordinal/relative, not dollar prices — the cost-weighted spend-*delta* classifier is #367.
 

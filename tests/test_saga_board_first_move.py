@@ -70,18 +70,42 @@ _TARGET = re.compile(r'--target-state\s+"([^"]+)"')
 _PAYLOAD = re.compile(r"--payload\s+'(\{.*?\})'")
 
 
+_BOUNDARY = re.compile(r"board_progression\.py\b.*?--boundary\s+([a-z-]+)", re.DOTALL)
+_DRY_RUN = re.compile(r"--dry-run")
+
+
 def submissions(path: Path) -> list[tuple[str, dict[str, Any]]]:
-    """Every ``(target_state, payload)`` a skill file's fenced submissions carry, in file order."""
+    """Every ``(target_state, payload)`` a skill file's fenced submissions carry, in file order.
+
+    Two spellings, one contract. A block naming ``--op set-field-status`` carries its own target
+    and payload. A block naming ``--boundary`` carries neither: the caller names a lifecycle
+    boundary and ``board_progression`` resolves the pair from the lifecycle repository's allowed
+    list, so the pair is resolved here through that same table rather than re-typed — a guard that
+    hard-coded the pair could disagree with the module it guards and still pass.
+
+    A ``--dry-run`` block prints a move and submits nothing, so it is not a submission.
+    """
     found: list[tuple[str, dict[str, Any]]] = []
     for block in _FENCE.findall(path.read_text(encoding="utf-8")):
-        if "--op set-field-status" not in block:
+        if _DRY_RUN.search(block):
             continue
-        target = _TARGET.search(block)
-        payload = _PAYLOAD.search(block)
-        assert target is not None and payload is not None, (
-            f"a submission block in {path.name} is not runnable as written:\n{block}"
-        )
-        found.append((target.group(1), json.loads(payload.group(1))))
+        if "--op set-field-status" in block:
+            target = _TARGET.search(block)
+            payload = _PAYLOAD.search(block)
+            assert target is not None and payload is not None, (
+                f"a submission block in {path.name} is not runnable as written:\n{block}"
+            )
+            found.append((target.group(1), json.loads(payload.group(1))))
+            continue
+        boundary = _BOUNDARY.search(block)
+        if boundary is None:
+            continue
+        move = BP.resolve_boundary(boundary.group(1))
+        if not move["submits"]:
+            # `review-accepted` has no row in the allowed list; the skill prints that and submits
+            # nothing, which is a real answer rather than a missing boundary.
+            continue
+        found.append((move["status"], BP.boundary_payload(move)))
     return found
 
 

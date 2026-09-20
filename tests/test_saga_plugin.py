@@ -46,12 +46,16 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.170.0"  # 0.170.0: /work becomes the build loop — the
-    # exit criterion is written in the run record at admission and read rather than judged, and
-    # build_loop.py runs it and records every result under the unit row's `build_loop` key
-    # (issue #1027). The five ship-ceremony modules are removed with their tests, the hook entry
-    # and their importers. Bumped from 0.169.0, the saga version on origin/parent/1018 at
-    # 23959a80: issue #1029 took 0.169.0 while this card's suite ran.
+    assert plugin_json["version"] == "0.171.0"  # 0.171.0: the merge turn, the release step, the
+    # lifecycle-boundary board interface and the allowed-submission enforcement (issue #1028).
+    # Bumped from 0.170.0, the saga version on origin/parent/1018 at 25619cd1. This card and issue
+    # #1027 BOTH took 0.170.0 against 23959a80, and the collision merged silently: two cards
+    # writing an identical version string never conflict, so the manifest and the marketplace entry
+    # came through clean and the only signal was two bodies under one changelog heading.
+    # Predecessor 0.170.0 was issue #1027: /work becomes the build loop — the exit criterion is
+    # written in the run record at admission and read rather than judged, and build_loop.py runs it
+    # and records every result under the unit row's `build_loop` key. The five ship-ceremony
+    # modules are removed with their tests, the hook entry and their importers.
     # Predecessor 0.169.0 was issue #1029: every lifecycle skill ends by doing the next step in the
     # same turn, a SessionStart hook announces the run record's next_step for a live run and
     # nothing for a done step, a closed run, or no record, and a local-only UserPromptSubmit hook
@@ -3969,19 +3973,25 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # ABSENT: the non-canonical `pass|fail|skip` vocab would parse to *unknown* and silently drop the
     # verdict (the Tests card cell would render not-reached) — guard against that regression.
     assert "tests:<pass|fail|skip>" not in work_doc
-    # PRESENT (substantive): the card render is the LEAD status step (step 1) of §5.4 — proving the
-    # card is the operator status HEADER, not an afterthought — and the continuation-routing step that
-    # was step 3 is pushed to step 4 by the insertion (proves a real reorder, not a keyword sprinkle).
+    # PRESENT (substantive): the card render is the LEAD status step of §5.4 — proving the card is
+    # the operator status HEADER, not an afterthought — and a fourth step still follows it, which
+    # proves a real reorder rather than a keyword sprinkle. THREE cards have now changed this
+    # section's wording: issue #1029 made the step continue the run rather than present routing,
+    # issue #1027 removed the ship ceremony it used to continue into, and issue #1028 replaced the
+    # hand-over with the merge turn, release, functional test and close it hands over TO. That is
+    # the argument for holding the POSITION and the property, not the prose.
     assert "1. **Render the operator status header**" in work_doc
-    # Step 4 is the last step of the section, and its presence proves the card render is a real
-    # reorder rather than a keyword sprinkle. BOTH sides of this guard's history changed its
-    # wording -- issue #1029 made the step continue the run rather than present routing, and issue
-    # #1027 removed the ship ceremony it used to continue into -- which is the argument for holding
-    # the POSITION and not the prose. The literal is kept as a second, weaker check.
     assert re.search(r"^4\. \*\*[^*]+\*\*", work_doc, flags=re.MULTILINE), (
         "section 5.4 must still carry a fourth step after the status-card render"
     )
-    assert "4. **Hand over to the integrate step, and continue into `/qa` on merge.**" in work_doc
+    section = work_doc[work_doc.index("### 5.4 ") :]
+    body = section[section.index("\n") :]  # past the heading, which names the steps too
+    assert body.index("**Render the operator status header**") < body.index(
+        "Take the merge turn"
+    ), "the status card must lead §5.4, not trail the steps it heads"
+    assert "Run `/qa` in this turn" in work_doc, (
+        "issue 1029's continuation contract: the functional test is run, not recommended"
+    )
     # STILL PRESENT (KTD5): detailed work-session evidence reference.
     assert "work-session" in work_doc
 

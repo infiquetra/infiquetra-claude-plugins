@@ -127,11 +127,25 @@ SUBMISSION_SEAM_RE = re.compile(
     r"|\bfrom\s+(?:board_progression|reconcile_controller)\s+import\b"
 )
 
-# The fenced submission a skill is now REQUIRED to carry at a lifecycle boundary.
+# The fenced submission a skill is REQUIRED to carry at a lifecycle boundary. Two spellings, one
+# contract: the controller call that names an op kind, and the boundary call that names a lifecycle
+# boundary and lets the allowed-submission table choose the pair (issue 1028). A `--dry-run` block
+# is an inspection, not a submission, and is excluded — otherwise every boundary would appear to
+# submit twice.
 FENCED_SUBMISSION_RE = re.compile(
     r"reconcile_controller\.py\s+reconcile\b(?:(?!```).)*--op\s+set-field-status",
     re.DOTALL,
 )
+FENCED_BOUNDARY_RE = re.compile(
+    r"board_progression\.py\b(?:(?!```).)*--boundary\s+(?P<boundary>[a-z-]+)",
+    re.DOTALL,
+)
+DRY_RUN_RE = re.compile(r"--dry-run")
+
+# The lifecycle boundaries /work submits, in the order the skill reaches them. `review-accepted` is
+# absent on purpose: the lifecycle repository's allowed list carries no row for it, so the skill
+# prints the absence and submits nothing there.
+WORK_BOUNDARIES = ["build-start", "merge-and-deploy", "close"]
 
 # Constant-resolution false-green guard: the op kind composed through the certificate CONSTANT —
 # the exact shape ``outcome_board_sync.py`` had at the W7 planning base — rather than the literal.
@@ -255,12 +269,28 @@ def scan_direct_writes(plugins_root: Path = PLUGINS_ROOT) -> list[tuple[str, str
 
 
 def scan_submissions(path: Path) -> list[str]:
-    """Every fenced Mission Control submission block in one markdown source, in file order."""
+    """Every fenced Mission Control submission block in one markdown source, in file order.
+
+    Either spelling counts. A `--dry-run` block is excluded: it prints a move and writes nothing.
+    """
     return [
         block
         for block in _fenced_blocks(path.read_text(encoding="utf-8"))
-        if FENCED_SUBMISSION_RE.search(block)
+        if (FENCED_SUBMISSION_RE.search(block) or FENCED_BOUNDARY_RE.search(block))
+        and not DRY_RUN_RE.search(block)
     ]
+
+
+def scan_boundaries(path: Path) -> list[str]:
+    """Every lifecycle boundary this skill SUBMITS, by name, in file order."""
+    names: list[str] = []
+    for block in _fenced_blocks(path.read_text(encoding="utf-8")):
+        if DRY_RUN_RE.search(block):
+            continue
+        match = FENCED_BOUNDARY_RE.search(block)
+        if match:
+            names.append(match.group("boundary"))
+    return names
 
 
 def assignments_of(block: str) -> list[tuple[str, str]]:
@@ -493,10 +523,25 @@ def test_saga_submits_at_every_plan_boundary() -> None:
 
 
 def test_saga_submits_at_every_work_boundary() -> None:
-    """R1: /work submits its three lifecycle moves through Mission Control."""
+    """R1: /work submits one move at each of its three lifecycle boundaries, and no more."""
     blocks = scan_submissions(WORK_SKILL)
     assert len(blocks) == 3, (
-        f"skills/work/SKILL.md must submit at 1.3b, 4.4-Verify and 4.4-delivered; found {len(blocks)}"
+        "skills/work/SKILL.md must submit at build start, merge plus deploy and close; found "
+        f"{len(blocks)}"
+    )
+
+
+def test_saga_work_submits_the_named_boundaries_and_not_review_acceptance() -> None:
+    """Issue 1028: the boundary is what a caller names, and review acceptance has no move."""
+    submitted = scan_boundaries(WORK_SKILL)
+    assert "review-accepted" not in submitted, (
+        "review acceptance has no row in the lifecycle repository's allowed submissions; the skill "
+        "must print the absence, not submit a move"
+    )
+    for boundary in submitted:
+        assert boundary in WORK_BOUNDARIES, f"/work submits an unknown boundary: {boundary}"
+    assert "merge-and-deploy" in submitted and "close" in submitted, (
+        f"/work must submit the merge-plus-deploy and close boundaries; found {submitted}"
     )
 
 
@@ -508,7 +553,11 @@ def test_saga_every_submission_carries_the_live_pair() -> None:
     stays where it was.
     """
     for skill, expected in BOUNDARY_PAIRS.items():
-        found = [assignments_of(block) for block in scan_submissions(skill)]
+        found = [
+            assignments_of(block)
+            for block in scan_submissions(skill)
+            if FENCED_SUBMISSION_RE.search(block)
+        ]
         for assignments in found:
             assert len(assignments) == 2, (
                 f"{skill.name}: a submission carries {len(assignments)} assignment(s), not the pair: "
@@ -517,9 +566,10 @@ def test_saga_every_submission_carries_the_live_pair() -> None:
             assert [f for f, _ in assignments] == ["Stage", "Status"], (
                 f"{skill.name}: a submission names the wrong fields: {assignments}"
             )
-        assert [(a[0][1], a[1][1]) for a in found] == expected, (
-            f"{skill.name}: submitted pairs {[(a[0][1], a[1][1]) for a in found]} != R1's {expected}"
-        )
+        pairs = [(a[0][1], a[1][1]) for a in found]
+        assert pairs == [pair for pair in expected if pair in pairs] and set(pairs) <= set(
+            expected
+        ), f"{skill.name}: submitted pairs {pairs} are not a prefix of R1's {expected}"
 
 
 def test_saga_every_submitted_pair_is_live_on_the_board() -> None:

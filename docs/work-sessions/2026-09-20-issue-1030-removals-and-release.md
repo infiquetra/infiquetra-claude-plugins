@@ -90,7 +90,49 @@ this card's remaining removals land without it.
 
 ## What landed
 
-Every removal independent of the trio. See the commit list on the branch.
+Four of the plan's units, each a complete removal in its own right, plus two small repair commits.
+
+| Unit | What went | Measured after |
+|---|---|---|
+| U1 | Ten command files and nine skill directories | `plugins/saga/commands` holds **14** files; `plugins/saga/skills` holds **13** directories |
+| U4 | Four hooks with their registrations, the `SessionEnd`, `Stop` and `SubagentStop` event keys, and both saga agents | `plugins/saga/hooks` holds **8** hook files; `plugins/saga/agents` no longer exists |
+| U5 | Nineteen reference documents, four generated SVGs, the documentation model and its renderer, and the visuals page | — |
+| U7 | The sandbox-spawn instruction in `CLAUDE.md`, the spawn-site inventory, and the prose in four surviving skills | `grep -c readonly-verifier CLAUDE.md` prints **0** |
+
+Test files went from 302 to **296**: nine whole files retired with their subjects, and one new file,
+`tests/test_command_surface.py`, was added. No test was marked advisory, skipped or `xfail`, and the
+gate's coverage contract against `ci.yml` is untouched.
+
+**The script line count is the measure that did not move**: 60,133 to **59,671**, against a target of
+under 15,000. Every remaining line is behind the blocker described above. This is the honest state of
+the card: the command surface, the hooks, the agents, the references and the project instruction are
+done; the script families, which are the line count, are not.
+
+## Inner-loop results at this branch head
+
+| Check | Result |
+|---|---|
+| `uv run ruff check .` | pass |
+| `uv run ruff format --check .` | pass, 564 files |
+| `uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports` | pass, 378 source files |
+| `uv run python scripts/check_release_surface_parity.py` | pass, all plugins in parity |
+| `uv run python scripts/sync_marketplace.py --check` | pass |
+| `uv run python marketplace/validator/validate.py` | pass |
+| `uv run python scripts/lint_journal_order.py --base-ref <merge-base with main>` | pass, 0 violations |
+| `uv run python plugins/saga/scripts/lint_gate_absence_contract.py` | pass, 0 violations after the baseline shrink |
+
+`scripts/plan_artifact_conformance.py` and `scripts/lint_gate_absence_contract.py` do not exist at
+the repository root at this base; the gate-absence lint lives at
+`plugins/saga/scripts/lint_gate_absence_contract.py` and was run there.
+
+**The gate-absence baseline was shrunk twice, never loosened.** The ratchet pinned uncovered gate
+sites in four deleted skill files and in the deleted gate-divergence reference. A vanished file is
+drift the lint fails on by design, and its documented repair is to remove the entry — the direction
+the ratchet allows. The check itself is unchanged.
+
+No version was bumped. Bumping saga to 1.0.0 on a release whose defining removal has not happened
+would make the changelog and both installed plugin trees assert something untrue, so the release
+surfaces wait for the blocker's resolution.
 
 ## Residuals for the merge turn
 

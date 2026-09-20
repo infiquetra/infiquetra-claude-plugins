@@ -2,7 +2,7 @@
 
 This manual explains Saga as a lifecycle operating model: where work starts, which command owns each phase, how local saga state differs from handoff readiness, and where Saga stops in favor of adjacent Infiquetra plugins.
 
-The source model for command coverage and visuals is [model/saga-docs-model.yaml](model/saga-docs-model.yaml). Rendered SVGs live in [assets/](assets/).
+These pages are the manual. The generated visual atlas and the model it was rendered from were retired with the eleven removed commands: a hand-maintained model of a command surface goes stale the moment the surface moves, and the surface itself is now guarded by tests/test_command_surface.py.
 
 ## Reading Path
 
@@ -25,17 +25,11 @@ The main chain is a reviewed-work spine:
 idea/requirements-ready -> /plan -> /doc-review -> /work -> /code-review -> /qa -> /handoff or /retro
 ```
 
-Several commands intentionally sit off the linear spine. `/spec`, `/investigate`, `/optimize`, and `/strategy` are not stored lifecycle phases; they produce artifacts or decisions that route back into the chain.
+Several commands intentionally sit off the linear spine. `/spec`, `/investigate`, and `/strategy` are not stored lifecycle phases; they produce artifacts or decisions that route back into the chain.
 
 ## Maintainer Path
 
-Update [model/saga-docs-model.yaml](model/saga-docs-model.yaml) first when the command surface, routes, state/readiness mappings, scenarios, ownership boundaries, or visual inventory changes.
-
-Then regenerate visuals:
-
-```bash
-uv run python plugins/saga/scripts/render_docs_visuals.py
-```
+Update these pages directly when the command surface, routes, state and readiness mappings, scenarios, or ownership boundaries change.
 
 Then run:
 

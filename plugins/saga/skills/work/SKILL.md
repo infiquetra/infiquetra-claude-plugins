@@ -519,10 +519,6 @@ canonical states is surfaced verbatim. A passing test gate is `tests:done:<ref>`
 
 List fields are full-snapshot (saga-spec §6) — pass the complete current set each tick, not a delta.
 
-When a team-execution run stored Layer-2 artifacts
-(`plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py store`), record their typed
-pointers on the tick via `--artifact-pointers "<pointer-json>|<pointer-json>"` (pipe-separated, omit =
-carry forward) so a resuming thread can `deref` the exact bytes instead of re-inlining them.
 
 ### 4.3 Issue progress (mission-control)
 

@@ -75,27 +75,14 @@ read subcommands of `gh` — never create / edit / merge.
 
 ---
 
-## Pass 3 — Transcript-review fan-out (reuse the /resume scripts, context-safe)
+## Pass 3 — What the run recorded
 
-Reuse the `/resume` forensic substrate, file-mediated. The orchestrator **never reads a raw `.jsonl` or a
-skeleton file** — paths only.
-
-```bash
-SCRATCH=$(mktemp -d -t retro-sessions-XXXXXX)
-# thread-scoped: identify sessions from the saga / branch.
-# windowed: discover, recency-ranked, capped, current session excluded:
-python3 plugins/saga/scripts/discover_sessions.py --repo <repo-folder> --days <N> --exclude <current-session-id>
-python3 plugins/saga/scripts/extract_session_skeleton.py --output "$SCRATCH/<id>.skeleton.txt" < <session-file>
-```
-
-**Fan-out (optional, offered).** When several sessions warrant parallel synthesis, **OFFER** a backend per
-`../../../references/operator-choice.md` and dispatch **one generic agent per session** (`Explore` / `Task` —
-this plugin has **no `agents/` dir**). Pass the scratch **paths** + guardrails as prompt text: read ONLY
-these paths, never read raw `~/.claude/projects/`, never reproduce tool I/O or thinking blocks, synthesize
-*what was tried / what didn't work / key decisions / related context*. This is CE `ce-compound`'s
-parallel-research pattern applied to the transcript evidence.
-
----
+This pass reconstructed the thread from session transcripts with the `/resume` forensic
+scripts. Issue 1030 removed `/resume` and those scripts; the run record for the issue is the
+replacement and it is a better source, because it was written by the run as it happened rather
+than reconstructed from it afterwards. Read
+`<primary checkout>/.claude/saga/runs/issue-<N>.json`: the admission answers, the units with
+their branches and merge-turn state, the review cycles, and `next_step`.
 
 ## Pass 4 — Interview question bank (grounded in Pass 1-3 evidence)
 

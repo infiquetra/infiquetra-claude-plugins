@@ -382,7 +382,9 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
     assert_row(api, contract, revised_spec)
     heading = next(line[3:] for line in spec.splitlines() if line.startswith("## 11. "))
     anchor = re.sub(r"[^a-z0-9 -]", "", heading.lower()).replace(" ", "-")
-    for source in ("plugins/saga/docs/commands.md", "plugins/saga/docs/model/saga-docs-model.yaml"):
+    # The docs model carried the second pointer; issue 1030 retired it with the generated
+    # atlas, so the command manual is the one remaining consumer-row pointer.
+    for source in ("plugins/saga/docs/commands.md",):
         path = ROOT / source
         match = re.search(
             r"\[/plan consumer row in saga-spec §11\]\(([^)#]+)#([^)]*)\)", path.read_text()

@@ -151,7 +151,7 @@ suite saw it. Each is restored, and each was a real requirement rather than an a
 | `uv run python marketplace/validator/validate.py` | 15 plugins, 0 errors |
 | `uv run python scripts/lint_journal_order.py --base-ref <merge-base with main>` | 0 violations |
 | `uv run python tools/release_surface_diff_guard.py --base-ref origin/parent/1018` | run after the version-bump commit |
-| the whole suite at the merged head | see below |
+| the whole suite at the merged head | **8778 passed, 34 skipped, 1 xfailed, 0 failed** in 14m37s, exit 0, at commit `8845ad09` |
 
 `scripts/gate.sh` was **not** run: the coordinator runs it after the merge.
 
@@ -180,6 +180,18 @@ Every one below came from the coordinator's stage-two message, recorded here as 
 | The release-step hazard | Mine to repair in this stage, test-first, watched failing |
 | Versions | Next minor above `origin/parent/1018` at the moment of the bump, re-read then |
 | Gate | Not run here; the coordinator runs it after the merge |
+
+## The suite, and what it took to get it green
+
+Three full-suite runs. The first two are recorded because they are the evidence, not a false start:
+
+| Run | Head | Result |
+|---|---|---|
+| 1 | before the version bump | stopped early; it would have red on the pinned saga version |
+| 2 | `6fc1f8ba` | **6 failed**, 8772 passed — the gate-absence baseline and five cross-skill contracts |
+| 3 | `8845ad09` | **0 failed**, 8778 passed, 34 skipped, 1 xfailed, exit 0, 14m37s |
+
+The only commit after the green run is this document's record of it.
 
 ## Next step
 

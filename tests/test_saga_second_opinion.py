@@ -1,12 +1,18 @@
-"""Second-opinion claim/adjudication after the #776 transport retirement.
+"""What survives the retirement of Saga's in-process second-opinion machinery.
 
-The managed-session runner (`engine_session_runner.py`) is deleted with its tests.
-This file keeps the claim-store contract that still lives in `second_opinion.py`.
+Two removals converge here. Issue #776 deleted the managed-session runner
+(`engine_session_runner.py`) with its tests. Issue #938 then deleted
+`plugins/saga/scripts/second_opinion.py`, which carried Work's in-process second-opinion offer and
+its feature-private dispatch, sidecar, streak and state machinery.
+
+This file no longer loads either of them. It keeps the three contracts that outlived both: the
+review skills halt rather than naming a launch command line, the operator-absence gate record
+survives, and an advisory reviewer or a panel can never satisfy a gate. The tombstone test below
+now names all four deleted files, so none of them can quietly return.
 """
 
 from __future__ import annotations
 
-import ast
 import importlib.util
 import re
 import sys
@@ -34,31 +40,23 @@ def _load(name: str, path: Path) -> ModuleType:
     return module
 
 
-SO = _load("second_opinion", SCRIPTS / "second_opinion.py")
-D = SO.engine_dispatch
+D = _load("engine_dispatch_for_second_opinion_tombstones", SCRIPTS / "engine_dispatch.py")
 
 
-def test_dispatch_second_opinion_still_takes_an_injected_runner() -> None:
-    tree = ast.parse((SCRIPTS / "second_opinion.py").read_text(encoding="utf-8"))
-    found = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "dispatch_second_opinion":
-            found = True
-            names = [arg.arg for arg in node.args.args]
-            names.extend(arg.arg for arg in node.args.kwonlyargs)
-            assert "runner" in names
-            assert "fallback_runner" not in names
-    assert found
+def test_the_retired_second_opinion_modules_stay_deleted() -> None:
+    """Issue #776's transport and issue #938's in-process offer are both gone from disk.
 
-
-def test_second_opinion_module_does_not_import_retired_transport() -> None:
-    text = (SCRIPTS / "second_opinion.py").read_text(encoding="utf-8")
-    assert "engine_session_runner" not in text
-    assert "engine_offer" not in text
-    assert "external_only" not in text
-    assert not (SCRIPTS / "engine_session_runner.py").exists()
-    assert not (SCRIPTS / "engine_offer.py").exists()
-    assert not (SCRIPTS / "external_only.py").exists()
+    A tombstone rather than a behaviour test: each of these four modules was deleted by a card
+    that proved it had no live consumer, so the failure this guards against is one of them coming
+    back unnoticed alongside unrelated work.
+    """
+    for name in (
+        "engine_session_runner.py",
+        "engine_offer.py",
+        "external_only.py",
+        "second_opinion.py",
+    ):
+        assert not (SCRIPTS / name).exists(), f"{name} came back; it was deleted deliberately"
 
 
 def test_review_skills_halt_instead_of_naming_a_launch_cli() -> None:

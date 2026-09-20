@@ -17,7 +17,6 @@ import pytest
 ROOT = Path(__file__).parent.parent
 SCRIPT_DIR = ROOT / "plugins" / "saga" / "scripts"
 DISPATCH_SCRIPT = SCRIPT_DIR / "engine_dispatch.py"
-SECOND_OPINION_SCRIPT = SCRIPT_DIR / "second_opinion.py"
 TRUST_BOUNDARY_DOC = ROOT / "plugins" / "saga" / "references" / "engine-output-trust-boundary.md"
 TEAM_VALIDATOR_REGISTRY = (
     ROOT
@@ -38,7 +37,12 @@ TEAM_VALIDATOR_CRITERIA = (
     / "validator-criteria.md"
 )
 
-PYTHON_CALL_SITES = (DISPATCH_SCRIPT, SECOND_OPINION_SCRIPT)
+# The Python call sites this guard scans. It carried two until issue #938 deleted
+# `second_opinion.py` with Work's in-process second-opinion offer; one scanned site went with it.
+# The boundary itself did not shrink -- it is the document and this guard, not a shared module -- so
+# the contract anchors, the seeded-unsafe fixtures, and the adversarial payload test below are all
+# unchanged. Add a module here whenever a new one handles external-engine advisory text.
+PYTHON_CALL_SITES = (DISPATCH_SCRIPT,)
 ADVISORY_TEXT_NAMES = {"advisory_text", "engine_output", "external_engine_output", "finding_text"}
 FORBIDDEN_CALLS = {
     "eval",
@@ -230,7 +234,13 @@ def test_lint_catches_interpolation() -> None:
     assert any("forbidden sink subprocess.run" in reason for reason in reasons)
 
 
-def test_lint_catches_second_opinion_content_interpolation() -> None:
+def test_lint_catches_finding_content_interpolation() -> None:
+    """A typed finding's `.content` is advisory text wherever it comes from.
+
+    This fixture is a literal source string, so the rule it pins outlived the module it was
+    written for (`second_opinion.py`, deleted by issue #938) and applies to any future carrier of
+    `external_opinion.findings[].content`.
+    """
     unsafe_source = """
         def run_external_text(item):
             return f"shell {item.content}"

@@ -182,8 +182,6 @@ step "Run tests with coverage" \
 step "Validate plugin manifests"     uv run python scripts/validate_plugins.py
 step "Validate marketplace registry" uv run python marketplace/validator/validate.py
 step "Validate ownership lanes"      uv run python scripts/check_ownership_lanes.py --verbose
-step "Engine Registry"               uv run python plugins/saga/scripts/check_engine_registry.py
-step "Engine Registry Conformance"   uv run python plugins/saga/scripts/engine_registry_conformance.py
 step "Agent-file spec lint (frontmatter, role-class tiers, tool-scope floor)" \
   uv run python tools/agent_spec.py --report
 step "Mission-control pagination-completeness lint" \

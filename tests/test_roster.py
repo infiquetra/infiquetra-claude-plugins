@@ -287,8 +287,17 @@ def test_a_role_with_no_prompt_in_the_library_is_a_named_refusal(
 
 
 def test_an_unknown_record_version_exits_three_with_one_line(
-    roster: ModuleType, rr: ModuleType, store: Path, capsys: pytest.CaptureFixture[str]
+    roster: ModuleType,
+    rr: ModuleType,
+    store: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # ``main`` reads the ambient environment for the herdr-pane precondition, which it checks
+    # before the record version — so without these two lines the test exits 4 on a machine
+    # outside a pane (CI) and 3 inside one. Pin the pane so the version check is what is tested.
+    monkeypatch.setenv("HERDR_ENV", "1")
+    monkeypatch.setenv("HERDR_PANE_ID", "w99:pTEST")
     record_path = _record(rr, store)
     payload = json.loads(record_path.read_text(encoding="utf-8"))
     payload["schema"] = "run_record.v2"

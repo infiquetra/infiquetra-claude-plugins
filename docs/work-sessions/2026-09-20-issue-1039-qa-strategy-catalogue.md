@@ -117,6 +117,24 @@ and `test_gate_absence_lint_reports_zero_violations` red with "file has no uncov
 (baseline pins 3) — remove it from the baseline". The entry was removed, which **tightens** the
 guard rather than weakening it: the qa skill now has no allowance to spend.
 
+## What the first full suite found — five cross-skill contracts
+
+The rewrite dropped prose that four other test files require of this document, and only the whole
+suite saw it. Each is restored, and each was a real requirement rather than an artefact:
+
+- **The board's `Verify` stage relationship** (`test_verify_entry_contract`, two tests). `/qa` is
+  the activity that stage holds, and the schema block in the lifecycle repository is the single
+  authority for the entry condition. The no-deployable route relaxes the deployment requirement and
+  never the merge requirement, which the prose has to say in those words because a paraphrase of a
+  board rule is a second, unversioned copy of it.
+- **The sandboxed verify-class spawn** (`test_sandbox_spawn_sites`, and
+  `test_inventory_guard_covers_brainstorm`, which fails as a cascade of it). A spawn from this step
+  passes the read-only verifier in a disposable worktree, which is what keeps "reads behaviour,
+  never writes code" a property rather than a promise.
+- **The step it continues into** (`test_skill_continuation_endings`, two tests). `/qa` continues
+  into `/retro` on a pass, and the continuation has to appear in the document's ending, where a
+  reader stops reading.
+
 ## Checks run
 
 | Check | Result |

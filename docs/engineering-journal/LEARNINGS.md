@@ -2,6 +2,26 @@
 
 ## 2026-09-20
 
+### A rewritten skill document owes contracts that live in four other test files  {#1039-skill-prose-contracts-are-distributed}
+
+**Evidence.** The `/qa` skill rewrite passed every test in `tests/test_saga_plugin.py`, which is the
+file that looks like the skill's contract, and then the full suite reported five failures from three
+other files: `test_verify_entry_contract` (the board stage this skill is the activity for, and the
+merge precondition of its no-deployable route), `test_sandbox_spawn_sites` (the read-only verifier
+at its spawn site), and `test_skill_continuation_endings` (the step it continues into, which must
+appear in the document's last quarter). A fourth file, `test_brainstorm_judgment_contract`, failed
+as a cascade of the sandbox one because its inventory guard runs that test as a subprocess.
+
+**Mechanism.** A skill document is a shared surface. Its own contract test guards what the skill
+does; other tests guard what the wider lifecycle needs it to SAY — a board rule quoted in the exact
+words the schema uses, a spawn profile, a continuation. None of those obligations is discoverable
+from the document or from its own test file, and a rewrite that reads only those two will drop them
+silently and pass everything it thought to run.
+
+**Generalizable rule.** Before rewriting a skill document, grep the whole test tree for its path,
+not just for its own test file, and list every assertion made against it. The full suite finds these
+eventually; grepping first turns a fifteen-minute suite run into a five-second search.
+
 ### The first live run of a new check is worth more than the test suite that passed before it  {#1039-live-run-found-two-driver-bugs}
 
 **Evidence.** The `/qa` strategy runner's eighty-six tests were green when the first end-to-end run

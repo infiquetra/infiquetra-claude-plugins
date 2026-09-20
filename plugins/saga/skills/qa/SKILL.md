@@ -43,6 +43,23 @@ build loop  →  code review  →  merge turn  →  release + non-production dep
 The Functional Tester is a herdr session created from the roles library. Its prompt names one
 command and one issue. It makes **no selection decisions of its own**: the selection is computed.
 
+**This skill is what the board's `Verify` stage holds (W8, SDLC R69/R71).** A card enters `Verify`
+only after the change is merged plus a succeeded non-production deployment. For work with no
+deployable software, the same merge precondition still applies — the no-deployable route relaxes
+the **deployment** requirement, never the **merge** requirement — so the card enters `Verify` only
+after the change is merged **and** the delivered artifact exists in its real form and consumption
+context (`Deploying to non-production` is applicable-only and never set for it). There is no
+pre-merge entry route: PR-ready never moves a card to `Verify`; the single authority for the
+condition is the `verify_entry` block of `config/sdlc-schema.json` in `infiquetra-sdlc`. When a
+card is in `Verify`, the activity it holds is this functional test.
+
+**Any verify-class agent this step spawns is sandboxed.** A spawn made from here passes
+`subagent_type: saga:readonly-verifier` with `isolation: "worktree"`, so a verifier can run a
+command without its working tree reaching the primary checkout. `/qa` reads running behaviour and
+never writes code, and the sandbox is what makes that a property rather than a promise. The full
+spawn-site inventory and the fallback ladder are in
+`saga/references/sandbox-spawn-sites.md`.
+
 ## Core principles
 
 1. **Reports, never repairs.** `/qa` does **NOT** fix bugs, does **NOT** edit code, does
@@ -205,6 +222,16 @@ evaluation harness has recorded agreement for the widening judgment at the chose
 
 Outbound routing is the chain's, and the map is referenced rather than restated:
 `saga/skills/loop/references/dispatch-table.md`.
+
+## The step this continues into
+
+On a `pass`, the run advances to close and this step continues into `/retro`, which turns the
+finished work into durable journal knowledge. That is a step this skill takes, not a suggestion it
+hands over: the chain runs automatically once admission has answered its questions, and a step that
+stopped to ask which command comes next would be the hand-written coordinator the chain replaced.
+
+On a `fail` the continuation is the build loop, and on a required `blocked` it is the operator.
+Those three are the whole set, and the exit code says which one applies.
 
 ## References
 

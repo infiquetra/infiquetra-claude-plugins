@@ -88,12 +88,6 @@ jobs:
       - name: Validate ownership lanes
         run: uv run python scripts/check_ownership_lanes.py --verbose
 
-      - name: Engine Registry
-        run: uv run python plugins/saga/scripts/check_engine_registry.py
-
-      - name: Engine Registry Conformance
-        run: uv run python plugins/saga/scripts/engine_registry_conformance.py
-
       # #422: one shared rule-registry lint over every plugins/*/agents/*.md file --
       # frontmatter schema, model-vs-role-class tier audit, and the review-class
       # tool-scope floor. `effort:` absence is warn-only (--report prints it) and never

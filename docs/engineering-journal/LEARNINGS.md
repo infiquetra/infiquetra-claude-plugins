@@ -137,6 +137,13 @@ skill names where the next step is read from) keeps the floor and drops the depe
 that path existing. Prefer asserting the property (the map is not restated here, and the source is
 named) over asserting a specific citation, or the guard becomes the reason a dangling reference
 cannot be fixed.
+### The CI workflow and the gate script are release surfaces of a removal too
+
+**Evidence:** pull request 1050's `Validate Plugins` job failed at the `Engine Registry` step after issue 1030 deleted `check_engine_registry.py` and `engine_registry_conformance.py`; `scripts/gate.sh` carried the same two steps.
+
+**Mechanism:** the gate checks its own coverage against `ci.yml`, so it stays green while both files still name a deleted script, and the only signal is the step failing at run time. A removal card's suite cannot see it because neither file is a test.
+
+**Generalizable rule:** when a script is deleted, grep `.github/workflows/ci.yml` and `scripts/gate.sh` for its name in the same commit and remove the step from both; a step whose subject no longer exists is deleted with its module, not marked advisory.
 
 ### A name-based check is only as good as the set of names you hand it  {#name-checks-need-checked-inputs-1030}
 

@@ -186,38 +186,6 @@ def test_the_work_gate_reads_the_durable_record_before_chat_memory() -> None:
 # --------------------------------------------------------------------------- U1
 
 
-def test_no_workflow_backend_section_survives_in_the_plan_skill() -> None:
-    """The card's own criterion greps for a phrase the file never carried, so it passes
-    vacuously. What actually moved is the section, so that is what this asserts."""
-    text = PLAN_SKILL.read_text(encoding="utf-8")
-    assert "#### 5.2a Author the ExecutionSpec" not in text
-    assert "docs/workflows/<YYYY-MM-DD>-<topic>-spec.json" not in text
-    assert "Step 1b — Price the plan" not in text
-    assert "Steps 2–5 — Author the spec" not in text
-    # The per-unit tier derivation deliberately stayed: it is the staffing heuristic for any
-    # backend that spawns per-unit agents, and both of its generated regions are rendered by
-    # generators that target this file. See DECISIONS {#1026-relocated-prose-and-guards}.
-    assert "#### 5.2a Derive the per-unit tiers" in text
-    assert "BEGIN GENERATED TIER TABLE" in text
-    assert "BEGIN GENERATED EFFORT HONORING NOTE" in text
-    assert WORKFLOW_BACKEND_REF.is_file()
-    assert "references/workflow-backend.md" in text
-    # And the criterion as the card words it.
-    assert "workflow backend" not in text.lower()
-
-
-def test_the_relocated_prose_landed_in_the_reference_file() -> None:
-    ref = WORKFLOW_BACKEND_REF.read_text(encoding="utf-8")
-    for moved in (
-        "Step 1b — Price the plan",
-        "Steps 2–5 — Author the spec",
-        "docs/workflows/<YYYY-MM-DD>-<topic>-spec.json",
-        "execution_spec.py settlement",
-        "spec-check",
-    ):
-        assert moved in ref, f"{moved!r} did not survive the move into workflow-backend.md"
-
-
 #: The four clauses a reader needs in order to decide whether to open the reference file at all.
 #: Issue #808's NARROW ruling is what each one encodes.
 EXPLICIT_INVOCATION_CONTRACT = (

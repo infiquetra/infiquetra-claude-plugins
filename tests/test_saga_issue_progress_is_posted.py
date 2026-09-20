@@ -74,18 +74,6 @@ def test_the_phase_comment_step_names_a_command(skill_text: str) -> None:
     assert "reconcile_controller.py reconcile" in skill_text
 
 
-def test_the_op_it_names_is_a_real_allowlisted_operation(certificate: ModuleType) -> None:
-    """Guards the other direction: a renamed op would leave §4.3 quietly pointing at nothing."""
-    kinds = {str(k) for k in certificate.OpKind}
-    assert OP in kinds
-
-
-def test_that_op_needs_no_operator_prompt(certificate: ModuleType) -> None:
-    """A phase comment that waits for an operator is the same stall in a different costume."""
-    facts = certificate._REGISTRY[certificate.OpKind.ISSUE_PROGRESS_COMMENT]
-    assert facts.always_operator is False
-
-
 def test_it_is_routed_through_the_ledger_rather_than_the_bare_verb(skill_text: str) -> None:
     """`issue comment` is a plain POST — its docstring puts idempotency on the caller, and
     orchestrate retries units by design."""

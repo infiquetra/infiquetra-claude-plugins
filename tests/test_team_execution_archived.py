@@ -109,11 +109,11 @@ def test_no_marketplace_entry_names_it() -> None:
     assert ARCHIVED_PLUGIN not in names, f"the marketplace still lists {ARCHIVED_PLUGIN}"
 
 
-def test_the_marketplace_holds_the_fourteen_surviving_plugins() -> None:
+def test_the_marketplace_holds_the_thirteen_surviving_plugins() -> None:
     """A count beside the name check: an entry removed by hand could take a neighbour with it."""
     names = [entry["name"] for entry in json.loads(MARKETPLACE.read_text())["plugins"]]
     assert len(names) == len(set(names)), f"duplicate marketplace entries: {names}"
-    assert len(names) == 14, names
+    assert len(names) == 13, names
 
 
 @pytest.mark.parametrize("module", ARCHIVED_MODULES)

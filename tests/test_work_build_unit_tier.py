@@ -193,33 +193,6 @@ def test_dispatch_prose_names_resolver_and_has_no_inheritance_instruction() -> N
         assert re.search(pattern, phase2, flags=re.IGNORECASE) is None
 
 
-def test_malformed_overlay_raises_through_seam(tmp_path: Path) -> None:
-    # Create a malformed .saga/tier-defaults.json and prove the seam delegates
-    # to the existing overlay contract rather than falling back silently.
-    overlay_dir = tmp_path / ".saga"
-    overlay_dir.mkdir(parents=True, exist_ok=True)
-    (overlay_dir / "tier-defaults.json").write_text("{ not valid json", encoding="utf-8")
-    orig_cwd = Path.cwd()
-    try:
-        os.chdir(tmp_path)
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("lifecycle_state_tmp", LIFECYCLE_STATE_PY)
-        assert spec and spec.loader
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)  # type: ignore[arg-type]
-        with pytest.raises(Exception) as excinfo:
-            mod.resolve_build_unit_tier(plan_tier=None, work_shape=None)
-        # Must be TierDefaultsError (subclass of ValueError) from tier_defaults.
-        assert (
-            "not valid JSON" in str(excinfo.value)
-            or "TierDefaultsError" in type(excinfo.value).__name__
-            or isinstance(excinfo.value, ValueError)
-        )
-    finally:
-        os.chdir(orig_cwd)
-
-
 def test_resolved_tier_in_execution_evidence_prose() -> None:
     work = _read_skill()
     strat = EXEC_STRATEGY.read_text(encoding="utf-8")
@@ -264,19 +237,6 @@ def test_the_dispatch_question_guard_can_actually_fail() -> None:
     real = text[text.find("## Phase 2") : text.find("## Phase 3", text.find("## Phase 2"))]
     assert len(real) > 500, "Phase 2 must be a substantial slice, not an empty or truncated one"
     assert "Build-unit tier" in real, "and it must be the slice that carries the tier dispatch"
-
-
-def test_premium_choice_boundary_left_untouched() -> None:
-    # U2's diff must not touch execution_spec.py or plan/SKILL.md per R10.
-    # Pin by checking that work/SKILL.md does not add a Work-side premium check.
-    text = _read_skill()
-    phase2 = text[text.find("## Phase 2") : text.find("## Phase 3")]
-    # The premium-choice boundary lives in execution_spec.py validate --require-receipts
-    # and plan/SKILL.md; Work must not add its own premium check.
-    assert "premium-choice" not in phase2.lower() and "premium_choice" not in phase2.lower()
-    # Also ensure lifecycle_state seam does not gain premium logic.
-    seam_text = LIFECYCLE_STATE_PY.read_text(encoding="utf-8")
-    assert seam_text.count("resolve_build_unit_tier") == 1 or "premium" not in seam_text.lower()
 
 
 def test_an_explicit_tier_is_checked_for_runnability_not_just_membership() -> None:

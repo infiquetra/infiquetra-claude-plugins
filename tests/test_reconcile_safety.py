@@ -55,7 +55,7 @@ def _load(name: str) -> ModuleType:
 
 
 RC = _load("reconcile_controller")
-CERT = _load("reversibility_certificate")
+CERT = _load("op_allowlist")
 
 
 class LiveBoard:

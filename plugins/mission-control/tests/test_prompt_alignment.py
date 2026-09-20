@@ -43,8 +43,10 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.19.0"
-    )  # 2.19.0: the tier-band comment names fleet-core's merged staffing data (issue 1021);
+        plugin_json["version"] == "2.20.0"
+    )  # 2.20.0: the saga readiness reader loses its handoff-envelope and
+    # reversibility-certificate paths, both removed by issue 1030. Predecessor 2.19.0:
+    # the tier-band comment names fleet-core's merged staffing data (issue 1021);
     # renumbered from 2.18.0 when main was folded into parent/1018.
     # Predecessor 2.18.0: board census regenerated and keyed by field name, stage-flow prose,
     # drift guard (issue 1020); renumbered from 2.17.0 in the same fold.

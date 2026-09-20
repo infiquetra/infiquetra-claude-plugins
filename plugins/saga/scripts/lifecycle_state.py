@@ -511,7 +511,7 @@ def resolve_build_unit_tier(
     import fleet_commons_shim  # noqa: PLC0415
 
     resolver = fleet_commons_shim.load("tier_resolver")
-    resolved = resolver.resolve(shape)
+    resolved = resolver.resolve(None, shape)
     return {"model": resolved.model, "effort": resolved.effort}
 
 

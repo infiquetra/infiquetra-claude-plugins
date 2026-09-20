@@ -2,6 +2,55 @@
 
 ## 2026-09-20
 
+### The closed op allowlist outlives the reversibility certificate  {#op-allowlist-survives-certificate-1030}
+
+**Decision.** `reversibility_certificate.py` (582 lines) is removed by issue 1030 and replaced by
+`plugins/saga/scripts/op_allowlist.py` (87 lines), which keeps `OpKind`, `authorize_write`,
+`authorize_correction_field`, `idempotency_key`, `CORRECTION_FIELDS`, `AUTHORIZED` and `GATE` --
+the same names, so every call site in `board_progression.py` and `reconcile_controller.py` is
+unchanged.
+
+**Rationale.** The certificate carried two things. A **reversibility tiering** -- which operations
+were reversible, what their inverse was, what aborting one cost -- which existed for the ship
+ceremony that issue #1027 removed, and which nothing computes any more. And underneath it a
+**default-deny allowlist** answering a question the lifecycle still asks on every board write: may
+saga do this one without a human? Deleting the file wholesale would have deleted a fail-closed gate
+along with the dead tiering, which the card forbids.
+
+Two ops stay enumerated and still refused, named rather than omitted so the refusal reads as a
+decision: closing a parent issue, which declares a whole tree finished, and merging, which was
+reachable only through the envelope machinery this release removes.
+
+**Rejected alternative.** Let the gate go with the module and have the controller submit whatever it
+is asked to. Rejected because the failure direction inverts: an unenumerated op would be attempted
+rather than refused.
+
+**Revisit when** mission-control adds a verb saga should submit autonomously -- the change is one
+entry in `_AUTONOMOUS`, and the default-deny means forgetting it fails safe.
+
+### A module is kept or removed by what it does, not by what it is named  {#keep-by-behaviour-not-name-1030}
+
+**Decision.** `handoff_envelope.py` survives issue 1030 even though the card removes `/handoff`,
+and `plugins/saga/references/liveness-consumer-sites.md` is deleted even though nothing in the card
+names it.
+
+**Rationale.** The first is not the command's envelope machinery; the name is historical. It owns
+the readiness vocabulary and the parser that classifies a source document's declared maturity, and
+`plugins/mission-control/scripts/sdlc_manager.py` resolves that exact path, gates it on a contract
+major, and calls `assess_source` and `assess_declared` at seven sites in its issue-prepare path.
+Deleting it would have broken a plugin this card does not otherwise touch, to remove a name.
+
+The second is the mirror. Its rows inventoried the liveness protocol's consumers, every one of which
+was in the archived team-execution plugin, so the document described an engine with no callers --
+and `fleet_commons/liveness_engine.py` went with it once the scan confirmed no importer remained.
+
+**Rejected alternative.** Work the card's list literally in both directions. Rejected because the
+card names families and intentions; matching a filename against that list is the same
+name-over-behaviour error in a different coat.
+
+**Revisit when** the readiness vocabulary moves into mission-control, which is now its only
+consumer. That is a follow-up card, not this one.
+
 ### The team-execution plugin is archived; its content lives on as roles  {#team-execution-archived-1030}
 
 **Decision.** `plugins/team-execution/` is removed from the repository and from the marketplace by

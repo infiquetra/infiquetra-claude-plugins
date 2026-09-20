@@ -2,6 +2,56 @@
 
 ## 2026-09-20
 
+### A name-based check is only as good as the set of names you hand it  {#name-checks-need-checked-inputs-1030}
+
+**Evidence.** Issue 1030's removal of 73 script modules and the test sweeps that followed. Four
+failures of the same kind, in one card:
+
+1. The archive guard reported clean while `tests/test_intent_envelope.py` reached a deleted script
+   through a path joined across seven lines. Fixed by matching the bare filename, since a path can
+   be assembled and a filename cannot.
+2. A sweep matched `outcome.` and `"outcome"` -- English prose and a dict key -- and dropped 62
+   cases including 20 live ones. Reverted; rewritten to require an *actionable* reference (an
+   import, a `spec_from_file_location`, a `_load("name")`, a `scripts/name.py` path).
+3. The same loose match was reintroduced later and dropped 120. Reverted again.
+4. Underneath all of it: the "which modules are gone" set was computed by diffing the working tree
+   against `HEAD`, but `HEAD` already contained the removals, so the set was nearly empty. The
+   precise matcher therefore found almost nothing, which is what made the blunt one look necessary.
+   Comparing against `origin/parent/1018` gave the right set, and the precise matcher then dropped
+   52 -- the correct answer all along.
+
+**Mechanism.** Three of these look like precision bugs and the fourth like a silly mistake, but the
+fourth caused the other two. A check that reports nothing has two explanations -- there is nothing
+to find, or it was asked the wrong question -- and the instinct to widen the net treats the first as
+given. The reference commit for "what did this change remove" is never `HEAD` once the change is
+committed; it is the branch point.
+
+**Generalizable rule.** When a check comes back empty, verify its input before loosening its
+pattern. For "what did I remove", diff against the branch point, never against `HEAD`.
+
+### Deleted tests do not fail, so something else has to notice  {#deleted-tests-need-a-witness-1030}
+
+**Evidence.** Issue 1030. The sweeps above removed four cases from
+`tests/test_saga_spec_consumer_row.py` and five from `tests/test_saga_plan_contract_boundaries.py`
+that had nothing to do with the removals: the plan-save contract CLI's failure envelopes (a missing
+PyYAML, a `BaseException` from checkout code, engine resolution, conflict recovery, the proof CLI
+staying inert under the loader) and the renderer's edit and rollback workflows.
+
+**Mechanism.** Nine entries in `tools/canary_registry.json` name those guards, and a canary whose
+guard function has vanished reports `error`, not `caught`. That is the only reason the loss
+surfaced: `test_plan_contract_guards_have_teeth` failed. A suite cannot report a test that is no
+longer there, so a deletion pass over tests is the one refactor with no built-in witness -- it can
+only go green.
+
+The near-miss is worth recording too. The first repair that suggested itself was to prune the canary
+entries whose guards were "missing", which would have silenced the alarm rather than answered it.
+Checking each entry individually split them nine guard-absent to fourteen guard-present, which is
+what made the deletion obvious.
+
+**Generalizable rule.** A pass that deletes tests needs an independent witness that the survivors
+are still there -- a canary registry, a committed count, anything outside the suite. When that
+witness fires, repair what it points at; never repair the witness.
+
 ### A guard over a path must also match the bare filename  {#guard-paths-by-filename-1030}
 
 **Evidence.** Issue 1030's `tests/test_team_execution_archived.py`, which reported clean; the full

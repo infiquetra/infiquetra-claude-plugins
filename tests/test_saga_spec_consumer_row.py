@@ -169,7 +169,11 @@ def test_plan_save_contract_binds_to_engine(contract_api: ModuleType, tmp_path: 
             assert before == {p: (tmp_path / p).read_bytes() for p in before}
     # A newly introduced condition must exercise both sides even when its field
     # is outside the ordinary destination/backend scenario matrix.
-    for field, value in (("kind", "task"), ("orchestration_recommended", "inline")):
+    # ("orchestration_recommended", "inline") was the second pair. Issue 1030 left that enum with
+    # one value, so `inline` is now INSIDE the scenario matrix and conditioning on it is valid --
+    # the case would assert a rejection that correctly no longer happens. `kind`/`task` is still
+    # outside the matrix and still proves the rule.
+    for field, value in (("kind", "task"),):
         data = copy.deepcopy(original)
         next(i for i in data["writes"] if i["name"] == "adr_refs")["when"] = {
             "field": field,
@@ -227,56 +231,6 @@ def save_tick(
     path = Path(json.loads(result.stdout)["envelope_path"])
     body = (tmp_path / path).read_text()
     return yaml.safe_load(body.split("---", 2)[1]), body
-
-
-def test_operator_choice_rule_matches_engine(tmp_path: Path) -> None:
-    tick, _ = save_tick(tmp_path, {"id": "fresh"})
-    assert tick["orchestration_mode"] == "inline" and tick["orchestration_operator_choice"] == ""
-    tick, _ = save_tick(tmp_path, {"id": "resume", "orchestration_mode": "cc-workflows-ultracode"})
-    assert tick["orchestration_operator_choice"] == "cc-workflows-ultracode"
-    tick, _ = save_tick(tmp_path, {"id": "resume"})
-    assert tick["orchestration_operator_choice"] == "cc-workflows-ultracode"
-    save_tick(
-        tmp_path,
-        {"id": "choice-only", "orchestration_operator_choice": "cc-workflows-ultracode"},
-        ok=False,
-    )
-    flags = {
-        "id": "override",
-        "orchestration_mode": "inline",
-        "orchestration_operator_choice": "cc-workflows-ultracode",
-    }
-    save_tick(tmp_path, flags, ok=False)
-    tick, _ = save_tick(
-        tmp_path, {**flags, "orchestration_downgrade": "explicit operator exception"}
-    )
-    assert (
-        tick["orchestration_operator_choice"] == "cc-workflows-ultracode"
-        and tick["orchestration_mode"] == "inline"
-    )
-    # A carried divergence needs no fresh rationale; a new upgrade is refused even
-    # with a rationale. Nonempty text alone is not an authorization to change modes.
-    tick, _ = save_tick(tmp_path, {"id": "override"})
-    assert (
-        tick["orchestration_operator_choice"] == "cc-workflows-ultracode"
-        and tick["orchestration_mode"] == "inline"
-    )
-    save_tick(tmp_path, {**flags, "id": "blank", "orchestration_downgrade": "   "}, ok=False)
-    save_tick(
-        tmp_path,
-        {
-            "id": "upgrade",
-            "orchestration_mode": "cc-workflows-ultracode",
-            "orchestration_operator_choice": "inline",
-            "orchestration_downgrade": "does not authorize an upgrade",
-        },
-        ok=False,
-    )
-    note = (ROOT / "plugins/saga/references/saga-spec.md").read_text()
-    assert (
-        "`orchestration_operator_choice` (derived from an explicit mode flag unless an explicit "
-        "choice is supplied; omitting both preserves the prior choice or starts empty)"
-    ) in note
 
 
 def test_saga_spec_plan_consumer_row_matches_contract(
@@ -368,6 +322,74 @@ def recommender_argv(command: str, root: Path) -> list[str]:
     return [sys.executable, str(target), *args[2:]]
 
 
+# The backend axis had three values; issue #1030 archived team-execution and cc-workflows, so the
+# enumeration is one. The destination axis is untouched.
+@pytest.mark.parametrize("destination", ["plan-only", "pr", "merge", "nonprod-deploy"])
+@pytest.mark.parametrize("backend", ["inline"])
+def test_plan_examples_save_the_intended_tick(
+    contract_api: ModuleType, tmp_path: Path, destination: str, backend: str
+) -> None:
+    api = contract_api
+    contract = api.load()
+    assert_engine_binding(api, contract)
+    candidate = api.rendered_documents(
+        contract, (ROOT / api.SKILL).read_text(), (ROOT / api.SPEC).read_text()
+    )
+    assert_regions(api, contract, candidate[api.SKILL], candidate[api.SPEC])
+    assert_row(api, contract, candidate[api.SPEC])
+    assert_saved_examples(api, contract, tmp_path, destination, backend, probe=save_tick)
+
+
+def test_an_archived_orchestration_mode_is_refused_at_write_and_read_back_at_rest() -> None:
+    """Issue #1030 archived `team-execution`. Both halves of that are load-bearing.
+
+    Refused at the command line, because a new run must not select a backend that is not there.
+    Read back at rest, because the enum strings are a durable wire contract and a saga written
+    before the archive must not become unreadable -- `_orchestration_rank` returns None for an
+    unrecognized value and the provenance guard is lenient, which is exactly that property.
+    """
+    engine = runpy.run_path(str(ROOT / "plugins/saga/scripts/saga.py"))
+    assert "team-execution" not in engine["ORCHESTRATION_MODES"]
+    assert engine["_orchestration_rank"]("team-execution") is None
+    assert engine["_orchestration_rank"]("inline") == 0
+    # The label map deliberately keeps the archived key, so a historical tick renders the label it
+    # was written with rather than falling back to the raw enum string.
+    assert engine["display_orchestration_mode"]("team-execution") == "team execution"
+
+
+# ---------------------------------------------------------------------------
+# Plan-save contract guards, restored. Issue 1030's sweeps to retire tests of removed modules took
+# these four with them, which was wrong: their subject is the plan-save contract and its renderer,
+# both of which survive. Nine entries in tools/canary_registry.json name them, and a canary whose
+# guard has vanished reports "error", not "caught" -- which is how the loss was found.
+# ---------------------------------------------------------------------------
+
+
+def test_operator_choice_rule_matches_engine(tmp_path: Path) -> None:
+    """The derivation rule: the operator choice follows the explicit mode flag, is empty when
+    neither is given, and is preserved across a save that names neither.
+
+    This case also exercised the divergence branches -- a choice supplied without a mode, a choice
+    differing from the mode, a downgrade rationale authorizing that divergence, a blank rationale
+    refused, and a rationale that does not authorize an *upgrade*. Every one of them needs two
+    backends to express. Issue 1030 archived both team-execution and cc-workflows, so the
+    enumeration is the single value `inline`, a choice can no longer differ from a mode, and those
+    branches are unreachable rather than untested. The engine still carries the guard; there is no
+    longer an input that reaches it.
+    """
+    tick, _ = save_tick(tmp_path, {"id": "fresh"})
+    assert tick["orchestration_mode"] == "inline" and tick["orchestration_operator_choice"] == ""
+    tick, _ = save_tick(tmp_path, {"id": "resume", "orchestration_mode": "inline"})
+    assert tick["orchestration_operator_choice"] == "inline"
+    tick, _ = save_tick(tmp_path, {"id": "resume"})
+    assert tick["orchestration_operator_choice"] == "inline"
+    note = (ROOT / "plugins/saga/references/saga-spec.md").read_text()
+    assert (
+        "`orchestration_operator_choice` (derived from an explicit mode flag unless an explicit "
+        "choice is supplied; omitting both preserves the prior choice or starts empty)"
+    ) in note
+
+
 def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_path: Path) -> None:
     api = contract_api
     contract = api.load()
@@ -415,10 +437,9 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
         "verification",
     }
     assert len(codes) == len(set(codes)), "maintainer runbook: duplicate error code"
-    reference = ROOT / "plugins/saga/references/execution-spec.md"
-    match = re.search(r"\[generated Plan save example\]\(([^)#]+)#([^)]*)\)", reference.read_text())
-    assert match and (reference.parent / match[1]).resolve() == (ROOT / api.SKILL).resolve()
-    assert match[2] == "53-write-the-saga-tick"
+    # references/execution-spec.md carried a pointer back at the generated Plan save example.
+    # Issue 1030 removed that document with the execution spec it described, so the pointer has no
+    # source; the generated region itself is still pinned by assert_regions above.
     for path in re.findall(r"`(plugins/[^`]+\.py)`", runbook):
         assert (ROOT / path).is_file(), f"maintainer runbook: missing {path}"
     commands = [
@@ -453,23 +474,6 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("destination", ["plan-only", "pr", "merge", "nonprod-deploy"])
-# "team-execution" was the third backend until issue #1030 archived that plugin.
-@pytest.mark.parametrize("backend", ["inline", "cc-workflows-ultracode"])
-def test_plan_examples_save_the_intended_tick(
-    contract_api: ModuleType, tmp_path: Path, destination: str, backend: str
-) -> None:
-    api = contract_api
-    contract = api.load()
-    assert_engine_binding(api, contract)
-    candidate = api.rendered_documents(
-        contract, (ROOT / api.SKILL).read_text(), (ROOT / api.SPEC).read_text()
-    )
-    assert_regions(api, contract, candidate[api.SKILL], candidate[api.SPEC])
-    assert_row(api, contract, candidate[api.SPEC])
-    assert_saved_examples(api, contract, tmp_path, destination, backend, probe=save_tick)
-
-
 def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -> None:
     api = contract_api
     tree(api, tmp_path)
@@ -480,7 +484,7 @@ def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -
             {"id": "merge", "fixed": {"destination": "merge"}},
             {
                 "id": "recommendation_example",
-                "fixed": {"orchestration_recommended": "cc-workflows-ultracode"},
+                "fixed": {"orchestration_recommended": "inline"},
             },
             {
                 "id": "autonomy",
@@ -505,7 +509,7 @@ def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -
         (tmp_path / api.SPEC).read_text(),
     )
     for destination in ("pr", "nonprod-deploy"):
-        for backend in ("inline", "cc-workflows-ultracode"):
+        for backend in ("inline",):
             assert_saved_examples(
                 api,
                 api.load(root=tmp_path),
@@ -642,20 +646,3 @@ def test_plan_renderer_refusals_and_rollback(
     # The callable CLI uses the same result envelope as the subprocess interface.
     assert api.main(["--root", str(tmp_path), "render", "--check"]) == 0
     assert json.loads(capsys.readouterr().out)["outcome"] == "clean"
-
-
-def test_an_archived_orchestration_mode_is_refused_at_write_and_read_back_at_rest() -> None:
-    """Issue #1030 archived `team-execution`. Both halves of that are load-bearing.
-
-    Refused at the command line, because a new run must not select a backend that is not there.
-    Read back at rest, because the enum strings are a durable wire contract and a saga written
-    before the archive must not become unreadable -- `_orchestration_rank` returns None for an
-    unrecognized value and the provenance guard is lenient, which is exactly that property.
-    """
-    engine = runpy.run_path(str(ROOT / "plugins/saga/scripts/saga.py"))
-    assert "team-execution" not in engine["ORCHESTRATION_MODES"]
-    assert engine["_orchestration_rank"]("team-execution") is None
-    assert engine["_orchestration_rank"]("inline") == 0
-    # The label map deliberately keeps the archived key, so a historical tick renders the label it
-    # was written with rather than falling back to the raw enum string.
-    assert engine["display_orchestration_mode"]("team-execution") == "team execution"

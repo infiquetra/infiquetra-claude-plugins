@@ -239,12 +239,6 @@ class Saga:
     adr_refs: ListOrAbsent = ABSENT
     journal_refs: ListOrAbsent = ABSENT
 
-    # Ship-ceremony state (issue #345, KTD2): the last transition run and that transition's
-    # reversibility tier. No index was ever stored — the ceremony derived the index from
-    # `ceremony_transition` against its own canonical order each time, so there was never a
-    # stored index to drift out of sync with the name. The ceremony was removed with issue
-    # #1027 and nothing writes these now; issue #1030 retires them with their readers.
-
     # Disposition detail.
     blockers: str = ""
     open_questions: ListOrAbsent = ABSENT
@@ -302,8 +296,6 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "pr_refs",
     "adr_refs",
     "journal_refs",
-    "ceremony_transition",
-    "ceremony_tier",
     "blockers",
     "open_questions",
     "checks_run",
@@ -930,8 +922,6 @@ def _tick_snapshot(saga: Saga) -> dict[str, Any]:
             "summary": saga.summary,
             "open_questions": _materialize(saga.open_questions),
             "rounds_seen": _materialize(saga.rounds_seen),
-            "ceremony_transition": saga.ceremony_transition,
-            "ceremony_tier": saga.ceremony_tier,
         }
     )
     return snapshot
@@ -1586,8 +1576,6 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         pr_refs=_split_list(args.pr_refs),
         adr_refs=_split_list(args.adr_refs),
         journal_refs=_split_list(args.journal_refs),
-        ceremony_transition=args.ceremony_transition,
-        ceremony_tier=args.ceremony_tier,
         blockers=args.blockers,
         open_questions=_split_list(args.open_questions),
         checks_run=_split_list(args.checks_run),

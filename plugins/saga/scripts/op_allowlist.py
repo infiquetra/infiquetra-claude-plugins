@@ -21,7 +21,16 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-__all__ = ["AUTHORIZED", "GATE", "OpKind", "Verdict", "authorize_write"]
+__all__ = [
+    "AUTHORIZED",
+    "CORRECTION_FIELDS",
+    "GATE",
+    "OpKind",
+    "Verdict",
+    "authorize_correction_field",
+    "authorize_write",
+    "idempotency_key",
+]
 
 
 class Verdict(StrEnum):
@@ -85,3 +94,48 @@ def authorize_write(op_kind: str | OpKind) -> Verdict:
     if op_kind in _OPERATOR_ONLY:
         return GATE
     return AUTHORIZED if op_kind in _AUTONOMOUS else GATE
+
+
+#: The only project fields a `set-field-status` op may name. Naming any other field -- Initiative,
+#: Objective, anything else -- is gated, never a silent write (#812). `Stage` is allowed as a name
+#: only; there is no `set-field-stage` op kind.
+CORRECTION_FIELDS: frozenset[str] = frozenset({"Status", "Stage"})
+
+
+def authorize_correction_field(field_name: str) -> Verdict:
+    """Authorize `Status` and `Stage` by name; gate every other project field (#812).
+
+    The field name is part of the authorization, not a parameter to it: an op that names a field
+    outside this set is refused rather than written.
+    """
+    return AUTHORIZED if field_name in CORRECTION_FIELDS else GATE
+
+
+def idempotency_key(
+    op_kind: str | OpKind,
+    repo: str,
+    issue_number: int,
+    target_state: str,
+    *,
+    field: str | None = None,
+) -> str:
+    """Return the deterministic idempotency key for one autonomous board write.
+
+    Key form:
+      `set-field-status`   ``"{op_kind}:{repo}#{issue_number}:{field}:{target_state}"``
+                           (``field`` defaults to ``Status``)
+      every other op       ``"{op_kind}:{repo}#{issue_number}:{target_state}"``
+      progress comment     ``target_state`` carries the leaf transition id as the coalescing
+                           discriminator, so one comment is posted per meaningful transition.
+
+    The ``repo`` qualifier is load-bearing: two issues sharing a number in different repositories
+    must get distinct keys, or one silently skips the other's board write off a colliding ledger
+    entry.
+
+    A pure string recipe -- it writes no ledger. Recording executed keys belongs to the caller.
+    """
+    op_str = op_kind.value if isinstance(op_kind, OpKind) else str(op_kind)
+    if op_str == OpKind.SET_FIELD_STATUS.value:
+        field_name = field if field else "Status"
+        return f"{op_str}:{repo}#{issue_number}:{field_name}:{target_state}"
+    return f"{op_str}:{repo}#{issue_number}:{target_state}"

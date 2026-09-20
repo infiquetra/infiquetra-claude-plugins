@@ -554,12 +554,11 @@ python3 plugins/saga/scripts/saga.py save \
   --destination '<plan-only|pr|merge|nonprod-deploy>' \
   --adr-refs 'ADR-NNNN|ADR-MMMM' \
   --decisions 'KTD1: rationale. KTD2: rationale.' \
-  --orchestration-mode '<inline|cc-workflows-ultracode>' \
-  --orchestration-recommended '<inline|cc-workflows-ultracode>'
+  --orchestration-mode '<inline>' \
+  --orchestration-recommended '<inline>'
 ```
 
 - `--deploy-autonomy '<gate|auto>'` only when `--destination nonprod-deploy`.
-- `--orchestration-ref 'docs/workflows/YYYY-MM-DD-<topic>-spec.json'` only when `--orchestration-mode cc-workflows-ultracode`.
 <!-- END GENERATED PLAN SAVE EXAMPLES: default -->
 
 **For `cc-workflows-ultracode`:** also pass `--orchestration-ref` pointing at the **spec JSON** (the
@@ -568,24 +567,7 @@ canonical artifact, per KTD1/KD3 — regenerable, so the ref is the spec not the
 <!-- BEGIN GENERATED PLAN SAVE EXAMPLES: workflow -->
 <!-- Source: plugins/saga/references/plan-save-contract.yaml; renderer: plugins/saga/scripts/plan_save_contract.py.
 Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract. -->
-**Example: cc-workflows-ultracode**
 
-```bash
-python3 plugins/saga/scripts/saga.py save \
-  --kind '<issue|task>' \
-  --id '<issue-number-or-task-slug>' \
-  --lifecycle-phase plan \
-  --phase-status complete \
-  --plan-path 'docs/plans/YYYY-MM-DD-<topic>-plan.md' \
-  --destination '<plan-only|pr|merge|nonprod-deploy>' \
-  --adr-refs 'ADR-NNNN|ADR-MMMM' \
-  --decisions 'KTD1: rationale. KTD2: rationale.' \
-  --orchestration-mode cc-workflows-ultracode \
-  --orchestration-recommended '<inline|cc-workflows-ultracode>' \
-  --orchestration-ref 'docs/workflows/YYYY-MM-DD-<topic>-spec.json'
-```
-
-- `--deploy-autonomy '<gate|auto>'` only when `--destination nonprod-deploy`.
 <!-- END GENERATED PLAN SAVE EXAMPLES: workflow -->
 
 The `.workflow.js` is regenerable at any time from the spec (`execution_spec.py emit`); the spec JSON is

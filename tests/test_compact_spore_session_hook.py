@@ -68,11 +68,10 @@ def repo_with_spore(tmp_path: Path) -> tuple[Path, str, str]:
                 "status": "active",
                 "next_step": "test",
             },
-            "dag": None,
             "pointers": {},
         }
 
-        common_dir = saga_spore.outcome_store.resolve_common_dir(repo)
+        common_dir = saga_spore.run_record._resolve_common_dir(repo)
         out_path = saga_spore.spore_path(common_dir, session_id)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(saga_spore.dump(spore_data), encoding="utf-8")
@@ -112,7 +111,7 @@ def test_happy_path(repo_with_spore: tuple[Path, str, str]) -> None:
     try:
         import saga_spore
 
-        common_dir = saga_spore.outcome_store.resolve_common_dir(repo)
+        common_dir = saga_spore.run_record._resolve_common_dir(repo)
         spore_file = saga_spore.spore_path(common_dir, session_id)
         assert not spore_file.exists()
     finally:
@@ -193,7 +192,7 @@ if __name__ == "__main__":
     try:
         import saga_spore
 
-        common_dir = saga_spore.outcome_store.resolve_common_dir(repo)
+        common_dir = saga_spore.run_record._resolve_common_dir(repo)
         spore_file = saga_spore.spore_path(common_dir, session_id)
         assert not spore_file.exists()
     finally:
@@ -214,10 +213,10 @@ def test_mismatch(repo_with_spore: tuple[Path, str, str], tmp_path: Path) -> Non
     try:
         import saga_spore
 
-        common_dir1 = saga_spore.outcome_store.resolve_common_dir(repo)
+        common_dir1 = saga_spore.run_record._resolve_common_dir(repo)
         spore_file1 = saga_spore.spore_path(common_dir1, session_id)
 
-        common_dir2 = saga_spore.outcome_store.resolve_common_dir(repo2)
+        common_dir2 = saga_spore.run_record._resolve_common_dir(repo2)
         spore_file2 = saga_spore.spore_path(common_dir2, session_id)
         spore_file2.parent.mkdir(parents=True, exist_ok=True)
         spore_file2.write_bytes(spore_file1.read_bytes())
@@ -274,7 +273,7 @@ def test_wrong_source(repo_with_spore: tuple[Path, str, str]) -> None:
     try:
         import saga_spore
 
-        common_dir = saga_spore.outcome_store.resolve_common_dir(repo)
+        common_dir = saga_spore.run_record._resolve_common_dir(repo)
         spore_file = saga_spore.spore_path(common_dir, session_id)
         assert spore_file.exists()
     finally:
@@ -293,7 +292,7 @@ def test_malformed_stdin(repo_with_spore: tuple[Path, str, str]) -> None:
     try:
         import saga_spore
 
-        common_dir = saga_spore.outcome_store.resolve_common_dir(repo)
+        common_dir = saga_spore.run_record._resolve_common_dir(repo)
         spore_file = saga_spore.spore_path(common_dir, session_id)
         assert spore_file.exists()
     finally:

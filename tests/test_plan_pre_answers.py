@@ -234,48 +234,6 @@ def test_third_field_is_rejected_not_ignored(pre_answers: ModuleType) -> None:
     assert outcome.applied == {}
 
 
-def test_caller_is_metadata_outside_the_admission_limit(pre_answers: ModuleType) -> None:
-    carrier = {
-        "schema": SCHEMA_TOKEN,
-        "caller": "orchestrate",
-        "backend": "inline",
-        "destination": "pr",
-    }
-
-    outcome = pre_answers.evaluate(_invocation(carrier))
-
-    # `caller` plus both admitted decision fields: accepted, not counted against the
-    # two-field limit.
-    assert outcome.stop is None
-    assert outcome.applied == {"backend": "inline", "destination": "pr"}
-    assert outcome.caller == "orchestrate"
-    assert outcome.omitted == ()
-
-
-# --- operator ruling (review F03): only inline applies automatically -----------------
-
-
-# "team-execution" was the other never-auto-applied value until issue #1030 archived it.
-@pytest.mark.parametrize("backend", ["cc-workflows-ultracode"])
-def test_invocation_only_backends_stop_and_are_never_applied(
-    pre_answers: ModuleType, backend: str
-) -> None:
-    # Operator ruling (stricter than #808): team-execution and cc-workflows-ultracode
-    # are legal plan-document values, but the carrier never applies them automatically.
-    # This test fails if either is silently applied.
-    carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": backend}
-
-    outcome = pre_answers.evaluate(_invocation(carrier))
-
-    assert outcome.applied == {}
-    assert outcome.caller is None
-    assert outcome.stop is not None
-    assert "explicit operator invocation" in outcome.stop
-    # The stop reads as a gate, not as an invalid value: the value is legal in a plan.
-    assert backend in outcome.stop
-    assert "is not one of" not in outcome.stop
-
-
 def test_inline_backend_still_applies_from_the_carrier(pre_answers: ModuleType) -> None:
     carrier = {"schema": SCHEMA_TOKEN, "caller": "orchestrate", "backend": "inline"}
 
@@ -314,21 +272,6 @@ def test_only_json_fenced_blocks_are_carrier_candidates(pre_answers: ModuleType)
 
     assert outcome.stop is None
     assert outcome.applied == {"backend": "inline"}
-
-
-def test_duplicate_json_keys_stop_rather_than_last_winning(pre_answers: ModuleType) -> None:
-    # Raw text: json.dumps would dedupe, so the duplicate must be hand-rolled.
-    text = (
-        "/plan work issue #924\n\n"
-        '```json\n{"schema": "plan_pre_answers.v1", "backend": "inline", '
-        '"backend": "cc-workflows-ultracode"}\n```\n'
-    )
-
-    outcome = pre_answers.evaluate(text)
-
-    assert outcome.applied == {}
-    assert outcome.stop is not None
-    assert "duplicate" in outcome.stop
 
 
 def test_malformed_json_block_is_a_stop_not_an_absence(pre_answers: ModuleType) -> None:
@@ -527,25 +470,6 @@ def test_unreadable_invocation_file_stops_with_the_same_json_shape(
 
 
 # --- drift pins (reviews F14/F14a): the enums equal their canonical sources -----------
-
-
-def test_decision_enums_match_their_canonical_sources(pre_answers: ModuleType) -> None:
-    saga = _load_module("saga.py")
-    assert pre_answers.BACKEND_ENUM == saga.ORCHESTRATION_MODES, (
-        "carrier backend enum drifted from saga.py's ORCHESTRATION_MODES"
-    )
-    assert pre_answers.DESTINATION_ENUM == saga.DESTINATIONS, (
-        "carrier destination enum drifted from saga.py's DESTINATIONS"
-    )
-    # The conformance check's copy — shipped as plugins/saga/scripts/
-    # plan_artifact_conformance.py since review F06t — is pinned to the same tuple.
-    shipped = (ROOT / "plugins" / "saga" / "scripts" / "plan_artifact_conformance.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'BACKEND_ENUM = ("inline", "cc-workflows-ultracode")' in shipped
-
-
-# --- contract pin: the intake subsection adds no rigidity (R8, R29) -------------------
 
 
 def test_phase0_intake_subsection_adds_no_rigidity_shapes() -> None:

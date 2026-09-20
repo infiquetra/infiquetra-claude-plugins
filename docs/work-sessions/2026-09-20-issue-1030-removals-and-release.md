@@ -206,7 +206,64 @@ lands. Cases this stage retired were deleted, never marked.
 - The check that found all three is worth keeping: a grep from every surviving skill, command, hook
   and reference for `plugins/saga/**` paths that no longer resolve. Run it after any deletion pass.
 
-## The team-execution archive (U6), landed while the cc-workflows question is with the operator
+## The cc-workflows archive and the removals (the operator's Answer A)
+
+The operator chose the archive. cc-workflows went the way team-execution did -- final 2.0.0 entry,
+then the directory, the marketplace entry, the emitter, the shim, `workflow_emitter.py`, their tests
+and saga's `references/workflow-backend.md`. That unblocked everything behind it: **73 script
+modules** by family, **19 reference documents**, four fleet-core modules whose last importers were
+among them, and the tests of all of it.
+
+**Final state**: 14 commands, 13 skills, **34 scripts**, 180 test files, **13 marketplace plugins**,
+saga **1.0.0**, cc-workflows 2.0.0 final then removed, fleet-core 0.31.0, mission-control 2.20.0,
+deploy 0.2.2. Backend enumeration is the single value `inline`. Full suite **5204 passed, 5 skipped,
+1 xfailed, 0 failed** against parent head `b264f154`. No dangling references.
+
+### The line-count criterion is not met, and the arithmetic says why
+
+`plugins/saga/scripts` is **21,437 lines** against the card's under-15,000. The simplification
+review set that target against saga at `fb69f6b3` and projected ~11,856 surviving lines. Since then
+this parent's own cards added **7,071 lines in eleven new modules** -- the run record, admission,
+the build loop, the merge turn, the release step, the review roster and result, the shaping
+judgments, the continuation context, the op allowlist, and issue 1039's 1,762-line `/qa` catalogue
+-- plus **615 lines** of growth in existing ones and **884** for `handoff_envelope.py`, kept
+deliberately. Subtract the 8,570 the projection could not have counted and the figure is **12,867**,
+under target.
+
+I did not close the gap by cutting into machinery issues 1021 through 1039 had just shipped. That
+would have hit the number by undoing the parent. The number is the stale half of the pair.
+
+### Two decisions inside the removal
+
+`op_allowlist.py` is the surviving half of the reversibility certificate: the tiering went with the
+ship ceremony that consumed it, the default-deny allowlist stayed, same names so no call site moved.
+Deleting the file whole would have removed a fail-closed gate along with dead code.
+DECISIONS `{#op-allowlist-survives-certificate-1030}`.
+
+`handoff_envelope.py` is kept though `/handoff` is removed, because the name is historical and
+mission-control calls it at seven sites; `references/liveness-consumer-sites.md` is deleted though
+nothing names it, because every consumer it inventoried was in the archived plugin. Kept or removed
+by behaviour, not by name. DECISIONS `{#keep-by-behaviour-not-name-1030}`.
+
+### What the suite caught that nothing else would have
+
+Seven full-suite runs, 272 failures down to zero. Three findings worth the cost:
+
+**Both spore hooks were silently broken.** `compact_spore_session_hook.py` and
+`precompact_spore_hook.py` reached the removed outcome store *through* `saga_spore`'s namespace.
+After the severance they exited 0 with no output -- the spore was never injected and nothing
+complained. A hook that crashes is visible; a hook that quietly does nothing looks exactly like a
+session with no spore to restore.
+
+**A one-value enum stopped being treated as an enum.** `plan_save_proof.py` substituted a
+placeholder only when it contained a pipe. That was silently correct for as long as every enum had
+two members, and this card made one singular.
+
+**My sweeps deleted nine live guards and a canary caught it.** Recorded as LEARNINGS
+`{#deleted-tests-need-a-witness-1030}`, with the four name-matching failures behind it as
+`{#name-checks-need-checked-inputs-1030}`.
+
+## The team-execution archive (U6), landed while the cc-workflows question was with the operator
 
 Unblocked under all three answers and named by the card, so it landed: the plugin's final 4.0.0
 changelog entry at commit `005e7e70`, then the directory, the marketplace entry and the vendored

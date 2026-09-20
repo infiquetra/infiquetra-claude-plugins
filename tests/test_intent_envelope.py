@@ -188,50 +188,6 @@ def _minimal_exec_spec(intent: dict[str, Any] | None) -> dict[str, Any]:
     return data
 
 
-def test_round_trip_seeds_defaults() -> None:
-    """T12-F1-2: the posture field round-trips through ExecutionSpec and seeds per-unit
-    tier defaults through the one mode-keyed matrix (asked once, never per unit)."""
-    import execution_spec
-
-    unattended = ie.apply_answers({"run_mode": "unattended"}).to_dict()
-    spec = execution_spec.ExecutionSpec.from_dict(_minimal_exec_spec(unattended))
-    spec.validate()
-    rebuilt = execution_spec.ExecutionSpec.from_dict(spec.to_dict())
-    rebuilt.validate()
-    assert rebuilt.intent == unattended
-
-    attended_spec = execution_spec.ExecutionSpec.from_dict(
-        _minimal_exec_spec(ie.apply_answers({"run_mode": "attended"}).to_dict())
-    )
-    seeded_unattended = ie.seeded_tier(rebuilt, "judgment")
-    seeded_attended = ie.seeded_tier(attended_spec, "judgment")
-    assert (seeded_attended.model, seeded_attended.effort) == ("opus", "high")
-    # The unattended posture seeds a strictly cheaper default for the same work shape.
-    assert (seeded_unattended.model, seeded_unattended.effort) == ("sonnet", "high")
-
-    # A spec with NO committed intent seeds the attended default — today's behavior.
-    bare = execution_spec.ExecutionSpec.from_dict(_minimal_exec_spec(None))
-    assert "intent" not in bare.to_dict()
-    seeded_bare = ie.seeded_tier(bare, "judgment")
-    assert (seeded_bare.model, seeded_bare.effort) == (
-        seeded_attended.model,
-        seeded_attended.effort,
-    )
-
-
-def test_round_trip_seeds_defaults_rejects_invalid_intent() -> None:
-    import execution_spec
-
-    spec = execution_spec.ExecutionSpec.from_dict(_minimal_exec_spec({"run_mode": "nope"}))
-    with pytest.raises(execution_spec.SpecError, match="invalid intent envelope"):
-        spec.validate()
-
-
-# ---------------------------------------------------------------------------
-# T12-F3-7: mode-keyed spend posture is machinery, not prose.
-# ---------------------------------------------------------------------------
-
-
 def test_spend_posture_unattended_silent() -> None:
     assert ie.spend_posture("unattended") == ("cache-tight", "silent")
     decision = ie.resolve_spend_action("unattended", spend_increase=False)
@@ -274,43 +230,6 @@ def _dag(edges: dict[str, list[str]]) -> Any:
     )
     spec.validate()
     return spec
-
-
-def test_posture_prompt_shows_stakes() -> None:
-    """The known independent-vs-chained fixture: both computed numbers appear in the prompt."""
-    independent = _dag({"a": [], "b": [], "c": []})
-    chained = _dag({"a": [], "b": ["a"], "c": ["b"]})
-
-    ind = ie.compute_stakes(independent)
-    assert (ind.parallel_width, ind.critical_path_estimate) == (3, 1.0)
-    chn = ie.compute_stakes(chained)
-    assert (chn.parallel_width, chn.critical_path_estimate) == (1, 3.0)
-
-    ind_prompt = ie.render_interview(ind)
-    assert "parallel_width: 3" in ind_prompt
-    assert "critical_path_estimate: 1" in ind_prompt
-    chn_prompt = ie.render_interview(chn)
-    assert "parallel_width: 1" in chn_prompt
-    assert "critical_path_estimate: 3" in chn_prompt
-    # The manifest carries the same numbers machine-readably.
-    manifest = ie.interview_manifest(chn)
-    assert manifest["stakes"] == {"parallel_width": 1, "critical_path_estimate": 3.0}
-
-
-def test_posture_prompt_stakes_reuse_critical_path_wall() -> None:
-    """compute_stakes reuses outcome_costs.critical_path_wall — never a re-derivation."""
-    import outcome_costs
-
-    chained = _dag({"a": [], "b": ["a"], "c": ["b"]})
-    walls = {n.subplot_id: 1.0 for n in chained.nodes}
-    assert ie.compute_stakes(chained).critical_path_estimate == outcome_costs.critical_path_wall(
-        chained, walls
-    )
-
-
-# ---------------------------------------------------------------------------
-# T12-F6-7: mode-aware tier recommendation.
-# ---------------------------------------------------------------------------
 
 
 def test_recommend_tier_cheaper_unattended() -> None:
@@ -449,74 +368,6 @@ def _outcome_module() -> ModuleType:
 
     module: ModuleType = outcome
     return module
-
-
-def test_outcome_start_skips_interview_when_envelope_present(tmp_path: Path) -> None:
-    """`/outcome start` commits the issue-authored envelope onto the spec and skips the
-    interview — exercised through the production start() + resolve_start_intent path."""
-    outcome = _outcome_module()
-    envelope = ie.apply_answers({"run_mode": "unattended"}, authored_by="jeff")
-    issue_body = "## Objective\n\nShip it.\n\n" + ie.render_issue_block(envelope)
-
-    resolution = outcome.resolve_start_intent(issue_body, None)
-    assert resolution["interview_required"] is False
-    assert resolution["intent_source"] == "issue"
-
-    repo_root = tmp_path / "repo"
-    (repo_root / ".git").mkdir(parents=True)
-
-    def _git_common_dir_runner(cmd: list[str], **_kwargs: Any) -> Any:
-        class _Result:
-            returncode = 0
-            stderr = ""
-            stdout = str(repo_root / ".git") + "\n"
-
-        return _Result()
-
-    spec = outcome.start(
-        repo_root,
-        "oc-envelope",
-        "ship it",
-        intent=resolution["intent"],
-        runner=_git_common_dir_runner,
-    )
-    assert spec.intent == envelope.to_dict()
-    # The committed artifact carries the envelope (the durable ask-once record).
-    on_disk = json.loads(outcome.spec_path(repo_root, "oc-envelope").read_text(encoding="utf-8"))
-    assert on_disk["intent"] == envelope.to_dict()
-
-
-def test_outcome_start_asks_when_envelope_absent(tmp_path: Path) -> None:
-    """Absent or invalid envelopes fall back to the interview — never silently adopted."""
-    outcome = _outcome_module()
-
-    absent = outcome.resolve_start_intent("## Objective\n\nno envelope here", None)
-    assert absent["interview_required"] is True
-    assert absent["intent"] is None and absent["intent_source"] is None
-
-    invalid_body = '```intent-envelope\n{"run_mode": "sideways"}\n```\n'
-    invalid = outcome.resolve_start_intent(invalid_body, None)
-    assert invalid["interview_required"] is True
-    assert invalid["intent"] is None
-    assert "invalid" in invalid["interview_reason"]
-
-    # An explicit --intent-file wins and skips the interview (the interview-capture path).
-    envelope_path = tmp_path / "envelope.json"
-    envelope_path.write_text(ie.apply_answers({"run_mode": "attended"}).to_json(), encoding="utf-8")
-    from_file = outcome.resolve_start_intent(None, envelope_path)
-    assert from_file["interview_required"] is False
-    assert from_file["intent_source"] == "file"
-
-    # But an INVALID --intent-file is direct operator input -> a loud error, not a fallback.
-    bad_path = tmp_path / "bad.json"
-    bad_path.write_text('{"run_mode": "sideways"}', encoding="utf-8")
-    with pytest.raises(outcome.OutcomeError, match="intent-file"):
-        outcome.resolve_start_intent(None, bad_path)
-
-
-# ---------------------------------------------------------------------------
-# T1-F5-8: the interview is a typed challenge-response manifest.
-# ---------------------------------------------------------------------------
 
 
 def test_manifest_is_typed_not_freeform() -> None:

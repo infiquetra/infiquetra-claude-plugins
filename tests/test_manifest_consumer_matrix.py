@@ -125,16 +125,3 @@ EXTERNAL_ENGINE_WORKERS_MD = (
     / "external-engine-workers.md"
 )
 WORKER_MANIFEST_MD = EXTERNAL_ENGINE_WORKERS_MD.with_name("worker-manifest.md")
-
-
-def test_canonical_manifest_writer_is_only_called_by_protected_dispatch() -> None:
-    production_calls: list[str] = []
-    for path in (REPO_ROOT / "plugins").rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            if node.func.attr == "write_manifest":
-                production_calls.append(path.relative_to(REPO_ROOT).as_posix())
-
-    assert production_calls == ["plugins/saga/scripts/engine_dispatch.py"]

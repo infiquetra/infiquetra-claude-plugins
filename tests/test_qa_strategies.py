@@ -182,6 +182,86 @@ class TestCatalogue:
         assert set(verb.questions) == set(QA.load_catalogue().strategies)
 
 
+class TestTheCardsOwnSelectors:
+    """Every ``-k`` selector the card's acceptance criteria name must select at least one test.
+
+    A selector that matches nothing passes vacuously, which is the false green this whole card
+    exists to remove — and it is one rename away at any time. Written after
+    ``blocked_routes_to_operator`` selected zero tests while every behaviour it names was covered
+    under a different name.
+    """
+
+    #: Verbatim from the card's acceptance criteria.
+    CARD_SELECTORS = (
+        "widen_only",
+        "judgment_absent",
+        "blocked_not_passed",
+        "verdict_matrix",
+        "blocked_routes_to_operator",
+        "envelope",
+        "boundary",
+        "cost_refusal",
+    )
+
+    def test_every_selector_the_card_names_matches_a_test_in_this_file(self) -> None:
+        source = (REPO_ROOT / "tests" / "test_qa_strategies.py").read_text(encoding="utf-8")
+        names = [
+            line.split("def ", 1)[1].split("(", 1)[0]
+            for line in source.splitlines()
+            if line.lstrip().startswith("def test_")
+        ]
+        unmatched = [
+            selector
+            for selector in self.CARD_SELECTORS
+            if not any(selector in name for name in names)
+        ]
+        assert unmatched == [], (
+            f"these acceptance-criteria selectors match no test, so their command would pass "
+            f"having run nothing: {unmatched}"
+        )
+
+
+class TestRemovals:
+    """Specification criterion 11 and the card's tenth: the score is gone in file AND in string."""
+
+    def test_the_health_score_script_and_its_test_are_gone(self) -> None:
+        assert not (SCRIPTS / "qa_health_score.py").exists()
+        assert not (REPO_ROOT / "tests" / "test_qa_health_score.py").exists()
+
+    def test_no_qa_skill_or_saga_script_names_the_retired_score(self) -> None:
+        """The changelog records the removal and is outside this sweep; nothing else may name it.
+
+        Written after the retarget of ``status_card.project_qa`` reintroduced the phrase in a
+        docstring explaining what the rows used to be. A removal that survives in a grep is a
+        removal only halfway done.
+        """
+        needle = "health score"
+        offenders: list[str] = []
+        for directory in (
+            REPO_ROOT / "plugins" / "saga" / "skills" / "qa",
+            REPO_ROOT / "plugins" / "saga" / "scripts",
+        ):
+            for path in directory.rglob("*"):
+                if not path.is_file():
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if needle in text.lower():
+                    offenders.append(str(path.relative_to(REPO_ROOT)))
+        assert offenders == [], f"these files still name the retired score: {offenders}"
+
+    def test_no_qa_skill_file_calls_the_removed_evidence_ledger(self) -> None:
+        """Specification criterion 12, and the card's eleventh."""
+        offenders = [
+            str(path.relative_to(REPO_ROOT))
+            for path in (REPO_ROOT / "plugins" / "saga" / "skills" / "qa").rglob("*")
+            if path.is_file() and "evidence_ledger" in path.read_text(encoding="utf-8")
+        ]
+        assert offenders == [], f"these files still call the removed ledger: {offenders}"
+
+
 class TestProfile:
     def test_a_repository_with_no_profile_file_is_blocked_naming_the_path(
         self, tmp_path: Path
@@ -858,7 +938,7 @@ class TestVerdictMatrix:
 
 
 class TestRouting:
-    def test_a_required_block_routes_to_the_operator_not_the_build_loop(self) -> None:
+    def test_a_required_blocked_routes_to_operator_not_the_build_loop(self) -> None:
         """Criterion 7, and the card's sixth."""
         decision = QA.route([_envelope("a", "blocked")], ["a"])
         assert decision["route"] == QA.ROUTE_OPERATOR

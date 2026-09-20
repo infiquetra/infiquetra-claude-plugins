@@ -47,9 +47,16 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.171.0"  # 0.171.0: the merge turn, the release step, the
-    # lifecycle-boundary board interface and the allowed-submission enforcement (issue #1028).
-    # Bumped from 0.170.0, the saga version on origin/parent/1018 at 25619cd1. This card and issue
+    assert plugin_json["version"] == "0.172.0"  # 0.172.0: /qa becomes the lifecycle's functional
+    # test — ten prescribed strategies as data, a per-repository profile, a widen-only advisory
+    # judgment, three-status drivers, one evidence envelope each in the run record, and a counted
+    # verdict. The health score and its test are removed; the release step no longer reports a
+    # blocked scenario as a pass (issue #1039). Bumped from 0.171.0, the saga version on
+    # origin/parent/1018 at 61da4b1c, re-read at the merge turn rather than above this branch's
+    # own base.
+    # Predecessor 0.171.0 was issue #1028: the merge turn, the release step, the
+    # lifecycle-boundary board interface and the allowed-submission enforcement.
+    # Bumped from 0.170.0, the saga version on origin/parent/1018 at 25619cd1. That card and issue
     # #1027 BOTH took 0.170.0 against 23959a80, and the collision merged silently: two cards
     # writing an identical version string never conflict, so the manifest and the marketplace entry
     # came through clean and the only signal was two bodies under one changelog heading.

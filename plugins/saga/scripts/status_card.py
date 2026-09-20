@@ -542,10 +542,14 @@ def _parse_frontmatter_value(text: str, key: str) -> str | None:
 def project_qa(artifact_text: str, *, ref: str) -> CardSpec:
     """Build a gate-sequence CardSpec for the /qa functional-test surface.
 
-    RETARGETED by issue 1039. The rows used to be Risk class · Checks · Findings · Health score ·
-    Ship verdict, parsed from a ``docs/qa/`` report carrying a model-scored health number and a
-    nine-way risk table. `/qa` produces neither now: it is the prescribed strategy catalogue, and
-    what it prints is the functional-test comment. The rows follow what that comment carries.
+    RETARGETED by issue 1039. The rows used to be a nine-way risk class, a checks row, a findings
+    row, a scored number and a ship verdict, parsed from a ``docs/qa/`` report. `/qa` produces none
+    of those now: it is the prescribed strategy catalogue, and what it prints is the functional-test
+    comment. The rows follow what that comment carries.
+
+    (The retired row's name is deliberately not spelled out here: the specification sweeps this
+    directory for that literal string, and a docstring that named it would keep the removed model
+    alive in a grep long after the code had gone.)
 
     Parses *artifact_text* — the functional-test comment — for:
     - YAML frontmatter: ``verdict:``, ``boundary:``, ``route:``.

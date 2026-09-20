@@ -864,9 +864,10 @@ At thread completion set `status=done`.
 ### 5.5 Hard boundary
 
 `/work` builds, runs the written criterion until it is green, records, and hands over. It does
-**NOT** silently mutate GitHub (pull-request open, review request, and merge are each explicitly
-confirmed — issue #1029's preservation contract, which outlived the ceremony that used to carry
-it). It does **NOT** refuse: the loop's only non-green outcome is another iteration, and the only
+**NOT** silently mutate GitHub
+(PR-open, review-request, and merge are each explicitly confirmed — issue #1029's preservation
+contract, which outlived the ceremony that used to carry it). It does **NOT** refuse: the loop's
+only non-green outcome is another iteration, and the only
 stops in it are an unreadable record or an unnamed unit. It does **NOT** judge whether the tests are
 adequate — the criterion was written at admission, and re-deciding it here would be the judgment the
 criterion replaced. It does **NOT** own deploy or canary (`deploy` owns deployment

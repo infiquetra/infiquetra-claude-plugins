@@ -358,10 +358,9 @@ def test_merge_confirmation_still_present() -> None:
 
     boundary = _section(text, "### 5.5 ", "\n---")
     boundary_collapsed = " ".join(boundary.split())
-    for mutation in ("pull-request open", "review request", "merge"):
-        assert mutation in boundary_collapsed, (
-            f"the hard boundary must still name {mutation!r} as explicitly confirmed"
-        )
+    # The exact phrase issue #938's anti-regression pin and this guard both hold. Keeping one
+    # wording across both means a rewrite cannot satisfy one guard while breaking the other.
+    assert "PR-open, review-request, and merge are each explicitly confirmed" in boundary_collapsed
     assert "silently mutate" in boundary_collapsed
 
 

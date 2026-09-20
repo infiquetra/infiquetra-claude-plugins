@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.2] - 2026-09-20
+
+### Changed
+
+- **The skill stops naming `team-execution` as a fallback and as the default offer's second value.**
+  Issue #1030 archived that plugin. `inline` is now the only backend the recommender returns, so the
+  HALT recovery line points there, the availability-probe note names one non-Workflow path rather
+  than two, and the isolation comparison speaks of the archived plugin in the past tense. Nothing
+  about when a Workflow may be entered changes: still explicit operator invocation only, per issue
+  #808's NARROW ruling.
+
 ## [1.0.1] - 2026-09-19
 
 - Issue #1026 removed `plugins/saga/scripts/spec_table.py`. The authoring skill invoked it to

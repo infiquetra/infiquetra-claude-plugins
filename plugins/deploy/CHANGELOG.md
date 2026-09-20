@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.2] - 2026-09-20
+
+### Changed
+
+- **The release orchestrator no longer defers broader validation to `team-execution`.** That plugin
+  was archived by issue #1030, and what it provided for a release — reviewer consensus and named
+  scanners — is now the lensed code review and the build loop's mechanical baseline. The agent's
+  instruction named a plugin that will not resolve, which reads as a missing dependency rather than
+  a retired one; it now names what actually performs the validation.
+
 ## [0.2.1] - 2026-08-08
 
 ### Added - house-style presentation contract on the release orchestrator (#704)

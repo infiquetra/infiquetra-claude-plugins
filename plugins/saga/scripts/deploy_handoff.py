@@ -13,7 +13,8 @@ module owns the acceptance contract that closes that gap (R1/R3/R4/R5):
   token and moves the prior envelope to ``superseded`` so a stale token can never be acked (KTD4).
 * ``accept`` is write-once (KTD4): it records ``{token, acknowledged_at, acknowledged_by,
   evidence}`` only on the deploy side. A second accept raises ``AlreadyAcknowledgedError`` (mirrors
-  ``ship_receipt.ReceiptExistsError``); accept without a prior offer, a token mismatch, or an empty
+  the ship-receipt module's own double-write error, removed in #1027); accept without a prior offer,
+  a token mismatch, or an empty
   identity/evidence all fail loud with named errors — ownership is never released silently.
 * ``authorize_promotion`` honors the payload mechanically, not by convention (KTD5): ``gate`` ->
   blocked pending explicit confirmation; ``auto`` -> authorized for ``nonprod`` only;
@@ -25,10 +26,11 @@ module owns the acceptance contract that closes that gap (R1/R3/R4/R5):
   ``no-handoff`` (deliberately not an error). Nothing is written back — no committed status field
   anywhere (KTD6).
 
-Storage follows the established sidecar discipline (``ship_receipt.py`` / ``ship_teardown.py``):
+Storage follows the sidecar discipline the ship-receipt and ship-teardown modules established
+(both removed in #1027):
 saga-id regex hardening, wrapped ``JSONDecodeError``, atomic tmp-then-``os.replace`` writes, no
 ``state.json`` contention. Write-once is enforced at the API layer (named errors on double-accept
-/ token mismatch), NOT at the filesystem — unlike ``ship_receipt``'s ``O_CREAT|O_EXCL``, which is
+/ token mismatch), NOT at the filesystem — unlike the ship receipt's ``O_CREAT|O_EXCL``, which was
 inapplicable here because ``accept`` mutates an already-existing offer file. The sidecar is
 git-ignored, machine-local, single-operator state; a local hand-edit or a same-instant concurrent
 accept is outside the trust model, same as every sibling sidecar.
@@ -77,8 +79,9 @@ STATUS_INVALID_SIDECAR = "invalid-sidecar"
 
 # saga_id becomes a path component under .claude/saga/sagas/ — a traversal value ("../..", an
 # absolute path) would read/write outside the sidecar directory. Single path segment, alphanumeric
-# first char (also excludes "." / ".." / a leading "-"). Duplicated (not shared) from
-# ship_teardown.py / ship_receipt.py by house convention — each sidecar module stays dependency-free.
+# first char (also excludes "." / ".." / a leading "-"). Duplicated, not shared, by house
+# convention from the sidecar modules removed in #1027 — each sidecar module stays
+# dependency-free, which is why the copy outlived its originals.
 _SAGA_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
@@ -258,7 +261,8 @@ def _read_sidecar(repo_root: Path, saga_id: str) -> dict[str, Any] | None:
 def _write_sidecar(repo_root: Path, saga_id: str, record: dict[str, Any]) -> Path:
     path = handoff_path(repo_root, saga_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic replace (same idiom as ship_teardown._write_manifest / saga.py's _atomic_write) — a
+    # Atomic replace (the idiom saga.py's _atomic_write uses, and the removed ship-teardown
+    # manifest writer used) — a
     # crash mid-write must never leave a torn sidecar.
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -493,8 +497,8 @@ def reconcile_all(repo_root: Path, *, now: str | None = None) -> list[dict[str, 
             # OSError covers a sidecar that is a directory (IsADirectoryError) or unreadable
             # (PermissionError) — open() raises these BEFORE the JSON validation that produces
             # InvalidHandoffError, and they must degrade the same way, never abort the sweep
-            # (falsification re-review, #395 fix round; same class as ship_teardown's
-            # _worktree_is_dirty OSError degrade from #347).
+            # (falsification re-review, #395 fix round; the same class as the dirty-worktree
+            # OSError degrade from #347, in the ship-teardown module removed in #1027).
             results.append(
                 {"saga_id": child.name, "status": STATUS_INVALID_SIDECAR, "note": str(exc)}
             )
@@ -580,7 +584,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 results = [reconcile_one(repo_root, args.saga_id)]
             print(json.dumps(results, indent=2, sort_keys=True))
-            # Exit-code convention follows ship_receipt.py read (KTD6): 0 for clean or no-handoff,
+            # Exit-code convention follows the ship receipt's read (KTD6, removed in #1027): 0 for
+            # clean or no-handoff,
             # 1 whenever any reconciled saga is handed-off-unacknowledged (dropped baton, F2) or
             # carries an unreadable sidecar (invalid-sidecar is "not clean", never silently 0).
             if any(r["status"] in (STATUS_UNACKNOWLEDGED, STATUS_INVALID_SIDECAR) for r in results):

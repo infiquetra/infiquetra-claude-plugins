@@ -427,9 +427,11 @@ def test_save_on_default_branch_preserves_stored_work_branch(
     saga: ModuleType, tmp_path: Path
 ) -> None:
     """Once a real work branch is recorded, a later save made back on ``main`` must NOT overwrite
-    it (issue #480). ship_ceremony's ``checkout_main`` progress-save runs on ``main`` right before
-    ``branch_delete`` — which still needs the work branch — so this mirrors that exact sequence and
-    guards against the refresh downgrading a real branch to the default one.
+    it (issue #480). The ship ceremony's ``checkout_main`` progress-save ran on ``main`` right
+    before ``branch_delete`` — which still needed the work branch — so this mirrors that exact
+    sequence and guards against the refresh downgrading a real branch to the default one. The
+    ceremony was removed in #1027; the guard stays, because the property is true of any caller that
+    saves while standing on the default branch.
     """
 
     def git_on(branch: str) -> Callable[..., SimpleNamespace]:

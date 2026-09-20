@@ -59,7 +59,8 @@ def _clear_ambient_fleet_admission_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # --- #279 hard floor: GitHub-write test modules can never touch the live operations board ---
-_GH_WRITE_TEST_MODULES = {"test_mission_control", "test_outcome_board_sync", "test_ship_ceremony"}
+# "test_ship_ceremony" was a member until issue #1027 removed the ship ceremony and its suite.
+_GH_WRITE_TEST_MODULES = {"test_mission_control", "test_outcome_board_sync"}
 
 
 @pytest.fixture(autouse=True)

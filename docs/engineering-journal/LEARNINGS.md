@@ -2,6 +2,60 @@
 
 ## 2026-09-20
 
+### A scanner a repository runs advisory cannot be promoted to a blocking check without measuring it first  {#1027-measure-before-promoting-an-advisory-scanner}
+
+**Evidence.** Issue #1027, `plugins/saga/references/mechanical-baseline.md`. The card asked for
+bandit to become an entry in the build loop's mechanical baseline. Bandit is installed here
+(`pyproject.toml`, `bandit>=1.7`) and continuous integration has always run it advisory —
+`.github/workflows/ci.yml:282` ends the step with `|| true`. Measured on the card's base commit
+`87a5329e`: `uv run python -m bandit -r plugins/ scripts/ tests/ tools/ -ll -q` reports 136 medium
+and 9 high findings over 231,188 lines and exits 1.
+
+**Mechanism.** The build loop's defining rule is that a failing check is an iteration and never a
+refusal. Promoting a check that fails on 145 pre-existing findings makes the loop unable to reach
+green on the first iteration and on every iteration after it — which is a refusal, arriving through
+the one door the design left open, and looking from the outside exactly like a slow worker. The
+tell is that the failure is not about the work: nothing the card does can clear it.
+
+**Generalizable rule.** Before moving any check from advisory to blocking, run it on the current
+tree and read the count. A check with pre-existing failures blocks the next change, not the debt
+that caused it, and "advisory" is usually load-bearing rather than an oversight.
+
+### The loop that runs the checks finds what a command line assumed about its shell  {#1027-no-shell-means-globs-need-expanding}
+
+**Evidence.** Issue #1027, `plugins/saga/scripts/build_loop.py`'s `expand_globs`. The first real
+run of the build loop against this repository's own baseline recorded
+`uv run pytest tests/ plugins/*/tests/ -q` as `fail`, detail
+`ERROR: file or directory not found: plugins/*/tests/`.
+
+**Mechanism.** The loop runs every check with `shell=False`, because a baseline entry is tracked
+configuration and tracked configuration must not reach `sh -c`. But the entry was written by a
+person, for a shell, and carried a glob. With no shell to expand it, pytest received a literal path
+that does not exist — and the loop recorded that as a `fail`, indistinguishable in the record from a
+genuine test failure. The security property and the configuration format disagreed, and the
+disagreement surfaced as a wrong verdict rather than an error.
+
+**Generalizable rule.** When you stop running a stored command through a shell, you inherit every
+shell behaviour that command silently depended on — globbing, `~`, variable expansion, the working
+directory. Expand what a shell would expand, or the stored command means something different than
+it did before, and the difference shows up as a false failure rather than a crash.
+
+### A count in a card goes stale between filing and building  {#1027-read-the-file-not-the-card}
+
+**Evidence.** Issue #1027 and the objective plan's section A10 both describe
+`plugins/saga/skills/work/SKILL.md` as "1,121 lines today". On the card's base commit `87a5329e`
+the file is 815 lines: issues #1026 and #938 each took prose out of it after the card was written
+and before it was branched.
+
+**Mechanism.** A card filed at the top of a tree is written against the tree as it stood then, and
+every sibling that merges first moves the ground under it. The count is the visible instance; the
+invisible ones are the line numbers a plan cites, which are wrong in the same way and do not
+announce themselves.
+
+**Generalizable rule.** Treat every quantity in a card as of the date it was filed. Re-measure
+against the base commit before planning from it, and say in the plan which revision each number was
+read at.
+
 ### A sibling taking the same version number produces no conflict, because both sides write the identical string  {#1029-same-version-collision-merges-silently}
 
 **Evidence.** Issue 1029 bumped saga to 0.167.0 against `origin/parent/1018` at `b98e94ea`, where saga read 0.166.0, and the release-surface diff guard passed at that head. Issue 938 took the same number and merged first, as `54a526b1`. Merging it in produced exactly two conflicts — `plugins/saga/CHANGELOG.md` and the version literal in `tests/test_saga_plugin.py` — and **none** in `plugins/saga/.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json`, which git merged clean to a single `"version": "0.168.0"`-shaped line that both sides had written as `0.167.0`.

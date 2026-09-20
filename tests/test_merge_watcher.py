@@ -1,8 +1,8 @@
 """merge_watcher.py tests (issue #346, U2).
 
-Test design: a module-local ``FakeRunner`` (distinct from ``test_ship_ceremony.py``'s
-``FakeGh`` and ``test_ceremony_hazards.py``'s own ``FakeRunner`` — each ceremony
-module gets its own small fake per the plan) drives ``record``/``validate`` against
+Test design: a module-local ``FakeRunner`` — each ceremony module got its own small fake per the
+plan, and this is the only one of them left after issue #1027 removed the rest — drives
+``record``/``validate`` against
 canned ``gh pr view`` JSON; ``watch`` is exercised entirely through its injected
 ``poll_source`` callable, never a runner, so the mid-poll-flip fixture is instant and
 deterministic (no real ``gh`` calls, no sleeping).

@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.170.0] - 2026-09-20
+
+**Bumped from 0.169.0**, the saga version on `origin/parent/1018` at commit `23959a80`. This card
+had taken 0.169.0 while its suite ran; issue #1029 merged that number onto the integration branch
+first, so the card renumbered above it rather than shipping a colliding version.
+
+### Added
+
+- **`/work` is the build loop, and its finish line is written down before the work starts**
+  (issue #1027). The exit criterion lives in the run record — the mechanical baseline from the
+  repository profile, the plan's child-scoped functional checks, a branch preview deployment where
+  the repository declares one, and the plan's scenario smoke. A worker reads it before writing a
+  line, runs it, and repeats until green; on the green iteration the loop records the full
+  forty-character revision that `/code-review` then freezes. "Working software" is a fact the
+  worker checks rather than a judgment it reaches at the end.
+- **`plugins/saga/scripts/build_loop.py`** runs the criterion once per invocation and records every
+  result under a new `build_loop` key on the unit's row. `--dry-run` prints the criterion, the lens
+  catalogue check each baseline command answers, every catalogue check the baseline does not cover
+  and why, every named scanner the repository has not configured, and whether a preview is
+  declared. `run_record.v1` does not change: a unit row's key set is deliberately not fixed.
+- **`plugins/saga/references/mechanical-baseline.md`** is the contract — the check map from the
+  lens catalogue at sdlc revision `5efc869f` to this repository's commands with every divergence
+  named, the three check statuses, the branch preview in all three of its cases, the record block
+  and the exit-code table.
+
+### Changed
+
+- **A failing check is a loop iteration, never a refusal.** `build_loop.py` exits 4 to say "not
+  green yet", a code distinct from every refusal code precisely so a caller cannot read it as
+  "stop". The instruction on seeing it is to implement again and run it again.
+- **An unexecutable check is `could-not-execute`, never a pass and never a fail** — the lens
+  catalogue's own rule. A missing program, a timeout, and a command that does not parse are
+  environment problems, not defects in the work.
+- **Globs in a baseline command are expanded by the loop, not by a shell.** The loop found this on
+  its first real run: with `shell=False`, this repository's own `plugins/*/tests/` reached pytest as
+  a literal path and was recorded as a `fail` indistinguishable from a real test failure. Tokens
+  carrying `*`, `?` or `[` now expand against the repository root the way a shell would, a token
+  matching nothing passes through unchanged, and `shell=False` stays.
+- **Every check runs from the repository root**, named by `--repo-root` rather than inherited from
+  the caller's directory. `--profile` reads the profile from elsewhere without moving the
+  repository.
+- **`branch_preview_command`** is a new optional key in `.saga-profile.json`, documented in
+  `references/repository-profile.md`. Where a repository declares a preview and names no command,
+  the loop records `could-not-execute` with that reason and never guesses a deployment command.
+- **The pull-request open, the review request and the merge stay explicitly confirmed** — issue
+  #1029's preservation contract, which outlived the mechanism that used to carry it.
+
+### Removed
+
+- **The ship ceremony and the confirmed-only merge**: `ship_ceremony.py`, `ceremony_hazards.py`,
+  `ship_receipt.py`, `ship_teardown.py` and `ship_undo.py` (175,034 bytes) with their four test
+  files (5,854 lines), the `SessionStart` hook entry that ran `ship_teardown.py reclaim`, and every
+  importer repaired. The merge turn belongs to the integrate step; there is no rollback command,
+  and a merge is undone with ordinary git.
+- **The risk-gated hard test gate** leaves `/work` and `references/test-and-gates.md`. It asked a
+  worker to decide, at the end of its own work, which change kinds deserved tests; a criterion
+  written before the work replaces that judgment. `change_kinds` is still derived and recorded, and
+  now gates nothing.
+- **The front-loaded ceremony start** that opened a draft pull request right after the saga mint.
+  The build loop opens no pull request: there is nothing to review until the criterion is green.
+
+### Deferred to issue #1030
+
+`merge_watcher.py` and its test file, which the removals above orphan; `lifecycle_state.py`'s
+`requires_hard_test_gate` function with the two `/loop` references to it; and `saga.py`'s
+`ceremony_transition` and `ceremony_tier` fields, which now have no producer. None is named by this
+card, and issue #1030's removal pass owns the commands that still read them, so one card retires
+each vocabulary together with its readers.
 ## [0.169.0] - 2026-09-20
 
 **Bumped from 0.168.0**, the saga version on `origin/parent/1018` at commit `87a5329e`, the merge

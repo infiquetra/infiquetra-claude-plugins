@@ -24,44 +24,42 @@ ROOT = Path(__file__).resolve().parent.parent
 WORK_SKILL = ROOT / "plugins" / "saga" / "skills" / "work" / "SKILL.md"
 LOOP_SKILL = ROOT / "plugins" / "saga" / "skills" / "loop" / "SKILL.md"
 RESUME_SKILL = ROOT / "plugins" / "saga" / "skills" / "resume" / "SKILL.md"
-SHIP_CEREMONY = ROOT / "plugins" / "saga" / "scripts" / "ship_ceremony.py"
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_post_merge_ceremony_names_all_five_calls_including_teardown() -> None:
-    # Derive expected five as post-merge slice of TRANSITIONS, never a hand-maintained list.
-    # Read the canonical tuple directly from the source to avoid import side effects.
-    text = SHIP_CEREMONY.read_text(encoding="utf-8")
-    m = re.search(r"TRANSITIONS:\s*tuple\[str,\s*\.\.\.\]\s*=\s*\((.*?)\)", text, flags=re.DOTALL)
-    assert m, "TRANSITIONS tuple not found"
-    inner = m.group(1)
-    transitions = tuple(re.findall(r'"([^"]+)"', inner))
-    assert transitions == (
-        "commit",
-        "open_pr",
-        "request_review",
-        "merge",
-        "checkout_main",
-        "pull",
-        "branch_delete",
-        "teardown",
-    )
-    expected = transitions[transitions.index("request_review") + 1 :]
-    # expected must be the five post-merge calls
-    assert expected == ("merge", "checkout_main", "pull", "branch_delete", "teardown")
+def test_section_54_carries_no_ship_ceremony_transition_and_keeps_the_confirmation() -> None:
+    """The ceremony went; the confirmation stayed. Both halves, or the removal was wrong.
+
+    This replaces the test that derived the five post-merge calls from the ship ceremony's own
+    ``TRANSITIONS`` tuple and asserted each appeared in section 5.4. That module was deleted in
+    issue #1027, so the derivation has no source any more -- but the property worth keeping is the
+    other one it implied: section 5.4 is where the outward mutations are described, and every one
+    of them must still be explicitly confirmed. Issue #1029 declared that as the preservation
+    contract, and a removal that quietly took the confirmation with the ceremony would look
+    identical in the diff to one that did not.
+    """
     text = _read(WORK_SKILL)
-    # Phase 5.4 is the post-merge ceremony; ensure each of the five appears near that section.
     sec_start = text.find("### 5.4")
     sec_end = text.find("### 5.5", sec_start)
     assert sec_start >= 0 and sec_end >= 0
     sec = text[sec_start:sec_end]
-    for name in expected:
-        assert name in sec, f"post-merge ceremony prose missing {name!r}"
-    # Ensure we did not assert against whole tuple (commit/open_pr/request_review must NOT be in that section's expected list expectation)
-    # The test derives from slice, so if prose mistakenly omitted teardown the check fails.
+
+    # The mechanism is gone: no ceremony, no transition names, no reversibility tier.
+    assert "ship_ceremony" not in sec
+    for transition in ("checkout_main", "branch_delete", "CeremonyTier"):
+        assert transition not in sec, (
+            f"section 5.4 still names the ceremony transition {transition!r}"
+        )
+
+    # The confirmation is not gone.
+    collapsed = " ".join(sec.split())
+    assert "explicitly confirmed" in collapsed, (
+        "section 5.4 must still say the pull-request open, review request and merge are "
+        "explicitly confirmed -- issue #1029's preservation contract"
+    )
 
 
 def test_no_saga_file_claims_first_board_move_belongs_to_work() -> None:

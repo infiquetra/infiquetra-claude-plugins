@@ -65,27 +65,42 @@ USAGE
     review_roster.py --declaration decl.json
     review_roster.py --issue 1001 --revision <sha>
     review_roster.py --issue 1001 --revision <sha> --sdlc-path /path/to/checkout
+    review_roster.py --declaration decl.json --propose
 
 Exit codes: ``0`` the generator's validation report is ``ok``; ``1`` the report is
 ``refused`` (a run-setup fact the caller must see, not a crash); ``2`` a refusal
 this module owns — no checkout, no generator, or a run record with no lens
 declaration; ``3`` an unknown run-record version.
+
+``--propose`` prints the advisory conditional-lens proposal for the declaration
+and exits ``0`` without resolving a roster: the proposed additions with their
+probabilities, the Planner's declaration as the floor, and a note when the
+judgment contributed nothing. It needs no lifecycle checkout and leaves the
+declaration's lenses intact — the Planner applies additions explicitly, through
+:func:`apply_proposal`, before the roster resolves.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import subprocess  # nosec B404 — fixed argv, no shell, to a path this module resolves
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import review_consensus  # noqa: E402
 import run_record  # noqa: E402
+
+#: The catalogue's four always-on lenses, by way of the one module that names
+#: them. No declaration can deselect one, so the proposal never questions one.
+ALWAYS_ON_LENS_IDS = review_consensus.ALWAYS_ON_LENS_IDS
 
 #: The schema this module builds for the generator, and the one it expects back.
 DECLARATION_SCHEMA = "applicability_declaration.v1"
@@ -488,6 +503,296 @@ def selected_lenses(roster: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# The conditional-lens proposal (issue 1034)
+# ---------------------------------------------------------------------------
+
+#: The probability at or above which an excluded lens is proposed back in.
+#: A proposal is shown to the Planner, not executed, so the bar is "the model
+#: leans yes" rather than a confidence floor.
+PROPOSAL_THRESHOLD = 0.5
+
+#: Mirrors ``typesafe_client.STATUS_OK`` so the injected-``ask`` path interprets
+#: answers without importing the client. A one-word string, not behaviour.
+_STATUS_OK = "ok"
+
+
+def _judgment_modules() -> tuple[Any | None, Any | None]:
+    """fleet-core's TypeSafe client and verdict log, or ``(None, None)``.
+
+    Unreachable is not an error: the proposal fails open to the Planner's
+    declaration, the way an absent staffing component degrades to resolving the
+    checkout here rather than refusing the review.
+    """
+    try:
+        import fleet_commons_shim  # noqa: PLC0415
+
+        return (
+            fleet_commons_shim.load("typesafe_client"),
+            fleet_commons_shim.load("jev_log"),
+        )
+    except Exception:  # noqa: BLE001 — any failure means "fail open" instead
+        return None, None
+
+
+def declared_applies(declaration: Mapping[str, Any]) -> list[str]:
+    """The conditional lenses the declaration already applies, in order."""
+    lenses = declaration.get("lenses")
+    if not isinstance(lenses, Mapping):
+        return []
+    return sorted(
+        str(lens_id)
+        for lens_id, entry in lenses.items()
+        if isinstance(entry, Mapping) and entry.get("applies") is True
+    )
+
+
+def proposal_candidates(declaration: Mapping[str, Any]) -> dict[str, str]:
+    """The excluded lenses the proposal may question, with the Planner's reason.
+
+    Always-on lenses are never candidates, even when a hand-written declaration
+    lists one as excluded: no declaration can deselect one, so there is nothing
+    to propose back.
+    """
+    lenses = declaration.get("lenses")
+    if not isinstance(lenses, Mapping):
+        return {}
+    always_on = set(ALWAYS_ON_LENS_IDS)
+    candidates: dict[str, str] = {}
+    for lens_id in sorted(lenses):
+        if str(lens_id) in always_on:
+            continue
+        entry = lenses[lens_id]
+        if isinstance(entry, Mapping) and entry.get("applies") is False:
+            reason = entry.get("reason", "")
+            candidates[str(lens_id)] = str(reason or "")
+    return candidates
+
+
+def proposal_state(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    """The change shape the proposal judges: the declaration's own account of it.
+
+    The stack, the work unit and the Planner's exclusion reasons are what the
+    declaration carries about the change, so they are what the model reads. No
+    diff is attached: the proposal answers whether a lens applies to the change
+    as declared, not what the diff contains line by line.
+    """
+    run = declaration.get("run")
+    run = run if isinstance(run, Mapping) else {}
+    return {
+        "change": {
+            "repository": str(run.get("repository", "UNKNOWN")),
+            "work_unit": str(declaration.get("work_unit", "UNKNOWN")),
+            "stack": list(declaration.get("stack", []) or []),
+            "declared_by": str(declaration.get("declared_by", "planner")),
+        },
+        "already_applies": declared_applies(declaration),
+        "excluded": proposal_candidates(declaration),
+    }
+
+
+def _proposal_questions(candidates: Mapping[str, str]) -> dict[str, Any]:
+    """One yes/no question per candidate lens, keyed by the lens itself."""
+    questions: dict[str, Any] = {}
+    for lens_id, reason in candidates.items():
+        sentence = f"Does the change described by `change` warrant the `{lens_id}` review lens?"
+        if reason:
+            sentence += f" The Planner excluded it, saying: {reason}"
+        questions[lens_id] = {"type": "noul", "instructions": sentence}
+    return questions
+
+
+def _noul_probability(answer: Any) -> float | None:
+    """The yes probability of a yes/no answer, or None when there is not one.
+
+    A yes/no answer carries a probability and no confidence field, verified
+    against the live endpoint, so the probability is the only number to compare
+    against the threshold. Mirrors ``jev_widen`` so this module interprets its
+    injected answers without importing the client.
+    """
+    if not isinstance(answer, Mapping):
+        return None
+    if answer.get("type") != "noul":
+        return None
+    value = answer.get("noul")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _record_proposal(
+    *,
+    state: Mapping[str, Any],
+    questions: Mapping[str, Any],
+    answers: Mapping[str, Any],
+    threshold: float,
+    model: str,
+    log_dir: Any,
+) -> None:
+    """Log one verdict per answered lens. Best-effort by design.
+
+    An unwritable log directory is a problem with the fleet's measurement, not
+    with the proposal the caller asked for, and the proposal has already been
+    computed by the time this runs.
+    """
+    client, log = _judgment_modules()
+    if client is None or log is None:
+        return
+    for lens_id, answer in answers.items():
+        if not isinstance(answer, Mapping):
+            continue
+        try:
+            log.record_verdict(
+                decision_id=f"code-review:propose-lenses:{lens_id}",
+                state=state,
+                questions=questions,
+                answer=dict(answer),
+                confidence=client.answer_confidence(answer),
+                threshold=threshold,
+                resolved_model=model,
+                directory=log_dir,
+            )
+        except Exception:  # noqa: BLE001 — see the docstring
+            return
+
+
+def propose_lenses(
+    declaration: Mapping[str, Any],
+    *,
+    ask: Callable[..., Any] | None = None,
+    threshold: float = PROPOSAL_THRESHOLD,
+    log: bool = True,
+    log_dir: Any = None,
+) -> dict[str, Any]:
+    """Propose excluded conditional lenses that may apply after all.
+
+    Advisory and additive only. The Planner's declaration is the floor: every
+    lens it applies stays applied, and the proposal can only name additions
+    from the excluded set. On any failure — no client, no key, a timeout, a
+    malformed body — the additions are empty and the note names the reason, so
+    a caller that ignores the note behaves as it did before this existed.
+
+    ``ask`` is the injection seam: tests hand in a fake and cannot reach the
+    network even by accident.
+    """
+    applies = declared_applies(declaration)
+    candidates = proposal_candidates(declaration)
+    lenses = declaration.get("lenses")
+    named = set(lenses) if isinstance(lenses, Mapping) else set()
+    skipped_always_on = sorted(named & set(ALWAYS_ON_LENS_IDS))
+    base: dict[str, Any] = {
+        "judgment": "conditional-lens-proposal",
+        "advisory": True,
+        "threshold": threshold,
+        "declared_applies": applies,
+        "candidates": sorted(candidates),
+        "skipped_always_on": skipped_always_on,
+    }
+
+    def _floor(ok: bool, note: str) -> dict[str, Any]:
+        return {
+            **base,
+            "ok": ok,
+            "note": note,
+            "model": "",
+            "probabilities": {},
+            "proposed_additions": [],
+            "proposed_lenses": list(applies),
+        }
+
+    if not isinstance(lenses, Mapping) or not lenses:
+        return _floor(False, "the declaration names no conditional lens; nothing was asked")
+    if not candidates:
+        return _floor(True, "every declared conditional lens already applies; nothing was asked")
+
+    state = proposal_state(declaration)
+    questions = _proposal_questions(candidates)
+
+    caller = ask
+    if caller is None:
+        client, _ = _judgment_modules()
+        if client is None:
+            return _floor(
+                False,
+                "fleet-core's TypeSafe client is unreachable; "
+                "the Planner's declaration stands unchanged",
+            )
+        caller = client.ask
+
+    try:
+        result = caller(state, questions)
+    except Exception as exc:  # noqa: BLE001 — the floor must survive any failure
+        return _floor(False, f"the request raised {type(exc).__name__}")
+
+    if getattr(result, "status", None) != _STATUS_OK:
+        note = getattr(result, "note", "") or "the request failed"
+        return _floor(False, note)
+
+    answers = getattr(result, "answers", None) or {}
+    model = str(getattr(result, "model", "") or "")
+    probabilities: dict[str, float | None] = {}
+    missing: list[str] = []
+    for lens_id in candidates:
+        probability = _noul_probability(answers.get(lens_id))
+        probabilities[lens_id] = probability
+        if probability is None and lens_id not in answers:
+            missing.append(lens_id)
+    additions = sorted(
+        lens_id
+        for lens_id, probability in probabilities.items()
+        if probability is not None and probability >= threshold
+    )
+
+    if log:
+        _record_proposal(
+            state=state,
+            questions=questions,
+            answers=answers,
+            threshold=threshold,
+            model=model,
+            log_dir=log_dir,
+        )
+
+    note = ""
+    if missing:
+        note = f"the answer carried no verdict for {', '.join(missing)}"
+    return {
+        **base,
+        "ok": True,
+        "note": note,
+        "model": model,
+        "probabilities": probabilities,
+        "proposed_additions": additions,
+        "proposed_lenses": sorted([*applies, *additions]),
+    }
+
+
+def apply_proposal(
+    declaration: Mapping[str, Any], proposal: Mapping[str, Any]
+) -> dict[str, Any]:
+    """A new declaration with the proposed additions flipped to applies.
+
+    The input is never mutated. Only lenses the proposal names *and* the
+    declaration excludes are touched; every other entry is carried over
+    unchanged, so this can only add, never remove. The Planner applies it
+    explicitly, before the roster resolves — the command line never does.
+    """
+    additions = set(proposal.get("proposed_additions", []) or [])
+    lenses = declaration.get("lenses")
+    lenses = lenses if isinstance(lenses, Mapping) else {}
+    applied: dict[str, Any] = {}
+    for lens_id, entry in lenses.items():
+        if (
+            str(lens_id) in additions
+            and isinstance(entry, Mapping)
+            and entry.get("applies") is False
+        ):
+            applied[lens_id] = {"applies": True}
+        else:
+            applied[lens_id] = copy.deepcopy(entry)
+    return {**declaration, "lenses": applied}
+
+
+# ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
 
@@ -512,7 +817,51 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also print the declaration that was built.",
     )
+    parser.add_argument(
+        "--propose",
+        action="store_true",
+        help=(
+            "Print the advisory conditional-lens proposal for the declaration "
+            "and exit without resolving a roster. The declaration's lenses are "
+            "left intact; the Planner applies additions explicitly."
+        ),
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=PROPOSAL_THRESHOLD,
+        help=(
+            "The probability at or above which --propose names an excluded lens "
+            f"(default {PROPOSAL_THRESHOLD})."
+        ),
+    )
     return parser
+
+
+def _load_declaration(args: argparse.Namespace) -> dict[str, Any]:
+    """The declaration from a file, or built from the issue's run record."""
+    if args.declaration is not None:
+        payload = json.loads(args.declaration.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise RosterError(
+                "review_roster: the declaration file does not hold a JSON object"
+            )
+        return payload
+    store_root = (
+        Path(args.store_root).resolve() if args.store_root else run_record.resolve_store_root()
+    )
+    record = run_record.load(store_root, args.issue, warn=None)
+    if record is None:
+        raise RosterError(
+            f"review_roster: no run record for issue {args.issue} under {store_root}; "
+            "run admission for this issue first"
+        )
+    return build_declaration(
+        record,
+        revision=args.revision or "UNKNOWN",
+        work_unit=args.work_unit,
+        resolved_at=args.resolved_at,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -521,28 +870,32 @@ def main(argv: list[str] | None = None) -> int:
     if args.declaration is None and args.issue is None:
         parser.error("one of --declaration or --issue is required")
 
+    if args.propose:
+        # The proposal needs no lifecycle checkout: it judges the declaration,
+        # not the catalogue, and the declaration is already in hand.
+        try:
+            declaration = _load_declaration(args)
+        except run_record.UnknownRecordVersionError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_UNKNOWN_VERSION
+        except RosterError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_REFUSED
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"review_roster: {exc}", file=sys.stderr)
+            return EXIT_REFUSED
+        print(
+            json.dumps(
+                propose_lenses(declaration, threshold=args.threshold),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return EXIT_OK
+
     try:
         checkout = resolve_checkout(args.sdlc_path)
-        if args.declaration is not None:
-            declaration = json.loads(args.declaration.read_text(encoding="utf-8"))
-        else:
-            store_root = (
-                Path(args.store_root).resolve()
-                if args.store_root
-                else run_record.resolve_store_root()
-            )
-            record = run_record.load(store_root, args.issue, warn=None)
-            if record is None:
-                raise RosterError(
-                    f"review_roster: no run record for issue {args.issue} under {store_root}; "
-                    "run admission for this issue first"
-                )
-            declaration = build_declaration(
-                record,
-                revision=args.revision or "UNKNOWN",
-                work_unit=args.work_unit,
-                resolved_at=args.resolved_at,
-            )
+        declaration = _load_declaration(args)
         resolution = resolve_roster(declaration, checkout=checkout)
     except run_record.UnknownRecordVersionError as exc:
         print(str(exc), file=sys.stderr)

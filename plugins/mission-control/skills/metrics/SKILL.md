@@ -56,7 +56,7 @@ Always run the script with `python3`.
 > census and the prose describing it.
 
 
-Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as active start
+Legacy (read-only history): the retired `Mount Olympus` board used its own active-start status
 with `Done`/`Closed`/`Cancelled` terminals, and its timeline may include `In Progress`,
 `In Development`, or `Deployed`. The CLI reads those values for historical continuity only;
 new cards use the active boards above.
@@ -142,7 +142,7 @@ split and no longer threshold for any board.
 
 1. Run `metrics column-time` on slow items to find the status consuming the most time.
 2. Check WIP age for active or review bottlenecks.
-3. Look for `blocked` or `Needs Question` state.
+3. Look for `blocked` or `Needs clarification` state.
 4. Check how many cards sit in the `Active` stage at once; no limit is enforced, so a
    pile-up there is a judgement call, not a gate.
 5. Separate deployment delay from work status; deployment evidence belongs to deployment fields.

@@ -7688,7 +7688,9 @@ def main() -> None:
     board_move_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     board_move_p.add_argument("--number", required=True, type=int)
     board_move_p.add_argument(
-        "--status", required=True, help="Target status (e.g. 'Assigned', 'In Review', 'Active')"
+        "--status",
+        required=True,
+        help="Target status (e.g. 'Implementing', 'Code review', 'Ready to close')",
     )
 
     board_archive_p = board_sp.add_parser("archive", help="Archive terminal workflow items")

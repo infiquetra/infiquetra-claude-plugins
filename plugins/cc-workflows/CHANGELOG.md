@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.0.0] - 2026-09-20
+
+### Archived -- FINAL RELEASE
+
+**This plugin is archived. It is removed from the marketplace in the next commit, and this is its
+last entry.** Issue #1030, under the saga simplification (parent #1018).
+
+**Why.** The emitter could not be separated from the machinery this release removes. Its declared
+plugin-boundary surface named thirty names in Saga's `execution_spec.py`, two of which were the
+engine-routing functions themselves; `execution_spec.py` imported the whole external-engine family
+at its module head, and `dispatch_settlement.py` referenced the run-fact ledger forty-six times as
+its substrate. Moving the three modules beside the emitter would have dragged 44 further modules and
+24,565 further lines -- including the entire outcome coordinator -- into this plugin. Severing them
+instead meant rewriting two large modules and roughly 9,261 lines of tests to remove a capability
+(routing units to external engines) that the same release deletes anyway. The operator chose the
+archive.
+
+**Where the content went.** Nowhere, and that is the decision: the Workflow backend was reachable
+only by explicit operator invocation (issue #808's NARROW ruling) and the September operating record
+shows it was not invoked. The lifecycle now has one execution backend, `inline`, and the work a
+Workflow used to fan out is done by the build loop and the lensed code review. Saga's
+`references/workflow-backend.md` -- the prose describing when to enter a Workflow and how to author
+a spec -- goes with this plugin in the same release. The role prompts that a fan-out would have
+staffed live in `plugins/agent-launcher/roles/`.
+
+**What a caller must change.** `cc-workflows-ultracode` is no longer a saga execution backend. The
+orchestration enumeration is the single value `inline`. A saga tick that recorded
+`--orchestration-mode cc-workflows-ultracode` still reads back, because the stored string is durable,
+but no new run can select it. Anything resolving this plugin's root by path or through the shared
+plugin-resolution ladder will no longer find it.
+
 ## [1.0.2] - 2026-09-20
 
 ### Changed

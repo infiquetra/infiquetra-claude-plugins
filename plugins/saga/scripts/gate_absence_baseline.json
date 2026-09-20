@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "pending": {
-    "plugins/saga/references/gate-divergence-instrumentation.md": 3,
     "plugins/saga/references/operator-choice.md": 4,
     "plugins/saga/references/workflow-backend.md": 1,
     "plugins/saga/skills/founder-review/references/review-modes.md": 3,

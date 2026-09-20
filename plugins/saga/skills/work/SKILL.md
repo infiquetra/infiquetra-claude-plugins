@@ -719,7 +719,15 @@ A record whose `field` reads a bare `Status` is a half-write and is reported as 
 with the board's reason and **never retried silently**.
 
 **Functional test.** The scenarios the plan prescribed run through `/qa` against the real
-environment, reading the run record rather than any ledger. A failure re-enters the build loop and
+environment, reading the run record rather than any ledger. **Run `/qa` in this turn** (issue
+#1029) — the acceptance evidence is the next step, and an operator who has to remember to ask for
+it is the transport for a step that already knows it should happen. Say in one line that you are
+running it. `/qa` still owns the advance of `lifecycle_phase` and still makes it only on a PASS:
+starting a step and deciding its verdict are different authorities, and only the first moved.
+
+When the run stops before the merge — a refused turn, a release still waiting on a check — report
+where it stopped and what would move it, and leave the run record's `next_step` naming that. Do not
+run `/qa` on an unmerged thread. A failure re-enters the build loop and
 counts against the post-merge allowance, which keeps its own counter of three standard and two
 escalated cycles plus exactly one recorded extension that no role may grant twice. An unrun scenario
 is never folded into a pass.
@@ -743,17 +751,38 @@ uv run python plugins/saga/scripts/board_progression.py --record <run record pat
 That resolves to `Verify` / `Ready to close` when no retro trigger fired and `Retro` /
 `Ready to close` when one did, from the record's own retro state.
 
+**What continuation does not change.** Every confirmation on this path stays exactly where it is:
+the pull-request open, the review request, and each of the five ceremony transitions around merge
+are **offered and confirmed, never auto-fired**. Continuation moves the run from one step to the
+next; it never converts a confirmed action into a silent one. A continuation that would fire one of
+them without a confirmation is a stop, and you say so rather than proceeding.
+
+When the run stops before the merge — an unapproved, stale, or failing pull request — report where
+it stopped and what would move it, and leave the run record's `next_step` naming that. Do not run
+`/qa` on an unmerged thread.
+
 At thread completion set `status=done`.
 
 ### 5.5 Hard boundary
 
-`/work` builds, tests, records, takes the merge turn, releases, and closes. It does **NOT** compose
-or execute a board write: every move above stops at mission-control's constrained lifecycle-field
-mutation, and this skill names the boundary and nothing else. It submits **no status the lifecycle
-repository's allowed list does not carry**, so `Ready to merge` and `Closeout` are never submitted
-even where a board offers them. It does **NOT** deploy to production, and no argument on this path
-produces a production deployment. It does **NOT** file SDLC issues (`mission-control` owns issue
-creation). Build, test, merge, release, test again, close — then stop.
+`/work` builds, tests, records, takes the merge turn, releases, runs the functional test, and
+closes.
+
+It does **NOT** compose or execute a board write: every move above stops at mission-control's
+constrained lifecycle-field mutation, and this skill names the boundary and nothing else. It submits
+**no status the lifecycle repository's allowed list does not carry**, so `Ready to merge` and
+`Closeout` are never submitted even where a board offers them. It does **NOT** deploy to production,
+and no argument on this path produces a production deployment. It does **NOT** file SDLC issues
+(`mission-control` owns issue creation).
+
+It does **NOT** silently mutate GitHub: the pull-request open, the review request and each ceremony
+transition around merge are explicitly confirmed. It does **NOT** advance `lifecycle_phase` past
+`work` — that advance is **`/qa`'s to make, and only on a PASS**; on a FAIL `/qa` keeps the phase at
+`work` and records the evidence. `/work` **runs** `/qa` after a merge (§5.4) and still does not make
+the advance only `/qa` can make: starting a step and deciding its verdict are different authorities,
+and only the first moved (issue #1029).
+
+Build, test, merge, release, test again, close — then stop.
 
 ---
 

@@ -48,16 +48,20 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     assert plugin_json["name"] == "saga"
     assert plugin_json["version"] == "0.170.0"  # 0.170.0: the merge turn, the release step, the
     # lifecycle-boundary board interface and the allowed-submission enforcement (issue #1028).
-    # Bumped from 0.169.0, the saga version on origin/parent/1018 at 23959a80 (issue #1029), not
-    # from this branch's own base of 0.168.0: two cards writing the same version string merge
-    # without a conflict, and the only signal left is two changelog sections under one number.
-    # Predecessor 0.168.0: the run record reference documents the
-    # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
-    # unit row (issue #1025). Bumped from 0.167.0, the saga version on origin/parent/1018 at
-    # 54a526b1: issues #1001, #1026 and #938 took 0.165.0, 0.166.0 and 0.167.0 while this card's
-    # suite ran, so this card renumbered above them rather than shipping a colliding version.
-    # 0.167.0 was issue #938: Work no longer offers an in-process external-engine second opinion,
-    # and plugins/saga/scripts/second_opinion.py is deleted with no live consumer.
+    # Bumped from 0.169.0, the saga version on origin/parent/1018 at 23959a80, not from this
+    # branch's own base of 0.168.0: two cards writing the same version string merge without a
+    # conflict, and the only signal left is two changelog sections under one number.
+    # Predecessor 0.169.0: every lifecycle skill ends by doing the next step in the same turn, a
+    # new SessionStart hook announces the run record's next_step for a live run and nothing for a
+    # done step, a closed run, or no record, and a local-only UserPromptSubmit hook names the
+    # command an operator's text is about (issue #1029).
+    # Predecessor 0.168.0: the run record reference documents the `units` rows as an extension
+    # point and names the three keys the orchestrate plugin adds to a unit row (issue #1025).
+    # Predecessor 0.167.0: Work no longer offers an in-process external-engine second opinion; the
+    # offer's prose and routing leave the work skill and its continuation reference, and
+    # plugins/saga/scripts/second_opinion.py is deleted with no live consumer, while the
+    # external-content trust boundary survives with its guard narrowed to the one remaining call
+    # site (issue #938).
     # Predecessor 0.166.0: /plan ends by dispatching the plan
     # review to the Plan Reviewer and looping on repair until no P0 or P1 remains, the /work floor
     # gate stays blocking on the operator's one-word override alone, the Workflow-backend and
@@ -3958,15 +3962,19 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # verdict (the Tests card cell would render not-reached) — guard against that regression.
     assert "tests:<pass|fail|skip>" not in work_doc
     # PRESENT (substantive): the card render LEADS §5.4 — proving the card is the operator status
-    # HEADER, not an afterthought. The assertion used to pin the list NUMBER (`1. `) as well; issue
-    # 1028 rewrote §5.4 from a numbered list into the merge turn, the release, the functional test
-    # and the close, so the numbering is formatting the contract never depended on. What is pinned
-    # is that the header is rendered and that it comes first in the section.
+    # HEADER, not an afterthought. This used to pin the list NUMBERS (`1. ` and `4. `) as well;
+    # issue 1028 rewrote §5.4 from a numbered list into the merge turn, the release, the functional
+    # test and the close, so the numbering is formatting the contract never depended on. The two
+    # properties the numbers stood for are pinned directly instead: the header comes first, and the
+    # section continues into the next step rather than handing routing to the operator (issue 1029).
     assert "**Render the operator status header**" in work_doc
     section = work_doc[work_doc.index("### 5.4 ") :]
     body = section[section.index("\n") :]  # past the heading, which names the steps too
     assert body.index("**Render the operator status header**") < body.index("Take the merge turn"), (
         "the status card must lead §5.4, not trail the steps it heads"
+    )
+    assert "Run `/qa` in this turn" in work_doc, (
+        "issue 1029's continuation contract: the functional test is run, not recommended"
     )
     # STILL PRESENT (KTD5): detailed work-session evidence reference.
     assert "work-session" in work_doc

@@ -711,18 +711,38 @@ did not land. Check the record's `field` reads `Stage+Status` before reporting t
 `halt`/`gated` falls back to the operator-prompted Mission Control path. When there is no issue,
 there is no card to move; say nothing further.
 
-### 5.6 Route
+### 5.6 Continue into `/work`
 
-The review has run, so the routing question is narrower than it used to be:
+**`/plan` does not recommend the build; it starts it.** The review has run and the card has moved,
+so there is nothing left for the operator to decide before the work begins — every decision the
+build needs was taken at admission and written into the run record. An operator who has to remember
+to type `/work` is the transport between two steps that already agree with each other (issue
+#1029).
 
-- **`/work`** (recommended next) — execute the plan. Its own document-review gate reads the result
-  this phase just recorded.
-- **`/handoff`** — hand the plan to an SDLC issue through `mission-control`.
-- **`/brainstorm`** — step back if the review found the WHAT was not actually settled. This is a
-  different exit from a failed review, not a review outcome.
+**Read the destination from the run record, not from this session.** Take
+`admission.destination` at `<primary checkout>/.claude/saga/runs/issue-<N>.json`:
+
+- **`plan-only`** — stop here. Report the plan path, the review result, and the board move, and say
+  the destination stopped the run. Do not enter `/work`.
+- **`pr`, `merge`, `nonprod-deploy`** — run `/work` against the plan path in this same turn, and
+  say in one line that you are doing so and which destination authorized it.
+
+When §5.4 exited on exhausted allowances rather than a pass, **stop and report** — that exit never
+passes, so it never continues either.
+
+**Continuation changes what happens automatically; it changes nothing about what is confirmed.**
+`/work`'s pull-request open, review-request, and merge stay explicitly operator-confirmed exactly
+as they are today. A continuation that would fire one of those without a confirmation is a stop,
+not a shortcut.
+
+Two exits remain the operator's to take, and neither is automatic: `/handoff` hands the plan to an
+SDLC issue through `mission-control`, and `/brainstorm` steps back when the review found the WHAT
+was not actually settled. Name them in one line; do not run them.
 
 ### 5.7 Hard boundary
 
-`/plan` authors a plan artifact, has it reviewed, and repairs it. It does **NOT** implement code and
-does **NOT** file SDLC issues (`mission-control` owns issue creation). Plan, write the saga, run the
-review to a verdict, route — then stop.
+`/plan` authors a plan artifact, has it reviewed, repairs it, and starts the build by entering
+`/work`. It does **NOT** implement code itself — `/work` owns that, and every boundary `/work`
+declares stays `/work`'s. It does **NOT** file SDLC issues (`mission-control` owns issue creation).
+Plan, write the saga, run the review to a verdict, then continue into `/work` or stop on a
+`plan-only` destination.

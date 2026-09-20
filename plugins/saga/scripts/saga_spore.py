@@ -411,7 +411,13 @@ def serialize(spore: dict[str, Any]) -> str:
 
     # The run record is part of the resumable core: it is the AUTHORITY on next_step (#1023), so a
     # continuing session that loses it re-grounds on the envelope's possibly stale copy instead.
+    # Suppression (#1029 KTD1/KTD5): an empty ``next_step`` means the step is done or the run is
+    # closed, and re-injecting a finished step across a compaction boundary reads as an
+    # instruction. The session-start hook applies the same rule from the same module, so the two
+    # readers of this field cannot drift apart on what "done" looks like.
     record = spore.get("run_record")
+    if record and not str(record.get("next_step") or "").strip():
+        record = None
     if record:
         head.append("")
         head.append("RUN RECORD (authoritative on next_step)")

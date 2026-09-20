@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.1] - 2026-09-19
+
+- Issue #1026 removed `plugins/saga/scripts/spec_table.py`. The authoring skill invoked it to
+  render the approval table an operator signs off; that command line is replaced by instructions
+  for building the same view from the spec — one row per unit with its id, label and
+  `{model, effort}` tier, the dependency waves, and spend against budget.
+- The boundary note and `saga_spec_shim.load_execution_spec`'s docstring no longer name
+  `team_emitter.py`, which issue #1026 also removed. Prohibiting or citing a file that does not
+  exist implies it could, and protects nothing.
+
 ## [1.0.0] - 2026-08-30
 
 - Initial extraction from Saga (#925, issue #918 wave 1, unit U4): the workflow-script

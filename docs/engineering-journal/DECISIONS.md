@@ -2,6 +2,29 @@
 
 ## 2026-09-20
 
+### The ruff specifier pins the locked minor instead of declaring an open floor  {#ruff-minor-pin-1043}
+
+**Decision.** `pyproject.toml` declares `ruff>=0.15,<0.16` rather than `ruff>=0.4`, matching the
+minor `uv.lock` already resolves (0.15.12). No rule configuration changes and no other dependency
+moves; the lock diff is the single requirement line.
+
+**Rationale.** An open floor with no ceiling lets the lint gate's verdict depend on whichever
+environment resolved last. The issue 1020 review proved the failure mode concretely: the project's
+synced 0.15.12 environment passed `ruff check .` and `ruff format --check .` clean while a reviewer
+environment that independently resolved 0.16.5 flagged pre-existing issues in `plugins/home-lab-ops`
+and some `docs/analysis` code blocks — files outside that diff. Both observations were true; only
+the versions differed. A ceiling on the declared specifier means a future `uv sync` or a fresh
+contributor environment cannot silently move the gate to a minor nobody triaged.
+
+**Rejected alternative.** *Leave the open `>=0.4` floor and rely on `uv.lock`.* The lock does pin
+what a synced environment installs, but the declared specifier is the contract every fresh
+resolution reads — and the gap between floor and reality is exactly what let two true-but-different
+lint results coexist. Keeping it trades one line of ceiling for repeat drift incidents.
+
+**Revisit when** the lock moves ruff to a new minor deliberately: bump the ceiling with it (for
+example `>=0.16,<0.17`) after triaging that minor's findings, rather than widening back to an open
+floor.
+
 ### Tier suggestions stay advisory: floor, fall-open, and one verdict per role  {#tier-suggest-advisory-1033}
 
 **Decision.** Issue 1033 wires the `tier` judgment verb into the staffing component as

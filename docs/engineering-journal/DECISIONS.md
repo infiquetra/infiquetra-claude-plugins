@@ -1,6 +1,23 @@
 # Decisions — Infiquetra Claude Plugins
 
-## 2026-09-19
+## 2026-09-20
+
+### A staged-input stop reports and stops; it no longer retries through the pane  {#1025-staged-stop-does-not-auto-redeliver}
+
+**Decision.** When the composer holds staged input, `go` returns the unit to `PENDING`, appends
+the stop message to the unit's note, and tells the operator to clear the composer and run
+`launcher.py redeliver` by hand. Orchestrate does not repeat the delivery itself.
+
+**Date:** 2026-09-20 · **Issue:** #1025 · **Supersedes in part:** `{#907-staged-input-redeliver}`
+
+**Why.** The automatic retry read the persisted launch receipt's `input_box` marker to decide
+that a `PENDING` unit was a staged stop rather than a fresh unit. This card stops persisting the
+receipt, so that marker is not in the record and the retry has nothing to key on. Reintroducing a
+field to carry it would re-add the run-file state this card exists to remove, and a retry that
+guesses wrong creates a second session in a live pane.
+
+**Rejected.** Persisting the receipt for this one field; inferring a staged stop from the note
+text; retrying unconditionally on every `PENDING` unit that records a pane.
 
 ### A merge turn runs in its own detached worktree, created and removed inside the turn  {#1025-detached-worktree-per-merge-turn}
 
@@ -63,6 +80,9 @@
 **Alternatives rejected.** Refusing any merge whose parent branch is behind `main`, rejected because it makes ordinary parallel work unmergeable. A lock service or a turn token, rejected by the source-of-truth document itself.
 
 **Revisit when.** A merge turn needs to be handed between machines, where a status field with no owner stops being enough.
+
+## 2026-09-19
+
 ### The plan-review loop's bound lives in the run record, and the only override is the operator's word  {#1026-review-loop-bound-and-override}
 
 **Decision.** `/plan` Phase 5.4 dispatches the plan review and loops on repair. Its bound is the run record's `standard_cycle_allowance` and `escalated_cycle_allowance`; no cycle count is written into the skill. It exits on exactly three conditions — a pass, the operator's one-word override with a recorded rationale, or exhausted allowances, which stops and reports rather than passing. No finding count, cycle count, unattended mode, or sentence in any skill produces an override.
@@ -1433,6 +1453,9 @@ the first owned tab. Clearing identity to make the retry possible was the other 
 
 **Rejected.** A new run-file field; a `requeue` subcommand; a second create under any `go`
 branch.
+
+**Superseded in part** by `{#1025-staged-stop-does-not-auto-redeliver}`: the automatic retry is
+gone, the hand repair through `redeliver` stands.
 
 ### Treat unproven composer continuation geometry as inconclusive  {#907-composer-structural-continuations}
 

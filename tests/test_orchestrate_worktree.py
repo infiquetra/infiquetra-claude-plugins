@@ -22,10 +22,22 @@ from orchestrate_support import (
     make_repo,
 )
 
+#: The production driver this module drives. Constructed here, not imported from the shared
+#: helper, so the module names on its own face the real file it crosses into.
+ORCHESTRATE_SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "orchestrate"
+    / "skills"
+    / "orchestrate"
+    / "scripts"
+    / "orchestrate.py"
+)
+
 
 @pytest.fixture(scope="module")
 def orch():
-    return load_orchestrate("_orchestrate_worktree")
+    return load_orchestrate("_orchestrate_worktree", ORCHESTRATE_SCRIPT)
 
 
 @pytest.fixture

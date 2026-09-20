@@ -8,9 +8,22 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pytest
-from orchestrate_support import ORCHESTRATE_SCRIPT, load_orchestrate
+from orchestrate_support import load_orchestrate
+
+#: The production driver this module drives. Constructed here, not imported from the shared
+#: helper, so the module names on its own face the real file it crosses into.
+ORCHESTRATE_SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "orchestrate"
+    / "skills"
+    / "orchestrate"
+    / "scripts"
+    / "orchestrate.py"
+)
 
 PLUGIN_ROOT = ORCHESTRATE_SCRIPT.parents[3]
 REPO_ROOT = PLUGIN_ROOT.parents[1]
@@ -30,7 +43,7 @@ KEPT_SUBCOMMANDS = ("plan-check", "start", "go", "merge", "clean")
 
 @pytest.fixture(scope="module")
 def orch():
-    return load_orchestrate("_orchestrate_surface")
+    return load_orchestrate("_orchestrate_surface", ORCHESTRATE_SCRIPT)
 
 
 @pytest.fixture(scope="module")

@@ -24,10 +24,22 @@ from orchestrate_support import (
     write_record,
 )
 
+#: The production driver this module drives. Constructed here, not imported from the shared
+#: helper, so the module names on its own face the real file it crosses into.
+ORCHESTRATE_SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "orchestrate"
+    / "skills"
+    / "orchestrate"
+    / "scripts"
+    / "orchestrate.py"
+)
+
 
 @pytest.fixture(scope="module")
 def orch():
-    return load_orchestrate("_orchestrate_plan_check")
+    return load_orchestrate("_orchestrate_plan_check", ORCHESTRATE_SCRIPT)
 
 
 @pytest.fixture
@@ -163,7 +175,7 @@ def unstubbed():
     helpers through THIS module's globals, so a test that wants to steer one of them patches it
     here rather than on the module under test.
     """
-    return load_orchestrate("_orchestrate_plan_check_helpers")
+    return load_orchestrate("_orchestrate_plan_check_helpers", ORCHESTRATE_SCRIPT)
 
 
 class TestMutationProof:

@@ -32,9 +32,15 @@ ORCHESTRATE_SCRIPT = (
 RUN_RECORD_SCRIPT = REPO_ROOT / "plugins" / "saga" / "scripts" / "run_record.py"
 
 
-def load_orchestrate(module_name: str) -> ModuleType:
-    """Load the driver under a per-module name, so two test modules never share its globals."""
-    spec = importlib.util.spec_from_file_location(module_name, ORCHESTRATE_SCRIPT)
+def load_orchestrate(module_name: str, script: Path) -> ModuleType:
+    """Load the driver under a per-module name, so two test modules never share its globals.
+
+    *script* is the production driver, and every caller passes it rather than letting this helper
+    supply a default. That is deliberate: a test module that drives real code should name the real
+    file on its own face, so a reader of that module -- and the fake-only test-shape lint in
+    ``scripts/lint_test_shape.py`` -- can see the boundary being crossed without following a helper.
+    """
+    spec = importlib.util.spec_from_file_location(module_name, script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

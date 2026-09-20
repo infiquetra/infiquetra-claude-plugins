@@ -4152,6 +4152,12 @@ def cmd_go(args: argparse.Namespace) -> int:
         try:
             launch(unit, r.backend, review_elsewhere=r.reviews_separately())
         except StagedInputError as exc:
+            # The stop returns the unit to PENDING and says why; it does NOT retry through the
+            # recorded pane. The automatic redelivery route that DECISIONS
+            # {#907-staged-input-redeliver} described went with the persisted launch receipt this
+            # card removed -- see DECISIONS {#1025-staged-stop-does-not-auto-redeliver}, which
+            # supersedes it in part. `launcher.py redeliver` is still the right repair; an
+            # operator runs it, and orchestrate says so below rather than guessing.
             unit.status = PENDING
             # Append, never overwrite: the guard's withheld line and an earlier stop message
             # are facts a repeated stop must not erase. The membership test is a substring,

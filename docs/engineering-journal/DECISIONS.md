@@ -2,6 +2,46 @@
 
 ## 2026-09-19
 
+### The roster helper creates panes through the launcher, never through raw herdr calls  {#1024-roster-creates-through-the-launcher}
+
+**Decision.** `roster.py up` shells out to `launcher.py launch` for every pane it creates, and `roster.py down` closes through `launcher.py close --receipt-json`. It issues no `herdr tab create`, no `herdr agent start`, and no `herdr pane close` of its own.
+
+**Rationale.** The dangerous half of this helper is teardown, and the only thing standing between "close the session I made" and "close the operator's session" is a proof of ownership. That proof already exists in exactly one place: the launcher computes `owned` from a tab-list snapshot taken immediately before the launch, and its `close` path refuses a receipt that does not carry it. The launcher also owns the single door into a pane (`PaneWriter`) and the staged-input stop, which is a rule this repository decided belongs in one implementation (`{#907-pane-writer-owns-the-write-rule}`). Creating panes directly would have been about thirty lines shorter and would have obliged this file to re-derive ownership — a second, weaker copy of the guard, in the file whose whole purpose is to hold that guard.
+
+**Alternatives rejected.** Direct `herdr tab create` plus `herdr agent start`, rejected for the reason above. `agent-herdr crew`, which creates a whole workspace in one call and is named as an option in the card, rejected because a crew returns no per-pane ownership receipt, and one receipt per pane is what teardown is built on; it is recorded as deferred follow-up work in the plan rather than as a non-goal.
+
+**Revisit when.** herdr publishes a creation call that returns a durable ownership token of its own, or the launcher's receipt stops carrying `owned`.
+
+### The bounded wait is `herdr agent wait`, and the socket event stream stays in orchestrate  {#1024-wait-is-a-command}
+
+**Decision.** `roster.py wait` runs `herdr agent wait <target> --timeout <ms>` once per recorded pane, with no `--until` flag. It does not open a socket subscription.
+
+**Rationale.** Card #891 asked for a bounded wait on herdr's own agent state rather than a hand-rolled polling sentinel, and the command path satisfies that: herdr blocks server-side and answers when the agent settles. Omitting `--until` is deliberate — herdr's default match set is idle, done, or blocked, which is exactly the settled-state set wanted, and naming `--until idle` would make a blocked role look like a hang instead of a report. `--timeout` is never omitted, because herdr without one waits forever. A socket-level `events.subscribe` client already exists at `plugins/orchestrate/skills/orchestrate/scripts/herdr_events.py:83`; a second copy in agent-launcher would be the duplicate implementation this repository keeps paying for, and it would need either a live socket or a socket fake in the tests, where the command path needs only the injected runner.
+
+**Alternatives rejected.** A subscription in `roster.py`, rejected as above. Importing orchestrate's module across plugins, rejected because neither plugin is importable as a package and a cross-plugin import would make agent-launcher's floor depend on orchestrate's.
+
+**Revisit when.** A roster grows large enough that one blocking wait per pane, in sequence, is slower than the work it is waiting on — at which point the multi-pane subscription orchestrate already has is the thing to reach for.
+
+### A role session is briefed by a path to its prompt, not by the prompt pasted into its composer  {#1024-dispatch-brief-by-path}
+
+**Decision.** The text `roster.py` sends a new session is a four-line dispatch brief: who the session is, the absolute path of its role prompt, the absolute path of the run record, and the instruction to read the prompt first. The role prompt itself is never sent.
+
+**Rationale.** The Lens Reviewer prompt is 15 KB, and a composer write is the riskiest thing this helper does — the launcher's whole staged-input machinery exists because writes into a terminal composer go wrong in ways that concatenate onto whatever a person left there. Every agent kind the launcher can start reads files. The roles library is on disk at a path resolved from `__file__`, so it is reachable whatever working directory the session starts in. The file is the whole briefing either way; only its transport changes.
+
+**Alternatives rejected.** Inlining the prompt, rejected for the write-size reason; it would also have satisfied the card's dry-run acceptance criterion, which is why the decision is recorded rather than left implicit. Sending a short summary written by the helper, rejected because it would be a second copy of the role's contract that can drift from the library.
+
+**Revisit when.** A vendor the staffing plan can name cannot read a local file.
+
+### The roster helper's exit codes extend the run record's table and add two  {#1024-exit-codes-extend-run-record}
+
+**Decision.** `roster.py` uses 0 success, 1 internal error, 2 refusal, and 3 unknown record version — the four `run_record.py` already publishes — and adds 4 for "not running inside a herdr pane" and 5 for "a role is blocked, or its wait timed out".
+
+**Rationale.** The helper's first act is to read a run record, so a record it cannot read should exit with the same code whichever script read it; a caller scripting around both would otherwise have to keep two tables. The two additions are the conditions a caller must be able to tell apart from an ordinary refusal: running outside a herdr pane is the precondition the whole design rests on, and a blocked role is a result to act on rather than an error to retry. Folding either into 2 would have made the most important precondition indistinguishable from a bad command line.
+
+**Alternatives rejected.** A private table starting from 1, rejected because the record-reading codes would then disagree with saga's for the same condition. Reusing 2 for the outside-a-pane refusal, rejected as above.
+
+**Revisit when.** The run record module changes its own table.
+
 ### The run record's version field is `schema`, holding a family token, not a bare version number  {#1023-schema-field-convention}
 
 **Decision.** The run record carries its version in a top-level `schema` field whose value is `run_record.v1`. Reading a record with any other value prints one line to standard error and exits 3.

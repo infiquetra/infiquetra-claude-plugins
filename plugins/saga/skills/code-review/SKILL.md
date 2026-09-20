@@ -97,6 +97,23 @@ and read the decision from the operator's actual answer, never from a widget's r
 Use repo-relative paths in every generated document. Absolute paths break portability across machines
 and worktrees. (The one exception is the saga `--review-paths` value — see Phase 5.)
 
+## Lens reviewers as role sessions: the roster helper
+
+When a lens reviewer runs as its own herdr session rather than as an in-session subagent, it is
+stood up by agent-launcher's roster helper and by nothing else:
+
+```bash
+R=$(ls -d ~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/roster.py \
+    | sort -V | tail -1)
+python3 "$R" up --issue <N> --dry-run    # one pane per applicable lens, before creating anything
+```
+
+The helper reads the run's `applicable_lenses` and creates one pane per lens, each briefed from the
+Lens Reviewer prompt sliced to that lens alone. It records each pane in the run record's `roster`
+array, and `down` closes only what that array names — never a pane this review did not create, and
+never one belonging to the operator's other work. A lens reviewer that blocks is reported, not
+answered. Its full contract is in the agent-launcher skill under "A whole roster from a run record".
+
 ## Reviewer-session transport
 
 Orchestrate owns every reviewer session. Do not launch or collect an external reviewer

@@ -46,7 +46,11 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.163.0"  # 0.163.0: one JSON run record per issue,
+    assert plugin_json["version"] == "0.164.0"  # 0.164.0: /work and /code-review stand role and
+    # lens-reviewer sessions up through agent-launcher's roster helper, which closes only the panes
+    # the run record says it created (issue #1024). Bumped from 0.163.0, the saga version on
+    # origin/parent/1018 at 0fa2ea32.
+    # Predecessor 0.163.0: one JSON run record per issue,
     # outside every worktree and addressed by an absolute path, plus the admission questionnaire
     # asked once at the front of /plan issue (issue #1023). Bumped from 0.161.0, the saga version
     # on origin/parent/1018 at 550ae6ce; the fold of main into that branch then renumbered the

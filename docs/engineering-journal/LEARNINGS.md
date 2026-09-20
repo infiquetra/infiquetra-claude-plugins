@@ -2,6 +2,30 @@
 
 ## 2026-09-19
 
+### There is no `herdr agent close`, so "close the agent" is always a tab operation with an ownership question attached  {#1024-no-herdr-agent-close}
+
+**Context.** Issue #1024's card and the live-evidence note both describe a helper that creates agent sessions and later "closes" them, and herdr's agent surface reads as a complete lifecycle: `start`, `prompt`, `wait`, `read`, `rename`, `focus`, `attach`, `explain`, `send-keys`.
+
+**Evidence.** `herdr agent --help` on herdr 0.9.0, read on 2026-09-19, lists twelve subcommands and no `close`. Closing is `herdr pane close <pane_id>` or `herdr tab close <tab_id>`, on a different noun. The launcher already knew this: `close_run_session` at `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py:1019` runs `herdr tab close`, guarded by `session_owned(unit)` and a `tab_id` from the launch receipt.
+
+**Mechanism.** The asymmetry is not an oversight in herdr; it is the shape of the problem. An agent is a thing that occupies a pane, and a pane can outlive the agent in it, so herdr will not let a caller say "close this agent" as though the two were the same object. The consequence for a caller is that teardown always happens one level down from creation, against an identifier — the pane or the tab — that is equally valid for somebody else's session. Nothing in the herdr command surface distinguishes a pane the caller created from a pane the operator is working in; that distinction exists only in whatever record the caller kept.
+
+**Fix.** `roster.py` never calls a close of its own. It records the launch receipt for every pane it creates, beside the run record and outside every worktree, and `down` closes only through `launcher.py close --receipt-json`, which independently refuses a receipt whose `owned` is not true. A test asserts that no command the helper builds, across a whole up/wait/down cycle, is a bare `pane close` or `tab close`.
+
+**Generalizable rule.** When an API lets you create a thing by one name and destroy it only by another, the destroy call is a wider weapon than the create call was, and the difference has to be closed by a record of what you created — not by matching on names, titles or anything else the environment also controls.
+
+### A launch receipt written inside a worktree is a leaked pane waiting for the worktree to be removed  {#1024-receipts-outside-the-worktree}
+
+**Context.** `roster.py` proves the right to close a pane from the launch receipt the launcher wrote when it created it. The obvious home for that file is beside the work — the unit's worktree, or a temporary directory.
+
+**Evidence.** Two facts on this branch decide it. The run record already lives at `<primary checkout>/.claude/saga/runs/issue-<N>.json`, resolved from the git *common* directory, precisely so that a unit working in a linked worktree can still reach it (`plugins/saga/references/run-record.md`, and issue #886's fifth finding before it). And the orchestrate driver removes a unit's worktree at the end of that unit.
+
+**Mechanism.** The receipt's lifetime has to cover the gap between `up` and `down`, which is the whole run — longer than any one unit, and longer than any one worktree. A receipt in a worktree that is removed mid-run does not produce an error at removal time; it produces a `down` that skips the row, reports a missing receipt, and leaves a live agent pane behind on the operator's server, which is the failure the helper exists to prevent. The receipt looks like a per-unit artifact and is really a per-run one.
+
+**Fix.** Receipts are written to `<run-record store root>/receipts/issue-<N>/<pane name>.json`, derived from the record's own path — the one location this repository has already established as reachable from every worktree and outlived by none of them. A test asserts the recorded receipt path sits beside the record and not under the working directory the launch ran in.
+
+**Generalizable rule.** Store a capability — anything whose only job is to authorise a later action — at the lifetime of the action it authorises, not at the lifetime of the code that obtained it.
+
 ### Adding a section to a saga skill has two contracts attached to it, and neither is visible from the section  {#1023-skill-section-hidden-contracts}
 
 **Context.** Issue #1023 added one section to `plugins/saga/skills/plan/SKILL.md` and wrote one plan document under `docs/plans/`. Both looked finished. The full test suite failed six tests across three files.

@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.163.0",
+      "version": "0.164.0",
       "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
       "author": {
         "name": "Infiquetra",
@@ -307,7 +307,7 @@
     {
       "name": "agent-launcher",
       "source": "./plugins/agent-launcher",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "description": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface.",
       "author": {
         "name": "Infiquetra",

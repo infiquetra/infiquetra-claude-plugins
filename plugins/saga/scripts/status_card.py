@@ -540,93 +540,113 @@ def _parse_frontmatter_value(text: str, key: str) -> str | None:
 
 
 def project_qa(artifact_text: str, *, ref: str) -> CardSpec:
-    """Build a gate-sequence CardSpec for the /qa surface.
+    """Build a gate-sequence CardSpec for the /qa functional-test surface.
 
-    Parses *artifact_text* for:
-    - YAML frontmatter: ``verdict:``, ``health_score:``, ``tier:``.
-    - ``| risk class | score | result |`` table rows.
+    RETARGETED by issue 1039. The rows used to be a nine-way risk class, a checks row, a findings
+    row, a scored number and a ship verdict, parsed from a ``docs/qa/`` report. `/qa` produces none
+    of those now: it is the prescribed strategy catalogue, and what it prints is the functional-test
+    comment. The rows follow what that comment carries.
 
-    Rows: Risk class · Checks · Findings · Health score · Ship verdict.
+    (The retired row's name is deliberately not spelled out here: the specification sweeps this
+    directory for that literal string, and a docstring that named it would keep the removed model
+    alive in a grep long after the code had gone.)
 
-    AE9 (operator-safety-critical): a ``verdict:`` that indicates failure (fail/no-ship/not-ship)
-    maps to CardState.FAILED with *ref* — NEVER blocked or not-reached.
+    Parses *artifact_text* — the functional-test comment — for:
+    - YAML frontmatter: ``verdict:``, ``boundary:``, ``route:``.
+    - the per-strategy results table, whose cells are ``passed`` / ``failed`` / ``blocked``.
+
+    Rows: Selection · Preflight · Evidence · Proof debt · Verdict.
+
+    AE9 (operator-safety-critical): a ``verdict:`` that indicates failure maps to CardState.FAILED
+    with *ref* — NEVER blocked or not-reached. A required strategy that could not run is a
+    distinct, equally loud state: it renders BLOCKED with *ref*, never DONE and never silence.
     """
     # ── Frontmatter ──────────────────────────────────────────────────────────────────────────────
     verdict_raw = _parse_frontmatter_value(artifact_text, "verdict")
-    health_score_raw = _parse_frontmatter_value(artifact_text, "health_score")
-    tier_raw = _parse_frontmatter_value(artifact_text, "tier")
+    boundary_raw = _parse_frontmatter_value(artifact_text, "boundary")
+    route_raw = _parse_frontmatter_value(artifact_text, "route")
 
-    # ── Risk class (from | risk class | score | result | table) ─────────────────────────────────
-    # Collect the result-column cells from data rows (skip the header row itself).
-    risk_result_cells = re.findall(
-        r"^\|\s*(?!risk class|[-\s|]+$)[^|]+\|\s*[\d.]+\s*\|\s*(\w+)\s*\|",
-        artifact_text,
-        re.MULTILINE | re.IGNORECASE,
-    )
-    risk_results = [c.lower() for c in risk_result_cells]
-    if risk_results:
-        if any(r in {"fail", "failed"} for r in risk_results):
-            risk_state = CardState.FAILED
-        else:
-            risk_state = CardState.DONE
-        risk_ref: str | None = ref
+    # ── Selection (from the selection table: one row per selected strategy) ─────────────────────
+    selected = re.findall(r"^\|\s*`([a-z-]+)`\s*\|\s*(yes|no)\s*\|", artifact_text, re.MULTILINE)
+    if selected:
+        selection_state = CardState.DONE
+        selection_ref: str | None = f"{ref}#selected:{len(selected)}"
     else:
-        risk_state = CardState.NOT_REACHED
-        risk_ref = None
+        selection_state = CardState.NOT_REACHED
+        selection_ref = None
 
-    # ── Checks (present when health_score or tier found — confirms the gate ran) ─────────────────
-    if health_score_raw or tier_raw:
-        checks_state = CardState.DONE
-        checks_ref: str | None = ref
+    # ── Preflight (the boundary the run could reach; absent means it never got that far) ────────
+    if boundary_raw:
+        preflight_state = CardState.DONE
+        preflight_ref: str | None = f"{ref}#boundary:{boundary_raw}"
     else:
-        checks_state = CardState.NOT_REACHED
-        checks_ref = None
+        preflight_state = CardState.NOT_REACHED
+        preflight_ref = None
 
-    # ── Findings ─────────────────────────────────────────────────────────────────────────────────
-    has_findings = bool(
-        re.search(r"^#+\s*Findings?\b", artifact_text, re.MULTILINE | re.IGNORECASE)
-    )
-    if has_findings:
-        has_blocking = bool(re.search(r"\bP0\b|\bP1\b", artifact_text))
-        findings_state = CardState.BLOCKED if has_blocking else CardState.DONE
-        findings_ref: str | None = ref
+    # ── Evidence (the per-strategy results: one envelope each, three values and no fourth) ──────
+    results = [
+        cell.lower()
+        for cell in re.findall(
+            r"^\|\s*`[a-z-]+`\s*\|\s*`(passed|failed|blocked)`\s*\|", artifact_text, re.MULTILINE
+        )
+    ]
+    if not results:
+        evidence_state = CardState.NOT_REACHED
+        evidence_ref: str | None = None
+    elif "failed" in results:
+        evidence_state = CardState.FAILED
+        evidence_ref = ref
+    elif "blocked" in results:
+        # A strategy that could not run proved nothing; the card says so rather than showing done.
+        evidence_state = CardState.BLOCKED
+        evidence_ref = ref
     else:
-        findings_state = CardState.NOT_REACHED
-        findings_ref = None
+        evidence_state = CardState.DONE
+        evidence_ref = ref
 
-    # ── Health score ─────────────────────────────────────────────────────────────────────────────
-    if health_score_raw:
-        health_state = CardState.DONE
-        health_ref: str | None = f"{ref}#health_score:{health_score_raw}"
+    # ── Proof debt (an optional strategy that could not run, recorded rather than hidden) ────────
+    has_debt = bool(re.search(r"^#+\s*Proof debt\b", artifact_text, re.MULTILINE | re.IGNORECASE))
+    if has_debt:
+        debt_state = CardState.BLOCKED
+        debt_ref: str | None = ref
+    elif results:
+        debt_state = CardState.DONE
+        debt_ref = ref
     else:
-        health_state = CardState.NOT_REACHED
-        health_ref = None
+        debt_state = CardState.NOT_REACHED
+        debt_ref = None
 
-    # ── Ship verdict (AE9: fail family → FAILED with ref; pass family → DONE) ────────────────────
+    # ── Verdict (AE9: the fail family → FAILED with ref; the pass family → DONE) ─────────────────
     if verdict_raw:
-        v = verdict_raw.lower().strip()
-        if v in {"fail", "no-ship", "not-ship", "failed"}:
-            ship_state = CardState.FAILED
-            ship_ref: str | None = ref  # AE9: failure is determinable and MUST carry ref
-        elif v in {"ship", "pass", "ship-with-deferred"}:
-            ship_state = CardState.DONE
-            ship_ref = ref
+        value = verdict_raw.lower().strip()
+        if value in {"fail", "failed", "no-ship", "not-ship"}:
+            verdict_state = CardState.FAILED
+            verdict_ref: str | None = ref  # AE9: failure is determinable and MUST carry ref
+        elif value == "blocked":
+            # Nothing was proved and the run stopped for the operator. Not a pass, not a failure.
+            verdict_state = CardState.BLOCKED
+            verdict_ref = ref
+        elif value in {"pass", "pass-with-proof-debt", "ship", "ship-with-deferred"}:
+            verdict_state = CardState.DONE
+            verdict_ref = ref
         else:
-            ship_state = CardState.NOT_REACHED
-            ship_ref = None
+            verdict_state = CardState.NOT_REACHED
+            verdict_ref = None
     else:
-        ship_state = CardState.NOT_REACHED
-        ship_ref = None
+        verdict_state = CardState.NOT_REACHED
+        verdict_ref = None
+    if route_raw and verdict_state is CardState.NOT_REACHED:
+        verdict_ref = f"{ref}#route:{route_raw}"
 
     return CardSpec(
         archetype="gate-sequence",
         header=CardHeader(surface="/qa", id=ref),
         rows=(
-            CardRow("risk", "Risk class", risk_state, ref=risk_ref),
-            CardRow("checks", "Checks", checks_state, ref=checks_ref),
-            CardRow("findings", "Findings", findings_state, ref=findings_ref),
-            CardRow("health", "Health score", health_state, ref=health_ref),
-            CardRow("ship", "Ship verdict", ship_state, ref=ship_ref),
+            CardRow("selection", "Selection", selection_state, ref=selection_ref),
+            CardRow("preflight", "Preflight", preflight_state, ref=preflight_ref),
+            CardRow("evidence", "Evidence", evidence_state, ref=evidence_ref),
+            CardRow("debt", "Proof debt", debt_state, ref=debt_ref),
+            CardRow("verdict", "Verdict", verdict_state, ref=verdict_ref),
         ),
     )
 

@@ -233,6 +233,67 @@ class TestFunctionalTest:
             RS.record_functional_test(self._record(), [{"name": "a", "state": "blocked"}])
         assert "no cause named" in str(caught.value)
 
+    def test_a_required_blocked_scenario_is_never_reported_as_a_pass(self) -> None:
+        """The hazard issue 1039 found: the status was computed from the failed list alone.
+
+        A scenario list holding nothing but ``blocked`` entries has proved nothing, and reporting
+        it ``passed`` is exactly the silent skip the prescribed-testing design exists to remove.
+        """
+        result = RS.record_functional_test(
+            self._record(),
+            [{"name": "a", "state": "blocked", "cause": "QA_BASE_URL is unset", "required": True}],
+        )
+        assert result["status"] == "blocked"
+        assert result["post_merge_cycles"] == 0
+        assert "a" in result["reason"]
+        assert "QA_BASE_URL is unset" in result["reason"]
+
+    def test_a_blocked_scenario_does_not_re_enter_the_build_loop(self) -> None:
+        """Its causes are environment, credential and permission; a build loop repairs none."""
+        result = RS.record_functional_test(
+            self._record(),
+            [
+                {"name": "a", "state": "passed"},
+                {"name": "b", "state": "blocked", "cause": "no toolchain", "required": True},
+            ],
+        )
+        assert result["status"] == "blocked"
+        assert result["status"] != "re-enters-the-build-loop"
+
+    def test_a_failure_beside_a_required_block_still_stops_for_the_operator(self) -> None:
+        """A block the operator must clear outranks a failure the loop could repair."""
+        result = RS.record_functional_test(
+            self._record(),
+            [
+                {"name": "a", "state": "failed"},
+                {"name": "b", "state": "blocked", "cause": "no credential", "required": True},
+            ],
+        )
+        assert result["status"] == "blocked"
+
+    def test_an_optional_blocked_scenario_passes_with_proof_debt(self) -> None:
+        """Proof debt is recorded, not hidden — and it is not a pass with nothing said."""
+        result = RS.record_functional_test(
+            self._record(),
+            [
+                {"name": "a", "state": "passed"},
+                {"name": "b", "state": "blocked", "cause": "no preview", "required": False},
+            ],
+        )
+        assert result["status"] == "passed-with-proof-debt"
+        assert result["proof_debt"] == [
+            {"name": "b", "cause": "no preview"},
+        ]
+
+    def test_a_scenario_that_does_not_say_whether_it_is_required_is_treated_as_required(
+        self,
+    ) -> None:
+        """The safe default: an unmarked scenario is a required one, so it cannot pass unproved."""
+        result = RS.record_functional_test(
+            self._record(), [{"name": "a", "state": "blocked", "cause": "unset"}]
+        )
+        assert result["status"] == "blocked"
+
 
 class TestClose:
     def test_the_comment_carries_every_required_part(self) -> None:

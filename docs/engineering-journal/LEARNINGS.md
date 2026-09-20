@@ -2,6 +2,108 @@
 
 ## 2026-09-20
 
+### A rewritten skill document owes contracts that live in four other test files  {#1039-skill-prose-contracts-are-distributed}
+
+**Evidence.** The `/qa` skill rewrite passed every test in `tests/test_saga_plugin.py`, which is the
+file that looks like the skill's contract, and then the full suite reported five failures from three
+other files: `test_verify_entry_contract` (the board stage this skill is the activity for, and the
+merge precondition of its no-deployable route), `test_sandbox_spawn_sites` (the read-only verifier
+at its spawn site), and `test_skill_continuation_endings` (the step it continues into, which must
+appear in the document's last quarter). A fourth file, `test_brainstorm_judgment_contract`, failed
+as a cascade of the sandbox one because its inventory guard runs that test as a subprocess.
+
+**Mechanism.** A skill document is a shared surface. Its own contract test guards what the skill
+does; other tests guard what the wider lifecycle needs it to SAY — a board rule quoted in the exact
+words the schema uses, a spawn profile, a continuation. None of those obligations is discoverable
+from the document or from its own test file, and a rewrite that reads only those two will drop them
+silently and pass everything it thought to run.
+
+**Generalizable rule.** Before rewriting a skill document, grep the whole test tree for its path,
+not just for its own test file, and list every assertion made against it. The full suite finds these
+eventually; grepping first turns a fifteen-minute suite run into a five-second search.
+
+### The first live run of a new check is worth more than the test suite that passed before it  {#1039-live-run-found-two-driver-bugs}
+
+**Evidence.** The `/qa` strategy runner's eighty-six tests were green when the first end-to-end run
+against this repository's own profile reported `fail` for two reasons that were both the checker's
+fault. The `installed-surface` driver pooled every plugin's version into one set and required the
+set to have one member, so saga at `0.161.0` beside fleet-core at `0.27.0` read as "the roots do
+not agree" on a machine where both roots were perfectly consistent. It also applied
+`expected_surfaces` to every declared plugin, so it demanded saga's `commands/qa.md` of fleet-core.
+
+**Mechanism.** Both bugs need a profile naming **two** plugins to appear, and every unit test wrote
+a fixture naming one. The fixtures were not lazy — they were written from the shape the driver
+expected, which is exactly the shape that hides a bug about relationships between two things. The
+live run used the real profile, which names two plugins, because that is what this repository
+actually has.
+
+**Generalizable rule.** A check whose subject is agreement between N things needs a test with N
+greater than one, and the first live run against real data is the cheapest place to discover that
+N was one everywhere. Run the new check against the real thing before calling it finished, and
+write the regression test from what the live run reported.
+
+### A corpus guard can block the change it was written to protect, and retargeting it is not weakening it  {#1039-retargeting-a-corpus-guard}
+
+**Evidence.** `tests/test_qa_engine_merge_contract` pinned the `/qa` skill's nine-way risk router,
+its ship verdicts, its severity bands and the runnable `qa_health_score.py` line. Issue 1039 removed
+every one of those by design, so the guard asserted the absence of the change. The same held for
+`test_ae10_status_card_single_emitter_routing`, which required the skill to name a projection that
+parsed a health score, and for five `project_qa` tests whose fixtures carried one.
+
+**Mechanism.** A contract test over prose pins the contract as it stood when it was written. When
+the contract is replaced deliberately, the test's failure is information about the test, not about
+the change — but only if someone reads it that way. Deleting it loses the protection; disabling it
+loses it silently; keeping it blocks the work. The fourth option is the right one: rewrite the body
+to assert the new contract at the same strength, and rename the function to say what it now guards
+(`test_qa_functional_test_step_contract`).
+
+**Generalizable rule.** When a removal reds a contract test, retarget it in the same commit and
+rename it to match its new subject, then watch it fail against a deliberately broken version before
+trusting it. A guard that survives a rewrite unexamined is a guard that has stopped guarding.
+
+### A function that validates three result states can still compute its status from one of them  {#1039-record-functional-test-counts-only-failures}
+
+**Evidence.** `plugins/saga/scripts/release_step.py:316-381`, read at commit `61da4b1c` while
+planning issue 1039. `record_functional_test` refuses any scenario whose state is not one of
+`passed`, `failed`, `blocked`, and separately refuses a `blocked` scenario that names no cause — so
+the three-state vocabulary is enforced carefully at the door. It then computes its answer from
+`failed = [s for s in scenarios if s.get("state") == "failed"]` and returns
+`{"status": "passed"}` when that list is empty. A scenario list holding nothing but `blocked`
+entries therefore reports a passed functional test.
+
+**Mechanism.** The validation and the arithmetic were written against different questions. The
+validation asks "is this a legal result?", which needs all three states. The arithmetic asks "did
+anything fail?", which needs only one. Nothing was wrong at the time it was written, because the
+only caller then could not produce a blocked scenario; the gap opens the moment a caller can. That
+is why it does not read as a bug on the page — every line is individually correct.
+
+**Repaired in the same release.** `record_functional_test` now returns `blocked` for a required
+blocked scenario and stops for the operator without counting a repair cycle,
+`passed-with-proof-debt` for an optional one, and treats a scenario that does not say which it is
+as required. Five tests were written first and watched fail on the old code — every one reported
+`assert 'passed' == 'blocked'`, which is the hazard reproducing exactly.
+
+**Generalizable rule.** When a function accepts an enumeration, check that its arithmetic mentions
+every member of that enumeration. A member that appears in the validation and nowhere in the
+computation is a state the function silently folds into its default answer.
+
+### A removal's blast radius includes every test that pins the removed name into a document  {#1039-corpus-tests-pin-removed-names}
+
+**Evidence.** `tests/test_saga_plugin.py:1281-1290`, found while reviewing the issue 1039 plan. It
+asserts that the qa skill document and its report reference each contain the literal string
+`qa_health_score.py`, and counts the score blocks across the corpus. Issue 1039's card names two
+files to delete and does not name this test, so a plan built from the card alone would have met a
+red gate after the deletion with nothing to explain it.
+
+**Mechanism.** A documentation-corpus test asserts on the *content* of files the card lists only as
+"rewritten", so it never appears in a diff-shaped reading of the card's file list. Grepping for the
+deleted module's name inside `plugins/` finds the callers; the test that pins the name lives in
+`tests/` and is only found by grepping there too.
+
+**Generalizable rule.** Before planning a deletion, grep the deleted name across `tests/` as well as
+the source tree, and name every test that mentions it in the plan's file list. A corpus test is a
+caller.
+
 ### Two cards taking the same version merge silently; the changelog is the only place it shows  {#1028-identical-version-strings-merge-silently}
 
 **Evidence.** Issues 1027 and 1028 both bumped saga to `0.170.0` against the same integration head,

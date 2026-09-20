@@ -99,10 +99,23 @@ def test_priority_and_confidence_never_form_an_acceptance_gate() -> None:
     assert "Finding Priority and confidence are reporting and routing metadata" in contract
     assert "neither can change the typed outcome" in contract
 
+    # The document-review floor gate in §1.3 is a *different* gate and its severities really are
+    # P0 to P3 -- that is the lifecycle repository's plan-review vocabulary, and issue 1026's own
+    # acceptance criteria are written in it. So the scan excludes that one section by name, with
+    # the reason, rather than forbidding the letter P0 everywhere in the file and quietly making
+    # the floor gate undescribable.
+    doc_review_gate = _section(text, "### 1.3 Doc-review gate", "### 1.3b ")
+    assert "P0" in doc_review_gate, (
+        "§1.3 no longer names the priorities it blocks on; the exclusion below would then be "
+        "hiding a real regression rather than a vocabulary clash"
+    )
+    scanned = text.replace(doc_review_gate, "")
+
     obsolete_priority_rules = (r"\bP0\b", r"\bP1\b", r"Priority 0", r"Priority 1", r"P-level")
     for pattern in obsolete_priority_rules:
-        assert re.search(pattern, text, flags=re.IGNORECASE) is None, (
-            f"Work still contains the obsolete Priority acceptance rule {pattern!r}"
+        assert re.search(pattern, scanned, flags=re.IGNORECASE) is None, (
+            f"Work still contains the obsolete Priority acceptance rule {pattern!r} outside the "
+            "document-review floor gate"
         )
 
 

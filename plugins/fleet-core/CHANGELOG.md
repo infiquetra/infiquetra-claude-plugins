@@ -5,6 +5,15 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.1] - 2026-09-19
+
+### Changed
+
+- `render_tier_table.py`'s docstring names `plugins/saga/references/workflow-backend.md` as the
+  home of the generated tier-table block. Issue #1026 moved `/plan`'s Phase 5.2a, and the
+  generated region inside it, into that reference file; the drift guard in
+  `tests/test_tier_resolver.py` follows it. No rendering behaviour changed.
+
 ## [0.28.0] - 2026-09-19
 
 ### Added

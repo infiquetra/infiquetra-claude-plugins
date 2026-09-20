@@ -1,9 +1,8 @@
 # Work session — issue 1025, orchestrate slims to the run driver
 
-**Status: the driver is done and proved; the legacy test migration is not finished.** This document
-says exactly what is true, what is not, and what the next session picks up. It is written that way
-on purpose: a work-session note that reports a green suite when the suite is red is worse than no
-note at all.
+**Status: done. The driver is rewritten, the whole test suite is green, and the integration branch
+is merged in.** An earlier revision of this document reported an honest red mid-flight; that half
+is replaced by the ledgers below rather than deleted, because what it recorded is now finished.
 
 | Field | Value |
 |---|---|
@@ -58,89 +57,124 @@ The protected-reference test carries its mutation proof inside itself: it runs t
 peel-before-strip implementation directly and asserts that it misses all four spellings, so the
 parametrised set is shown to discriminate rather than merely to pass.
 
-## What is NOT finished
+## The test ledgers
 
-**The legacy Orchestrate test suite is not green.** The rewrite invalidated most of the 17,953 lines
-of tests that drove the old fixed-path run file, and the migration is substantially advanced but
-incomplete.
+A test was removed **only** when the behaviour it tested belongs to a subsystem this card removes,
+and the subsystem is named. A test whose behaviour survives was migrated, however tedious, because
+the tests are this card's proof and the parent review's.
 
-At the last measurement, across the orchestrate modules: **524 passing, 175 failing** — down from 276
-failing when the driver rewrite landed. Of the 175:
-
-| Module | Failing | Why |
-|---|---|---|
-| `tests/test_orchestrate_land_clean.py` | 49 | Not started. Mixed: its remote-branch half survives and needs migrating; its landing half tests removed machinery |
-| `tests/test_orchestrate_launch_and_land.py` | 40 | Not started. Mixed: launch argv, workspace and OpenCode tests survive; the land, staged-input and redrive tests are of removed machinery |
-| `tests/test_orchestrate_board_writeback.py` | ~22 | Hand-built `Run` objects saved to a path, plus tests of the removed contract key |
-| `tests/test_orchestrate_scoped_review_controllers.py` | ~14 | Hand-built `Run` objects saved to a path |
-| `tests/test_orchestrate_review_loop.py` | ~16 | The same, plus land-path assertions |
-| Five smaller modules | ~34 | A long tail of per-test work |
-
-The migration so far was six mechanical passes over the surviving modules: the command Namespace now
-carries `--issue` and `--store-root`; the run-file writers and readers point at the record;
-`Run.load()` and `cmd_land` call sites moved; hand-built runs attach to a record through
-`tests/orchestrate_support.save_run`; and every test repository gets a bare local remote, because the
-merge turn now fetches before it compares.
-
-### Modules deleted, with the ledger the plan requires
-
-Four modules were deleted. The plan named four; the count matched but the membership did not, because
-two more modules turned out to be wholly about removed subsystems and one of the planned four is
-mixed. That is a deviation from the plan and it is recorded here rather than glossed:
+### Modules deleted whole
 
 | Module | Tests | Where every test name went |
 |---|---|---|
-| `tests/test_orchestrate_task_spill.py` | 12 | All of them test the task spill, which goes with the fixed-path run file. No assertion survives, because there is no spill |
-| `tests/test_orchestrate_task_file_safety.py` | 15 | Eleven test the spill pointer and go with it. The four that test unsafe unit names and an unsafe run identifier are carried into `tests/test_orchestrate_plan_check.py`, where they are proved against a path that creates nothing |
-| `tests/test_orchestrate_land_worktree.py` | 29 | All of them test the landing-worktree recovery machinery the card removes. Its one cleanup-failure assertion is re-authored with an injected failure in `tests/test_orchestrate_clean.py` (issue 991) |
-| `tests/test_orchestrate_land_announce.py` | 12 | Nine test the writeback records the card removes. The three announce-per-unit assertions are carried into `tests/test_orchestrate_merge.py`, where the announcement now happens |
+| `test_orchestrate_task_spill.py` | 12 | All test the task spill, which goes with the fixed-path run file. No assertion survives, because there is no spill |
+| `test_orchestrate_task_file_safety.py` | 15 | Eleven test the spill pointer and go with it. The four that test unsafe unit names and an unsafe run identifier are carried into `test_orchestrate_plan_check.py`, proved against a path that creates nothing |
+| `test_orchestrate_land_worktree.py` | 29 | All test the landing-worktree recovery machinery. Its cleanup-failure assertion is re-authored with an injected failure in `test_orchestrate_clean.py` (issue 991) |
+| `test_orchestrate_land_announce.py` | 12 | Nine test the writeback records. The three announce-per-unit assertions are carried into `test_orchestrate_merge.py`, where the announcement now happens |
 
-`tests/test_orchestrate_hygiene.py` was rewritten rather than deleted: its four `info/exclude` tests
-and its `clean --all` test go with the removed run state, its run-identifier safety test is carried
-into `tests/test_orchestrate_plan_check.py`, and its two documentation checks survive.
+### `test_orchestrate_land_clean.py` → `test_orchestrate_reap_and_remote.py`
 
-**The two mixed modules, `test_orchestrate_land_clean.py` and `test_orchestrate_launch_and_land.py`,
-have NOT been split.** Their ledgers are the work the next session starts with.
+**All 50 tests migrated; none removed.** Everything it covers survives the card: `landed`'s three
+answers, the hand-finished landing shapes, `reap`'s rule, the keep reasons, the post-land
+`produced_anything` reading, `check` after a merge, the legacy-run readings, the scoped `--clean`
+reap, and the thirteen remote-branch proofs. Four assertions moved with contracts that moved, each
+with the reason in the test:
+
+| Test | What moved |
+|---|---|
+| `test_every_keep_cause_prints_its_own_reason` | exits 3, not 0: an owned tab could not be closed |
+| `test_a_worktree_that_cannot_be_removed_keeps_the_unit_and_the_run_record` | exits 3; its `--all` run-state assertion went with `--all` |
+| `test_a_kept_unit_names_the_tab_this_pass_already_closed` | exits 3 |
+| `test_clean_reports_an_unowned_tab_as_left_open_and_never_closes_it` | its `--all` retention assertion went with `--all`; the rest stands |
+| `test_land_clean_says_every_merged_unit_was_kept_rather_than_merged_nothing` | the sentence says "this invocation" |
+| the two `TestLandCleanReapsOnlyWhatThisLandMerged` tests | the retained unit now carries a tab, which is what defers the merge-turn release; the scoping question they ask is unchanged |
+
+### `test_orchestrate_launch_and_land.py` → `test_orchestrate_launch_argv.py`
+
+**54 migrated, 6 removed.**
+
+| Removed test | Subsystem that took it |
+|---|---|
+| `test_staged_input_stop_on_an_owned_pane_retries_through_the_same_pane` | the staged-input redelivery route (`_staged_input_stop`) |
+| `test_a_staged_receipt_without_a_pane_is_not_a_retry` | the staged-input redelivery route |
+| `test_the_staged_marker_is_the_composer_enum_value` | the staged-input redelivery route (`STAGED_INPUT_BOX`) |
+| `test_redrive_reprompts_an_undelivered_unit_whose_session_is_idle` | the `redrive` command and the `prompt_undelivered` door |
+| `test_redrive_refuses_a_session_that_has_started_and_a_unit_that_is_not_undelivered` | the `redrive` command |
+| `test_a_load_and_save_round_trip_writes_no_version_key` | the run file's `contract` key |
+
+Migrated with a changed premise, not deleted: `test_staged_input_stop_returns_the_unit_to_retryable_pending`
+and `test_repeated_staged_stop_keeps_identifiers_and_dedupes_the_note` keep the half that survives —
+the stop returns the unit to `PENDING`, keeps its identifiers, and says why — and lose the retry
+cycle. The two OpenCode tests keep their argv assertions and drop the receipt-after-reload ones,
+which tested a persistence this card removes.
+
+### Removed elsewhere, same rule
+
+| Test | Module | Subsystem |
+|---|---|---|
+| `test_a_second_land_still_reports_an_outstanding_failure` | board writeback | the outstanding-writeback ledger |
+| `test_a_converged_announce_clears_the_outstanding_entry` | board writeback | the outstanding-writeback ledger |
+| `test_the_contract_string_moves_with_the_unit_field_set` | board writeback | the run file's `contract` key |
+| `test_a_reader_that_knows_only_the_previous_contract_refuses_this_run_file` | board writeback | the run file's `contract` key |
+| `test_a_run_file_from_a_newer_orchestrate_is_refused_not_read` | board writeback | the `contract` key; the record's `schema` refusal replaces it, proved in `test_orchestrate_record.py` |
+| `test_a_run_file_this_version_wrote_round_trips` | board writeback | the run file; the record round trip is proved in `test_orchestrate_record.py` |
+| `test_an_unrecorded_numbered_landing_worktree_is_reported` | drift and adopt | the landing-worktree discovery, with the landing bookkeeping |
+| four `info/exclude` tests, `clean --all`, the hand-authored-brief test | hygiene | the run state they protected; its run-identifier safety test is carried into `test_orchestrate_plan_check.py` |
+
+`test_orchestrate_hygiene.py` was rewritten rather than deleted: its two documentation checks
+survive, one of them rewritten to assert the skill names the record rather than a run file.
+
+## Defects the migration found
+
+Every one surfaced in a legacy test rather than in this card's new ones, and every one was fixed in
+the driver rather than in the test that caught it.
+
+| Defect | Fix |
+|---|---|
+| `clean` exited 3 whenever the `--merged` rule kept anything | the exit code reads a separate failure set, so it means "something this run owns was left behind"; a borrowed tab is reported and does not raise it |
+| The merge-turn worktree release pulled the floor from under a live session | the release refuses while the unit records a tab; `clean` keeps the close-then-remove order |
+| A release deferred for that reason counted as a cleanup failure | it is the correct order, so it does not |
+| Dropping the persisted receipt took the launcher's tab-ownership proof with it | `Unit.owned` keeps that one fact beside `tab_id`, which `session_owned` already falls back to |
+| The saga resolver could not see a saga installed beside orchestrate in a versioned cache | a sibling-cache rung, newest version first |
+| A plan that is not JSON died in a decode error six frames deep | a named refusal, reachable because the floor now warns |
+| The unattended-worktree check read only a session's working directory | it matches on the agent name too |
+| A relaunch could not check out a branch its stale worktree still held | the stale worktree is released first, refusing on uncommitted or unpushed work |
+
+## The merge
+
+`origin/parent/1018` at **`b98e94ea`** merged in, carrying issue 1001 (the code-review rewrite,
+orchestrate 4.6.0, saga 0.165.0) and issue 1026 (plan continues into plan review, saga 0.166.0).
+Six files conflicted and all six were resolved keeping both sides:
+
+- Both changelogs keep both sections. Orchestrate's 5.0.0 stands above 1001's 4.6.0, whose section
+  is folded under it rather than renumbered; saga's 0.167.0 stands above 1026's 0.166.0.
+- Saga took **0.167.0**, bumped from 0.166.0 at `b98e94ea`, because 1001 and 1026 took 0.165.0 and
+  0.166.0 while this card's suite ran.
+- The driver carries `review_result.v2` as issue 1001 left it.
 
 ## The operator question, answered
 
-The plan carried one open question: whether the board-writeback path leaves orchestrate in this
-release. **Answered by the run's rules rather than by a new decision: it stays.** The card does not
-name it, nothing unnamed is deleted, and issue 1028 — which implements the simplification review's
-recommendation R19 and depends on this card — moves board writes into saga and removes the path
-then. Unit U8's removal inventory is unchanged.
+Whether the board-writeback path leaves orchestrate in this release: **it stays**, by the run's
+rules rather than by a new decision. The card does not name it, nothing unnamed is deleted, and
+issue 1028 — which implements the simplification review's recommendation R19 and depends on this
+card — moves board writes into saga and removes the path then. Unit U8's inventory is unchanged.
 
 ## Choices taken, and where each came from
 
-Every choice the work skill would have asked about was answered up front by the coordinator, and each
-is recorded here with that message as its source.
-
 | Choice | Taken | Source |
 |---|---|---|
-| Saga | resumed `issue-1025` from this worktree's store; no second saga minted | coordinator |
+| Saga | resumed `issue-1025`; no second saga minted | coordinator |
 | Branch | stayed on `issue/1025` | coordinator |
-| Execution backend | `inline`, as the plan's frontmatter says; no other backend offered or entered | coordinator, and the plan's `backend:` field |
-| Document-review gate | passed with nothing above P2 open; no override sought or needed | coordinator, and the review artifact |
+| Execution backend | `inline`; no other offered or entered | coordinator, and the plan's `backend:` field |
+| Document-review gate | passed with nothing above P2 open; no override | coordinator, and the review artifact |
 | Complexity triage | fresh build, not a round-N continuation | the skill's documented default; no pull request exists for this card |
-| Ceremony start | declined | earlier cards in this run declined it because it opens a draft pull request, and this card opens none |
-| Code review | none run; no lenses, no review artifact | operator decision, 2026-09-19 |
-| Live record | the live record at `.claude/saga/runs/issue-1025.json` was read, never written by code; every test writes a temporary record under `tmp_path` | coordinator |
+| Ceremony start | declined | it opens a draft pull request, and this card opens none |
+| Code review | none; no lenses, no review artifact | operator decision, 2026-09-19 |
+| Live record | read, never written by code; every test writes a temporary record under `tmp_path` | coordinator |
 
 ## Board moves
 
 | Move | Result |
 |---|---|
-| `Active` / `Implementing` at the start of the work | `written`, `field: Stage+Status`, 1 attempt — both halves executed |
-
-No end-of-work move was submitted, because the work is not finished and moving the card would be a
-claim this session cannot make.
-
-## Where the next session starts
-
-1. Split `tests/test_orchestrate_land_clean.py`: migrate its remote-branch tests, drop its landing
-   tests, and write the name ledger for both halves.
-2. Split `tests/test_orchestrate_launch_and_land.py` the same way.
-3. Work the remaining tail — hand-built `Run` saves, and the handful of tests that assert on removed
-   subsystems (the run-file contract key, the outstanding-writeback ledger).
-4. Run the inner loop and then the full suite across both pytest roots.
-5. Merge `origin/parent/1018` into `issue/1025`, re-run at the merged head, and hand back.
+| `Active` / `Implementing`, at the start of the work | `written`, `field: Stage+Status`, 1 attempt |
+| `Active` / `Code review`, at the end | recorded in the return; the suite was green first |

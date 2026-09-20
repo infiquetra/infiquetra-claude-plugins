@@ -1,6 +1,8 @@
 # Changelog
 
-## [0.165.0] - 2026-09-19
+## [0.167.0] - 2026-09-20
+
+**Bumped from 0.166.0**, the saga version on `origin/parent/1018` at commit `b98e94ea`.
 
 ### Changed
 
@@ -13,6 +15,168 @@
   state under a top-level `orchestrate` key, which the module already preserves unchanged across a
   read and a write, and that it never writes `admission`, `approval_scope`, `run_configuration`,
   `review_cycles` or `roster`. No code changes; `run_record.v1` is unchanged.
+
+## [0.166.0] - 2026-09-20
+
+**Bumped from 0.165.0**, the saga version on `origin/parent/1018` at commit `542e9810`. This card
+branched from `4e951f0e` and had taken 0.165.0; issue #1001 merged that same number onto the
+integration branch while this card's suite ran, so the card renumbered above it at the merge turn
+rather than shipping a colliding version.
+
+### Changed
+
+- `/plan` ends by running the plan review instead of recommending it (issue #1026). Phase 5.4
+  dispatches `/doc-review` to the Plan Reviewer — a herdr pane through agent-launcher's roster
+  helper when the run record's `roster` carries one or its staffing plan names `plan-reviewer` and
+  the helper can run, otherwise the same session in review-only mode — and then loops review,
+  repair, re-check, recording one entry per turn in the record's `review_cycles`. The loop's bound
+  is the record's `standard_cycle_allowance` and `escalated_cycle_allowance`, not a number written
+  into the skill. It exits on a pass, on the operator's one-word override, or on exhausted
+  allowances, and the last of those stops and reports rather than passing.
+- The card's move to `Planning` / `Ready for Active` moved from the head of Phase 5 to §5.5, after
+  the review loop. Its trigger is the recorded pass, which is not observable where the submission
+  used to sit.
+- `/work` §1.3 still refuses to execute on an open `P0` or `P1` without a recorded operator
+  override — unchanged behaviour, now stated as a preservation contract with a `gate-record`
+  marker and a named evidence order: the run record's `review_cycles` first, then same-session
+  output, then the latest matching `docs/reviews/` artifact. Chat memory is not evidence.
+- `/doc-review` reviews an explicitly submitted path as given and never redirects it; it carries
+  the cycle definition from the lifecycle repository at revision `5efc869f`; and it binds each
+  verdict to the revision it read (cards #933, #1026).
+- The rubric command resolves from any working directory: the skill's invocation is now
+  repository-root-relative rather than relative to the skill's own directory, which only ever
+  resolved from `plugins/saga/skills/doc-review/` (card #932).
+- A rubric that cannot be loaded now **stops** the review. The skill's "continue with the readiness
+  review where safe" sentence is replaced, and one layer down `lifecycle_review.py`'s
+  `rubrics list-cores` and `list-extras` no longer exit 0 printing nothing when the rubric library
+  is absent — a reviewer read that as "no rubrics apply" (card #932).
+- The extras-rubric instructions read each applicability condition before the step that selects on
+  it (card #932).
+- Document Review carries the standalone operator-is-the-transport clause, and both Document Review
+  and Code Review state the prohibition generally rather than naming retired scripts, so a
+  differently-named equivalent is covered too (card #931).
+- Document Review's `external_opinion` / `claude_adjudication` cross-reference no longer points at
+  `../code-review/references/findings-schema.md`, which defines neither name; the fields are
+  defined in Document Review's own section. The guard that used to assert the *path string* —
+  and so passed while the reference was broken — is replaced by one that resolves the target and
+  reads it (card #931).
+- The retired external-engine dispatch is gone from Document Review's reviewer-panel section; the
+  only representable external seat is a named Orchestrate `external-reviewer` unit (issue #776
+  residue, card #931).
+- `review` is documented as a declared `lifecycle_phase` that no code path writes, in
+  `references/saga-spec.md` and in `/work`; no write path to it was added (card #934). Whether the
+  phase should be advanced by a step remains an open operator decision.
+- "The latest matching artifact" is defined, by the two filename conventions the `docs/reviews/`
+  corpus already uses, with ambiguity between them surfaced as a finding rather than guessed
+  (card #934).
+- A review artifact records a real commit SHA whenever the reviewed document is committed;
+  `working tree` is reserved for a document not yet in a commit (card #934).
+- "Safe fixes are enabled by default" loses the word `default`, which described a report-only
+  switch the skill never defined; a plain-language report-only request is honoured instead
+  (card #934).
+
+### Added
+
+- `plugins/saga/references/workflow-backend.md` (515 lines) — the new home of the Claude Code
+  Workflow and team-execution-emission instructions, moved out of `/plan` Phase 5.2 and the
+  Workflow-specific half of 5.2a, and `/work` §1.4 and §1.5 (card #808's NARROW ruling, issue
+  #1026). The two skills keep the contract a reader needs in order to decide whether to open it:
+  the backend's name, that it is reached only by explicit operator invocation, and the file's path.
+  `/plan` ends at 728 lines against 772 and `/work` at 864 against 1,142, after the new Phase 5.4
+  and the rewritten `/work` §1.3 added their own text back.
+- **The per-unit tier derivation stayed in `/plan`**, as §5.2a, and is no longer gated on the
+  Workflow backend. It is the staffing heuristic for any backend that spawns per-unit agents — its
+  effort-honoring note covers the `agent`, `external-engine` and `workflow` spawn kinds alike — and
+  both of the generated regions inside it are rendered by generators that target that file.
+- `--doc-review-fixes` on `issue_progress.py`, with its forwarding line in `/work`'s Phase-4
+  command. The parameter had existed and been rendered since the beginning with no flag able to
+  populate it, so the issue comment recorded a review's findings and silently dropped what was done
+  about them (card #932).
+
+### Removed
+
+- `plugins/saga/scripts/team_emitter.py` and `plugins/saga/scripts/spec_table.py`, with
+  `tests/test_team_emitter.py` and `tests/test_spec_table.py`. Every other reference is repaired
+  rather than left to fail at runtime: `execution_spec.recompile_for_tier` now emits the inline
+  baseline for the `team-execution` tier, and the four skills and commands that invoked
+  `spec_table.py` to render an approval table now describe building that table from the spec.
+- `plugins/saga/scripts/execution_spec.py` is **not** removed here. It has seven live importers
+  inside saga, every one of them already on issue #1030's removal list, so deleting it with them
+  reaches the same end state without pulling that card's work forward. Issue #1026's second
+  acceptance criterion is satisfied at the parent pull request, where the end state is identical.
+
+## [0.165.0] - 2026-09-19
+
+**Bumped from 0.164.0**, the saga version on `origin/parent/1018` at commit `4e951f0e` when that
+card branched.
+
+### Code review becomes a policy-free executor (issue #1001)
+
+Until now this plugin decided for itself what good code means. It shipped
+`references/lens-roster.json`, a fourteen-lens quality policy with its own dimensions, anchors and
+acceptance thresholds, and scored against it. A plugin upgrade could therefore change the
+acceptance bar for every repository, with no decision anywhere that said so. That is the problem
+architecture decision record ADR-001 in `infiquetra/infiquetra-sdlc` — the lifecycle repository —
+exists to fix.
+
+**Added**
+
+- `plugins/saga/scripts/review_roster.py` — builds an `applicability_declaration.v1` from the run
+  record's lens declaration and resolves `review_roster.v1` by **invoking the lifecycle
+  repository's own `tools/docs/gen_review_roster.py` as a subprocess**. No copy of that generator
+  is vendored here and the resolution is never reimplemented. The card carried a stop condition —
+  stop if the generator cannot be invoked without vendoring it — and it does not fire: the
+  generator imports only the standard library and resolves its inputs from its own location.
+- `plugins/saga/scripts/review_result.py` — the `review_result.v2` writer. Finding identity is the
+  catalogue's fingerprint of path, line and category; one review history per unit, with a second
+  refused; one cycle counter per repair loop; residual defects prepared at the cycle cap; and
+  publication as exactly one pull-request comment.
+- `review_consensus.compute_verdict` — the verdict as a total function of three facts about the
+  cycle, and a command line that prints one of `accepted`, `repairs_requested`,
+  `cycle_cap_best_available`, `review_incomplete` and nothing else.
+
+**Removed**
+
+- `plugins/saga/references/lens-roster.json`, and with it `ROSTER_PATH`, `load_scoring_policy`,
+  `always_on_lenses`, `recommend_conditional_lenses`, `resolve_lens_selection`,
+  `launch_approved_lenses` and the four conditional-approval classes. Thresholds now arrive as an
+  argument — the roster the run resolved — rather than being looked up in a file this plugin owns.
+- The review-side whole-diff external advisory seat, `ExternalAdvisoryReview` and
+  `ExternalFindingAdjudication`. Removing Work's own in-process second-opinion offer and its
+  private dispatch, sidecar, streak and state modules is **issue 938**, a separate card: those
+  files are not in issue 1001's list.
+- The evidence-ledger write and the `docs/reviews/` publication lane from this skill. The evidence
+  lands in the run record's `review_cycles`, where every later step of the run already reads. The
+  `evidence_ledger.py` module stays — it has other callers; only this call site went.
+- The per-commit conditional-lens approval prompt. The lens set is settled once, at admission.
+
+**Changed**
+
+- `review_result.v1` becomes `review_result.v2`, and Orchestrate's consumer moves with it. The
+  pair of schema identifiers is the only persistent compatibility contract between the two
+  repositories, so a consumer that does not recognise one refuses rather than guesses.
+- `references/lens-catalog.md` is renamed `references/lens-execution.md`. It sat one letter from
+  the lifecycle repository's `config/lens-catalogue.json`, which is the collision child #939
+  reported.
+- `plugins/saga/scripts/admission.py` reads `staffing.lens_catalogue()` correctly. It returns a
+  pair — a mapping keyed by lens identifier, and a version — and the consumer was reading `lenses`
+  and `strictness_ladder` keys off the mapping, so `per_lens_score_threshold` could not be filled
+  by any path. Admission now fills **13 of 13** run-configuration parameters. The origin of the
+  defect is issue #1023, which owns `lens_catalogue`.
+
+**Known state, on purpose**
+
+The lifecycle repository's `config/executor-verifications.json` has no entries: no executor has
+been qualified against any lens's fixtures. The roster generator therefore assigns no scoring
+executor, no lens establishes a threshold, and **every review returns `review_incomplete` today**.
+That is the honest answer rather than a failure — a score from an unqualified model is not weak
+evidence, it is not evidence — and it changes when the first qualification lands, with no change
+here. `tests/test_review_dry_run.py` asserts it, so the day it changes is a diff someone reads.
+
+Issue 1001's fifth acceptance criterion, one real review on a pull request, is **deferred to the
+parent pull request that issue 1030 opens**: children of parent 1018 open no pull request of their
+own. What ships proved instead is the four scripted criteria plus a full dry run of the review
+against this branch's own diff, with the lens sessions replaced by an injected fake executor.
 
 ## [0.164.0] - 2026-09-19
 

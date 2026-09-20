@@ -11,9 +11,9 @@ The spec schema lives in
 [`../scripts/execution_spec.py`](../scripts/execution_spec.py). The workflow-script emission
 path is extracted to the cc-workflows plugin
 (`plugins/cc-workflows/skills/cc-workflows/scripts/emitter.py`, #925/U4); `execution_spec.py`
-keeps the typed integration contract that delegates `emit` / `settlement` / `lease` to it. The
-second emitter (the `## Team Structure` markdown) is U11's `team_emitter.py`, fed by the same
-spec.
+keeps the typed integration contract that delegates `emit` / `settlement` / `lease` to it.
+There was a second emitter, for the `## Team Structure` markdown; issue 1026 removed it, and the
+`team-execution` tier now re-emits the same inline baseline as every other non-workflow tier.
 
 The worked reference — a hand-authored harness of exactly this shape — is the campaign's own
 sibling `docs/workflows/2026-06-21-saga-tiering-and-execution-campaign.workflow.js`. Authoring it
@@ -134,7 +134,7 @@ Non-gating corrections never throw; they are `log()`-ged during the run and also
 emitted workflow's final return value (see "Workflow return shape" below), so the driving session
 sees them without the unit being killed.
 
-Absent `verify` round-trips unchanged — existing specs and the `team_emitter.py` never gain a spurious key.
+Absent `verify` round-trips unchanged — existing specs never gain a spurious key.
 
 ### Workflow return shape (#686, KTD4)
 

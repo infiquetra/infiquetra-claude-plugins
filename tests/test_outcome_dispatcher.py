@@ -228,11 +228,20 @@ def _execution_spec_dict() -> dict[str, Any]:
     }
 
 
-def test_team_execution_artifact_wires_team_emitter() -> None:
+def test_team_execution_artifact_is_runnable_and_preserves_every_unit() -> None:
+    """Issue 1026 removed team_emitter.py, so the team tier falls to the inline baseline.
+
+    What this case guards is unchanged and is the part that matters: dispatching a leaf on the
+    ``team-execution`` tier yields a runnable artifact that still carries every unit. The old
+    assertion named the ``## Team Structure`` heading of the emitter that is gone; asserting a
+    format that no longer exists would only pin the removal, not the contract.
+    """
     spec = ES.ExecutionSpec.from_dict(_execution_spec_dict())
     art = D.team_execution_artifact(spec)
-    assert "Team Structure" in art  # produced through recompile_for_tier's team_emitter leg (R5)
+    assert art.strip(), "the team tier produced no artifact at all"
     assert "U1" in art and "U2" in art  # units preserved (by unit id)
+    assert "depends_on" in art  # and their ordering, which a runnable artifact needs
+    assert "Team Structure" not in art  # the removed emitter's format must not come back
 
 
 # --------------------------------------------------------------------------- integration with advance

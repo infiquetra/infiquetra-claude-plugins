@@ -82,11 +82,12 @@ python3 plugins/saga/scripts/execution_spec.py emit docs/workflows/<name>-spec.j
 (`execution_spec.py emit` is Saga's typed integration contract: it delegates emission to this
 plugin's `emitter.py`.)
 
-**Then render the approval table — this is the artifact the operator approves, not the JSON:**
+**Then render the approval table — this is the artifact the operator approves, not the JSON.**
 
-```bash
-python3 plugins/saga/scripts/spec_table.py docs/workflows/<name>-spec.json --backend <backend>
-```
+Issue 1026 removed `spec_table.py`, the script that used to render this table. Build the same
+view by reading the spec: one row per unit with its id, label and `{model, effort}` tier, the
+dependency waves the `depends_on` edges imply, and the spend against budget. The artifact the
+operator approves is that table, never the spec JSON.
 
 Paste that table into your reply verbatim. It reports every unit's tier, the dependency waves
 (what actually runs in parallel), spend against budget, and — the decision-relevant part — **what

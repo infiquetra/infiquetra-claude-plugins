@@ -20,7 +20,9 @@ MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 #: Orchestrate's version at this card. Named with its predecessor so a bump is deliberate.
 ORCHESTRATE_VERSION = "5.0.0"
-ORCHESTRATE_PREDECESSOR = "4.5.0"
+# Issue 1001 took 4.6.0 on the integration branch while this card's suite ran; its
+# section is folded under 5.0.0 rather than renumbered.
+ORCHESTRATE_PREDECESSOR = "4.6.0"
 
 REMOVED_SUBCOMMANDS = ("redrive", "collect", "land")
 KEPT_SUBCOMMANDS = ("plan-check", "start", "go", "merge", "clean")

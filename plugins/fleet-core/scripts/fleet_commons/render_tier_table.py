@@ -2,7 +2,7 @@
 """Render `/plan`'s Step-1 tier table markdown from `staffing.json` (U3, #362 R6).
 
 Replaces the prose-only heuristic table authored by hand at
-``plugins/saga/skills/plan/SKILL.md`` (formerly lines 298-304) with a block rendered
+``plugins/saga/skills/plan/SKILL.md`` (its Phase 5.2a) with a block rendered
 straight from the registry, so a registry edit is the only way to change the table —
 no second, hand-maintained copy to drift out of sync. ``tests/test_tier_resolver.py``
 parses the live SKILL.md block and asserts it equals this renderer's output

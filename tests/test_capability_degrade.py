@@ -230,13 +230,19 @@ def test_recompile_to_workflow_tier_emits_the_dynamic_script(es: ModuleType) -> 
     assert '"opus"' in out and '"haiku"' in out and '"sonnet"' in out
 
 
-def test_recompile_to_team_tier_emits_team_structure(es: ModuleType) -> None:
-    """R5 — team-execution recompiles to the team_emitter ## Team Structure markdown (the third
-    leg of the by-mode dispatcher seam), NOT the inline baseline."""
+def test_recompile_to_team_tier_floors_to_the_runnable_baseline(es: ModuleType) -> None:
+    """Issue 1026 removed ``team_emitter.py``, the third leg of the by-mode dispatcher seam.
+
+    The team tier now recompiles to the same host-independent inline baseline as any other
+    non-workflow tier. What this case guards is what R5 was really protecting and is unchanged:
+    the tier yields a *runnable* artifact and every unit survives the recompile. Asserting the
+    ``## Team Structure`` heading of a removed emitter would pin the removal, not the contract.
+    """
     spec = es.ExecutionSpec.from_dict(_spec_dict())
     out = es.recompile_for_tier(spec, "team-execution")
-    assert "Team Structure" in out  # the team_emitter protocol, wired in (R5)
-    assert "await agent(" not in out  # not the workflow harness
+    assert out.strip()  # runnable, never empty (AE3)
+    assert "Team Structure" not in out  # the removed emitter's format must not come back
+    assert "await agent(" not in out  # not the workflow harness either
     for unit in spec.units:
         assert unit.unit_id in out  # units preserved (by unit id) regardless of tier
 

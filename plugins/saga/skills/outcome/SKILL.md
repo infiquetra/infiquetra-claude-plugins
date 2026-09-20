@@ -159,11 +159,12 @@ reconcile loop are the contract.
 
 **Surface the approval table at every backend approval.** When a leaf carries an
 `orchestration_ref` spec and the operator is being asked to approve its backend, render it — never
-paste the spec JSON:
+paste the spec JSON.
 
-```bash
-python3 plugins/saga/scripts/spec_table.py <orchestration_ref_spec.json> --backend <backend>
-```
+Issue 1026 removed `spec_table.py`, the script that used to render this table. Build the same
+view by reading the spec: one row per unit with its id, label and `{model, effort}` tier, the
+dependency waves the `depends_on` edges imply, and the spend against budget. The artifact the
+operator approves is that table, never the spec JSON.
 
 Paste the output verbatim. This is the same view `/plan` shows at Step 5, deliberately: the
 operator approves one artifact in one format wherever the decision is made. The enforceability

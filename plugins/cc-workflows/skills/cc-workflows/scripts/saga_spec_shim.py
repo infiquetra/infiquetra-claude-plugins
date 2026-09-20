@@ -127,10 +127,9 @@ def resolve_root() -> tuple[Path, int]:
 def load_execution_spec() -> ModuleType:
     """Load Saga's ``execution_spec.py`` — the spec schema this emitter emits from.
 
-    Reuses ``sys.modules["execution_spec"]`` when a host process already loaded it (the
-    same single-instance convention ``team_emitter.py`` follows), so the spec classes in
-    play are always one set; otherwise loads from the resolved saga root and registers
-    the module under its bare name.
+    Reuses ``sys.modules["execution_spec"]`` when a host process already loaded it, so the
+    spec classes in play are always one set; otherwise loads from the resolved saga root and
+    registers the module under its bare name.
     """
     cached = sys.modules.get("execution_spec")
     if cached is not None:

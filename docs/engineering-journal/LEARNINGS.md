@@ -1,6 +1,16 @@
 # Learnings — Infiquetra Claude Plugins
 
-## 2026-09-19
+## 2026-09-20
+
+### Updating the existing tests was the larger half of the work, and the plan called it incidental  {#1025-updating-in-place-was-the-larger-half}
+
+**Evidence.** Issue 1025's plan, unit U8 (`docs/plans/2026-09-19-issue-1025-orchestrate-slim-run-driver-plan.md`), said four test modules would be deleted and named the rule for deleting them; everything else it called "updated in place where the record replaces the run file", in one clause, with no unit of its own. The driver rewrite was 6,450 lines going to 6,237. The test migration that followed touched 26 modules, needed ten mechanical passes plus per-test work, and ran from 276 failing tests to zero. It was reported honestly as unfinished once, mid-flight, because it could not be finished in the session that started it.
+
+**Mechanism.** The plan sized the work by the diff it expected to write, and a rewrite's diff is in the source file. What it did not size is that 17,953 lines of tests were written against the interface being replaced: every one that constructed a `Run`, called a command with a hand-built `argparse.Namespace`, or read `.orchestrate/run.json` had to move, and "move" is not one edit repeated — the mechanical passes got the shape right and then each module had a tail of tests whose *premise* had changed, not just their plumbing. Those are the ones that take judgment: a test asserting `land --clean` exits 0 on a close failure is not broken plumbing, it is a contract that moved, and deciding whether to move the assertion or keep it is the same work as writing the test the first time.
+
+**It also found four defects the driver's own new tests did not.** Dropping the persisted launch receipt took the launcher's tab-ownership proof with it; the saga resolver could not see a saga installed beside orchestrate in a versioned cache; a plan that was not JSON died in a decode error six frames deep once the companion floor stopped refusing earlier; and the unattended-worktree check read only a session's working directory. Every one surfaced in a legacy test, because legacy tests are the ones that exercise paths a rewrite's author is not thinking about.
+
+**Generalizable rule.** When a plan replaces an interface, count the tests written against that interface and give their migration its own unit with its own estimate. A plan that says "updated in place" about more lines than it is rewriting has not planned the larger half — and those tests are not overhead to get past, they are where a rewrite's real defects are found.
 
 ### A card that cites a defect by line number can be citing a defect that has since been fixed  {#1025-issue-879-assert-review-transport-is-stale}
 
@@ -25,6 +35,75 @@
 **Mechanism.** Both readings are locally correct and together they are wrong: with an allocation of ten, six role panes and ten units are sixteen agent sessions on one account, against a number that exists for that account's rate limit. Neither consumer could see the error from inside itself, because each one's count was true. The repair is that orchestrate's `live` count is units plus the record's open `roster` rows — the record is where both consumers already meet, so the shared budget needs no new mechanism, only one of the two to stop counting half of it.
 
 **Generalizable rule.** When a limit is shared by two consumers, the one that adds its count second is the one that must add the other's; a limit each consumer reads independently is not a limit.
+
+## 2026-09-19
+
+### Removing a module breaks tests that never import it, because they assert the *shape of its output*  {#1026-tests-assert-output-shape-not-imports}
+
+**Evidence.** Issue 1026 removed `plugins/saga/scripts/team_emitter.py`. A four-syntax scan for anything that *reached* it — imports, `spec_from_file_location`, path expressions, command lines — came back clean, and the targeted test run was green. The full suite then failed three cases that never name the module: `tests/test_outcome_dispatcher.py::test_team_execution_artifact_wires_team_emitter`, `tests/test_capability_degrade.py::test_recompile_to_team_tier_emits_team_structure`, and (in a different way) `tests/test_work_review_contract.py::test_priority_and_confidence_never_form_an_acceptance_gate`. The first two assert `"Team Structure" in out` — the heading the removed emitter rendered — reached through `execution_spec.recompile_for_tier`, two call layers away.
+
+**Mechanism.** A removal scan asks "who calls this?" and the answer was nobody. But a caller is not the only kind of dependent: a test that asserts a *string in the output* of a function that used to delegate to the removed module depends on it without naming it anywhere. The dependency runs through the data, not the import graph, so no scan over source text can find it. The third failure is the same shape one level up in vocabulary rather than data: `/work`'s new document-review gate legitimately names `P0` and `P1`, and a guard written about the *code-review* acceptance gate scanned the whole file for that letter pair.
+
+**Generalizable rule.** An import scan bounds the blast radius of a removal; it does not measure it. The full suite is the measurement, and it has to be run before the removal is called done — a targeted run over the files you edited cannot see a test that depends on the behaviour you deleted without mentioning it. When such a test fails, ask what it was protecting: here it was "the tier yields a runnable artifact with every unit", which survives, and not "the artifact is Team Structure markdown", which was the format of a thing now gone.
+
+### A rubric listing that returns an empty list for a missing library reads as "nothing applies"  {#1026-empty-listing-reads-as-nothing-applies}
+
+**Evidence.** `plugins/saga/scripts/lifecycle_review.py`, `rubrics_for_phase` before this change: `if not d.exists(): return []`. Probed on 2026-09-19 by copying the engine into a directory with no `references/rubrics/`: `rubrics read` printed `ERROR: no rubric for phase=issue slug=...` and exited 1, while `rubrics list-cores --phase issue` printed nothing and exited **0**. Issue #1026, card #932; the repair is at `lifecycle_review.py:139-165` and the guard is `tests/test_doc_review_rubric_resolution.py::test_every_rubric_subcommand_fails_loud_when_the_library_is_missing`.
+
+**Mechanism.** The skill's own sentence — "if the rubric engine or its rubrics are unavailable, say so clearly and continue with the readiness review where safe" — was the documented half of the defect, and card #932 was written against it. But the reviewer never reaches that sentence, because it never learns anything is unavailable: `list-cores` succeeds. A list command's empty result and its failure are the same two lines of output, so the caller cannot distinguish "this phase has no core rubrics" from "this install has no rubrics at all". The `read` subcommand had always failed loud, which is why the defect survived: whoever tested the failure path tested the one subcommand that already worked.
+
+**Generalizable rule.** A list operation whose "none" and whose "cannot tell" are the same value is a silent-degradation site, and it does not stop being one because a sibling operation on the same data fails loudly. Where the empty result would be consumed as a decision — here, which rubrics to apply — the missing-source case has to raise, not return the empty collection.
+
+### A guard that asserts a path string passes forever, whatever the target says  {#1026-path-string-guards-pass-forever}
+
+**Evidence.** `tests/test_saga_plugin.py::test_review_second_opinion_contracts_preserve_native_findings_and_gate_authority` asserted `"../code-review/references/findings-schema.md" in doc_skill`. That file exists and a grep against it for `external_opinion` or `claude_adjudication` returns **0** — the skill told the reader to reuse two contracts from a document that defines neither. The assertion had been green throughout. Card #931 named this; issue #1026 replaced it with `tests/test_doc_review_transport.py::test_every_cross_reference_target_defines_what_is_cited`, which resolves the target, reads it, and fails when the cited identifiers are absent.
+
+**Mechanism.** The guard and the thing it guards were coupled only through a string that the guard itself also contained, so the two could never disagree. The reference's correctness has three parts — the path is spelled right, the file exists, the file defines what is cited — and the assertion checked only the first, which is the one part a broken reference still gets right.
+
+**Generalizable rule.** When a document cites a contract from another file, the guard resolves the target and reads it. Asserting the citation's text proves the citation is present, never that it is true — and a citation that is present and false is worse than none, because it stops anyone looking further.
+
+### A removal inventory built by grepping import statements misses the callers that are command lines  {#1026-removal-inventory-misses-command-lines}
+
+**Evidence.** Issue #1026's plan inventoried `spec_table.py`'s callers as "its own test plus `work/SKILL.md:400`". The implementation's four-syntax scan found three more, all live: `plugins/cc-workflows/skills/cc-workflows/SKILL.md:88`, `plugins/saga/commands/tier.md:50`, `plugins/saga/skills/outcome/SKILL.md:165`, each a `python3 plugins/saga/scripts/spec_table.py ...` line telling an agent to run the script. Six further stale prose references to `team_emitter.py` surfaced the same way.
+
+**Mechanism.** In a plugin repository a script has two kinds of caller: Python that imports it, and a skill or command whose Markdown instructs an agent to execute it. Only the first appears in an import grep, and the second fails later and less legibly — the agent runs a command that is not there, mid-run, with no import error to read.
+
+**Generalizable rule.** Before removing a script from a plugin, scan for every syntax that reaches it — the import, the `spec_from_file_location`, the path expression, and the command line in Markdown — and make the guard that proves the removal scan all four, with a case proving the scanner fires on each.
+### An empty verification ledger means the gate reports `review_incomplete` for every review, and that is the designed state  {#1001-empty-ledger-review-incomplete}
+
+**Context.** Issue #1001 made Saga's code review consume the lens roster that `infiquetra/infiquetra-sdlc` — the lifecycle repository — generates, instead of a policy file shipped inside the plugin. The expectation going in was that reviews would start producing catalogue-backed scores.
+
+**Evidence.** `config/executor-verifications.json` at revision `5efc869f` has `"entries": []`, and that revision is also the lifecycle repository's `origin/main` — both read with `git show` after a fetch on 2026-09-19, not recalled. Running the generator against a real declaration returns `status: refused` on its `verification_presence` check and exits 1: `tools/docs/gen_review_roster.py` refuses to assign a scoring executor to a lens with no matching ledger entry.
+
+**Mechanism.** The ledger is the gate between a model producing a number and that number being allowed to establish a threshold. With no entries, no lens has a qualified scoring executor; with no qualified executor, no lens establishes a threshold; with no threshold met, the verdict function's first row fires — an unusable result is decided before any low score — and every review returns `review_incomplete`. Nothing is broken. A score from an unqualified model is not weak evidence, it is not evidence, and inventing one locally would make the plugin a policy owner again, which is the whole thing ADR-001 removes.
+
+The trap is that this reads exactly like a failure to anyone who did not know. `tests/test_review_dry_run.py::test_the_verdict_is_review_incomplete_while_the_ledger_is_empty` asserts the honest outcome, so the day the first qualification lands the assertion changes in a diff someone reads rather than the behaviour changing silently.
+
+**Generalizable rule.** When a gate depends on a qualification ledger that is empty on purpose, assert the degraded outcome as the expected one and say why in the same place — otherwise the first reader diagnoses the design as a bug.
+
+### Two environment variables named the same lifecycle checkout, and only one was read by code  {#1001-two-sdlc-env-vars}
+
+**Context.** `review_roster.py` needed to find the sibling `infiquetra-sdlc` checkout in order to invoke its roster generator.
+
+**Evidence.** `plugins/fleet-core/scripts/fleet_commons/staffing.py:59` sets `SDLC_PATH_ENV = "INFIQUETRA_SDLC_PATH"`, and mission-control's README, its card-validator test and its project-mapping override read the same name. Sixteen role prompts under `plugins/agent-launcher/roles/` — the lens reviewer's at line 59, and fifteen siblings at the same position in their files — tell the session to read `INFIQUETRA_SDLC_ROOT` instead. Both landed on `parent/1018`, from issues #1021 and #1022.
+
+**Mechanism.** Setting one does not set the other. A review whose controller resolved the checkout through `_PATH` would brief lens sessions that look for `_ROOT`, find nothing, and stop — and the failure would present as "the lifecycle repository is missing" on a machine where it is plainly present. Neither half is wrong in isolation; the divergence is only visible when something reads both, which nothing did until the roster resolver had to.
+
+The repair here is deliberately not a rename: `plugins/agent-launcher/roles/` is issue #1022's file and issue #1001 names none of it. `review_roster.py` reads `_PATH` first, accepts `_ROOT` second, and **reports which of the two it used**, so the mismatch surfaces as a sentence in the provenance rather than as an empty resolution.
+
+**Generalizable rule.** When two cards in one release each need to name the same external thing, the name is a shared contract — and prose that names it is as load-bearing as code that reads it. A resolver that accepts both and reports which it used converts a silent failure into a readable one.
+
+### A consumer that reads a sibling's return shape needs one test against the real function, not a fake  {#1001-fake-agreed-with-the-bug}
+
+**Context.** `admission.py` fills the run's thirteen configuration parameters. `per_lens_score_threshold` was `unset` after every run, including a real one against a real lifecycle checkout.
+
+**Evidence.** `staffing.lens_catalogue()` returns a **pair**: a mapping keyed by lens identifier, and a version string. The consumer at `plugins/saga/scripts/admission.py:339` unpacked the pair, then read `catalogue.get("lenses")` and `catalogue.get("strictness_ladder")` off the mapping — keys that shape does not have. Both returned `None` for every checkout, so the parameter could not be filled by any path. `tests/test_admission.py` passed anyway: its `_fake_staffing` returned `{"lenses": ..., "strictness_ladder": ...}`, the catalogue **document**, which is the shape the consumer wrongly assumed.
+
+**Mechanism.** The fake agreed with the bug. Every assertion about the consumer held, because both sides of the test shared one wrong belief about the producer, and nothing in the suite ever compared that belief to the producer itself. The failure mode is specific to a fake written from the consumer's reading rather than from the producer's signature — which is the easy way to write one.
+
+The repair pins the real function's shape directly (`test_real_lens_catalogue_returns_a_pair_keyed_by_lens_identifier`), skipping when fleet-core is not in the tree, and corrects the fake to match. Admission now fills 13 of 13. The defect originates in issue #1023, which owns `lens_catalogue`.
+
+**Generalizable rule.** A fake encodes a belief about the thing it replaces. Where that belief is the thing under test — a consumer reading a sibling's return shape — one test must assert against the real function, or the suite proves only that the consumer is self-consistent.
 
 ### There is no `herdr agent close`, so "close the agent" is always a tab operation with an ownership question attached  {#1024-no-herdr-agent-close}
 

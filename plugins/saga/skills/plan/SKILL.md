@@ -8,8 +8,8 @@ description: Create durable Infiquetra implementation plans with issue, review, 
 `/plan` answers **"How should it be built?"** It takes a settled WHAT — from `/brainstorm`'s
 requirements doc, a handoff issue, or a clear ad-hoc request — and interrogates it into a durable,
 agent-consumable implementation plan. It does **not** invent product behavior (that came from
-`/brainstorm` or the issue), it does **not** implement code, and it does **not** run the review
-gauntlet. It plans, self-reviews, records a plan saga, and routes.
+`/brainstorm` or the issue) and it does **not** implement code. It plans, records a plan saga,
+**dispatches the plan review and loops on repair until it passes**, and routes.
 
 ## Position in the lifecycle
 
@@ -19,13 +19,18 @@ gauntlet. It plans, self-reviews, records a plan saga, and routes.
 - `/ideate` answers: "What are the strongest ideas worth exploring?"
 - `/brainstorm` answers: "What exactly should one chosen idea mean?" (the WHAT)
 - **`/plan` answers: "How should it be built?"** (the HOW — this engine)
-- the `review` phase (`/doc-review`) answers: "Is this plan ready to execute?"
+- plan review (`/doc-review`) answers: "Is this plan ready to execute?" — and this engine runs it
+  itself in Phase 5.4 rather than recommending it.
 - `/work` answers: "Build it." (consumes the plan + saga)
+
+`review` is a declared `lifecycle_phase` in `scripts/saga.py`, but no code path writes it. Plan
+review is a step inside the plan phase, not a phase the saga records.
 
 The handshake is deliberate. When the WHAT is unsettled, `/plan` recommends the operator step back to
 `/brainstorm` first (a one-way forward route — `/plan` points there; it does not claim `/brainstorm`
-"accepts" a handoff). When the plan is written, `/plan` recommends `/doc-review` (the review phase)
-before `/work`.
+"accepts" a handoff). When the plan is written, `/plan` does not recommend the review — it dispatches
+it, repairs what it finds, and re-checks until nothing above `P2` is open or the operator overrides
+one finding in one word.
 
 ## Core principles
 
@@ -201,7 +206,7 @@ python3 plugins/saga/scripts/reconcile_controller.py reconcile \
 
 **Submit both halves, and check both.** The move is one invocation carrying two assignments, and
 Mission Control does **not** roll the pair back: a `Stage` write can land while `Status` fails.
-Read the record the same way Phase 5.0 does, and read it by more than its `status` word. The
+Read the record the same way Phase 5.5 does, and read it by more than its `status` word. The
 record's `field` is the whole submission's identity: `Stage+Status` when both halves were executed,
 a bare `Status` when they were not — which is what an installed saga older than the pair contract
 reports after writing the `Status` half alone, `written` and all. `skipped` is not a synonym for
@@ -385,32 +390,7 @@ vector). Add `deepened: YYYY-MM-DD` to frontmatter when the plan was substantive
 
 ---
 
-## Phase 5 — Saga, route, and operator-choice
-
-### 5.0 Submit the card's move to `Planning` / `Ready for Active` — Mission Control executes it
-
-**Actor:** this skill. **Trigger:** the plan document exists and has cleared review, so the
-card is no longer being designed -- it is ready to build. **Move:** the live pair `Stage` =
-`Planning`, `Status` = `Ready for Active`. `Ready for Active` is the schema's own named terminal
-option for the Planning stage; there is no bare `Ready` option on either live field.
-
-**Deciding and submitting is not writing.** As in Phase 0.6, this skill submits the move and
-Mission Control executes it, derived from what this skill durably produced: the plan document and
-the saga tick.
-
-```bash
-python3 plugins/saga/scripts/reconcile_controller.py reconcile \
-  --op set-field-status --repo <owner/repo> --number <N> \
-  --target-state "Ready for Active" \
-  --payload '{"assignments": [["Stage", "Planning"], ["Status", "Ready for Active"]]}'
-```
-
-**Submit both halves, and check both** — the pair is not rolled back if one half fails, so a
-`failed` record naming the landed and the unlanded assignment is the signal to repair the half that
-did not land. Check the record's `field` reads `Stage+Status` before reporting the move: a
-`written` from a saga too old to carry the pair names a bare `Status` and moved one field.
-`halt`/`gated` falls back to the operator-prompted Mission Control path. When there is no issue,
-there is no card to move; say nothing further.
+## Phase 5 — Saga, plan review, board move, and route
 
 ### 5.1 Ask the destination
 
@@ -435,96 +415,43 @@ re-asked — by `deploy_handoff.offer` at handoff time; there is deliberately no
 the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-deploy destination —
 `deploy_handoff` reads an absent posture as `gate`.
 
-### 5.2 Offer the execution backend
+### 5.2 Record the execution backend
 
-**Write the answer into the plan document's `backend:` frontmatter field**, not only into the saga
+**Write the backend into the plan document's `backend:` frontmatter field**, not only into the saga
 tick. The tick is untracked local state: it does not survive a worktree boundary, another machine,
-or another vendor, so an executor that did not run in this directory cannot see it. The plan document
-travels with the work because the executor commits it alongside the changes, which makes it the
-place a decision made here can reliably be read later. `/work` honours that field and does not ask
-again. (If a Phase 0.7 pre-answer carrier applied `backend: inline`, skip only the operator-facing offer — still call
-`lifecycle_state.recommend_execution_backend`, still record `--orchestration-recommended` with its
-output and `--orchestration-mode inline`, and still write the plan document's `backend:` field;
-the carrier never applies the other two backends, they remain explicit invocations. Skipping the
-offer must never skip the recommend call: Phase 5.3's save examples include its output.)
+or another vendor, so an executor that did not run in this directory cannot see it. The plan
+document travels with the work because the executor commits it alongside the changes, which makes
+it the place a decision made here can reliably be read later. `/work` honours that field and does
+not ask again.
 
-The recorded enum still has three values — `inline` ("inline") | `team-execution` ("team execution") |
+The recorded enum has three values — `inline` ("inline") | `team-execution` ("team execution") |
 `cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
-`ORCHESTRATION_MODES`. **The default Saga offer is only `inline` and `team-execution`.** Claude Code
-Workflows (`cc-workflows-ultracode`) remain only an **explicitly invoked** task-local mechanism inside
-a Herdr-managed Claude Code session: never a default or automatic Saga backend, never a generic
-interchangeable execution backend (DECISIONS `{#cc-workflows-backend-narrow-808}`, issue #808 NARROW
-ruling). Never pre-select `cc-workflows-ultracode`. Never launch a Workflow because
-`recommend_execution_backend()` returned it. Never silently substitute a Workflow for `inline` or
-`team-execution`. Do not build a mechanism-neutral backend-switching abstraction around it.
+`ORCHESTRATION_MODES`. **The default Saga offer is `inline` and `team-execution` only.** Read the
+work shape, call `lifecycle_state.py recommend-backend` so the tick can record
+`--orchestration-recommended` (R12 telemetry), pre-select the cheapest-correct of those two,
+confirm with the operator, and record what they picked via `--orchestration-mode`. (If a Phase 0.7
+pre-answer carrier applied `backend: inline`, skip only the operator-facing offer — still call the
+recommender, still record both flags, and still write the plan document's `backend:` field.)
 
-Offer the default Saga backends per `references/operator-choice.md` (the decision contract, as
-narrowed by #808). Read the work shape, **recommend the cheapest-correct Saga backend** (`inline` or
-`team-execution`) and pre-select it. Call `lifecycle_state.recommend_execution_backend` so the tick
-can record `--orchestration-recommended` (R12 telemetry). Confirm with the operator and record what
-they picked via `--orchestration-mode`.
+**Claude Code Workflows (`cc-workflows-ultracode`) are reachable only by explicit operator
+invocation** (DECISIONS `{#cc-workflows-backend-narrow-808}`, issue #808's NARROW ruling).
+They are **never a default** or automatic Saga backend, and never a generic interchangeable
+execution backend. **Never pre-select** one. Never launch one because
+`recommend_execution_backend()` returned it. Never
+silently substitute one for `inline` or `team-execution`. Do not build a mechanism-neutral
+backend-switching abstraction around it.
 
-**Before an explicit Workflow invocation, probe Workflow-tool availability with `ToolSearch`** (not
-an assumption) and pass the result as `--workflow-availability-source probed`; only fall back to the
-`asserted` default when a live probe is not possible on this host (e.g. a non-Claude-Code runner). The
-recommender echoes the source back in `workflow_availability` so the offer can say whether
-availability was verified or merely assumed. An unavailable Workflow is **not** a third interchangeable
-choice; name it only to explain that explicit invocation cannot run here.
+Everything about the two non-`inline` backends — the availability probe, the per-unit tier table,
+the spend guards, authoring the specification, and the naming convention for the generated
+artifacts — is in [`references/workflow-backend.md`](../../references/workflow-backend.md). Go
+there only after an explicit invocation; nothing in this skill needs it otherwise.
 
-**Claude Code Workflows still serve the five workflow shapes** (per `references/operator-choice.md`
-§3.2) — **understand / design / research / review / migrate** — and the two legacy purposes beside
-them. Those purposes describe **when an operator might explicitly invoke** a Workflow. They are **not**
-automatic offer triggers and **not** a reason to pre-select `cc-workflows-ultracode`:
+#### 5.2a Derive the per-unit tiers
 
-- **Breadth / scale** (`broad_independent_fanout`) — broad independent fan-out, the same operation
-  across many enumerated targets, or an exhaustive probe-all sweep where missing a target is the
-  failure mode.
-- **Adversarial confidence** (`adversarial_confidence`) — a judge panel over N independent attempts,
-  prove-by-refutation (refute-N), or perspective-diverse verifiers each applying a distinct lens. This
-  is real review depth; the Workflow tool names *confidence* as a first-class purpose. Set it only on an
-  **explicit** request for many-independent-attempt verification, not on a generic "be more sure." (The
-  `review` shape covers a multi-lens review *sweep* requested as a workflow; the explicit refute-N /
-  judge-panel form stays `adversarial_confidence` — the two may co-fire, no precedence between them.)
-
-Pass any matching shape(s) via repeatable `--workflow-shape` when authoring a spec after explicit
-invocation; an unrecognized shape is rejected loud (`ValueError`), never silently downgraded to inline.
-
-**The team↔workflow fork is GOVERNANCE, not "review depth"** (both have review depth). The question is:
-**does the verdict need to stick?** Escalate to `team-execution` ("team execution") when the work needs
-**gated** consensus — a verdict that blocks a merge/deploy and persists as standing evidence (a reviewer-
-CONSENSUS gate, named scanners, a guarded deploy), or the size/risk signals fire (≥8 functional files,
-≥4 phases, security, infra, cross-repo, deployment-sensitive). When the consensus signal is **advisory**
-— N throwaway in-session votes you act on yourself, nothing recorded or blocking — stay on `inline`
-unless the operator **explicitly invokes** a Claude Code Workflow judge-panel. Confirm with the operator
-and record what they picked via `--orchestration-mode`. Enter §5.2a only after that explicit invocation.
-
-**KTD4 — the gated-vs-advisory interrogation (R7).** When a consensus / multi-reviewer / many-attempt
-signal is present, do **not** silently force `team-execution`. Ask the operator (`AskUserQuestion`, or
-channel-inline) one question, with the work-shape default pre-selected:
-
-> **Does this verdict need to BLOCK a merge/deploy or PERSIST as evidence — or are these throwaway
-> in-session votes you act on yourself?**
-> **A) Gated** — block/persist (a reviewer-CONSENSUS gate, named scanners, a guarded deploy) → `team-execution`.
-> **B) Advisory** — N throwaway votes, nothing recorded/blocking → `inline` (a judge-panel Workflow
-> only if the operator then explicitly invokes `cc-workflows-ultracode`).
-
-**Work-shape default:** pre-select **Gated** when any deploy / security / persist signal is present
-(`--destination merge|nonprod-deploy`, security/infra work, or a verdict that must be recorded); pre-select
-**Advisory** otherwise. Pass the answer into the recommender as `--advisory-consensus` (set for B; omit for
-A — gated is the default). Advisory consensus no longer auto-routes onto `cc-workflows-ultracode`; the
-default Saga path is `inline`, and a Workflow judge-panel is explicit-invocation only. If the work is
-**both** gated **and** broadly parallel, the default offer is still `team-execution` (and `inline` as
-the cheaper alternative), not a third interchangeable Workflow choice.
-
-#### 5.2a Author the ExecutionSpec (cc-workflows-ultracode only)
-
-**Enter this section only after explicit invocation** — the operator named `cc-workflows-ultracode` in
-this session, or a prior operator decision already recorded it. Never enter it because the recommender
-suggested it, never as a silent substitute for `inline` or `team-execution`.
-
-When the operator **explicitly invokes** `cc-workflows-ultracode`, **author a structured `ExecutionSpec`
-before writing the saga tick**. This is the canonical artifact `/work` re-emits from; the spec JSON —
-not the prose plan — is the single source of truth (KTD1, `references/operator-choice.md` §6).
+This applies to **any** backend that spawns a per-unit agent, not only to a Claude Code
+Workflow: the honoring seam below names the `agent`, `external-engine` and `workflow` spawn
+kinds alike. Where admission already recorded a staffing plan for the run, that plan is the
+authority for the roles it names and this step fills in only the units it does not cover.
 
 **Step 1 — Derive per-unit tiers.** For each Implementation Unit in the plan, assign a `{model, effort}`
 tier from the work-shape heuristic (R10). Surface the tier table for operator override before locking:
@@ -618,58 +545,6 @@ unavailable). This preview is the baseline the chaperone's `substituted-engine` 
 the run-time resolution against (KTD4, `references/external-engine-workers.md` §4 in team-execution) —
 record it in the saga tick / emitted plan alongside the tier so it survives to `/work`.
 
-**Step 1b — Price the plan and set the spend guards (#366).** Once tiers are locked the plan has a
-*price*: surface it and set the run-scoped guards before authoring prompts.
-
-- Run `python3 plugins/saga/scripts/execution_spec.py spend <spec.json>` to print per-unit spend, the
-  multiplicity-aware total (fan-out targets and verify panels counted, not one weight per unit), any
-  `cost_budget` headroom, and the `spend_envelope`. Show the operator the priced plan.
-- Set an optional `cost_budget` on the spec when the operator wants a hard ceiling — `validate`/`emit`
-  HALT (never a silent over-spend, per HALT-not-degrade) if the summed spend exceeds it, mirroring
-  `VERIFY_N_CAP`.
-- Set an optional `spend_envelope` when the operator wants "ask once, at the crossing" rather than a
-  prompt per expensive choice; `/work`'s #364 between-rounds escalation consults it before proposing a
-  climb (`SpendEnvelope.consider`).
-- Author per-unit effort allocations with
-  `python3 plugins/saga/scripts/effort_ledger.py allocate --unit <U-ID> --amount <to_spend>` (ordinal
-  spend units, so escrow and the budget speak one currency). `/work` records actuals and refunds unused
-  budget; a unit that would exceed its allocation surfaces an escalation-request **before** it runs.
-
-Weights are ordinal/relative, not dollar prices — the cost-weighted spend-*delta* classifier is #367.
-
-**Step 1c — Spend-delta levers: relative override, worth-it receipts, spend authority (#367).**
-
-- **Relative override** — when the operator wants to adjust a proposed tier, offer the three-way
-  **relative** choice `cheaper` / `as-proposed` / `dearer` (computed by `execution_spec.adjacent_tier`)
-  instead of forcing an absolute re-pick from the full `MODELS × EFFORTS` enum. `cheaper`/`dearer` step
-  exactly one rung; at a ladder boundary the lever raises (no silent clamp). `spend_delta(old, new)`
-  classifies any change as `cheapen` / `escalate` / `lateral` — a `lateral` (sideways axis trade) or a
-  `cheapen` proceeds quietly; an `escalate` is the one that asks.
-- **Worth-it receipts** — a **premium** tier (opus/fable model or xhigh effort — above the `sonnet/high`
-  baseline) must carry a one-line `worth_it_because` and a named `cheaper_fallback` (an adjacent
-  strictly-cheaper tier, default `adjacent_tier(tier, "cheaper")`). Enforce it at authoring by validating
-  with receipts required:
-  `python3 plugins/saga/scripts/execution_spec.py validate <spec.json> --require-receipts`. Plain
-  `validate`/`emit` do NOT require receipts, so existing specs are never retroactively broken.
-- **Spend authority** — resolve each unit's silent/ask disposition via
-  `spend_authority.resolve_spend_authority(tier)`: a `.saga/spend-authority.json` `silent_ceiling`
-  (absent → `sonnet/high`) makes any premium tier `ask` and everything at/below `silent` — the
-  configurable home for the cheap-silent/expensive-asks rule.
-
-**Steps 2–5 — Author the spec into a runnable workflow (lives with the capability, #925/U4).**
-Follow the cc-workflows authoring protocol — `plugins/cc-workflows/skills/cc-workflows/SKILL.md` —
-for the thin per-unit prompts (KTD2), `depends_on` barriers and `verify` panels, `validate` (HARD
-BLOCK on failure), `emit` + the `spec_table.py` approval table, and concurrent-writer safety
-(#671). Saga keeps this entry guard, the tier/spend authoring above, and the tick write below. The
-runnable commands are unchanged — `execution_spec.py validate` / `emit` still exist and delegate
-emission to the extracted emitter; artifacts land in `docs/workflows/`. The operator must
-explicitly confirm the tier assignments and the control-flow structure before `/work` runs it (R8
-"approved"); a rejection means revising the spec and re-running validate + emit + table.
-
-**Spec naming convention:** `docs/workflows/<YYYY-MM-DD>-<topic>-spec.json` — the plan doc stays in
-`docs/plans/`; generated Workflow artifacts live in `docs/workflows/`. The `.workflow.js`
-shares the same stem: `docs/workflows/<YYYY-MM-DD>-<topic>.workflow.js`.
-
 ### 5.3 Write the saga tick
 
 Emit a **runnable** saga `save` command — never prose like "write a saga", and never `git add` the
@@ -755,18 +630,99 @@ additional tick carrying the same state (harmless to `restore`, visible to `saga
 Either way, STOP and surface the error to the operator — do not continue to Phase 5.4 on a
 failed save.
 
-### 5.4 Route
+### 5.4 Dispatch the plan review, and loop until it passes
 
-Recommend the next command with plural clean exits:
+<!-- gate-record: id=plan-review-floor absence=HALT transport=ask-user-question -->
 
-- **`/doc-review`** (recommended next) — the review phase. `/work` gates on doc-review and blocks on
-  unresolved P0/P1 findings, so run the review before execution.
-- **`/work`** — execute the plan (after doc-review).
+**`/plan` does not recommend the review; it runs it.** The plan is not finished when the document
+is written — it is finished when a Plan Reviewer has read it and nothing above `P2` is open, or the
+operator has said one word to go past a finding that is. An operator who has to remember to type
+`/doc-review` is the transport for a gate, and a gate with a human transport is a gate that gets
+skipped on the busy days it matters most.
+
+**Who reviews, decided from the run record and not from this session.** Read the run record at
+`<primary checkout>/.claude/saga/runs/issue-<N>.json` and take the first of these that holds:
+
+1. Its `roster` array already carries a live row whose role is `plan-reviewer` — dispatch to that
+   pane.
+2. Its `run_configuration.staffing_models_and_efforts` names `plan-reviewer`, and
+   agent-launcher's roster helper can run here — stand the pane up and dispatch to it:
+
+   ```bash
+   R=$(ls -d ~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/roster.py \
+       | sort -V | tail -1)
+   python3 "$R" up   --issue <N>
+   python3 "$R" wait --issue <N> --timeout 600000
+   ```
+
+   The helper writes the pane into the record's `roster` array, briefs it from
+   `plugins/agent-launcher/roles/plan-reviewer.md` by absolute path, and `down` later closes only
+   what that array names. It refuses outside a herdr pane with **exit 4** — the ordinary case for a
+   background driver, which falls through to option 3 — and reports a blocked role with **exit 5**,
+   which is reported, never answered.
+3. Otherwise, review in **this session in review-only mode**: run `/doc-review` against the plan
+   path yourself, applying the same rubric, and say in one line that no reviewer pane existed.
+
+Say which of the three happened and why. The choice is read from the record rather than probed
+from the environment because the same run continues in other sessions and on other machines, and a
+rule that reads the environment answers differently in each of them.
+
+**The loop is the repair protocol.** Dispatch, read the result, repair the plan document, dispatch
+again — recording **one entry per turn** in the record's `review_cycles` (its cycle number, its
+result, and where its findings are). Exit on one of exactly three conditions:
+
+- **Pass.** No `P0` and no `P1` remains. Continue to §5.5.
+- **The operator's word.** A `P0` or `P1` is open and the operator overrides it in one word, with
+  a rationale recorded alongside the finding. This is the **only** override. No finding count, no
+  cycle count, no unattended mode, and no sentence in this skill produces one on its own.
+- **Exhausted allowances.** The record's `standard_cycle_allowance` and
+  `escalated_cycle_allowance` bound the loop (a cycle is one completed review result followed by
+  one repair batch; a re-dispatch after no repair is not a cycle). Exhausting them **stops and
+  reports** — it never passes. The numbers live in the record, not here, so a run can lower them
+  without editing this skill.
+
+A finding the reviewer raises against a revision you have since changed is not answered by the
+change alone: re-dispatch so the verdict is bound to the revision that will be built.
+
+### 5.5 Submit the card's move to `Planning` / `Ready for Active` — Mission Control executes it
+
+**Actor:** this skill. **Trigger:** §5.4's review loop recorded a **pass**, or the operator's
+one-word override, so the card is no longer being designed -- it is ready to build. The trigger is
+observable here and nowhere earlier: before §5.4 runs there is no review result to read, which is
+why this move sits after the loop rather than at the head of the phase. **Move:** the live pair `Stage` =
+`Planning`, `Status` = `Ready for Active`. `Ready for Active` is the schema's own named terminal
+option for the Planning stage; there is no bare `Ready` option on either live field.
+
+**Deciding and submitting is not writing.** As in Phase 0.6, this skill submits the move and
+Mission Control executes it, derived from what this skill durably produced: the plan document, the
+saga tick, and the review cycles in the run record.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> \
+  --target-state "Ready for Active" \
+  --payload '{"assignments": [["Stage", "Planning"], ["Status", "Ready for Active"]]}'
+```
+
+**Submit both halves, and check both** — the pair is not rolled back if one half fails, so a
+`failed` record naming the landed and the unlanded assignment is the signal to repair the half that
+did not land. Check the record's `field` reads `Stage+Status` before reporting the move: a
+`written` from a saga too old to carry the pair names a bare `Status` and moved one field.
+`halt`/`gated` falls back to the operator-prompted Mission Control path. When there is no issue,
+there is no card to move; say nothing further.
+
+### 5.6 Route
+
+The review has run, so the routing question is narrower than it used to be:
+
+- **`/work`** (recommended next) — execute the plan. Its own document-review gate reads the result
+  this phase just recorded.
 - **`/handoff`** — hand the plan to an SDLC issue through `mission-control`.
-- **`/brainstorm`** — step back if interrogation revealed the WHAT was not actually settled.
+- **`/brainstorm`** — step back if the review found the WHAT was not actually settled. This is a
+  different exit from a failed review, not a review outcome.
 
-### 5.5 Hard boundary
+### 5.7 Hard boundary
 
-`/plan` authors a plan artifact and self-reviews it. It does **NOT** implement code, does **NOT** file
-SDLC issues (`mission-control` owns issue creation), and does **NOT** run the full review gauntlet
-(`/doc-review` owns that). Plan, write the saga, route — then stop.
+`/plan` authors a plan artifact, has it reviewed, and repairs it. It does **NOT** implement code and
+does **NOT** file SDLC issues (`mission-control` owns issue creation). Plan, write the saga, run the
+review to a verdict, route — then stop.

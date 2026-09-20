@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.167.0] - 2026-09-20
+
+**Bumped from 0.166.0**, the saga version on `origin/parent/1018` at commit `b98e94ea`, read
+immediately before the bump. Issue #1025 and issue #938 were running on saga in parallel; whichever
+of the three landed first took this number, and the others renumber above it at their merge turn
+rather than shipping a colliding version.
+
+### Added
+
+- A `SessionStart` hook for the `startup` and `resume` sources,
+  `hooks/next_step_session_hook.py`, that announces the run record's `next_step` when a run is
+  live — and announces **nothing** when the record says the step is done, when the run is closed,
+  or when there is no record at all (issue #1029). The plugin had no session-start reader of the
+  run record before this: the spore's reader was matched on `compact` alone, so a cold session
+  learned nothing from the record and re-grounded on whatever the older envelope log happened to
+  say. The session that produced the card opened carrying exactly such a stale step.
+- A `UserPromptSubmit` hook, `hooks/prompt_suggestion_hook.py`, that names the saga command the
+  operator's text is about. It matches **locally**: the installed plugin's own command names, and
+  the step the run record already says is next, used only when the prompt asks to get on with the
+  run. It makes no network call, imports no client, logs nothing, and writes no file. It is
+  advisory and can never block or rewrite a prompt. Issue #1038's exploration measured a
+  typed-judgment version at 93 percent accuracy and still recommended deferring it, because
+  whether the operator's live prompt text may be sent to a third-party vendor is an open operator
+  decision; this ships the registration and the local matcher, and adds no call.
+- `scripts/next_step_context.py`, the one place the suppression rule is written. It is a module of
+  its own rather than a function on `run_record` because `saga_spore` imports `saga` and `saga`
+  imports `run_record`, so a resolver on the record would close an import cycle that the lazy
+  import would then hide at runtime.
+
+### Changed
+
+- Every lifecycle skill ends by **doing** the next step in the same turn instead of recommending
+  it (issue #1029). `/plan` continues into `/work`, reading `admission.destination` from the run
+  record so a `plan-only` destination still stops. `/doc-review` returns its result to `/plan`'s
+  review loop when that loop dispatched it, and otherwise continues into `/work` only when all
+  three hold: the document classified as a plan, the review was standalone, and no `P0` or `P1`
+  remains. `/work` runs `/qa` after a merge. `/code-review` performs each verdict's own next step.
+  `/qa` continues into `/retro` on a pass and into the merge-state branch on a failure.
+- **What is confirmed did not move.** `/work`'s pull-request open, review request, and merge stay
+  explicitly operator-confirmed, and a continuation that would fire one of them without a
+  confirmation is a stop. Continuation changed which step runs next, never what is asked first.
+- The compaction spore no longer renders the run-record block when the frozen `next_step` is
+  empty. It used to print `next_step:` with nothing after it, which reads as an instruction with
+  no content. The session-start hook and the spore now apply one rule from one module, so the two
+  readers of that field cannot drift apart on what "done" means.
+- `/qa`'s post-merge defect route and `/plan`'s `/handoff` and `/brainstorm` exits are named rather
+  than run: opening a defect thread and handing work to an SDLC issue are outward-facing writes and
+  stay the operator's to take.
+- Two shaping skills, `/brainstorm` and `/office-hours`, lost the phrase "recommended next" from
+  their closing text. Their routing behaviour is unchanged — they are not lifecycle skills — but
+  the card's acceptance grep covers every skill in the plugin.
+
+### Not changed
+
+- `/loop`, `/resume`, `/handoff` and the handoff and intent envelope machinery are all still here.
+  Issue #1030 removes them; this card removes nothing.
+
 ## [0.166.0] - 2026-09-20
 
 **Bumped from 0.165.0**, the saga version on `origin/parent/1018` at commit `542e9810`. This card

@@ -1,5 +1,37 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-20
+
+### A run's step is done when its `next_step` is empty, and nothing is inferred  {#1029-empty-next-step-means-done}
+
+**Decision.** The run record says a step is finished by its `next_step` being the empty string. Every reader — the session-start hook, the prompt-submission suggestion, the compaction spore — applies that one rule from one module, `plugins/saga/scripts/next_step_context.py`. Nothing infers doneness from any other field.
+
+**Rationale.** The record's twelve top-level keys are frozen by name in `run_record.TOP_LEVEL_KEYS`, with a comment saying so, precisely to stop children of issue 1018 inventing keys; a `closed_at` or `run_state` field was therefore not available. The empty string is already writable through `run_record.set_next_step` and is already the value a record carries before anything sets a step.
+
+**Rejected alternatives.** A new top-level key on the record (frozen, deliberately). Inferring doneness from `review_cycles` or `units` — inference over recorded state is the class of reasoning that produced the stale injection this card exists to prevent. A sentinel string such as `done` inside the field — a second schema nobody declared, living inside a free-text value.
+
+**Revisit when** a run genuinely needs to distinguish "closed" from "between steps" — for example when a closing step wants to record *why* a run ended. That is a schema question for the record's owner, not a reader's rule, and it should reopen the frozen key set rather than overloading this field.
+
+### The prompt-submission suggestion matches locally, and stays local until the operator rules otherwise  {#1029-prompt-suggestion-is-local-only}
+
+**Decision.** `plugins/saga/hooks/prompt_suggestion_hook.py` matches the operator's prompt against local strings only: the installed plugin's own command names, and the command named in the run record's `next_step`, the latter used only when the prompt asks to get on with the run. It makes no network call, imports no client, writes no file, and logs nothing. A test asserts the module's import graph contains no networking module.
+
+**Rationale.** Issue #1038's exploration (`docs/analysis/2026-09-19-prompt-suggestion-latency.md`) measured a typed-judgment version at 93 percent accuracy on prompts warranting a command and 100 percent silence on those that do not — and still recommended **defer**, on two grounds: no shape that makes a blocking call reaches the 400 millisecond target, and whether the operator's live prompt text may be sent to a third-party vendor is an open operator decision. A prompt is not a session transcript, but it is uncontrolled text nobody vetted, which is the stated reason transcripts are excluded from the data rule.
+
+**Rejected alternatives.** Shipping the typed judgment now (the governance ruling is a precondition, not a task). Shipping nothing (the registration and a conservative matcher are useful on their own and make the later swap a one-module change). Widening the matcher to chase recall — a keyword table over a dozen commands cannot approach a typed judgment's, and a hook that guesses is a hook the operator learns to ignore.
+
+**Revisit when** the operator rules on whether live prompt text may leave the machine. The typed judgment then replaces the matcher behind the same registration.
+
+### Lifecycle skills continue in the same turn; what was confirmed stays confirmed  {#1029-continuation-preserves-confirmations}
+
+**Decision.** Each of the five lifecycle skills ends by performing the next step rather than recommending it: `/plan` into `/work` (gated on the record's `admission.destination`, so `plan-only` still stops), `/doc-review` into `/work` under three conditions, `/work` into `/qa` after a merge, `/code-review` into each verdict's own step, `/qa` into `/retro` on a pass. Separately and explicitly: every action that required an operator confirmation before this change still requires one — `/work`'s pull-request open, review request, and merge — and a continuation that would fire one of them without a confirmation is a stop.
+
+**Rationale.** A step an operator has to remember to type is a step that gets skipped on the busy days it matters most. The two halves are recorded together because they are the two halves of one risk: making a chain automatic is exactly the change that could quietly swallow a confirmation, and separating "what runs next" from "what is asked first" is what makes the change safe rather than merely convenient.
+
+**Rejected alternatives.** Leaving continuation to a driver command — `/loop`'s Drive mode was that, it had to be chosen, and issue #1030 removes it. Continuing `/plan` into `/work` unconditionally — the destination already records how far a run may go, and reading it costs nothing. Continuing `/doc-review` into `/work` from any document — a strategy or requirements document has no plan to execute, and an open `P0` or `P1` is the very finding `/work`'s gate enforces.
+
+**Revisit when** a repository wants a pause between planning and building that the destination cannot express. The answer is a value in the record, not a sentence in a skill.
+
 ## 2026-09-19
 
 ### The plan-review loop's bound lives in the run record, and the only override is the operator's word  {#1026-review-loop-bound-and-override}

@@ -301,12 +301,16 @@ confirmation, exactly as they are today. If an implementer finds a continuation 
 of them without a confirmation, that is a stop: ask the operator through AskUserQuestion, and do
 not proceed on an assumption.
 
-**The one open question, declared rather than answered.** `/plan` continuing into `/work` in the
-same turn for a `pr` destination is new behaviour for this repository, and KTD4 is this plan's
-proposed answer rather than a recorded operator ruling. The run record for this card carries
-`destination: pr`, which authorizes the run to reach a pull request; it does not by itself say that
-one turn may cross from planning into building without a pause. This plan proceeds on KTD4 and
-flags it here so the plan reviewer and the operator can overrule it in one word.
+**The open question, now answered.** `/plan` continuing into `/work` in the same turn for a `pr`
+destination was declared here as KTD4's proposal rather than a ruling. It was answered by the run
+coordinator on 2026-09-20, from the card and the operator's standing direction rather than by a new
+decision: same-turn continuation is this card's own objective ("every lifecycle skill ends by doing
+the next step in the same turn"), and the operator's direction for the whole of parent issue 1018
+is that the lifecycle steps run automatically as guidance with the operator's answers taken up
+front at admission. **KTD4 stands as written**, together with the preservation contract above: the
+pull-request open, the review request, and the merge stay explicitly confirmed, and a continuation
+that would fire one of them without a confirmation is a stop. Both are implemented and both are
+guarded by `tests/test_skill_continuation_endings.py`.
 
 ## Scope Boundaries
 

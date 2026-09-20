@@ -796,7 +796,7 @@ via `--review-gate-override` for the review gate and `--doc-review-override` for
 each rendered through `issue_progress.py:_override_line` under its own gate's label, plus the
 work-session). Never a silent skip.
 
-### 5.4 Reach PR-ready and present continuation routing
+### 5.4 Reach PR-ready, then continue into `/qa`
 
 On a clean gate (or recorded override):
 
@@ -815,7 +815,7 @@ On a clean gate (or recorded override):
 3. **Record `pr_refs`** — `ship_ceremony.py`'s `open_pr` transition writes this on the saga itself; set
    `next_step="await review on PR #N"`; comment the PR status to the issue via the extended
    `issue_progress.py` CLI (`--pr-url`, `--review-status`).
-4. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
+4. **Continue, and pause only where a confirmation is owed.** On re-entry, Phase 0.4 reads the live PR state and runs the
     transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
     approved + clean + fresh, **offer to run the rest of the ceremony** — five separate
     `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
@@ -825,11 +825,25 @@ On a clean gate (or recorded override):
     closes the opened-resource manifest; `teardown` is `CeremonyTier.REVERSIBLE` and structurally
     required) — each explicitly confirmed, never silent; merge is a
     git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
-    On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
+    On merge, set `phase_status=complete` and **run `/qa` in the same turn** (issue #1029) — the
+    acceptance evidence is the next step, and an operator who has to remember to ask for it is the
+    transport for a step that already knows it should happen. Say in one line that you are running
+    it. `/qa` still owns the advance of `lifecycle_phase` and still makes it only on a PASS, which
+    is unchanged: what changes is who starts `/qa`, not what `/qa` decides.
    See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.
    When the destination includes deploy, route the merged item's ownership transfer through the
    offer step in `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept
    the handoff itself.
+
+**What continuation does not change.** Every confirmation on this path stays exactly where it is:
+the pull-request open, the review request, and each of the five ceremony transitions around merge
+are **offered and confirmed, never auto-fired**. Continuation moves the run from one step to the
+next; it never converts a confirmed action into a silent one. A continuation that would fire one of
+them without a confirmation is a stop, and you say so rather than proceeding.
+
+When the run stops before the merge — an unapproved, stale, or failing pull request — report where
+it stopped and what would move it, and leave the run record's `next_step` naming that. Do not run
+`/qa` on an unmerged thread.
 
 At thread completion set `status=done`.
 
@@ -841,11 +855,12 @@ only under confirmation). It does **NOT** own deploy or canary (`deploy` owns de
 mutation and production-health revert). It does **NOT** file SDLC issues (`mission-control` owns issue
 creation). It does **NOT** advance `lifecycle_phase` past `work` — the advance to `qa` is **`/qa`'s
 to make, and only on a PASS**; on a FAIL `/qa` keeps the phase at `work` and records the evidence.
-So the saga legitimately sits at `work` from merge until `/qa` runs and passes, and `/work`'s
-post-merge routing to `/qa` is advisory. (This is not a deferral awaiting a rebuild: the `/qa` skill
-exists at `plugins/saga/skills/qa/`. The advance is withheld because it is another skill's to make,
-which is a different claim and the one the preamble at the top of this document states.) Build,
-gate, record, coordinate the PR loop under confirmation — then stop.
+So the saga legitimately sits at `work` from merge until `/qa` runs and passes. `/work` **runs**
+`/qa` after a merge (§5.4) and still does not make the advance that `/qa` alone can make — starting
+a step and deciding its verdict are different authorities, and only the first moved (issue #1029).
+(This is not a deferral awaiting a rebuild: the `/qa` skill exists at `plugins/saga/skills/qa/`.)
+Build, gate, record, coordinate the PR loop under confirmation, continue into `/qa` on a merge —
+then stop.
 
 ---
 

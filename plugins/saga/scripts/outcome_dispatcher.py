@@ -270,14 +270,19 @@ def _rate_limit_kwargs(receipt: dict[str, Any]) -> dict[str, Any]:
 
 
 def team_execution_artifact(execution_spec_obj: Any) -> str:
-    """Emit the team-execution ``## Team Structure`` markdown for a leaf's execution spec (R5).
+    """Emit the runnable artifact for a leaf dispatched on the ``team-execution`` tier (R5).
 
     Delegates to ``execution_spec.recompile_for_tier(spec, "team-execution")`` — the by-mode
-    dispatcher seam whose third leg is ``team_emitter`` — so the team-execution backend's runnable
-    artifact is produced through the single seam, not reinvented here. Uses the module-level
-    ``execution_spec`` import (loaded under the sys.path shim) so this and ``team_emitter`` reach the
-    SAME class objects — a fresh per-call ``exec_module`` would mint a second ``SpecError`` that an
-    upstream ``except`` misses (the #287 U3 dynamic-reload identity trap).
+    dispatcher seam — so the artifact is produced through the single seam, not reinvented here.
+    Uses the module-level ``execution_spec`` import (loaded under the sys.path shim) so both reach
+    the SAME class objects: a fresh per-call ``exec_module`` would mint a second ``SpecError`` that
+    an upstream ``except`` misses (the #287 U3 dynamic-reload identity trap).
+
+    Issue 1026 removed ``team_emitter.py``, which used to be that seam's third leg and rendered a
+    ``## Team Structure`` markdown protocol. The tier now falls to the host-independent inline
+    baseline, which is still a runnable artifact carrying every unit and its dependencies — so this
+    function keeps its contract (a runnable artifact for the tier) while the format it returns has
+    changed.
     """
     return str(execution_spec.recompile_for_tier(execution_spec_obj, "team-execution"))
 

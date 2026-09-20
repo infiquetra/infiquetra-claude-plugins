@@ -2,6 +2,14 @@
 
 ## 2026-09-19
 
+### Removing a module breaks tests that never import it, because they assert the *shape of its output*  {#1026-tests-assert-output-shape-not-imports}
+
+**Evidence.** Issue 1026 removed `plugins/saga/scripts/team_emitter.py`. A four-syntax scan for anything that *reached* it — imports, `spec_from_file_location`, path expressions, command lines — came back clean, and the targeted test run was green. The full suite then failed three cases that never name the module: `tests/test_outcome_dispatcher.py::test_team_execution_artifact_wires_team_emitter`, `tests/test_capability_degrade.py::test_recompile_to_team_tier_emits_team_structure`, and (in a different way) `tests/test_work_review_contract.py::test_priority_and_confidence_never_form_an_acceptance_gate`. The first two assert `"Team Structure" in out` — the heading the removed emitter rendered — reached through `execution_spec.recompile_for_tier`, two call layers away.
+
+**Mechanism.** A removal scan asks "who calls this?" and the answer was nobody. But a caller is not the only kind of dependent: a test that asserts a *string in the output* of a function that used to delegate to the removed module depends on it without naming it anywhere. The dependency runs through the data, not the import graph, so no scan over source text can find it. The third failure is the same shape one level up in vocabulary rather than data: `/work`'s new document-review gate legitimately names `P0` and `P1`, and a guard written about the *code-review* acceptance gate scanned the whole file for that letter pair.
+
+**Generalizable rule.** An import scan bounds the blast radius of a removal; it does not measure it. The full suite is the measurement, and it has to be run before the removal is called done — a targeted run over the files you edited cannot see a test that depends on the behaviour you deleted without mentioning it. When such a test fails, ask what it was protecting: here it was "the tier yields a runnable artifact with every unit", which survives, and not "the artifact is Team Structure markdown", which was the format of a thing now gone.
+
 ### A rubric listing that returns an empty list for a missing library reads as "nothing applies"  {#1026-empty-listing-reads-as-nothing-applies}
 
 **Evidence.** `plugins/saga/scripts/lifecycle_review.py`, `rubrics_for_phase` before this change: `if not d.exists(): return []`. Probed on 2026-09-19 by copying the engine into a directory with no `references/rubrics/`: `rubrics read` printed `ERROR: no rubric for phase=issue slug=...` and exited 1, while `rubrics list-cores --phase issue` printed nothing and exited **0**. Issue #1026, card #932; the repair is at `lifecycle_review.py:139-165` and the guard is `tests/test_doc_review_rubric_resolution.py::test_every_rubric_subcommand_fails_loud_when_the_library_is_missing`.

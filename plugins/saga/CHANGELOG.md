@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0] - 2026-09-20
+
+### Added
+
+- **Batched tier suggestions at admission (issue #1033).** Admission's new `--suggest` flag runs
+  the staffing component's tier consult once per run over every staffed role and records each
+  suggestion beside its default in `staffing_models_and_efforts`, with one verdict-log entry per
+  suggested role. Advisory and fail-open: a suggestion never changes a value, and without the
+  flag the filled record is unchanged from 1.0.0.
+
 ## [1.0.0] - 2026-09-20
 
 **The removals.** Issue #1030, the closing child of parent #1018. Eleven commands, their skills and

@@ -604,3 +604,43 @@ a live branch and nothing deploys.
 Carried verbatim from the card. Stop and report if a merge-turn case would need a lock to be
 correct, or if Mission Control refuses a move the lifecycle repository allows. Neither has fired at
 plan time.
+
+## Amendments made during the work stage
+
+The plan is the contract, so where the build departed from it the departure is recorded here rather
+than left for a reader to find in a diff. Four, each with what the code found.
+
+**KTD3 — orchestrate keeps its own copy of the guard, with an equivalence test instead of a
+re-export.** The plan said orchestrate's two guard functions would become thin re-exports of
+fleet-core's shared module. The code says otherwise: `orchestrate.py` carries a comment block at its
+plugin resolver explaining why it must not take a resolution dependency on another plugin for
+something it needs when that plugin is absent, and a safety guard is precisely that — an orchestrate
+on a machine without fleet-core would fail at import rather than degrade. So the shared module is
+fleet-core's, saga imports it, orchestrate keeps its own pair, and `tests/test_merge_guard.py`
+drives both through one case table and fails if they diverge. One rule, two homes, one test.
+
+**KTD5 — `board_progression.py` gains the boundary layer rather than being gutted.** "Rewritten
+thin" meant removing the merge-record phases and the comment-idempotency machinery. Both still have
+live callers: `outcome_merge.py` uses `record_envelope_authorized_merge`, and `default_board_writer`
+uses the comment markers for the progress-comment operation. Removing them would mean deleting or
+rewriting modules this card does not name — the same test the ledger deferrals apply. What changed
+instead is the caller-facing surface: a caller now names a lifecycle boundary and cannot name a
+target state of its own, and any pair outside the allowed list is refused. The primitives go with
+the outcome coordinator, on issue 1030.
+
+**KTD7 / U4 — `evidence_ledger.py` is deferred too, and the card's second criterion is not met.**
+The plan expected two removals and two deferrals. Parsing imports rather than grepping names (see
+the learning entry `{#1028-field-named-after-a-module}`) showed `review_consensus.py` never imported
+the module at all — its eight hits are a dataclass field of the same name. The module's sole
+production importer is `closure_gate.py` (310 lines), whose whole subject is that ledger and which
+has two further production dependents, `intent_envelope.py` and `outcome_orchestrator.py`, plus five
+test modules. Removing the ledger therefore means deleting `closure_gate.py`, which this card does
+not name and issue 1030 does, or rewriting it and its dependents onto the run record, which is issue
+1030's work done early and thrown away. So `test ! -f plugins/saga/scripts/evidence_ledger.py`
+**fails on this branch**, deliberately, and is reported rather than forced. `effort_ledger.py` was
+removed as planned.
+
+**U5 — `tests/test_orchestrate_status_map_contract.py` is deleted as well.** The plan named one test
+module to delete with the writeback. This second one pins the vocabulary of the removed functions
+(`stage_statuses`, `live_rungs`, `normalize_rung`); with them gone its whole subject is gone. Its 10
+test names are recorded with the other 56 in the work-session notes.

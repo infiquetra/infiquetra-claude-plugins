@@ -35,7 +35,7 @@ _tier_resolver = fleet_commons_shim.load("tier_resolver")
 try:
     _staffing = fleet_commons_shim.load("staffing")
 except RuntimeError as exc:  # pragma: no cover - exercised by the install-obligation test
-    # saga 0.161.0 requires fleet-core 0.28.0 or later: the overlay read moved there (issue
+    # saga 0.162.0 requires fleet-core 0.28.0 or later: the overlay read moved there (issue
     # #1021). This repository has two installed plugin roots and a release has updated one and
     # not the other six times, so say which version is needed and which was found rather than
     # letting a bare "module not found" reach the operator.

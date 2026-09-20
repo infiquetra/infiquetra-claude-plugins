@@ -46,8 +46,11 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.161.0"  # 0.161.0: the per-repository tier overlay
-    # reads through one implementation in fleet-core (issue #1021).
+    assert plugin_json["version"] == "0.162.0"  # 0.162.0: the per-repository tier overlay
+    # reads through one implementation in fleet-core (issue #1021); renumbered from 0.161.0
+    # when main was folded into parent/1018.
+    # Predecessor 0.161.0: shaping_judgments.py asks the eleven advisory typed judgments inside
+    # /ideate, /brainstorm and /office-hours through the fleet-core TypeSafe client (issue #1037).
     # Predecessor 0.160.0: parse_issue.py gains --flags and
     # --issue, which widen the five keyword flags with a model judgment (widen-only: a keyword
     # flag stays set whatever the model answers) and report the seven approval boundaries

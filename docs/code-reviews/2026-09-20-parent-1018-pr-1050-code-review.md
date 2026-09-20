@@ -232,6 +232,20 @@ route loop pins the three routes that still resolve, and the boundary half the `
 carried — that Mission Control owns the issue — is asserted directly, which is a property rather
 than a command name.
 
+**23 (pre-existing) — two tests decide their verdict from the ambient environment, and they block
+the push gate.** `tests/test_agent_launcher_plugin.py::test_a_launcher_that_fails_mid_file_binds_nothing`
+and `tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth` pass from a shell and fail
+from the saga pre-push gate on the same commit. The gate's pytest child inherits
+`CLAUDE_PLUGIN_ROOT`, which Claude Code sets for every plugin hook;
+`plugins/orchestrate/.../orchestrate.py:1902` reads it and resolves the *installed* agent-launcher
+instead of the deliberately broken one the test built in `tmp_path`, and the canary's subprocesses
+inherit it and resolve fleet-core without the checkout root the mutation removes. Setting the
+variable by hand reproduces the first failure in 0.18 seconds — at this branch **and at the clean
+branch tip**, so it is not a regression from these repairs. *Repaired*: `tests/conftest.py` gains an
+autouse fixture that scrubs `CLAUDE_PLUGIN_ROOT` and `AGENT_LAUNCHER_ROOT`, following the two
+ambient-environment fixtures already there for the saga concurrency override and the
+`INFIQUETRA_FLEET_` family. Both tests then pass with the variable set.
+
 **14 — `references/operator-choice.md` §5.1 contained a fenced command with no command.** The edit
 that removed `/outcome` deleted `python3 plugins/saga/scripts/outcome.py approve <outcome_id> \` and
 left its continuation flags alone inside a ```bash block. Introduced by this diff. *Repaired.*

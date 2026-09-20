@@ -30,6 +30,12 @@ crash behind.
   `/founder-review`, `/retro` and `/investigate`, with their reference documents, state `inline`
   rather than rendering a choice; `/work`'s Phase 1.5 Claude Code Workflow step says it cannot be
   entered; `/qa` no longer cites the deleted dispatch table.
+- **The suite no longer decides two verdicts from the ambient environment.** `tests/conftest.py`
+  scrubs `CLAUDE_PLUGIN_ROOT` and `AGENT_LAUNCHER_ROOT`, as it already did for the saga concurrency
+  override and the `INFIQUETRA_FLEET_` family. Without that, two tests passed from a shell and
+  failed from the pre-push gate — whose pytest child inherits the variable every plugin hook is
+  given — because the launcher ingest and the mutation canary both resolved installed plugins
+  instead of the roots the tests had built. The behaviour predates this release.
 - **The surviving skills stop routing to removed commands.** `/handoff` becomes `mission-control`,
   which is what it always meant, across `/brainstorm`, `/spec`, `/investigate`, `/office-hours`,
   `/ideate`, `/founder-review`, `/retro` and their reference documents. `/loop`, `/resume`, `/tier`

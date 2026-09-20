@@ -2,6 +2,36 @@
 
 ## 2026-09-20
 
+### The same tree, two verdicts, decided by the environment the runner carried  {#plugin-root-leaks-into-the-suite-1030}
+
+**Evidence.** `tests/test_agent_launcher_plugin.py::test_a_launcher_that_fails_mid_file_binds_nothing`
+and `tests/test_wiring_canary.py::test_plan_contract_guards_have_teeth` pass from a plain shell and
+fail from the saga pre-push gate, on the same commit, three times running. The difference is one
+environment variable: `CLAUDE_PLUGIN_ROOT`, which Claude Code sets for every plugin hook and which
+the gate's pytest child therefore inherits.
+
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:1902` reads it and falls back to the
+*installed* agent-launcher beside that root. The first test builds a deliberately broken launcher in
+`tmp_path` and asserts the ingest rolls back; with the variable set, the ingest never looked at that
+copy — it found the real installed launcher, imported it cleanly, and left `run` bound. The second
+test runs the mutation canary, whose pytest subprocesses inherit the variable and resolve fleet-core
+without the checkout root the mutation removes, so the guard stayed green and the canary reported
+`plan-save-contract-engine-root` **toothless**. Setting the variable by hand reproduces the first
+failure in 0.18 seconds, at this branch and at the branch tip alike.
+
+**Mechanism.** Both tests exercise a resolution path, and a resolution path is by construction
+sensitive to the environment. `tests/conftest.py` already scrubs two ambient families for exactly
+this reason — the saga concurrency override and everything under `INFIQUETRA_FLEET_` — and the
+plugin-root variables were simply never added to that list. The cost of the omission is the worst
+shape a test failure can take: it does not fail where you run it, only where it blocks you, so the
+first three readings all looked like flakiness or like a regression in whatever had just changed.
+
+**Generalizable rule.** A suite that gates a push will be run from a hook, and a hook's environment
+is not a shell's. Any variable the production code reads for resolution — a plugin root, an install
+prefix, a checkout path — is scrubbed in `conftest.py` by default, and added to that list in the
+same change that teaches production code to read it. And when one commit's suite passes for you and
+fails for the gate, compare the two environments before comparing the two trees.
+
 ### Two parsers for one kind of value, and only one of them is right  {#two-command-parsers-1030}
 
 **Evidence.** In the same release, `plugins/saga/scripts/build_loop.py:379` turns an

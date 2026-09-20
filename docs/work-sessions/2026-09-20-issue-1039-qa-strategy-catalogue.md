@@ -109,6 +109,14 @@ surface, hosted page or browser target exists here to exercise a driver against,
 driver is the silent skip this redesign exists to remove wearing a new name. This is in the
 changelog entry as well as here, per the coordinator's instruction.
 
+## One more consequence the full suite found
+
+`plugins/saga/scripts/gate_absence_baseline.json` pinned three uncovered gate sites for
+`plugins/saga/skills/qa/SKILL.md`. The rewrite removed all three, so the baseline entry went stale
+and `test_gate_absence_lint_reports_zero_violations` red with "file has no uncovered gate site
+(baseline pins 3) — remove it from the baseline". The entry was removed, which **tightens** the
+guard rather than weakening it: the qa skill now has no allowance to spend.
+
 ## Checks run
 
 | Check | Result |

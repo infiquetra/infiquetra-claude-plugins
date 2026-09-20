@@ -414,3 +414,42 @@ def test_freeze_dag_none_outcome_and_corrupt_status(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(M.outcome, "load_spec", _boom)
     assert M.freeze_dag(Path("/repo"), "ship-auth") is None
+
+
+# ------------------------------------------------- run-record suppression at the boundary (#1029)
+
+
+def _spore_with_record(next_step: str) -> dict[str, Any]:
+    spore = _spore(dag=None)
+    spore["run_record"] = {
+        "path": "/primary/.claude/saga/runs/issue-281.json",
+        "issue": 281,
+        "next_step": next_step,
+        "destination": "pr",
+        "pending_questions": [],
+        "units": 2,
+        "review_cycles": 1,
+    }
+    return spore
+
+
+def test_serialize_carries_a_live_run_record() -> None:
+    block = M.serialize(_spore_with_record("run /work on the plan"))
+    assert "RUN RECORD (authoritative on next_step)" in block
+    assert "run /work on the plan" in block
+
+
+def test_serialize_suppresses_a_run_record_whose_step_is_done() -> None:
+    """#1029 KTD5: an empty ``next_step`` means done, and a done step is not re-injected.
+
+    The same rule the session-start hook applies, applied at the compaction boundary — two readers
+    of one field must not disagree about what "done" looks like. Without this the block rendered as
+    a bare ``next_step:`` with nothing after it, which reads as an instruction with no content.
+    """
+    block = M.serialize(_spore_with_record(""))
+    assert "RUN RECORD" not in block
+
+
+def test_serialize_suppresses_a_whitespace_only_next_step() -> None:
+    block = M.serialize(_spore_with_record("   \n  "))
+    assert "RUN RECORD" not in block

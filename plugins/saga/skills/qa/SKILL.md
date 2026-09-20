@@ -361,14 +361,20 @@ python3 plugins/saga/scripts/saga.py save \
 
 `saga.py save` **mints unconditionally**, so run this tick **only if Phase 0.2 restored a saga** — never
 invent a `--kind`/`--id` to satisfy the CLI (the scan-first / never-mint guard `/qa` shares with
-`/code-review`). Never `git add` the tick — saga state is git-ignored and machine-local. Then route to
-**`/handoff`** (turn the work into / update an SDLC issue) or **`/retro`** (capture learnings).
+`/code-review`). Never `git add` the tick — saga state is git-ignored and machine-local.
 
-### 6.2 FAIL — keep work phase, route by merge state
+Then **run `/retro` in the same turn** (issue #1029). A pass is the end of the build, and the
+learnings are worth most while the evidence is still in the session — a retro an operator has to
+remember to ask for is a retro that happens on the calm weeks and not the instructive ones. Say in
+one line that you are running it. `/handoff` remains the operator's to take when the work should
+become or update an SDLC issue; name it, do not run it.
+
+### 6.2 FAIL — keep work phase, continue by merge state
 
 On a `no-ship` verdict, **keep `lifecycle_phase=work`** (omit `--lifecycle-phase`, which carries the
 prior phase forward), tick with `--qa-paths "<the ledger artifact_path from 5.1>"` and the evidence,
-then route by **merge state**:
+then **continue into the step the merge state names**, in the same turn (issue #1029) — run it,
+having said in one line which branch you took and why:
 
 - **Pre-merge (PR still open)** → **`/work`** — hand the findings back and re-enter the round-N PR loop.
   `/work`'s Phase 0.4 re-entry keys on the saga's `pr_refs`, so the thread resumes cleanly.
@@ -378,7 +384,8 @@ then route by **merge state**:
   - **Deep / uncertain root cause** (the cause is unknown or the falsifiable prediction failed) →
     **`/investigate`** — the systematic-debugging engine owns the causal-chain work `/qa` does not do.
   - **Clear / trackable defect** (the cause is understood, just not fixing it now) → **`/handoff`** —
-    open a **new defect thread**.
+    open a **new defect thread**. This is the one branch that is named rather than run: opening a
+    defect thread is an outward-facing write, so it stays the operator's to take.
 
 `/investigate` is a real routable target — it ships and is on the dispatch-table's routable list, so
 emit it for deep post-merge root-cause failures. `/qa` still does **not** debug: it routes the
@@ -390,7 +397,8 @@ loop`. Routing **reads** `loop/references/dispatch-table.md`.
 ## Hard boundary
 
 `/qa` gathers acceptance evidence, assigns severity, derives a verdict, writes the artifact, ticks the
-saga, and routes — then stops. It does **NOT** fix bugs, does **NOT** edit reviewed code, does **NOT**
+saga, and continues into the step its verdict names — then stops. Starting the next step is not
+doing it: it does **NOT** fix bugs, does **NOT** edit reviewed code, does **NOT**
 commit, does **NOT** push, does **NOT** open, update, or merge a PR, does **NOT** deploy, does **NOT**
 file SDLC issues, does **NOT** set readiness labels, and does **NOT** run a fix loop or deep root-cause
 debugging (`/work` and `/investigate` own those). It never blocks the router.

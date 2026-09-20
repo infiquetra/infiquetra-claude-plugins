@@ -46,13 +46,20 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.168.0"  # 0.168.0: the run record reference documents the
-    # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
-    # unit row (issue #1025). Bumped from 0.167.0, the saga version on origin/parent/1018 at
-    # 54a526b1: issues #1001, #1026 and #938 took 0.165.0, 0.166.0 and 0.167.0 while this card's
-    # suite ran, so this card renumbered above them rather than shipping a colliding version.
-    # 0.167.0 was issue #938: Work no longer offers an in-process external-engine second opinion,
-    # and plugins/saga/scripts/second_opinion.py is deleted with no live consumer.
+    assert plugin_json["version"] == "0.169.0"  # 0.169.0: every lifecycle skill ends by doing the
+    # next step in the same turn, a new SessionStart hook announces the run record's next_step for
+    # a live run and nothing for a done step, a closed run, or no record, and a local-only
+    # UserPromptSubmit hook names the command an operator's text is about (issue #1029). Bumped
+    # from 0.168.0, the saga version on origin/parent/1018 at 87a5329e. This card took 0.167.0
+    # against b98e94ea and then 0.168.0 against 54a526b1; issue #938 took the first number and
+    # issue #1025 the second, so this card renumbered above them at each merge turn.
+    # Predecessor 0.168.0: the run record reference documents the `units` rows as an extension
+    # point and names the three keys the orchestrate plugin adds to a unit row (issue #1025).
+    # Predecessor 0.167.0: Work no longer offers an in-process external-engine second opinion; the
+    # offer's prose and routing leave the work skill and its continuation reference, and
+    # plugins/saga/scripts/second_opinion.py is deleted with no live consumer, while the
+    # external-content trust boundary survives with its guard narrowed to the one remaining call
+    # site (issue #938).
     # Predecessor 0.166.0: /plan ends by dispatching the plan
     # review to the Plan Reviewer and looping on repair until no P0 or P1 remains, the /work floor
     # gate stays blocking on the operator's one-word override alone, the Workflow-backend and
@@ -3956,7 +3963,11 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # card is the operator status HEADER, not an afterthought — and the continuation-routing step that
     # was step 3 is pushed to step 4 by the insertion (proves a real reorder, not a keyword sprinkle).
     assert "1. **Render the operator status header**" in work_doc
-    assert "4. **Present continuation routing**" in work_doc
+    # The step-4 label changed wording in issue #1029 — the continuation step now *continues* the
+    # run rather than presenting routing for the operator to act on — but this guard is about
+    # POSITION, not prose: step 4 is still the continuation step, which is what proves the card
+    # render was a real reorder rather than a keyword sprinkle.
+    assert "4. **Continue, and pause only where a confirmation is owed.**" in work_doc
     # STILL PRESENT (KTD5): detailed work-session evidence reference.
     assert "work-session" in work_doc
 

@@ -295,3 +295,30 @@ Use this structure:
 5. Residual risk from limited evidence, if any.
 
 If no issues are found, say so clearly and name any remaining risk from limited evidence.
+
+## Continue, or return the result
+
+**A review ends by doing the next thing, not by naming it** (issue #1029). Which next thing depends
+on who asked, and there are exactly two answers.
+
+**Dispatched by `/plan`'s review loop.** Return the result to that loop and stop. `/plan` §5.4 owns
+the repair-and-re-dispatch cycle and its allowances; a review that continued on its own from inside
+that loop would run the build in the middle of it.
+
+**Invoked standalone.** Continue into `/work` against the reviewed document in the same turn when
+**all three** hold:
+
+1. the document classified as a **plan** (Classification above, or the `docs/plans/` tie-breaker);
+2. the review was standalone rather than dispatched by `/plan`; and
+3. **no `P0` and no `P1` remains** after the safe fixes.
+
+If any one of the three does not hold, continue into nothing and report. In particular a strategy,
+requirements, issue, or blueprint document continues into nothing, because `/work` has no plan to
+execute and pointing it at one of those is worse than stopping. An open `P0` or `P1` continues into
+nothing either: the readiness gate `/work` enforces is the same finding this review just made, and
+a review that walked past its own finding would be no gate at all. Say which of the three stopped
+the continuation.
+
+**Continuation never converts a confirmed action into an automatic one.** `/work`'s pull-request
+open, review-request, and merge remain explicitly operator-confirmed; a continuation that would
+fire one of them without a confirmation is a stop.

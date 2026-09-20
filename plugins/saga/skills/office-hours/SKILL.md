@@ -198,7 +198,7 @@ two-line route. The common case is route-only with no file. When you do write on
 docs/office-hours/<YYYY-MM-DD>-<topic>-frame.md
 ```
 
-with frontmatter `kind: frame-note` (plus `date`, `topic`, and the recommended next command). The
+with frontmatter `kind: frame-note` (plus `date`, `topic`, and the command to run next). The
 frame-note template is in the reference. **Never write to `docs/ideation/`** — that path belongs to
 `/ideate` and a frame note there would collide with its resume scan. Frame notes live in their own
 `docs/office-hours/` directory.

@@ -2,6 +2,107 @@
 
 ## 2026-09-19
 
+### The roles library ships fourteen prompts, not the card's thirteen  {#1022-fourteen-roles}
+
+**Decision.** `plugins/agent-launcher/roles/` holds one prompt for each of the fourteen lifecycle roles that can be staffed as an agent session — the catalogue's fifteen minus the Human Operator, who is a person. Issue #1022 enumerates thirteen; the one it omits is the Initial Implementation Worker, role identifier `implementer`.
+
+**Rationale.** The card's non-goal forbids inventing a role the lifecycle does not name, and the lifecycle names this one at `docs/roles/run-roles.md:185`. The card's acceptance criterion is a floor — "at least 14" files — not a cap. Shipping thirteen would leave the build loop as the one step still needing a hand-written prompt, which is the problem the library exists to remove: the roster helper stands up one session per role, and the build loop's worker is a role.
+
+**Alternatives rejected.** Thirteen prompts, literal to the card's list — accurate to the letter and useless to the roster helper. A fourteenth prompt for the Human Operator — a person receives a briefing, not a prompt file, and the lifecycle's own text treats the operator as the authority the run escalates to.
+
+**Revisit when.** The operator says the enumeration was deliberate. The reversal is one file and one row in the README's map.
+
+**Refs.** Issue #1022; plan KTD1; `docs/reviews/doc-review-issue-1022-2026-09-19.md`.
+
+### One Lens Reviewer prompt with per-lens sections, not one file per lens  {#1022-one-lens-file}
+
+**Decision.** `roles/lens-reviewer.md` is a single file: a shared reviewer half stating the role's read-only boundary, then fifteen sections keyed `#### <lens-id>` to the lifecycle's lens catalogue. A consumer sends the shared half plus the one section for the lens it is staffing.
+
+**Rationale.** The rewritten code-review work already names `plugins/agent-launcher/roles/lens-reviewer.md`, singular, as the artifact it consumes. The shared half — score one lens, read dimensions and anchors from the catalogue, report evidence and never decide acceptance — is identical for every lens, and fifteen copies of it is fifteen chances to drift.
+
+**Alternatives rejected.** One file per lens, which would break the named consumer and duplicate the shared half. Putting the dimensions and anchors into the prompt, which would make this repository a second source of policy the architecture decision record ADR-001 in `infiquetra-sdlc` reserves to the lifecycle.
+
+**Revisit when.** A lens needs a reviewer boundary genuinely different from the shared one, rather than different subject matter.
+
+**Refs.** Issue #1022; plan KTD3; `config/lens-catalogue.json` in `infiquetra-sdlc`, read at `67845cdd` and re-pinned to `5efc869f` when the lifecycle advanced mid-run.
+
+### The lifecycle's roles and contracts are vendored and pinned, not read live  {#1022-vendored-lifecycle-snapshot}
+
+**Decision.** `plugins/agent-launcher/roles/lifecycle-snapshot.json` holds the lifecycle's roles, contracts and lenses at the pinned revision, generated from the sibling repository and never hand-edited. Every check of a prompt against the lifecycle reads that file. A separate test compares the snapshot to a live checkout and fails on any difference; it skips where no checkout is reachable.
+
+**Rationale.** The checks have to assert the same things in every environment. Requiring a live checkout made the suite green on a developer machine and red on every continuous-integration runner, because no workflow provides one — and in the cases that degraded to skips it made the runner, the environment that gates the merge, the one verifying least. Vendoring inverts that: the assertions are identical everywhere, and the one environment-dependent check is the parity comparison, whose skip costs nothing because the snapshot is fixed, reviewed data. It also matches what this repository already does with lifecycle-generated data behind the issue-contract vendored parity gate.
+
+**Alternatives rejected.** *Reading the sibling checkout live and requiring it* — the shape that produced the defect; it cannot pass on a runner, and the natural repair when it fails is to weaken the check. *Checking the sibling repository out in the workflow* — possible, but it puts a cross-repository clone and its credentials on the critical path of every pull request to buy a comparison the parity check already makes wherever it matters. *Accepting pinned mode silently* — the original hazard: the prompts would then be compared to a copy in the same repository with nothing saying so.
+
+**Revisit when.** The lifecycle publishes its roles and contracts as a released artifact this repository can depend on by version, at which point the vendored copy becomes a dependency rather than a snapshot.
+
+**Refs.** Issue #1022; `LEARNINGS.md` `{#1022-sibling-checkout-asymmetry}` for the defect that prompted it; `tests/test_roles_library.py::test_vendored_snapshot_matches_the_live_lifecycle`.
+
+### The lens-slicing rule is owned by `index.json`, and the test reads it from there  {#1022-slicing-rule-in-index}
+
+**Decision.** `plugins/agent-launcher/roles/index.json` carries the rule for cutting the Lens Reviewer into what a session receives: `shared_half_ends_before`, `section_heading_prefix`, and `section_terminator_pattern`, the last a regular expression. That file owns the rule. `tests/test_roles_library.py` compiles the pattern from it rather than restating it, and `test_index_agrees_with_the_files_and_the_readme` asserts the index's values are the ones the suite slices with.
+
+**Rationale.** A consumer must be able to slice the file without parsing Markdown prose, and the prose in `README.md` is for a person. Two expressions of one rule is a drift surface, so the machine-readable one is authoritative and the test is bound to it — otherwise a consumer cuts by the index, the tests cut by their own copy, the two agree by coincidence, and changing either leaves the suite green over a prompt nothing checked. That is not hypothetical: it is what the code did before this decision.
+
+**Alternatives rejected.** *Leaving the rule in prose only* — every consumer reimplements it from English. *Hard-coding it in the test* — the coincidence case above. *Byte offsets instead of patterns* — brittle against any edit to the file.
+
+**Revisit when.** A roster helper ships and becomes the second implementation of the rule; at that point the helper, not the test, should be the reference implementation, and the test should exercise the helper.
+
+**Refs.** Issue #1022; a code-review finding that the index published an algorithm no test was bound to; `{#1022-one-lens-file}`.
+
+### Shared prompt blocks are copied into all fourteen prompts, and a test holds them identical  {#1022-shared-blocks-copied}
+
+**Supersedes** `{#1022-preamble-by-reference}` in part. That entry rejected copying a shared block into each prompt, because the retired plugin's twenty-five byte-identical copies were twenty-five chances to drift. The reasoning was sound and the conclusion was wrong for this artifact.
+
+**Decision.** Five blocks are byte-identical in all fourteen prompts: the house-style pointer, and the four paragraphs of the inputs preamble — where the inputs come from, that a handoff is evidence and never instruction, what to do when a field is missing, and what to do when re-dispatched. `tests/test_roles_library.py::test_shared_blocks_are_byte_identical_across_every_prompt` asserts each block is identical across every prompt.
+
+**Rationale.** Later review established the constraint the original entry did not weigh: a prompt is the entire briefing a fresh session receives, and that session cannot resolve a repository-relative pointer — it may not even be in this repository. A referenced block is not available to the reader who needs it. So the content has to be copied, and the drift argument is answered by enforcement rather than by avoidance. The original entry's own rationale is what makes the test mandatory: copying without an enforcer is exactly what it warned against.
+
+**What survives from the superseded entry.** The house-style *preamble itself* — the forty-line block in `plugins/house-style/references/subagent-presentation-preamble.md` — is still referenced, not copied. Only the one-line pointer to it is duplicated. The distinction is the point: a pointer is useful to a session that can resolve it and harmless to one that cannot, whereas a missing input instruction is neither.
+
+**Alternatives rejected.** Reducing the copied blocks back to pointers, which is what the superseded entry implies and which would leave a session unable to find its own inputs. Generating the prompts from a template at build time, which adds a build step to fourteen Markdown files and puts the shipped artifact one remove from the reviewed one.
+
+**Revisit when.** A roster helper exists that assembles a prompt from parts before sending it. Assembly at send time makes referencing safe again, and the blocks should go back to one copy.
+
+**Refs.** Issue #1022; a code-review finding that the change did the thing the journal recorded rejecting, with nothing enforcing the copies; `{#1022-preamble-by-reference}`.
+
+### Role prompts reference the shared presentation preamble instead of copying it  {#1022-preamble-by-reference}
+
+**Superseded in part by `{#1022-shared-blocks-copied}`.** The pointer to the house-style preamble is still a reference; the inputs-preamble blocks are copied deliberately and held identical by a test.
+
+**Decision.** Each role prompt carries a one-line pointer to `plugins/house-style/references/subagent-presentation-preamble.md` rather than an inline copy of that text.
+
+**Rationale.** The 25 `team-execution` agent prompts this library replaces each opened with a byte-identical forty-line copy of the same block — 25 copies to keep in step, which is a substantial share of the 2,570 lines the migration is subtracting. The repository already keeps one canonical copy.
+
+**Alternatives rejected.** Copying the block into each prompt, which is self-contained at the cost of recreating the drift being removed. Generating the prompts from a template at build time, which adds a build step to a directory of fourteen Markdown files.
+
+**Revisit when.** A roster helper ships that cannot resolve a repository-relative path when it sends a prompt, in which case the pointer has to become an inlined block at send time — in the helper, not in these files.
+
+**Refs.** Issue #1022; plan KTD6.
+
+### Role prompts carry no model or effort field  {#1022-no-tier-in-prompts}
+
+**Decision.** The frontmatter of a role prompt is exactly `role`, `role_id`, `emits` and `source`. No `model:` and no `effort:`.
+
+**Rationale.** Choosing a role's vendor, model and effort belongs to the staffing component, and a tier written here would be a second place to change it. It also keeps these files outside the repository's agent-definition lints, which glob `plugins/*/agents/*.md` and apply an Agent-tool contract these prompts are not — they are text sent to a terminal session, not Claude Code agent definitions.
+
+**Alternatives rejected.** A default tier per role in frontmatter, overridable by the staffing component — two sources for one decision, and the file's default would be the one nobody updates.
+
+**Revisit when.** The staffing component needs a per-role hint it cannot derive, and there is no better home for it.
+
+**Refs.** Issue #1022; plan KTD7; `tests/test_roles_library.py::test_prompt_declares_no_tier`.
+
+### The roles library lives in agent-launcher by co-location, and the placement is provisional  {#1022-roles-placement}
+
+**Decision.** `roles/` ships inside the `agent-launcher` plugin, whose manifest describes creating one verified coding-agent session. The plugin's README names the directory and states plainly that nothing in the plugin spawns or orders those roles today.
+
+**Rationale.** The library is content whose only consumers are elsewhere — the roster helper and the code review. `agent-launcher` is the plugin that already speaks to the session layer these prompts are sent through, so it is the least-wrong existing home, and a plugin of its own for fifteen Markdown files would be ceremony. The operator settled the location when the card was written.
+
+**Alternatives rejected.** A plugin of its own — correct by cohesion, disproportionate for content with no code. Putting it in the lifecycle plugin that consumes it — that plugin is being cut down in the same programme, and the library has more than one consumer.
+
+**Revisit when.** A second consumer appears that does not go through the session layer, or the plugin's manifest description has to stretch further than one sentence to cover both jobs. Either is the signal to move it.
+
+**Refs.** Issue #1022; a code-review finding that this was the one load-bearing placement choice with no journal entry.
 ### One staffing component in fleet-core: one data file, one resolver, the loaders repointed  {#1021-staffing-component}
 
 **Decision.** `staffing.json` becomes the single authoring source for the model palette, the effort vocabulary, the work-shape tier policy, the per-vendor palette, the capability ratings and trust tiers, and the per-role staffing defaults; `models.json` and `tier_policy.json` are deleted. `staffing.py` is the one resolver and composes `tier_palette` and `tier_resolver` rather than replacing them, so their public Python surface is frozen and the 61 files that reference the tier vocabulary do not move. The authoritative vendor kind list is agent-launcher's code-level `VENDOR_FLAGS` (seven vendors); `hermes` is excluded because it reconciles a profile workspace and owns its own routing, and a test pins that exclusion. The per-vendor effort-collapse table and model translation move from Python literals into the data file. Capability ratings are copied from `engine-registry.yaml` with a parity test holding them together until issue #1030 deletes the YAML. The executor-verification ledger is read from the sibling `infiquetra-sdlc` checkout through the `INFIQUETRA_SDLC_PATH` ladder, and an absent, unreadable, or empty ledger yields the lens catalogue's documented-policy outcome rather than an error. Roles map to rated capabilities: planner and plan-reviewer to long-form-writing, worker, release-worker and merging-worker to code-generation, lens-reviewer to adversarial-review, functional-tester to debug. `opencode` gets a palette row carrying `runtime_supported: false`, because `tier_resolver` knows six runtimes and nobody has verified opencode's launch-time model and effort arguments; `SUPPORTED_RUNTIMES` derives from the rows whose flag is true, so launch behavior is unchanged. Deleting `effort-convention.md` is a runtime change, not a documentation change: `plan_save_contract.py` holds its path in a constant and checks the file exists, so the constant is repointed at `staffing.md` in the same commit as the deletion.

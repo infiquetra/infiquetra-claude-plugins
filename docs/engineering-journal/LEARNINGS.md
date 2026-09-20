@@ -2,6 +2,65 @@
 
 ## 2026-09-19
 
+### A test that demands a sibling checkout is green on a developer machine and red on the runner  {#1022-sibling-checkout-asymmetry}
+
+**Context.** `tests/test_roles_library.py` checks fourteen role prompts against lifecycle data owned by the sibling repository `infiquetra-sdlc`. An earlier repair made the suite fail when that data came from a copy vendored in this repository rather than from a live checkout, on the reasoning that comparing the prompts to this repository's own copy proves little.
+
+**Evidence.** A review lens found it by inspection: no workflow in `.github/` checks out `infiquetra-sdlc`, none sets `INFIQUETRA_SDLC_ROOT`, and none sets the opt-out variable. On a runner the checkout has no sibling, so the resolver returns nothing, the live-mode assertion fails, and five per-prompt checks degrade to skips. Every local run was green, including the full inner loop, because this machine happens to have the sibling cloned.
+
+**Mechanism.** The asymmetry runs the dangerous way. A check that is strict locally and absent remotely merely under-tests; a check that is strict locally and *failing* remotely blocks every pull request while every author sees green, and the author's instinct is to weaken the check. Worse, the same design made continuous integration assert strictly less than a developer machine in the skipping cases — the environment with the least verification was the one gating the merge.
+
+**Fix.** Follow the pattern this repository already uses for lifecycle-generated data, the one behind the "issue-contract vendored parity" gate: vendor a pinned snapshot, check the prompts against it everywhere, and make drift between the snapshot and the lifecycle a separate parity check that skips when no checkout is reachable. The same assertions now run in both places; only the parity check is environment-dependent, and its skip costs nothing because the snapshot is fixed, reviewed data.
+
+**A second defect surfaced while proving the first.** The test written to simulate the runner called the parity function and wrapped it in `pytest.raises(Exception)`. `pytest.skip` raises a `BaseException` subclass, so the skip escaped the guard and marked the simulating test itself skipped — it reported green while proving nothing, which is the very class of defect it was written to catch. Catch `BaseException` and assert the outcome's type name.
+
+**Generalizable rule.** Before adding an assertion that depends on the environment, ask which environments can satisfy it and what each one does when it cannot. If the answer differs between a developer machine and the gate, prefer vendored data checked everywhere plus one explicit parity check, and never let the gate be the environment that verifies least.
+
+**Refs.** Issue #1022; `plugins/agent-launcher/roles/lifecycle-snapshot.json` (written first under `tests/data/`, moved when the dependency direction was corrected); `.github/workflows/ci.yml` ("Issue-contract vendored parity"); `docs/code-reviews/2026-09-19-issue-1022-roles-library-code-review.md`.
+
+### A worktree-isolated review agent lands on the base commit, so it reviews the wrong revision unless told otherwise  {#1022-isolated-worktree-base}
+
+**Context.** The code review for issue #1022 fanned out to seven lenses, each spawned with `isolation: "worktree"` as the sandbox contract requires for review-class work. The change under review was on branch `issue/1022`, several commits ahead of the base.
+
+**Evidence.** The security lens reported: "My worktree is pinned at the base commit `2044c363` and does not contain the change; the change lives in the sibling worktree, where worktree isolation blocked me from running `git diff`." It could read the changed files only by reaching into the driver's worktree by absolute path, and it could not diff at all. It said so, which is the only reason the gap was visible. A later lens, told explicitly to run `/usr/bin/git checkout --detach <sha>` as its first action, confirmed `HEAD` at the reviewed revision and produced a real review — five gating findings the earlier lenses had not reached.
+
+**Mechanism.** The isolated worktree is created from the repository's base state, not from the spawning session's `HEAD`. A lens that infers "the change" from its own working tree therefore sees the base and finds nothing wrong with it — and a review that examined the wrong revision is indistinguishable, in its output, from a review that examined the right one and found it clean. The failure is silent and biased toward false confidence, which is the worst direction for a gate.
+
+**Fix.** Name the exact revision in the lens prompt and make the lens's first action `/usr/bin/git checkout --detach <full sha>`, then `/usr/bin/git rev-parse HEAD` to confirm, and require the lens to state the reviewed `HEAD` as the first line of its report. Git objects are shared across worktrees of one repository, so the checkout and a `git diff <base> <head>` both work from any of them. Treat a report that cannot name the reviewed revision as not a review of the change, and rerun it.
+
+**Generalizable rule.** An isolated agent's working tree is not the state you are asking about — name the revision and have the agent check it out and echo it back, and make "which revision did you review" a required field of its report rather than an assumption.
+
+**Second observation, same run.** `subagent_type: saga:readonly-verifier` produced a 176-byte transcript over roughly thirty minutes before eventually completing, twice slower than any other spawn in the run; the documented fallback ladder (`Explore` plus worktree isolation, with the refute-first framing restated in the prompt) started producing transcript within seconds. The fallback exists for an unresolvable agent type, but it is also the remedy for one that resolves and then stalls. Judge the spawn by whether its transcript grows, not by whether it was accepted.
+
+**Refs.** Issue #1022; `docs/code-reviews/2026-09-19-issue-1022-roles-library-code-review.md`; `plugins/saga/references/sandbox-spawn-sites.md` ("Fallback when `saga:readonly-verifier` is unavailable").
+
+### A contract document quoting its own rule defeats the unanchored grep that checks it  {#1022-anchored-stop-rule}
+
+**Context.** Issue #1022's acceptance criterion reads `grep -L "### Stop rule" plugins/agent-launcher/roles/*.md` prints nothing except the README — the README being the one file exempt from carrying a stop rule. The directory has fourteen role prompts plus that README.
+
+**Evidence.** With all fifteen files written, `grep -L "### Stop rule" plugins/agent-launcher/roles/*.md` printed nothing at all, including not the README. Anchored — `grep -L "^### Stop rule"` — it printed exactly `plugins/agent-launcher/roles/README.md`.
+
+**Mechanism.** The README is the directory's contract document, so it necessarily quotes the heading it mandates; it names `### Stop rule` three times, in a table row and twice in prose. An unanchored `-L` search therefore finds the substring in the README too and reports no file as lacking it. The check does not fail — it passes vacuously, and it would go on passing if every role prompt lost its stop rule, because the README alone would still carry the string. A criterion whose intended output is "the README" silently became a criterion whose output is empty.
+
+**Fix.** `tests/test_roles_library.py` anchors the check to a line start, so it distinguishes a heading from a mention, and asserts the README carries no stop-rule heading rather than inferring it from an empty result. A seeded fixture holds a file that quotes the heading without having one, proving the anchoring discriminates. The README states why the anchoring is load-bearing.
+
+**Generalizable rule.** When a directory contains the document that specifies its own contract, any structural check over that directory matches the specification as well as the instances — anchor the pattern to the structure it is really about, and assert the exemption positively instead of reading it off an empty result.
+
+**Refs.** Issue #1022; plan `docs/plans/2026-09-19-issue-1022-roles-library-plan.md` U6; `tests/test_roles_library.py::test_readme_carries_no_stop_rule_heading`.
+
+### A scalar frontmatter parser reads an inline empty list as the string "[]"  {#1022-inline-empty-list}
+
+**Context.** Role prompts carry `emits`, a YAML list of the handoff contracts the role posts. The Lens Reviewer posts none of its own — its result is aggregated into the Review Controller's contract — so its frontmatter reads `emits: []`.
+
+**Evidence.** Two tests failed on first run: `test_prompt_frontmatter[lens-reviewer.md]` and `test_lens_reviewer_emits_nothing_of_its_own`. The parser had returned the string `"[]"`, which is not a list, so the role that legitimately emits nothing looked like a malformed scalar.
+
+**Mechanism.** The repository's existing frontmatter helpers are scalar-only, splitting on the first colon and keeping the remainder as text. A block list is handled by treating an empty value as the start of an indented list, but an inline `[]` has a non-empty value, so it fell through to the scalar branch. The two forms mean the same thing in YAML and differ only in how they are written.
+
+**Fix.** The parser recognises `[]` as an empty list before the scalar branch, with a seeded fixture for the inline form beside the existing one for the block form.
+
+**Generalizable rule.** A hand-rolled frontmatter parser has to handle both spellings of an empty collection, or the one case that is semantically empty becomes indistinguishable from a syntax error — and it will be the case that is rarest and therefore least tested.
+
+**Refs.** Issue #1022; `tests/test_roles_library.py::parse_frontmatter`, `::test_seeded_inline_empty_list_parses`.
 ### A reference document can be load-bearing at runtime, and deleting one is a code change  {#1021-reference-documents-are-runtime}
 
 **Evidence.** Issue #1021, commit for U6. `plugins/saga/scripts/plan_save_contract.py:36` held

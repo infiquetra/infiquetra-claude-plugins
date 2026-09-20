@@ -11,6 +11,10 @@ launch seam. An ordinary session uses the same script as a CLI, or follows
 This plugin does not ship a copy of the `herdr` skill. After a session exists, use that
 skill for prompt, wait, read, input, and cleanup.
 
+`roles/` holds one reusable prompt per role the software development lifecycle names — what to
+send a session once it exists, so the briefing is not hand-written each time. Its contract is in
+[`roles/README.md`](roles/README.md). Nothing in this plugin spawns or orders those roles today.
+
 ## Quick start
 
 ```bash

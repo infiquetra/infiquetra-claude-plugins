@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0] - 2026-09-19
+
+### Added
+
+- **A roles library at `roles/`, one reusable prompt per lifecycle role (#1022).** Fourteen prompts plus a README stating the contract each follows: the role and its authority boundary, the inputs it reads from the run record, the handoff contract it posts, and its stop rule. Written in the vocabulary of `infiquetra-sdlc` at revision `5efc869f`, read at that pin with `git show` so a checkout on a moving default branch still serves the pinned documents.
+- **Fourteen is the lifecycle's fifteen roles minus the Human Operator**, who is a person rather than a session. The two historical role identifiers are carried in frontmatter rather than in filenames: the Architect's identifier is `orchestrator` and the Delivery Manager's is `controller`.
+- **`roles/lens-reviewer.md` carries a shared reviewer half plus one section per lens**, keyed to the fifteen identifiers in the lifecycle's lens catalogue. It states no threshold of its own; the catalogue owns the strictness ladder.
+- **`tests/test_roles_library.py`**, which reads the expected role set from the README's map and the lens, contract and role identifiers from the sibling lifecycle checkout when one resolves.
+
+### Notes
+
+- Nothing here spawns, orders, gates or aggregates a role; the roster helper and the run chain consume these prompts later.
+- The `team-execution` plugin's 25 agent prompts and two criteria documents were the source material and are unchanged by this release. The README accounts for where each one's substance went.
+
 ## [1.5.2] - 2026-09-16
 
 ### Changed

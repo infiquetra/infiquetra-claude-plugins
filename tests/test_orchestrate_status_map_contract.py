@@ -67,7 +67,7 @@ def test_no_rung_reaches_the_verify_stage_by_any_door() -> None:
 
     Verify is entered only after merge PLUS the applicable non-production deployment, or after
     installed or published artifact verification when nothing deploys. Orchestrate can check neither
-    conjunct: `cmd_land` merges onto the run branch rather than the default branch, and the module
+    conjunct: `cmd_merge` merges onto the run branch rather than the default branch, and the module
     carries no deployment or artifact-verification signal at all. So NO rung may reach that stage --
     not through `codereview`, which carried it before this change, and not through `landed`, which
     carried it briefly during it. Pinning the stage rather than a key closes both doors and any

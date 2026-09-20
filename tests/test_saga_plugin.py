@@ -46,13 +46,13 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.167.0"  # 0.167.0: Work no longer offers an in-process
-    # external-engine second opinion. The offer's prose and routing leave the work skill and its
-    # continuation reference, and plugins/saga/scripts/second_opinion.py -- the feature-private
-    # dispatch, claim store, sidecar, streak detector and typed projections -- is deleted, with no
-    # live consumer for any of it. The external-content trust boundary survives: its document keeps
-    # every row and rule, and its guard now scans the one call site that remains (issue #938).
-    # Bumped from 0.166.0, the saga version on origin/parent/1018 at b98e94ea.
+    assert plugin_json["version"] == "0.168.0"  # 0.168.0: the run record reference documents the
+    # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
+    # unit row (issue #1025). Bumped from 0.167.0, the saga version on origin/parent/1018 at
+    # 54a526b1: issues #1001, #1026 and #938 took 0.165.0, 0.166.0 and 0.167.0 while this card's
+    # suite ran, so this card renumbered above them rather than shipping a colliding version.
+    # 0.167.0 was issue #938: Work no longer offers an in-process external-engine second opinion,
+    # and plugins/saga/scripts/second_opinion.py is deleted with no live consumer.
     # Predecessor 0.166.0: /plan ends by dispatching the plan
     # review to the Plan Reviewer and looping on repair until no P0 or P1 remains, the /work floor
     # gate stays blocking on the operator's one-word override alone, the Workflow-backend and

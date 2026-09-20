@@ -2,11 +2,18 @@
 """Run a plan of units across herdr agent sessions, one git worktree each.
 
 The plan is authored by the operator and Claude together; this script is the mechanical half.
-It creates a worktree and branch per unit, launches the requested agent there, sends the unit's
-saga command, waits, merges the branches back, and cleans up.
+It creates a FRESH worktree and a branch per unit, launches the requested agent there, sends the
+unit's saga command, waits, takes a merge turn onto the run's parent branch, and cleans up.
 
-State is one JSON file, plus one file each for tasks too long to live in it. If it is wrong,
-delete it -- `herdr agent list` is the real truth.
+State is saga's per-issue run record, `run_record.v1`, under the primary checkout's
+`.claude/saga/runs/issue-<N>.json`. One record per issue, so two issues can be driven in one
+repository at once, and the store root is resolved from the git COMMON directory, so a unit's own
+worktree reads the same file the coordinator writes.
+
+There is no lock, lease, reservation or receipt anywhere in here, and adding one is out of bounds
+(issue #1018). What makes a repeated `go` launch a unit once is that the launch is persisted
+before the launcher is called; what makes a relaunch safe is that every launch gets its own fresh
+worktree; what serialises merges is a `merge_state` field checked against git rather than trusted.
 """
 
 from __future__ import annotations
@@ -16,10 +23,11 @@ import ast
 import contextlib
 import functools
 import glob
+import importlib.util
 import json
 import os
 import re
-import shutil
+import shlex
 import subprocess
 import sys
 import textwrap
@@ -27,6 +35,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,20 +46,18 @@ try:
 except ImportError:  # pragma: no cover - only when the sibling module is missing
     herdr_events = None  # type: ignore[assignment]
 
-RUN_FILE = Path(".orchestrate/run.json")
-LOCAL_RUN_STATE_EXCLUDE = ".orchestrate/"
+# The top-level key orchestrate keeps its own run-level state under, inside saga's per-issue run
+# record. The record's twelve documented keys have no place for a run branch, a base commit or a
+# unit-name-to-issue mapping, and ``run_record`` preserves an unknown top-level key unchanged
+# across a read and a write by design -- so this is a first-class extension point rather than a
+# smuggled field. The record's own documented keys (``admission``, ``approval_scope``,
+# ``run_configuration``, ``review_cycles``, ``roster``) are NEVER written from here.
+ORCHESTRATE_BLOCK = "orchestrate"
 
-# Where task text lives when it does not belong inside run.json. Two mechanisms write here,
-# named apart: the spill (see ``TASK_SPILL_THRESHOLD``) moves a long unit task out of the run
-# record at save time, and ``pane_text`` hands a too-long-to-type task to a session as a file.
-TASK_DIR = RUN_FILE.parent / "tasks"
-
-# A task longer than this is spilled to ``TASK_DIR / f"{unit.name}.task.md"`` at save time, and
-# the record keeps a pointer instead. Measured on a real 75-unit run: run.json was 267,897 bytes
-# and 223,040 of them -- 83% -- were unit task text, rewritten whole on every save and parsed by
-# every subcommand. This threshold is about the record, not the session: what a pane will carry
-# as typed input is a different limit with its own mechanism (``PANE_TYPING_LIMIT``).
-TASK_SPILL_THRESHOLD = 400
+# Where a landing worktree used to live, and where a run file used to be written. Only the
+# directory name survives, as the parent of a merge turn's detached worktree; there is no run
+# file, no task spill and no recovery pointer under it any more (issue #1025).
+WORKTREE_STATE_DIR = Path(".orchestrate")
 
 # The note matches the task column's existing human-facing bound. It used to be the only unbounded
 # status field: one delivery warning stretched a two-unit table to 268 characters per row.
@@ -169,15 +176,12 @@ SAGA_SYNTAX: dict[str, str] = {
 }
 
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
-PROMPT_UNDELIVERED = "prompt_undelivered"
 ACCOUNT_MISMATCH = "account_mismatch"
-# The receipt value the launcher writes for a staged-input stop: ``ComposerState.STAGED.value``
-# in the agent-launcher's composer module. Orchestrate's whole staged retry route hangs on this
-# one string, and the enum is only bound into this namespace after a successful ingest, so the
-# literal lives here under a name and ``tests/test_orchestrate_launch_and_land.py`` binds it to
-# the enum (terminal review F25). Drift there is a red test, not a silent "already has tab".
-STAGED_INPUT_BOX = "staged"
 ORPHANED = "orphaned"
+
+# The three merge-turn states a unit row can carry. ``merging`` is never trusted on its own: see
+# ``stale_merge_turn``.
+MERGE_READY, MERGE_MERGING, MERGE_MERGED = "ready", "merging", "merged"
 PARKED = "parked"
 TERMINAL_UNIT_STATUSES = frozenset({FAILED, ORPHANED, ACCOUNT_MISMATCH, PARKED})
 
@@ -242,11 +246,6 @@ class Unit:
     Always the full text in memory, even when the record on disk keeps only a pointer: ``save``
     spills a task longer than ``TASK_SPILL_THRESHOLD`` into its own file, and ``load`` reads it
     back, so no caller of ``task`` knows the difference."""
-    task_file: str | None = None
-    """The file this unit's task is spilled in, relative to ``TASK_DIR`` -- None when inline.
-
-    Written only by ``save``. A record from before the spill existed carries its task inline and
-    has no such key, which ``load`` still accepts; nothing is migrated at read time."""
     model: str | None = None
     effort: str | None = None
     account: str | None = None
@@ -371,9 +370,50 @@ class Unit:
     variant: str | None = None
     """Effective model variant (e.g. for OpenCode), verified before task submission."""
     launch_receipt: dict[str, Any] = field(default_factory=dict)
-    """Verified launch state: provider, model, variant, cwd, worktree, workspace, pane."""
+    """Verified launch state the launcher fills in memory: provider, model, cwd, worktree, pane.
+
+    **Never persisted** (issue #1025). The receipt was a record that outlived its invocation, and
+    the card removes the receipt records; what a later invocation actually needs from a launch --
+    the tab, the pane and the agent name -- are their own unit fields, written the moment the
+    session exists (``record_launch_identity``)."""
     parked_state: dict[str, Any] = field(default_factory=dict)
     """Typed parked state for push-succeeded / PR-creation-blocked recovery."""
+    merge_state: str = MERGE_READY
+    """Where this unit stands in the merge-turn sequence: ``ready``, ``merging`` or ``merged``.
+
+    Ordinary execution state, not a lock: it carries no owner token and no expiry, and a row left
+    at ``merging`` by a turn that died is reset by the next turn once git confirms no merge is in
+    flight (see ``stale_merge_turn``). The software-development-lifecycle repository's
+    parent-branch chapter describes merge turns exactly this way and explicitly rejects a lock
+    service for them."""
+    owned: bool = False
+    """Did this run's launcher create the tab this unit records?
+
+    The launcher proves ownership from its launch receipt and refuses to close a tab it did not
+    create. The receipt itself is no longer persisted (issue #1025 removes the receipt records),
+    so the one FACT the close needs is kept as its own field -- an identity fact like ``tab_id``,
+    not a record of the launch. Without it a reload left orchestrate unable to close a tab it had
+    made, and every later sweep reported a borrowed tab it should have closed.
+    ``session_owned`` reads this whenever the receipt is absent."""
+    merge_worktree: str | None = None
+    """The detached worktree this unit's merge turn is running in, while a turn is in flight.
+
+    Cleared at the end of every turn, in a ``finally``. It is how a ``merging`` row is checked
+    against reality rather than trusted: no worktree, or a worktree with no merge in flight, means
+    the turn died and the row is released."""
+    launch_started_at: str | None = None
+    """When ``go`` persisted this unit's launch, written BEFORE the launcher is called.
+
+    This is what makes a repeated ``go`` in the launch window launch the unit once: the row is
+    already ``running`` when the second call reads it, so eligibility does not return it. There is
+    no claim, no owner and no expiry -- see DECISIONS ``{#1025-immediate-persist-not-a-reservation}``
+    for the residual this deliberately leaves."""
+    shared_blockers: list[dict[str, Any]] = field(default_factory=list)
+    """Blockers this unit meets, each naming the ONE unit that owns its repair.
+
+    Orchestrate does not diagnose blockers and never writes a row here; it only reads them, so two
+    units never both repair the same thing. The producer is whoever notices the blocker -- the
+    coordinator, or a role session writing through the record."""
 
 
 @dataclass
@@ -401,21 +441,16 @@ class RunBranchResolutionError(RuntimeError):
     """A branch-dependent predicate was asked about an unresolvable run branch."""
 
 
-# The run-file shape this Orchestrate writes and understands. Bumped when a key changes meaning in
-# a way an older Orchestrate would misread rather than ignore -- `status_map` becoming a
-# (Stage, Status) pair in 4.0.0 is exactly that: an older version reads the pair as an unmapped
-# prefix and announces nothing, silently -- and whenever ``Unit`` gains a field, because every
-# Orchestrate before 4.2.0 reads a unit row with a bare ``Unit(**raw)``: it passes this gate on a
-# string it knows and then dies in a TypeError on the key it does not. The string is bound to the
-# Unit field set by ``UNIT_FIELDS_BY_CONTRACT`` in ``tests/test_orchestrate_board_writeback.py``.
-# Every string this Orchestrate ever wrote stays in the known set, so its own older run files
-# still open; the empty string is a run file older than the contract key itself.
-RUN_FILE_CONTRACT = "2026-09-02.permission-declared"
-KNOWN_RUN_FILE_CONTRACTS = frozenset({"", "2026-08-31.stage-status-pair", RUN_FILE_CONTRACT})
+# Unit-row keys that are in-memory only and never reach the record (issue #1025).
+UNPERSISTED_UNIT_FIELDS = frozenset({"launch_receipt"})
 
 
-class RunFileContractError(RuntimeError):
-    """A run file written under a contract this Orchestrate does not know."""
+class RecordError(RuntimeError):
+    """The per-issue run record could not be used. The command line maps it to exit 2."""
+
+
+class UnknownRecordVersionError(RecordError):
+    """The record carries a version this Orchestrate does not know. Exit 3."""
 
 
 @dataclass
@@ -439,8 +474,14 @@ class Run:
     end this is the single branch that merges into the operator's tree."""
     branch_state: RunBranchState | None = field(default=None, init=False, repr=False)
     """One load-time resolution of ``branch``; absent only for a legacy branchless run."""
-    conflict_worktree: str | None = None
-    """A detached land worktree retained so the operator can resolve a merge conflict."""
+    issue: int = 0
+    """The issue this run belongs to. The run's identity, and the record's file name."""
+    store_root: Path | None = field(default=None, repr=False)
+    """Where this run's record lives. Absolute, and the same from every linked worktree."""
+    record: Any = field(default=None, repr=False)
+    """The loaded ``run_record.v1`` document this run is a view over."""
+    workspaces_created: list[str] = field(default_factory=list)
+    """Herdr workspaces this run created, so ``clean`` can retire exactly those and no others."""
     workspace: str | None = None
     """Default herdr workspace NAME every unit inherits unless it sets its own.
 
@@ -482,55 +523,70 @@ class Run:
     controller's outcome, resubmit flag, or unresolved fix requests can never be read as another's
     (#877)."""
     review_controller_ceiling: int | None = None
-    # Units whose merge landed but whose board writeback did not, unit name -> reason. Persisted
-    # because the failure OUTLIVES the invocation that saw it: `land` announces only the units it
-    # merged this time, so a second `land` after a failed writeback merged nothing, announced
-    # nothing, found no failures and exited 0 -- while the card was still wrong and the exit code
-    # said it was not. Cleared per unit as soon as a later round converges that unit.
-    writeback_failed: dict[str, str] = field(default_factory=dict)
     """Most Code Review controllers this run may have running at once, when declared."""
 
     @classmethod
-    def load(cls, path: Path = RUN_FILE) -> Run:
-        raw = json.loads(path.read_text())
-        contract = str(raw.get("contract", ""))
-        if contract and contract not in KNOWN_RUN_FILE_CONTRACTS:
-            # A run file written by a NEWER Orchestrate, opened by this one. Refuse rather than
-            # read it: a `status_map` whose values this version cannot interpret resolves to "no
-            # status mapped for this unit's prefix" -- a designed no-op -- so a downgrade turns a
-            # board write into silence, which is the same failure shape everywhere else in this
-            # change. This can only protect run files written from here on: an Orchestrate older
-            # than 4.0.0 does not read this key and will still open a 4.0.0 run file blind, which
-            # is why the changelog carries the downgrade as an install obligation rather than a
-            # note.
-            raise RunFileContractError(
-                f"{path} was written under run-file contract {contract!r}, which this Orchestrate "
-                f"does not know (it knows {', '.join(sorted(c for c in KNOWN_RUN_FILE_CONTRACTS if c))}). "
-                f"Update the orchestrate plugin rather than running this run file with an older one"
+    def load(cls, issue: int, store_root: Path | None = None) -> Run:
+        """Read *issue*'s run from saga's per-issue run record (issue #1025).
+
+        There is no run file any more. One record per issue is what lets two issues be driven in
+        one repository at once, and the store root comes from the git COMMON directory, so a
+        unit's own worktree reads the same file the coordinator writes -- issue 886's fifth
+        finding was that a repository-relative, git-ignored directory resolves to an empty one
+        inside a worktree.
+        """
+        root = Path(store_root) if store_root is not None else resolve_record_store_root()
+        record = load_record(root, issue)
+        block = record.extra.get(ORCHESTRATE_BLOCK)
+        if not isinstance(block, dict):
+            raise RecordError(
+                f"the run record for issue {issue} carries no {ORCHESTRATE_BLOCK!r} block, so this "
+                "issue has no orchestrate run; `orchestrate.py start --issue "
+                f"{issue} --plan <plan>` creates one"
             )
         loaded = cls(
-            run_id=raw["run_id"],
-            source=raw["source"],
-            base=raw["base"],
-            units=[read_unit(u) for u in raw["units"]],
-            backend=raw.get("backend", "inline"),
-            branch=raw.get("branch", ""),
-            conflict_worktree=raw.get("conflict_worktree") or None,
-            issues=raw.get("issues", {}),
-            status_map=raw.get("status_map", {}),
-            workspace=raw.get("workspace") or None,
-            account=raw.get("account") or None,
-            review_result=raw.get("review_result"),
-            review_outcome=raw.get("review_outcome"),
-            review_resubmit_pending=bool(raw.get("review_resubmit_pending", False)),
-            operator_fix_requests=raw.get("operator_fix_requests", []),
-            review_states=raw.get("review_states", {}),
-            review_controller_ceiling=review_ceiling_from_plan(raw),
-            writeback_failed=raw.get("writeback_failed", {}),
+            run_id=str(block.get("run_id") or f"issue-{issue}"),
+            source=str(block.get("source", "")),
+            base=str(block.get("base", "")),
+            units=[read_unit(u) for u in record.units],
+            backend=str(block.get("backend", "inline")),
+            branch=str(block.get("branch", "")),
+            issue=int(issue),
+            store_root=root,
+            record=record,
+            workspaces_created=list(block.get("workspaces_created") or []),
+            issues=dict(block.get("issues") or {}),
+            status_map=dict(block.get("status_map") or {}),
+            workspace=block.get("workspace") or None,
+            account=block.get("account") or None,
+            review_result=block.get("review_result"),
+            review_outcome=block.get("review_outcome"),
+            review_resubmit_pending=bool(block.get("review_resubmit_pending", False)),
+            operator_fix_requests=list(block.get("operator_fix_requests") or []),
+            review_states=dict(block.get("review_states") or {}),
+            review_controller_ceiling=review_ceiling_from_plan(block),
         )
-        # engine_prefs was retired with #776; ignore it on load so older run files still open.
         loaded.resolve_branch_once()
         return loaded
+
+    def parameter(self, name: str) -> Any:
+        """One run-configuration parameter's value, or ``None`` when the record has no record."""
+        if self.record is None:
+            return None
+        entry = self.record.run_configuration.get(name)
+        if isinstance(entry, dict):
+            return entry.get("value")
+        return entry
+
+    def open_roster_rows(self) -> int:
+        """How many role sessions this issue still has open.
+
+        Counted against the same width number this run's units are counted against: the number
+        exists for the account's rate limit, and a role pane is an agent session like any other.
+        """
+        if self.record is None:
+            return 0
+        return sum(1 for row in self.record.roster if str(row.get("state")) != "closed")
 
     def resolve_branch_once(self) -> None:
         """Resolve the named run branch once and retain both success and failure as state."""
@@ -568,37 +624,15 @@ class Run:
         if self.branch:
             self.branch_state = RunBranchState(self.branch, commit)
 
-    def save(self, path: Path = RUN_FILE) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Pre-validate all unit spills so any refusal happens before mutating any files on disk
-        planned_spills: dict[str, tuple[str, Path, str]] = {}
-        for u in self.units:
-            if len(u.task) > TASK_SPILL_THRESHOLD:
-                planned_spills[u.name] = check_can_spill_unit(u, self.run_id)
-
-        TASK_DIR.mkdir(parents=True, exist_ok=True)
-        unit_rows: list[dict[str, Any]] = []
-        for u in self.units:
-            if u.name in planned_spills:
-                pointer, target, stamped_task = planned_spills[u.name]
-                _atomic_write_text(target, stamped_task, encoding="utf-8")
-                data = asdict(u)
-                data["task"] = ""
-                data["task_file"] = pointer
-                unit_rows.append(data)
-            else:
-                data = asdict(u)
-                data["task_file"] = None
-                unit_rows.append(data)
-
-        payload = {
+    def block(self) -> dict[str, Any]:
+        """This run's own state, as it is stored under the record's ``orchestrate`` key."""
+        return {
             "run_id": self.run_id,
             "source": self.source,
             "base": self.base,
             "backend": self.backend,
             "branch": self.branch,
-            "conflict_worktree": self.conflict_worktree,
+            "workspaces_created": self.workspaces_created,
             "issues": self.issues,
             "status_map": self.status_map,
             "workspace": self.workspace,
@@ -609,11 +643,29 @@ class Run:
             "operator_fix_requests": self.operator_fix_requests,
             "review_states": self.review_states,
             "review_controller_ceiling": self.review_controller_ceiling,
-            "writeback_failed": self.writeback_failed,
-            "contract": RUN_FILE_CONTRACT,
-            "units": unit_rows,
         }
-        _atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
+
+    def save(self) -> Path:
+        """Write the unit rows and this run's own block back to the record, and nothing else.
+
+        ``admission``, ``approval_scope``, ``run_configuration``, ``review_cycles`` and ``roster``
+        pass through untouched, and so does every OTHER unknown top-level key a newer writer put
+        there -- the record module preserves them and this only replaces its own.
+        """
+        if self.record is None or self.store_root is None:
+            raise RecordError("this run is not attached to a record; nothing was written")
+        module = _run_record_module()
+        extra = dict(self.record.extra)
+        extra[ORCHESTRATE_BLOCK] = self.block()
+        updated = module.RunRecord(
+            **{
+                **self.record.__dict__,
+                "units": [unit_row(u) for u in self.units],
+                "extra": extra,
+            }
+        )
+        self.record = updated
+        return Path(module.save(self.store_root, updated))
 
     def unit(self, name: str) -> Unit:
         for u in self.units:
@@ -859,44 +911,6 @@ class Run:
         return "; ".join(parts)
 
 
-_TASK_SPILL_MARKER_PATTERN = re.compile(
-    r"^<!--\s*orchestrate:owner\s+json=(?P<json>\{.*?\})\s*-->\r?\n"
-)
-
-
-def task_spill_marker(run_id: str, unit_name: str) -> str:
-    """Format the stable ownership marker for a generated task spill file."""
-    raw_json = json.dumps({"run_id": run_id, "unit": unit_name}, sort_keys=True)
-    # Escape '-->' sequence so the HTML comment is never broken by unit names containing arrows
-    safe_json = raw_json.replace("-->", r"\u002d\u002d\u003e")
-    return f"<!-- orchestrate:owner json={safe_json} -->"
-
-
-def parse_task_spill_marker(content: str) -> tuple[str, str] | None:
-    """Extract (run_id, unit_name) from a task spill file's ownership marker, if present."""
-    match = _TASK_SPILL_MARKER_PATTERN.match(content)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group("json"))
-        if isinstance(data, dict) and "run_id" in data and "unit" in data:
-            run_id = str(data["run_id"])
-            unit_name = str(data["unit"])
-            if run_id and unit_name:
-                return run_id, unit_name
-    except (ValueError, TypeError):
-        return None
-    return None
-
-
-def strip_task_spill_marker(content: str) -> str:
-    """Return task content with any leading orchestrate ownership marker removed."""
-    match = _TASK_SPILL_MARKER_PATTERN.match(content)
-    if not match:
-        return content
-    return content[match.end() :]
-
-
 def _atomic_write_text(target: Path, content: str, encoding: str = "utf-8") -> None:
     """Write content to target atomically via a temporary file in the same directory."""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -910,83 +924,124 @@ def _atomic_write_text(target: Path, content: str, encoding: str = "utf-8") -> N
                 temp_path.unlink()
 
 
-def resolve_task_file(pointer: str) -> Path:
-    """The spill file a ``task_file`` pointer names, refusing anything outside ``TASK_DIR``.
+# ------------------------------------------------------- saga's per-issue run record (issue #1025)
 
-    Symlinks are resolved before the comparison, so a link planted inside the directory does not
-    pass. The check runs on the resolved target rather than trusting the join: in Python an
-    absolute right-hand operand discards the left, so ``TASK_DIR / "/etc/passwd"`` is simply
-    ``/etc/passwd``. Every pointer passes through here, on save AND on load -- a run record
-    edited by hand never passed through name validation, and that is the case this check exists
-    for."""
-    base = TASK_DIR.resolve()
-    resolved = (TASK_DIR / pointer).resolve()
-    if base not in resolved.parents:
-        raise SystemExit(f"task file {pointer!r} resolves outside {TASK_DIR}: {resolved}")
-    return resolved
+#: Points straight at saga's ``run_record.py``, for a layout the resolver below does not know.
+RUN_RECORD_ENV = "ORCHESTRATE_RUN_RECORD"
+
+_RUN_RECORD_MODULE: Any = None
 
 
-def check_can_spill_unit(unit: Unit, run_id: str) -> tuple[str, Path, str]:
-    """Validate that a unit's long task can safely spill to its task file without clobbering.
+def _run_record_candidates() -> list[Path]:
+    """Where saga's ``run_record.py`` can live, in order of trust.
 
-    Returns (pointer, target_path, stamped_content). Fails loudly with SystemExit on conflict."""
-    if not run_id:
-        raise SystemExit("run_id must not be empty when spilling tasks")
-    pointer = f"{unit.name}.task.md"
-    target = resolve_task_file(pointer)
-
-    if target.exists():
-        try:
-            existing_content = target.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            raise SystemExit(
-                f"refusing to overwrite task file {pointer!r} ({target}): "
-                f"cannot read existing file ({exc})"
-            ) from None
-
-        owner = parse_task_spill_marker(existing_content)
-        if owner is not None:
-            existing_run_id, existing_unit_name = owner
-            if existing_unit_name != unit.name:
-                raise SystemExit(
-                    f"refusing to overwrite task file {pointer!r} ({target}) owned by "
-                    f"unit {existing_unit_name!r} (current unit {unit.name!r})"
-                )
-            if existing_run_id != run_id:
-                raise SystemExit(
-                    f"refusing to overwrite task file {pointer!r} ({target}) owned by "
-                    f"run {existing_run_id!r} unit {existing_unit_name!r} "
-                    f"(current run {run_id!r} unit {unit.name!r})"
-                )
-        else:
-            if unit.task_file != pointer:
-                raise SystemExit(
-                    f"refusing to overwrite unmarked task file {pointer!r} ({target}); "
-                    "hand-authored briefs are protected from generated task spills"
-                )
-
-    stamped_task = f"{task_spill_marker(run_id, unit.name)}\n{unit.task}"
-    return pointer, target, stamped_task
+    The same ladder ``_controller_candidates`` uses for the reconcile controller: the repository
+    layout first, because this file ships beside the saga plugin in one checkout, then each
+    vendor's install cache, newest version first. A bare ``<plugin>/../saga/`` guess is not
+    enough on its own -- in an install cache the sibling of ``orchestrate/<version>/`` is
+    ``orchestrate/``, not ``saga/``.
+    """
+    here = Path(__file__).resolve()
+    root = _plugin_root(here)
+    # 1. The repository layout: this file ships beside the saga plugin in one checkout.
+    paths = [root.parent / "saga" / "scripts" / "run_record.py"]
+    # 2. The SIBLING CACHE layout, which the repository probe cannot reach: an install cache holds
+    #    `<marketplace>/orchestrate/<version>/` and `<marketplace>/saga/<version>/`, so the sibling
+    #    of this plugin's root is `orchestrate/`, not `saga/`, and the version directory sits
+    #    between them. Newest version first, the same ordering `_install_candidates` uses and for
+    #    the same reason: a stale saga resolved here would read the record with an older contract.
+    marketplace = root.parent.parent
+    paths.extend(
+        sorted(
+            (
+                Path(hit)
+                for hit in glob.glob(str(marketplace / "saga" / "*" / "scripts" / "run_record.py"))
+            ),
+            key=lambda path: (_version_rank(path, "saga"), str(path)),
+            reverse=True,
+        )
+    )
+    # 3. Every vendor's own install cache, newest version first.
+    paths.extend(_install_candidates("saga", "scripts/run_record.py"))
+    return paths
 
 
-def spill_unit(unit: Unit, run_id: str) -> dict[str, Any]:
-    """One unit's row in the run record, with a long task spilled to its own file.
+def _run_record_module() -> Any:
+    """Import saga's ``run_record`` by path, once per process.
 
-    The record keeps the pointer and ``TASK_DIR`` keeps the text, stamped with an Orchestrate
-    ownership marker carrying run and unit identity. If the target file already exists, it is
-    overwritten only if it is owned by the same run and unit (idempotent update). If the file is
-    unmarked (such as a hand-authored brief) or owned by another run/unit, saving fails loudly with
-    SystemExit, naming the conflicting path, leaving the existing file bytes untouched."""
-    data = asdict(unit)
-    if len(unit.task) <= TASK_SPILL_THRESHOLD:
-        data["task_file"] = None
-        return data
-    TASK_DIR.mkdir(parents=True, exist_ok=True)
-    pointer, target, stamped_task = check_can_spill_unit(unit, run_id)
-    _atomic_write_text(target, stamped_task, encoding="utf-8")
-    data["task"] = ""
-    data["task_file"] = pointer
-    return data
+    Neither plugin is importable as a package, so the module is loaded from its file. A missing
+    saga is a refusal naming every path that was tried, never a traceback out of an import.
+    """
+    global _RUN_RECORD_MODULE
+    if _RUN_RECORD_MODULE is not None:
+        return _RUN_RECORD_MODULE
+    override = os.environ.get(RUN_RECORD_ENV, "")
+    candidates = [Path(override).expanduser()] if override else _run_record_candidates()
+    for path in candidates:
+        if not path.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location("run_record", path)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault("run_record", module)
+        spec.loader.exec_module(module)
+        _RUN_RECORD_MODULE = module
+        return module
+    tried = ", ".join(str(path) for path in candidates) or "<nothing>"
+    raise RecordError(
+        "saga's run_record module could not be found, so this issue's run record cannot be read; "
+        f"install the saga plugin beside orchestrate, or point {RUN_RECORD_ENV} at run_record.py. "
+        f"Tried: {tried}"
+    )
+
+
+def resolve_record_store_root(start: Path | None = None) -> Path:
+    """The absolute run-record store, resolved through saga's own resolver.
+
+    Never re-derived here. The resolution reads the git COMMON directory rather than the
+    worktree's own, which is the whole reason a unit's worktree and the coordinator see one file;
+    a second copy of that rule in this plugin is the drift this repository keeps paying for.
+    """
+    module = _run_record_module()
+    try:
+        return Path(module.resolve_store_root(start))
+    except Exception as exc:  # the module raises its own StoreRootError
+        raise RecordError(f"the run record store could not be resolved: {exc}") from None
+
+
+def _record_warn(message: str) -> None:
+    """Report an unknown top-level record field, except this plugin's own block.
+
+    ``orchestrate`` is an unknown key from ``run_record``'s point of view and a known one from
+    here, so warning about it on every read would train the operator to ignore the warning that
+    matters -- a field a NEWER writer added, which is the case issue 989 is about.
+    """
+    if f"{ORCHESTRATE_BLOCK!r}" in message:
+        return
+    print(message, file=sys.stderr)
+
+
+def load_record(store_root: Path, issue: int) -> Any:
+    """Read *issue*'s record, mapping saga's errors onto this module's own."""
+    module = _run_record_module()
+    try:
+        record = module.load(store_root, issue, warn=_record_warn)
+    except module.UnknownRecordVersionError as exc:
+        raise UnknownRecordVersionError(str(exc)) from None
+    except module.RunRecordError as exc:
+        raise RecordError(str(exc)) from None
+    if record is None:
+        raise RecordError(
+            f"there is no run record for issue {issue} in {store_root}; run the admission step "
+            f"first: `python3 plugins/saga/scripts/admission.py --issue {issue}`"
+        )
+    return record
+
+
+def unit_row(unit: Unit) -> dict[str, Any]:
+    """One unit's row for the record, with the in-memory-only fields left out."""
+    return {key: value for key, value in asdict(unit).items() if key not in UNPERSISTED_UNIT_FIELDS}
 
 
 def _orchestrate_version() -> str:
@@ -999,25 +1054,16 @@ def _orchestrate_version() -> str:
 
 
 def read_unit(raw: dict[str, Any]) -> Unit:
-    """One unit from its record row, reading a spilled task back transparently.
+    """One unit from its row in the record's ``units`` array.
 
-    A row without a pointer is an old-format record or a short task, and its inline task is
-    taken as-is -- nothing is migrated at read time, so a run.json written by an older version
-    loads exactly as it lies. A pointer whose file is genuinely missing loads as an empty task
-    with a note naming it: a run record must stay loadable even when its spill does not. Every
-    other read failure -- a directory standing where the file should be, a permission error, an
-    I/O error -- raises rather than being absorbed: absorbing it also drops the pointer, so the
-    next save would make the loss permanent and the unit could be launched with no instructions.
-    If the file contains a leading Orchestrate ownership marker, the marker is stripped so the
-    unit's in-memory task text is restored cleanly; unmarked hand-authored briefs load verbatim.
+    The task is the row's own text: there is no spill file any more (issue #1025). The spill
+    existed because the old fixed-path run file was rewritten whole on every save and 83% of a
+    75-unit record was task text; one issue's record is not that file.
 
     A key this Unit does not know is dropped with a one-line notice naming the unit, the key
-    and this Orchestrate's version. That is a safety net for a row under a contract this
-    version knows -- a hand-edited record, or a same-contract writer that added a field it
-    should not have -- not forward tolerance: a run file written by a newer Orchestrate under
-    a newer contract string is refused by ``Run.load`` before any unit row is read (cycle 2,
-    F68). No version is ever written into the run file; the contract string is the only
-    statement of shape.
+    and this Orchestrate's version. That is a safety net for a hand-edited row, or one a newer
+    Orchestrate added a field to; the record's own ``schema`` token is what refuses a document
+    this version cannot read at all, before any unit row is reached.
     """
     known = set(Unit.__dataclass_fields__)
     unknown = [key for key in raw if key not in known]
@@ -1032,21 +1078,10 @@ def read_unit(raw: dict[str, Any]) -> Unit:
         raw = {key: value for key, value in raw.items() if key in known}
     unit = Unit(**raw)
     if unit.lifecycle is not None:
-        # Normalise here rather than in the plan guard alone: review-result, land, status and reap
+        # Normalise here rather than in the plan guard alone: review-result, merge, status and reap
         # all load the run without passing through that guard, and "c2" versus "c2 " being two
         # lifecycles for routing is exactly the bypass the one-per-lifecycle rule forbids (#877).
         unit.lifecycle = unit.lifecycle.strip() or None
-    if not unit.task_file:
-        return unit
-    spill = resolve_task_file(unit.task_file)
-    try:
-        raw_text = spill.read_text(encoding="utf-8")
-        unit.task = strip_task_spill_marker(raw_text)
-    except FileNotFoundError:
-        unit.task = ""
-        unit.task_file = None
-        note = f"spilled task file is gone: {spill}"
-        unit.note = f"{unit.note}; {note}" if unit.note else note
     return unit
 
 
@@ -1966,20 +2001,20 @@ def assert_agent_launcher_ingested() -> None:
 def assert_agent_launcher_available() -> None:
     """Refuse before any pane write, session or worktree creation, or tab close.
 
-    The seven commands that call this: ``start``, ``expand``, ``go``, ``review-result``,
-    ``land``, ``clean``, and ``redrive``.
+    The five commands that call this: ``start``, ``expand``, ``go``, ``review-result``,
+    ``merge`` and ``clean``.
 
-    This is the KTD7 matrix's write side
-    (``docs/engineering-journal/DECISIONS.md`` ``{#907-agent-launcher-floor-owner}``):
-    it fires whenever the companion is below the declared floor (stale: update it) or
-    was not ingested at all (missing or unusable: install or repair it). Read-only
-    commands never call it, so a broken companion never kills a status or a check
-    while a unit is running.
+    **A companion below the declared floor WARNS and the command continues** (issue #1025). The
+    distinction that survives is between stale and absent: a below-floor launcher still defines
+    every name orchestrate calls, so the call can be made and the operator is told the install is
+    behind; a launcher that was never ingested, or that is missing a required name, has nothing to
+    call and still refuses with the install remedy. Refusing on the floor made an out-of-date
+    install indistinguishable from a broken one, and stopped work that would have succeeded.
     """
-    if _AGENT_LAUNCHER_ERROR:
-        raise SystemExit(_AGENT_LAUNCHER_ERROR)
     if not _AGENT_LAUNCHER_AVAILABLE:
-        raise SystemExit(_REMEDIATION_MESSAGE)
+        raise SystemExit(_AGENT_LAUNCHER_ERROR or _REMEDIATION_MESSAGE)
+    if _AGENT_LAUNCHER_ERROR:
+        _print_companion_fault_once()
 
 
 def _ingest_agent_launcher() -> bool:
@@ -2245,28 +2280,6 @@ def repo_root() -> Path:
     return Path(run(["git", "rev-parse", "--show-toplevel"]).stdout.strip())
 
 
-def ensure_local_run_state_excluded() -> None:
-    """Keep Orchestrate's local run state out of the driven repository's status.
-
-    ``git rev-parse --git-path`` resolves the shared ``info/exclude`` file correctly for both a
-    primary checkout and a linked worktree. Existing rules stay byte-for-byte intact; the only
-    addition is one newline when the previous final line needs terminating, followed by the one
-    Orchestrate rule. Repeated ``start`` calls therefore do not grow the file.
-    """
-    root = repo_root()
-    result = run(["git", "-C", str(root), "rev-parse", "--git-path", "info/exclude"])
-    exclude_path = Path(result.stdout.strip())
-    if not exclude_path.is_absolute():
-        exclude_path = root / exclude_path
-    exclude_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = exclude_path.read_text() if exclude_path.exists() else ""
-    if LOCAL_RUN_STATE_EXCLUDE in (line.strip() for line in existing.splitlines()):
-        return
-    separator = "" if not existing or existing.endswith("\n") else "\n"
-    with exclude_path.open("a", encoding="utf-8") as exclude_file:
-        exclude_file.write(f"{separator}{LOCAL_RUN_STATE_EXCLUDE}\n")
-
-
 # ----------------------------------------------------------------- launching
 
 
@@ -2338,29 +2351,125 @@ def landed_by_merge(branch: str, r: Run) -> bool:
     return False
 
 
-def make_worktree(unit: Unit, r: Run, root: Path) -> None:
-    """One worktree and one branch per unit. This is the whole isolation story.
+#: Points at the command that prepares a fresh worktree's environment, for a repository whose
+#: setup is not ``uv``.
+WORKTREE_SETUP_ENV = "ORCHESTRATE_WORKTREE_SETUP"
 
-    Every unit branches from the run branch, whatever it names in ``after``. A dependency's
-    output is visible to it because ``land`` merged that work onto the run branch, not because
-    of where this unit branches from -- that is why a phase is landed before the next one is
-    launched; the land is what puts the earlier phase's work where a dependent unit can see it.
-    Made at launch time, not at ``start``, so the branch opens on the run branch as it stands,
-    with everything landed so far already on it.
+#: What a ``uv`` repository's fresh worktree needs before a session can run its own tests.
+DEFAULT_WORKTREE_SETUP = ("uv", "sync", "--locked", "--extra", "dev")
+
+
+def fresh_unit_worktree_path(canonical: Path, *, avoid: Path | None = None) -> Path:
+    """The canonical path, or the lowest unused numbered sibling when that is taken.
+
+    "Unused" is THREE tests: nothing at the path on disk (``lexists``, so a dangling symlink
+    counts), no git worktree registered there, and not *avoid*. A directory git has forgotten and
+    a registration whose directory is gone are both real states, and either one makes
+    ``git worktree add`` fail.
+
+    *avoid* is the path this unit used last time, and it counts as taken even after it has been
+    removed. That is what makes "a fresh worktree on every launch, never a reused path" a property
+    a reader can check on disk rather than a claim about what happened in between: releasing a
+    stale tree and recreating a directory of the same name would leave the two launches
+    indistinguishable afterwards.
     """
-    path = root.parent / f"orch-{unit.name}"
+    registered = set(registered_worktree_paths())
+    blocked = {Path(os.path.abspath(avoid))} if avoid is not None else set()
+
+    def taken(candidate: Path) -> bool:
+        return (
+            os.path.lexists(candidate)
+            or Path(os.path.abspath(candidate)) in registered
+            or Path(os.path.abspath(candidate)) in blocked
+        )
+
+    if not taken(canonical):
+        return canonical
+    number = 1
+    while True:
+        candidate = canonical.with_name(f"{canonical.name}-{number}")
+        if not taken(candidate):
+            return candidate
+        number += 1
+
+
+def worktree_setup_command() -> list[str] | None:
+    """What to run in a fresh worktree before a session is launched into it, or ``None``.
+
+    Declared, never guessed: the environment variable when it is set, otherwise ``uv sync`` when
+    the repository has a ``uv.lock``, otherwise nothing. Copying or linking the primary
+    checkout's ``.venv`` is not an option -- a virtual environment records absolute paths, so the
+    copy points back at the directory it came from.
+    """
+    override = os.environ.get(WORKTREE_SETUP_ENV, "").strip()
+    if override:
+        return shlex.split(override)
+    return None
+
+
+def prepare_worktree_environment(path: Path, root: Path) -> str | None:
+    """Run the setup command in *path*; return a failure description, or ``None`` on success.
+
+    A unit whose worktree has no virtual environment produces confident work that cannot run its
+    own tests, and the failure surfaces much later as a test result nobody can reproduce. So a
+    failing setup is named on the unit and the unit is not launched.
+    """
+    command = worktree_setup_command()
+    if command is None:
+        if not (root / "uv.lock").is_file():
+            print(f"  {path.name}: no uv.lock and no {WORKTREE_SETUP_ENV}; no setup step run")
+            return None
+        command = list(DEFAULT_WORKTREE_SETUP)
+    print(f"  {path.name}: {' '.join(command)}")
+    proc = run(command, check=False, timeout=900)
+    if proc.returncode == 0:
+        return None
+    detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+    return f"worktree setup `{' '.join(command)}` failed ({proc.returncode})" + (
+        f": {detail[-1]}" if detail else ""
+    )
+
+
+def make_worktree(unit: Unit, r: Run, root: Path) -> str | None:
+    """A FRESH worktree on every launch, on the unit's own branch (issue #1025, card 886).
+
+    The branch is the unit's identity and holds its history, so a relaunch reuses it; only the
+    working directory is new. A reused directory is what made "fast-forward it, adopt or close the
+    prior session, preserve the unknown fields" a question at all -- a fresh one removes the
+    question rather than answering it, and it is also why a second ``go`` racing the first can
+    never put two sessions in one tree.
+
+    A new branch opens on the parent branch as it stands, with everything merged so far already on
+    it. Returns a setup-failure description, or ``None`` when the worktree is ready.
+    """
     # dash, not a second slash: git cannot hold `orch/<run>` as a branch and `orch/<run>/<unit>`
     # as another, because one ref would have to be both a file and a directory
-    branch = f"orch/{r.run_id}-{unit.name}"
+    branch = unit.branch or f"orch/{r.run_id}-{unit.name}"
     base = r.branch or r.base
-    if path.exists():
-        print(f"  worktree already there: {path}")
-    else:
+    # The stale directory is RELEASED, not reused and not left behind. git will not check a branch
+    # out into a second worktree while the first still holds it, so a relaunch has to let the old
+    # one go -- and letting it go is the point: card 886's hazards all begin with a session
+    # standing in a tree some earlier session left. The release refuses on uncommitted or unpushed
+    # work and names what is at risk, so "fresh" never means "discarded".
+    previous = Path(unit.worktree) if unit.worktree else None
+    if previous is not None and os.path.lexists(previous):
+        released, why = release_unit_worktree(unit, root)
+        print(f"  {unit.name}: {why}")
+        if not released:
+            return (
+                "the previous worktree could not be released, so this unit is not relaunched: "
+                f"{why}"
+            )
+    path = fresh_unit_worktree_path(root.parent / f"orch-{r.run_id}-{unit.name}", avoid=previous)
+    if resolve_ref(branch) is None:
         run(["git", "worktree", "add", str(path), "-b", branch, base or r.base])
         unit.branched_from = resolve_ref(branch)
+    else:
+        run(["git", "worktree", "add", str(path), branch])
     unit.worktree = str(path)
     unit.branch = branch
     print(f"  {unit.name}: {path.name} on {branch} from {base}")
+    return prepare_worktree_environment(path, root)
 
 
 def poll(
@@ -2668,7 +2777,7 @@ def render_rung(rung: tuple[str, str]) -> str:
 # rule W-D2 states for that boundary is "merged, PLUS the applicable non-production deployment or
 # artifact verification". Orchestrate can check NEITHER conjunct:
 #
-#   * `cmd_land` merges unit branches onto the RUN branch, `orch/<run-id>` -- never the default
+#   * `cmd_merge` merges unit branches onto the run's PARENT branch -- never the default
 #     branch -- so a `landed` boundary is not a merge in W-D2's sense at all; and
 #   * every occurrence of `deployment` / `deployed` / `non-production` / `nonprod` in this module
 #     is prose inside this comment -- there is no code that reads, computes or receives any of
@@ -3156,7 +3265,7 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
             continue
         if not live:
             # FAIL LOUD, and say so on stderr. An earlier form recorded a `skipped` here, which
-            # `report_announcements` prints only under `verbose` (both `cmd_land` call sites pass
+            # `report_announcements` prints only under `verbose` (the `cmd_merge` call site passes
             # the default False) and `_failed_writebacks` excludes by design -- so on a machine
             # where the schema does not resolve, `land` wrote nothing to any board, printed nothing
             # about it, and exited 0. That is the same silence this whole change exists to end, one
@@ -3392,88 +3501,148 @@ def _report_failed_writebacks(failures: Sequence[dict[str, Any]]) -> None:
             print("  a retry cannot clear this on its own -- fix the cause named above first")
 
 
-def record_writeback_outcome(r: Run, records: Sequence[dict[str, Any]]) -> None:
-    """Fold one round's writeback records into the run file's outstanding-failure ledger.
+def report_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> None:
+    """Name every path cleanup could not remove, with git's own message (issue #1025).
 
-    Converged units are cleared, failed units are recorded with their reason. The ledger is what
-    makes a failure survive the invocation that produced it: `land` only ever announces the units
-    it merged in THAT invocation, so without this a second `land` sees no failures because it
-    attempted no writes, and exits 0 over a card that is still wrong."""
-    failed = {str(record.get("unit", "?")) for record in _failed_writebacks(records)}
-    for record in records:
-        name = str(record.get("unit", "?"))
-        if name in failed:
-            blocking = [write for write in record.get("writes", []) if not _write_converged(write)]
-            reason = ""
-            for write in blocking:
-                reason = str(
-                    write.get("error") or write.get("halt_reason") or write.get("note") or ""
-                )
-                if reason:
-                    break
-            r.writeback_failed[name] = reason or "the board write did not converge"
-        elif "skipped" not in record:
-            r.writeback_failed.pop(name, None)
-
-
-def _report_outstanding_writebacks(r: Run, announced: Sequence[str]) -> list[str]:
-    """Name every unit carrying a writeback failure from an EARLIER invocation, and return them.
-
-    Units announced in this invocation are excluded -- they were just reported first-hand."""
-    outstanding = sorted(set(r.writeback_failed) - set(announced))
-    for name in outstanding:
-        print(
-            f"BOARD WRITEBACK STILL OUTSTANDING: {name} -- a previous land or announce failed to "
-            f"update its card and nothing has since: {r.writeback_failed[name]}"
-        )
-        print(f"  retry with `orchestrate.py announce {name}`")
-    return outstanding
-
-
-def _report_landing_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> None:
-    """Name every landing path that remains after cleanup."""
+    Called from a ``finally`` block, so it must contain nothing that can itself raise: issue 979
+    reported a removal failure appended to a list whose only reader was skipped whenever an
+    exception was unwinding, which is exactly when a leftover most needs naming.
+    """
     for path, detail in failures:
-        print(f"  LANDING CLEANUP FAILED at {path}: {detail}")
+        print(f"  CLEANUP FAILED at {path}: {detail}")
 
 
 # ----------------------------------------------------------------- commands
 
 
-def cmd_start(args: argparse.Namespace) -> int:
-    assert_agent_launcher_available()
-    plan = json.loads(Path(args.plan).read_text())
+def load_plan(path: str) -> dict[str, Any]:
+    """Read a plan file, refusing by name rather than by traceback.
+
+    Since the companion floor warns instead of refusing (issue #1025), a plan read is now
+    reachable in states that used to stop earlier -- so "this file is not a plan" has to be a
+    sentence the operator can act on rather than a JSONDecodeError six frames deep.
+    """
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"cannot read the plan at {path}: {exc}") from None
+    try:
+        loaded = json.loads(raw)
+    except ValueError as exc:
+        raise SystemExit(f"the plan at {path} is not JSON: {exc}") from None
+    if not isinstance(loaded, dict):
+        raise SystemExit(f"the plan at {path} is not a JSON object")
+    return loaded
+
+
+def validate_plan(plan: Mapping[str, Any]) -> list[Unit]:
+    """Every check ``start`` runs before it creates anything, and NOTHING else (issue 879).
+
+    This is the first half of ``start``, not a copy of it: ``plan-check`` calls this and stops,
+    ``start`` calls it and goes on to create resources. One code path stays the source of truth,
+    so a validator cannot quietly stop agreeing with the ``start`` it claims to match.
+
+    Nothing here writes: no worktree, no branch, no tab, no session, no record. ``plan_units``
+    runs ``assert_review_transport`` on its way through, so that check is reached here for the
+    same reason ``start`` reaches it -- by the plan parser, with nothing added. (Issue 879 warns
+    against *adding* it, having read a ``main`` on which ``plan_units`` did not yet call it.)
+    """
     assert_no_engine_prefs(plan)
-    assert_safe_path_component(plan["run_id"], "run id")
+    assert_safe_path_component(str(plan.get("run_id", "")), "run id")
     units = plan_units(plan)
     assert_safe_unit_names(units)
+    assert_dependencies_reachable(units)
+    assert_vendors_available(units)
+    assert_saga_reachable(units)
+    return units
+
+
+def cmd_plan_check(args: argparse.Namespace) -> int:
+    """Validate a plan completely, and create nothing (issue 879).
+
+    Exit 0 means the plan is startable; exit 2 means it is not, with the same message ``start``
+    would print. Usable as a gate step, and safe to run while another run is active -- it does not
+    read or write any run record at all.
+    """
+    assert_agent_launcher_ingested()
+    plan = load_plan(args.plan)
+    units = validate_plan(plan)
+    order = " -> ".join(u.name for u in units)
+    print(f"plan {plan.get('run_id', '?')}: {len(units)} units validate clean  ({order})")
+    print("nothing was created: no worktree, no branch, no tab, no session, no run record.")
+    return 0
+
+
+def parent_branch_name(issue: int, *, runner: Callable[..., Any] | None = None) -> tuple[str, str]:
+    """The run's shared branch name for *issue*, and the one line explaining the choice.
+
+    A parent issue with children gets a parent branch, per the software-development-lifecycle
+    repository's parent-branch chapter; an issue with no children gets its own. The sub-issue
+    count is read ONCE here and then recorded, so a later network failure can never change the
+    branch a run is already using. When GitHub cannot answer, the name falls back to the
+    standalone form and the printed line says so rather than pretending it knew.
+    """
+    call = runner or run
+    query = (
+        '{repository(owner:"infiquetra",name:"infiquetra-claude-plugins")'
+        f"{{issue(number:{int(issue)}){{subIssues(first:1){{totalCount}}}}}}}}"
+    )
+    proc = call(["gh", "api", "graphql", "-f", f"query={query}"], check=False, timeout=60)
+    if getattr(proc, "returncode", 1) != 0:
+        return f"issue/{issue}", "GitHub could not be asked for sub-issues, so the standalone name"
+    try:
+        payload = json.loads(proc.stdout)
+        count = int(payload["data"]["repository"]["issue"]["subIssues"]["totalCount"])
+    except (ValueError, KeyError, TypeError):
+        return f"issue/{issue}", "GitHub's answer could not be read, so the standalone name"
+    if count > 0:
+        return f"parent/{issue}", f"issue {issue} has {count} sub-issue(s), so the parent name"
+    return f"issue/{issue}", f"issue {issue} has no sub-issues, so the standalone name"
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    """Create the branch and the unit rows for one issue's run.
+
+    ``start`` REQUIRES the record and never creates one: the record is written by saga's
+    admission step, which is what fills the thirteen run-configuration parameters and the seven
+    approval boundaries. Minting one here would produce a record whose admission block is empty,
+    which every later reader would have to treat as "not asked yet".
+    """
+    assert_agent_launcher_available()
+    plan = load_plan(args.plan)
+    units = validate_plan(plan)
+    store_root = Path(args.store_root) if args.store_root else resolve_record_store_root()
+    record = load_record(store_root, args.issue)
     base = args.base or run(["git", "rev-parse", "HEAD"]).stdout.strip()
+    if args.branch:
+        branch, why = args.branch, "named on the command line, so"
+    else:
+        branch, why = parent_branch_name(args.issue)
     r = Run(
         run_id=plan["run_id"],
         source=plan.get("source", ""),
         base=base,
         units=units,
         backend=plan.get("backend", "inline"),
+        branch=branch,
+        issue=int(args.issue),
+        store_root=store_root,
+        record=record,
         issues=plan.get("issues", {}),
         status_map=plan.get("status_map", {}),
         workspace=plan.get("workspace") or None,
         account=plan.get("account") or None,
         review_controller_ceiling=review_ceiling_from_plan(plan),
     )
-    # Before anything is written or any worktree is created: a typo in an ordering edge is a
-    # unit that is never eligible, forever, and `start` is the only moment it fails cheaply.
-    assert_dependencies_reachable(r.units)
-    assert_vendors_available(r.units)
-    assert_saga_reachable(r.units)
-    r.branch = f"orch/{r.run_id}"
     exists = run(["git", "rev-parse", "--verify", "--quiet", r.branch], check=False)
     if exists.returncode != 0:
         run(["git", "branch", r.branch, base])
-    ensure_local_run_state_excluded()
-    r.save()
-    print(f"run branch {r.branch} from {base[:8]} — units land here, it merges out once")
+    path = r.save()
+    print(f"{why} the run branch is {r.branch}, from {base[:8]}")
     order = " -> ".join(u.name for u in r.units)
     print(f"run {r.run_id}: {len(r.units)} units on base {base[:8]}  ({order})")
-    print("`orchestrate.py go` to launch what is eligible.")
+    print(f"record {path}")
+    print(f"`orchestrate.py go --issue {args.issue}` to launch what is eligible.")
     return 0
 
 
@@ -3665,12 +3834,12 @@ def assert_safe_path_component(value: str, label: str) -> None:
 def assert_safe_unit_names(units: list[Unit]) -> None:
     """Refuse any unit name that is not one safe path component.
 
-    A spilled task is written to ``TASK_DIR / f"{name}.task.md"``, and in Python an absolute
-    right-hand operand discards the left when joined, while ``..`` traverses -- unchecked, a name
-    is a write anywhere on disk, and the pointer stored from it a read back from anywhere. Names
-    are therefore refused here, where they enter a run, so a bad plan fails before anything is
-    written and before any worktree exists. ``resolve_task_file`` re-checks every pointer
-    independently: a run record edited by hand never passed through this function.
+    A unit name becomes a worktree directory name, and in Python an absolute right-hand operand
+    discards the left when joined, while ``..`` traverses -- unchecked, a name is a directory
+    created anywhere on disk. Names are refused here, where they enter a run, so a bad plan fails
+    before anything is
+    written and before any worktree exists. A name reaches the filesystem as a worktree
+    directory name, so the check still earns its place with the task spill gone.
     """
     for unit in units:
         assert_safe_path_component(unit.name, "unit name")
@@ -3744,8 +3913,8 @@ def cmd_expand(args: argparse.Namespace) -> int:
     reaching back to the units they depend on, and keeps one ``collect`` for the whole thing.
     """
     assert_agent_launcher_available()
-    r = Run.load()
-    added = json.loads(Path(args.plan).read_text())
+    r = Run.load(args.issue, args.store_root)
+    added = load_plan(args.plan)
     assert_no_engine_prefs(added)
     incoming = plan_units(added)
     assert_safe_unit_names(incoming)
@@ -3829,7 +3998,7 @@ def cmd_review_result(args: argparse.Namespace) -> int:
     except (OSError, UnicodeError) as exc:
         raise SystemExit(f"cannot read review result {args.file!r}: {exc}") from None
 
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     selector = getattr(args, "controller", None)
     controllers = r.review_controllers()
     controller: Unit | None
@@ -3901,25 +4070,42 @@ def cmd_review_result(args: argparse.Namespace) -> int:
     return 0
 
 
-def _staged_input_stop(unit: Unit) -> bool:
-    """Whether this PENDING unit stopped on staged input and keeps the recorded pane to retry.
+def launch_room(r: Run) -> tuple[int, int, int]:
+    """How many more sessions this run may start: ``(room, live units, open role panes)``.
 
-    The marker routes `go`: a unit carrying it is redelivered into the pane the stop
-    recorded, is never skipped as already launched, and never runs the wrapper create a
-    second time -- a second create would overwrite the first owned tab off the unit.
-    Contract: ``docs/engineering-journal/DECISIONS.md`` ``{#907-staged-input-redeliver}``.
+    The width number is the record's ``concurrency_allocation``, and it is ONE budget. A role
+    session is an agent session like any other and the number exists for the account's rate
+    limit, so counting units alone would let six role panes and ten units put sixteen sessions on
+    one account against a cap of ten. ``roster.py`` already refuses to exceed the same number on
+    its side; this is the other half of that agreement.
     """
-    return (
-        unit.status == PENDING
-        and bool(unit.pane_id)
-        and isinstance(unit.launch_receipt, dict)
-        and unit.launch_receipt.get("input_box") == STAGED_INPUT_BOX
-    )
+    width = r.parameter("concurrency_allocation")
+    live_units = sum(1 for unit in r.units if unit.status == RUNNING)
+    open_roles = r.open_roster_rows()
+    if not isinstance(width, int) or isinstance(width, bool) or width < 1:
+        return (len(r.units), live_units, open_roles)
+    return (max(width - live_units - open_roles, 0), live_units, open_roles)
+
+
+def record_launch_identity(unit: Unit, r: Run) -> None:
+    """Persist the wrapper identity the moment the session exists (issue 990).
+
+    Handed to the launcher as its post-create callback. Before this, ``tab_id``, ``pane_id`` and
+    ``agent_name`` were written onto the in-memory unit and nothing persisted them until a second
+    save after delivery returned -- a window of up to two minutes plus settle plus the delivery
+    check, in which an interrupt left the record claiming the unit was never launched while a real
+    tab existed, and the next ``go`` made a second session.
+    """
+    receipt = unit.launch_receipt if isinstance(unit.launch_receipt, dict) else {}
+    if "owned" in receipt:
+        unit.owned = receipt["owned"] is True
+    with contextlib.suppress(RecordError):
+        r.save()
 
 
 def cmd_go(args: argparse.Namespace) -> int:
     assert_agent_launcher_available()
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     if r.unresolvable_branch:
         raise SystemExit(f"run branch {r.unresolvable_branch!r} does not resolve; cannot go")
     assert_review_transport(r.units)
@@ -3927,33 +4113,51 @@ def cmd_go(args: argparse.Namespace) -> int:
     if not ready:
         print("nothing eligible -- either everything is running or dependencies are unmet.")
         return 0
+    room, live_units, open_roles = launch_room(r)
+    if room <= 0:
+        print(
+            f"at the run's width already: {live_units} unit(s) running and {open_roles} open role "
+            f"pane(s) against a concurrency allocation of {r.parameter('concurrency_allocation')}"
+        )
+        return 0
+    slice_size = min(room, args.limit) if args.limit else room
     root = repo_root()
-    for unit in ready[: args.limit] if args.limit else ready:
-        staged_stop = _staged_input_stop(unit)
-        if unit.tab_id and not staged_stop:
+    for unit in ready[:slice_size]:
+        if unit.tab_id:
             print(f"  {unit.name}: already has tab {unit.tab_id}; not launching twice")
             continue
         empty = [d for d in unit.after if not produced_anything(r.unit(d), r)]
         if empty:
             print(f"  {unit.name}: skipped — {', '.join(empty)} committed nothing to build on")
             continue
-        make_worktree(unit, r, root)
+        setup_failure = make_worktree(unit, r, root)
+        if setup_failure is not None:
+            unit.status = PENDING
+            append_unit_note(unit, setup_failure)
+            print(f"  {unit.name} NOT LAUNCHED: {setup_failure}")
+            r.save()
+            continue
         if not unit.workspace and r.workspace:
             unit.workspace = r.workspace
         if not unit.account and r.account:
             unit.account = r.account
-        r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
-        if staged_stop:
-            print(
-                f"redelivering {unit.name} ({unit.vendor}) into pane {unit.pane_id} -> {unit.task}"
-            )
-            deliver = redeliver
-        else:
-            print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
-            deliver = launch
+        # THE IMMEDIATE PERSIST (issue #1025, cards 900 and 990). The row goes to `running` and
+        # is written BEFORE the launcher is called, so a second `go` in the launch window finds
+        # the unit already running and eligibility does not return it. No claim, no owner token,
+        # no expiry -- see DECISIONS {#1025-immediate-persist-not-a-reservation}.
+        unit.status = RUNNING
+        unit.launch_started_at = datetime.now(UTC).isoformat()
+        r.save()
+        print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
         try:
-            deliver(unit, r.backend, review_elsewhere=r.reviews_separately())
+            launch(unit, r.backend, review_elsewhere=r.reviews_separately())
         except StagedInputError as exc:
+            # The stop returns the unit to PENDING and says why; it does NOT retry through the
+            # recorded pane. The automatic redelivery route that DECISIONS
+            # {#907-staged-input-redeliver} described went with the persisted launch receipt this
+            # card removed -- see DECISIONS {#1025-staged-stop-does-not-auto-redeliver}, which
+            # supersedes it in part. `launcher.py redeliver` is still the right repair; an
+            # operator runs it, and orchestrate says so below rather than guessing.
             unit.status = PENDING
             # Append, never overwrite: the guard's withheld line and an earlier stop message
             # are facts a repeated stop must not erase. The membership test is a substring,
@@ -3961,15 +4165,29 @@ def cmd_go(args: argparse.Namespace) -> int:
             if str(exc) not in unit.note:
                 append_unit_note(unit, str(exc))
             print(f"  {unit.name} PENDING: {exc}")
+            print(
+                f"  the composer for {unit.name} holds staged input: clear it and redeliver by "
+                "hand with `launcher.py redeliver`, never a second launch"
+            )
         except AccountMismatchError as exc:
             unit.status = ACCOUNT_MISMATCH
-            unit.note = str(exc)
+            # APPEND, never replace (issue 944). Replacing the note erased the launcher's own
+            # close-failure record, so the fix agent-launcher 1.1.0 made observable never reached
+            # an operator working through orchestrate.
+            append_unit_note(unit, str(exc))
             print(f"  {unit.name} FAILED: {exc}")
         except SystemExit as exc:
             unit.status = FAILED
-            unit.note = str(exc)
+            append_unit_note(unit, str(exc))
             print(f"  {unit.name} FAILED: {exc}")
-        r.save()
+        except BaseException:
+            # A keyboard interrupt is a BaseException and neither clause above catches it. The
+            # identity the launcher already wrote onto the unit is persisted here before the
+            # interrupt continues, so an interrupted launch is never relaunched blind (issue 990).
+            r.save()
+            raise
+        finally:
+            record_launch_identity(unit, r)
     return 0
 
 
@@ -4029,7 +4247,7 @@ def status_cell(text: str) -> str:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     if _AGENT_LAUNCHER_AVAILABLE:
         live = {u.name: poll(u) for u in r.units if u.status == RUNNING}
     else:
@@ -4183,7 +4401,7 @@ def cmd_settle(args: argparse.Namespace) -> int:
     ``orphaned`` with a note that says the commits could not be checked rather than one asserting
     there were none.
     """
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     running = [u for u in r.units if u.status == RUNNING]
     first = settle_reading(running) if running else {}
     second = first
@@ -4292,7 +4510,17 @@ def report_wait(unit: Unit, status: str) -> None:
     if status == "blocked":
         print(f"{unit.name} is blocked -- it is asking a question in its own tab")
         return
-    print(f"{unit.name} is {status} -- `settle`, `land`, then `go`")
+    print(f"{unit.name} is {status} -- `settle`, `merge`, then `go`")
+
+
+def record_settlement(unit: Unit, status: str) -> None:
+    """Write one observed settlement onto the unit's row (issue 891).
+
+    The wait used to return on the FIRST unit to settle and record nothing, so an unattended run
+    over several units had no durable answer to "which of them finished". Every settlement this
+    wait observes is written, and a blocked session is recorded as blocked rather than answered.
+    """
+    append_unit_note(unit, f"settled {status}")
 
 
 def wait_on_events(
@@ -4303,11 +4531,15 @@ def wait_on_events(
     needed: int,
     poll_unit: Callable[[Unit], str],
     sleep: Callable[[float], None] = time.sleep,
+    settled: list[tuple[Unit, str]] | None = None,
 ) -> tuple[Unit, str] | None:
     """Drive the event-socket path: a wake is one observation, not a settlement.
 
     The stream is edge-triggered, so a single ``idle`` is the think-pause this function exists
     to ignore. Confirmation is level-triggered, through ``poll_unit``, matching ``settle``.
+
+    Every confirmed settlement is appended to *settled* before the first one returns, so a
+    multi-unit wait has a record of all of them rather than only of the one it returned.
     """
     for event in events:
         unit = by_pane.get(event.pane_id)
@@ -4321,6 +4553,8 @@ def wait_on_events(
             needed=needed,
             sleep=sleep,
         )
+        if status is not None and settled is not None:
+            settled.append((unit, status))
         if status is not None:
             return unit, status
     return None
@@ -4452,7 +4686,7 @@ def cmd_wait(args: argparse.Namespace) -> int:
     confirmation rule; a degraded path that still fired on one sample would leave the defect in
     place on exactly the machines that hit the fallback.
     """
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     running = [u for u in r.units if u.status == RUNNING]
     if not running:
         print("nothing running -- `go` to launch what is eligible")
@@ -4461,6 +4695,7 @@ def cmd_wait(args: argparse.Namespace) -> int:
     needed = args.confirmations
     by_pane = {u.pane_id: u for u in running if u.pane_id}
     print(f"waiting on {', '.join(u.name for u in running)} (up to {args.timeout}s)")
+    observed: list[tuple[Unit, str]] = []
 
     if by_pane and herdr_events is not None:
         try:
@@ -4470,7 +4705,11 @@ def cmd_wait(args: argparse.Namespace) -> int:
                 interval=args.interval,
                 needed=needed,
                 poll_unit=poll,
+                settled=observed,
             )
+            for unit, status in observed:
+                record_settlement(unit, status)
+            r.save()
             if settled is None:
                 print("no unit changed state before the timeout")
                 return 0
@@ -4485,57 +4724,14 @@ def cmd_wait(args: argparse.Namespace) -> int:
         interval=args.interval,
         needed=needed,
     )
+    if settled is not None:
+        record_settlement(*settled)
+    r.save()
     if settled is None:
         print("no unit settled before the timeout")
         return 0
     report_wait(*settled)
     return 0
-
-
-def resolved_retained_land(r: Run, retained: Path) -> tuple[Unit, str, str] | str:
-    """Return one exact retained merge candidate, or its specific refusal reason.
-
-    A hand-written commit message, ancestry, or a branch merely contained in ``HEAD`` is not enough:
-    the retained ``HEAD`` must be a clean two-parent merge whose second parent is exactly one
-    current unit tip. The caller separately requires its first parent to be the current run tip
-    before publication. An exact candidate already in run-branch history needs only cleanup.
-    """
-    status = run(["git", "-C", str(retained), "status", "--porcelain"], check=False)
-    if status.returncode != 0:
-        detail = (status.stderr or status.stdout or "unknown git error").strip()
-        return f"Git could not inspect the worktree status: {detail}; it is left untouched."
-    if status.stdout.strip():
-        return (
-            "the worktree has uncommitted or unresolved changes. Resolve the conflicts there, "
-            "stage and commit the merge, then rerun `orchestrate.py land`; it is left untouched."
-        )
-    commit = run(
-        ["git", "-C", str(retained), "rev-list", "--parents", "-n", "1", "HEAD"],
-        check=False,
-    )
-    parts = commit.stdout.split() if commit.returncode == 0 else []
-    if len(parts) != 3:
-        return (
-            "HEAD is clean but is not a committed two-parent merge. Commit a merge of the "
-            "current run tip and one current unit tip there, then rerun `orchestrate.py land`; "
-            "it is left untouched."
-        )
-    unit_tip = parts[2]
-    matches = [
-        unit
-        for unit in r.units
-        if unit.status == DONE
-        and unit.merge
-        and unit.branch
-        and resolve_ref(unit.branch) == unit_tip
-    ]
-    if len(matches) != 1:
-        return (
-            "HEAD is a clean two-parent merge, but its second parent does not match exactly one "
-            "current DONE, merge-enabled unit tip. Restore that exact unit branch match before "
-            "rerunning `orchestrate.py land`; the worktree is left untouched."
-        )
-    return matches[0], parts[0], parts[1]
 
 
 def registered_worktree_paths() -> list[Path]:
@@ -4624,290 +4820,234 @@ def live_linked_worktree_at(path: Path, *, operator_worktree: Path) -> bool:
     return back_pointer.resolve() == gitfile.resolve()
 
 
-def fresh_landing_worktree_path(canonical: Path) -> Path:
-    """Return the lowest unused numbered sibling of the canonical landing path."""
-    registered = set(registered_worktree_paths())
-    number = 1
-    while True:
-        candidate = canonical.with_name(f"{canonical.name}-{number}")
-        if not os.path.lexists(candidate) and candidate.resolve() not in registered:
-            return candidate
-        number += 1
+def stale_merge_turn(r: Run, unit: Unit, root: Path) -> bool:
+    """Is this unit's recorded ``merging`` state left over from a turn that never finished?
+
+    A merge turn is ordinary execution state, not a lock: there is no owner token and no expiry.
+    That means a row left at ``merging`` by a process that died would block every later turn
+    forever unless the state is checked against reality -- which is card 992's failure shape, a
+    failed attempt demoting a unit out of the one state its own door can act on, reappearing in a
+    new place. So the refusal is DERIVED, never trusted: a turn is live only while its own
+    worktree is still registered and still holds an unfinished merge.
+    """
+    path = unit.merge_worktree or ""
+    if not path:
+        return True
+    candidate = Path(path)
+    if not os.path.lexists(candidate) or not worktree_registration_exists(candidate):
+        return True
+    if not live_linked_worktree_at(candidate, operator_worktree=root):
+        return True
+    head = run(
+        ["git", "-C", str(candidate), "rev-parse", "--verify", "--quiet", "MERGE_HEAD"], check=False
+    )
+    return head.returncode != 0
 
 
-def landing_worktree_paths(r: Run, *, root: Path | None = None) -> list[Path]:
-    """Discover canonical and numbered landing paths from files and Git registrations."""
-    repository = (root or repo_root()).resolve()
-    parent = repository / RUN_FILE.parent
-    canonical_name = f"land-{r.run_id}"
-    numbered = re.compile(rf"{re.escape(canonical_name)}-(\d+)")
+def merge_turn_holder(r: Run, root: Path) -> Unit | None:
+    """The unit whose merge turn is genuinely in flight, or ``None`` -- clearing stale rows.
 
-    found: dict[Path, Path] = {}
-    if parent.is_dir():
-        for child in parent.iterdir():
-            if child.name == canonical_name or numbered.fullmatch(child.name):
-                found[Path(os.path.abspath(child))] = child
-    for registered in registered_worktree_paths():
-        if registered.parent == parent and (
-            registered.name == canonical_name or numbered.fullmatch(registered.name)
-        ):
-            found.setdefault(Path(os.path.abspath(registered)), registered)
-
-    def order(path: Path) -> tuple[int, int]:
-        if path.name == canonical_name:
-            return (0, 0)
-        match = numbered.fullmatch(path.name)
-        assert match is not None
-        return (1, int(match.group(1)))
-
-    return sorted(found.values(), key=order)
+    Every row this finds stale is reset to ``ready`` with a line saying its turn did not finish.
+    That is the "inspect the actual Git and worker state first" step the lifecycle repository's
+    own merge-turn flowchart prescribes for an attempt whose outcome is unknown.
+    """
+    holder: Unit | None = None
+    for unit in r.units:
+        if unit.merge_state != MERGE_MERGING:
+            continue
+        if stale_merge_turn(r, unit, root):
+            unit.merge_state = MERGE_READY
+            unit.merge_worktree = None
+            print(
+                f"  {unit.name}: its previous merge turn did not finish and no merge is in "
+                "flight; the turn is released"
+            )
+            continue
+        holder = unit
+    return holder
 
 
-def cmd_land(args: argparse.Namespace) -> int:
-    """Merge finished units back onto the run branch.
+def fetch_default_branch(remote: str, branch: str) -> str | None:
+    """Refresh ``<remote>/<branch>``; return a refusal reason, or ``None`` when it is current.
 
-    This is the step that makes a phase real to the next one. A reviewer does not read the planner's
-    branch; it opens on the run branch, and it can only find a plan there because the planner's work
-    was landed first. Run it after ``settle`` and before the next ``go``.
+    A regression guard that reads an out-of-date remote-tracking ref passes silently, which is
+    the quiet failure card 875 reported one level up. So the turn refuses rather than comparing
+    against whatever the operator last pulled.
+    """
+    fetched = run(["git", "fetch", remote, branch], check=False, timeout=180)
+    if fetched.returncode != 0:
+        detail = (fetched.stderr or fetched.stdout or "unknown error").strip().splitlines()
+        return (
+            f"`git fetch {remote} {branch}` failed"
+            + (f": {detail[-1]}" if detail else "")
+            + f"; the guard against reverting a newer {branch} cannot be evaluated against a "
+            "current ref, so this merge turn is refused"
+        )
+    return None
 
-    A unit that finished without committing anything is named here rather than passed over. That is
-    the failure worth catching -- not a missing merge, but a session that produced nothing and
-    reported itself done.
 
-    With ``--clean``, a successful land then reaps on the spot -- but only the units this
-    invocation merged, and they must still pass the ``clean --merged`` rule: DONE, with every
-    commit on the run branch. A land that merged nothing reaps nothing: work an earlier
-    invocation deliberately kept stays kept until the operator's own ``clean`` sweep. Nothing
-    else is touched, and no branch is ever deleted here: that stays an explicit
-    ``clean --branches``.
+def main_regression_files(merged_tip: str, compare_ref: str) -> list[str]:
+    """Files this merge would take BACKWARDS relative to *compare_ref* (card 875).
 
-    Each unit is announced the moment its own merge lands, before the next merge is attempted: a
-    conflict on a later unit returns out of the loop, and anything still waiting for the whole
-    batch would never be announced at all -- the next land sees those units already merged and
-    announces nothing either.
+    Empty means the merge reverts nothing. The reading is deliberately narrow: only a file the
+    comparison ref has changed since the two diverged, AND that this merge result also touches,
+    can be reverted by publishing this merge. Refusing every merge whose branch is merely behind
+    the comparison ref would make ordinary parallel work unmergeable.
+    """
+    ancestor = run(["git", "merge-base", "--is-ancestor", compare_ref, merged_tip], check=False)
+    if ancestor.returncode == 0:
+        return []
+    base = merge_base(compare_ref, merged_tip)
+    if base is None:
+        return []
+    theirs = run(["git", "diff", "--name-only", f"{base}..{compare_ref}"], check=False)
+    ours = run(["git", "diff", "--name-only", f"{base}..{merged_tip}"], check=False)
+    if theirs.returncode != 0 or ours.returncode != 0:
+        return []
+    theirs_files = {line.strip() for line in theirs.stdout.splitlines() if line.strip()}
+    ours_files = {line.strip() for line in ours.stdout.splitlines() if line.strip()}
+    return sorted(theirs_files & ours_files)
 
-    The exit status is deliberate, and five-way. 0: every merge and every board write converged.
-    1: the land itself could not finish -- a missing run branch, retained conflict, merge conflict,
-    or ref-advance failure, named above. 2: every merge landed, but at least one board writeback did
-    not converge; the units are named above with their retry. 3: every merge landed, but a landing
-    path remains because it was unsafe to touch or could not be removed. A failed writeback or
-    cleanup never undoes a merge: the code on the run branch is right, and only the bookkeeping is
-    incomplete. 4: repairs landed but could not be resubmitted to the recorded Code Review
-    controller. A caller scripting this has to be able to tell those failures apart.
+
+def release_unit_worktree(unit: Unit, root: Path) -> tuple[bool, str]:
+    """Remove a merged unit's worktree so its branch becomes deletable (issue 876).
+
+    GitHub cannot delete a branch a local worktree still holds, and `gh pr merge --delete-branch`
+    failed for exactly this reason on pull requests 867, 869 and 872 during one campaign. The
+    moment the branch becomes deletable is the merge turn, so the release happens here rather
+    than only at the end of the run.
+
+    Refuses on dirty or unpushed state, naming what is at risk: the worktree is the last copy of
+    anything not committed, and the branch is the last copy of anything not pushed.
+
+    **It also refuses while the unit still records a tab.** A recorded tab is a session this run
+    has not closed, and a session's working directory is this worktree -- pulling the floor out
+    from under a live session is worse than a branch that stays undeletable for one more step.
+    `clean` closes the tab first and then removes the worktree, which is the order that already
+    worked; this is the same order, brought forward to the merge turn only where it is safe. The
+    reading is the record's rather than herdr's on purpose: it is deterministic, it needs no
+    round trip in the middle of a merge, and a machine that cannot answer about its sessions must
+    not silently become a machine that removes them.
+    """
+    path = Path(unit.worktree) if unit.worktree else None
+    if path is None or not os.path.lexists(path):
+        return True, "no worktree to release"
+    if unit.tab_id:
+        return False, (
+            f"the worktree at {path} still hosts tab {unit.tab_id}; `clean` closes the tab and "
+            "then removes it"
+        )
+    if not live_linked_worktree_at(path, operator_worktree=root):
+        return False, f"{path} is not a proven separate linked worktree; it was left untouched"
+    status = run(["git", "-C", str(path), "status", "--porcelain"], check=False)
+    if status.returncode != 0:
+        detail = (status.stderr or status.stdout or "unknown error").strip()
+        return False, f"git could not inspect {path}: {detail}"
+    dirty = [line.strip() for line in status.stdout.splitlines() if line.strip()]
+    if dirty:
+        shown = ", ".join(dirty[:5]) + (" ..." if len(dirty) > 5 else "")
+        return False, f"the worktree at {path} has uncommitted changes and would lose them: {shown}"
+    if unit.branch:
+        unpushed = run(
+            ["git", "rev-list", "--count", f"origin/{unit.branch}..{unit.branch}"], check=False
+        )
+        count = unpushed.stdout.strip() if unpushed.returncode == 0 else ""
+        if count and count not in ("", "0"):
+            return False, (
+                f"{unit.branch} has {count} commit(s) not on origin, and removing the worktree "
+                "makes the branch deletable; push first"
+            )
+    removed = run(["git", "worktree", "remove", "--force", str(path)], check=False)
+    if removed.returncode != 0 and os.path.lexists(path):
+        detail = (removed.stderr or removed.stdout or "unknown error").strip()
+        return False, f"removing {path} failed ({removed.returncode}): {detail}"
+    unit.worktree = None
+    return True, f"released the worktree at {path}"
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    """Take one merge turn per ready unit, merging its branch onto the run's parent branch.
+
+    This replaces `land` (issue #1025). What is gone with the name is the machinery around the
+    merge, not the merge: the retained conflict pointer that outlived an invocation, the numbered
+    landing-path fallback and its preserved-path bookkeeping, and the retained-merge recovery that
+    inspected an earlier run's worktree and decided whether to publish it. What remains is one
+    detached worktree per turn, created and removed inside the turn.
+
+    Merges are serialised: exactly one unit holds the turn at a time, tracked in the record as
+    ordinary state. A conflicting merge aborts in the turn's own worktree, leaves the unit at
+    ``ready`` with the conflict named, and leaves the parent branch untouched -- the merging
+    worker re-merges on its next turn, which is whose job the lifecycle repository says it is.
+
+    Exit status: 0 everything merged and every board write converged; 1 the merge itself could not
+    finish; 2 every merge landed but a board writeback did not; 3 every merge landed but cleanup
+    left something behind, named above; 4 repairs landed but could not be resubmitted.
     """
     assert_agent_launcher_available()  # reaching PaneWriter and close_run_session: gate first
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     if not r.branch:
-        raise SystemExit("this run has no run branch; it predates `land` -- start a new run")
+        raise SystemExit("this run has no parent branch; `start` creates one")
     branch_tip = r.resolved_branch
     if branch_tip is None:
-        raise SystemExit(f"run branch {r.branch!r} does not resolve; cannot land")
+        raise SystemExit(f"parent branch {r.branch!r} does not resolve; cannot merge")
 
     root = repo_root()
-    land_path = root / RUN_FILE.parent / f"land-{r.run_id}"
     branch_ref = r.branch if r.branch.startswith("refs/") else f"refs/heads/{r.branch}"
     landed: list[str] = []
     empty: list[str] = []
     already: list[str] = []
     held: list[str] = []
-    # The bare names, kept apart from ``landed``'s display strings: ``--clean`` reaps exactly the
-    # units this invocation merged, and a name recovered by stripping " (+3)" off a display string
-    # would break on the first unit name containing a bracket.
     landed_names: list[str] = []
     landed_tips: dict[str, str] = {}
     completed_fix_ids: list[str] = []
     writeback_failures: list[dict[str, Any]] = []
     announced_units: list[str] = []
     cleanup_failures: list[tuple[Path, str]] = []
-    preserved_landing_paths: list[tuple[Path, str]] = []
-    canonical_unavailable = False
-    handled_canonical = False
-    canonical_key = Path(os.path.abspath(land_path))
+    refusals: list[str] = []
 
     held_at = worktree_on_branch(r.branch)
     if held_at:
         print(
             f"WARNING: {r.branch} is checked out at {held_at}; advancing the ref leaves files "
-            "brought in by land staged for deletion in that checkout. Do not commit that index; "
-            f"run `git -C {held_at} reset` first, then reconcile it with the new branch tip."
+            "brought in by a merge staged for deletion in that checkout. Do not commit that "
+            f"index; run `git -C {held_at} reset` first, then reconcile it with the new tip."
         )
 
-    if r.conflict_worktree:
-        retained = Path(os.path.abspath(Path(r.conflict_worktree)))
-        retained_exists = os.path.lexists(retained)
-        handled_canonical = retained_exists and retained == canonical_key
-        if retained_exists:
-            if live_linked_worktree_at(retained, operator_worktree=root):
-                recovered = resolved_retained_land(r, retained)
-                if isinstance(recovered, str):
-                    print(f"  CONFLICT worktree is still retained at {retained}: {recovered}")
-                    return 1
-                unit, recovered_tip, recovered_base = recovered
-                published = run(
-                    ["git", "merge-base", "--is-ancestor", recovered_tip, branch_tip],
-                    check=False,
-                )
-                if published.returncode not in (0, 1):
-                    detail = (published.stderr or published.stdout or "unknown git error").strip()
-                    print(
-                        f"  CONFLICT worktree is still retained at {retained}: could not verify "
-                        f"whether its exact merge is already on {r.branch}: {detail}; it is left "
-                        "untouched."
-                    )
-                    return 1
-                if published.returncode == 1:
-                    if recovered_base != branch_tip:
-                        print(
-                            f"  CONFLICT worktree is still retained at {retained}: run branch "
-                            f"{r.branch} has advanced since {unit.name}'s retained merge was built. "
-                            f"Re-merge {unit.name} onto the current tip in that worktree, commit the "
-                            "new merge, then rerun `orchestrate.py land`; it is left untouched."
-                        )
-                        return 1
-                    expected_tip = branch_tip
-                    recovered_ahead = run(
-                        ["git", "rev-list", "--count", f"{expected_tip}..{unit.branch}"],
-                        check=False,
-                    ).stdout.strip()
-                    advanced = run(
-                        ["git", "update-ref", branch_ref, recovered_tip, expected_tip], check=False
-                    )
-                    if advanced.returncode != 0:
-                        detail = (advanced.stderr or advanced.stdout or "unknown git error").strip()
-                        print(
-                            f"  LANDING REF UPDATE FAILED for {r.branch}: {detail}; resolved merge "
-                            f"retained at {retained} for another `orchestrate.py land` attempt"
-                        )
-                        return 1
-                    branch_tip = recovered_tip
-                    r.record_branch_advance(recovered_tip)
-                    # Publication ends this pointer's job. Persist that fact before cleanup so a
-                    # filesystem failure cannot turn a published merge back into unresolved work.
-                    r.conflict_worktree = None
-                    r.save()
-                    landed.append(f"{unit.name} (+{recovered_ahead or '?'})")
-                    landed_names.append(unit.name)
-                    landed_tips[unit.name] = branch_tip
-                    completed_fix_ids.extend(complete_landed_fix_requests(r, [unit.name]))
-                    r.save()
-                    records = announce_units(r, [unit.name])
-                    report_announcements(records)
-                    writeback_failures.extend(_failed_writebacks(records))
-                    announced_units.append(unit.name)
-                    record_writeback_outcome(r, records)
-                    r.save()
-                else:
-                    # A clean exact retained merge already in run-branch history is published. This
-                    # closes records written by the older cleanup ordering without republishing it.
-                    r.conflict_worktree = None
-                    r.save()
-
-                # Protected by live_linked_worktree_at at retained-path admission: this is the
-                # exact separate linked worktree whose resolved merge was just proved published.
-                removed = run(["git", "worktree", "remove", "--force", str(retained)], check=False)
-                if removed.returncode != 0:
-                    detail = (removed.stderr or removed.stdout or "unknown git error").strip()
-                    cleanup_failures.append((retained, detail))
-                    preserved_landing_paths.append((retained, detail))
-                    if retained == canonical_key:
-                        canonical_unavailable = True
-            else:
-                detail = "the existing path is not a proven live separate linked worktree"
-                cleanup_failures.append((retained, f"{detail}; it was left untouched"))
-                preserved_landing_paths.append((retained, detail))
-                if retained == canonical_key:
-                    canonical_unavailable = True
-                r.conflict_worktree = None
-                r.save()
-        else:
-            r.conflict_worktree = None
-            r.save()
-
-    if os.path.lexists(land_path) and not handled_canonical:
-        canonical_unavailable = True
-        if live_linked_worktree_at(land_path, operator_worktree=root):
-            # A previous recovery may have published and cleared its pointer before cleanup failed.
-            # Remove it only with the same exact merge and ancestry proof used above. It is never
-            # rebound or used for another merge.
-            leftover = resolved_retained_land(r, land_path)
-            if isinstance(leftover, str):
-                detail = leftover
-                cleanup_failures.append((land_path, f"{detail}; it was left untouched"))
-                preserved_landing_paths.append((land_path, detail))
-            else:
-                _, leftover_tip, _ = leftover
-                published = run(
-                    ["git", "merge-base", "--is-ancestor", leftover_tip, branch_tip], check=False
-                )
-                if published.returncode == 0:
-                    # Protected by live_linked_worktree_at at canonical-path admission: this
-                    # separate linked worktree's exact merge was also proved published.
-                    removed = run(
-                        ["git", "worktree", "remove", "--force", str(land_path)], check=False
-                    )
-                    if removed.returncode == 0:
-                        canonical_unavailable = False
-                    else:
-                        detail = (removed.stderr or removed.stdout or "unknown git error").strip()
-                        cleanup_failures.append((land_path, detail))
-                        preserved_landing_paths.append((land_path, detail))
-                else:
-                    if published.returncode == 1:
-                        detail = f"its exact merge is not published on {r.branch}"
-                    else:
-                        error = (
-                            published.stderr or published.stdout or "unknown git error"
-                        ).strip()
-                        detail = (
-                            f"Git could not verify whether its exact merge is published: {error}"
-                        )
-                    cleanup_failures.append((land_path, f"{detail}; it was left untouched"))
-                    preserved_landing_paths.append((land_path, detail))
-        else:
-            detail = "the existing path is not a proven live separate linked worktree"
-            cleanup_failures.append((land_path, f"{detail}; it was left untouched"))
-            preserved_landing_paths.append((land_path, detail))
-
-    # The canonical land path can outlive the record pointer: `clean --merged` deliberately clears
-    # a pointer to a missing directory. Inspect Git itself, and prune before constructing it again.
-    if (
-        not canonical_unavailable
-        and not land_path.exists()
-        and worktree_registration_exists(land_path)
-    ):
-        pruned = run(["git", "worktree", "prune", "--expire", "now"], check=False)
-        if pruned.returncode != 0:
-            detail = (pruned.stderr or pruned.stdout or "unknown git error").strip()
-            raise SystemExit(f"cannot prune stale landing worktree registrations: {detail}")
-
-    landing_worktree = (
-        fresh_landing_worktree_path(land_path) if canonical_unavailable else land_path
-    )
-    for preserved, reason in preserved_landing_paths:
+    holder = merge_turn_holder(r, root)
+    r.save()
+    if holder is not None:
         print(
-            f"  landing path left untouched at {preserved}: {reason}; "
-            f"using fresh detached landing worktree at {landing_worktree}"
+            f"  {holder.name} holds the merge turn and its merge is still in flight at "
+            f"{holder.merge_worktree}; one worker merges at a time"
         )
+        return 1
 
-    # A missing recovery directory is no longer unresolved work once its surviving Git
-    # registration has been reconciled (or was already absent).
-    if r.conflict_worktree:
-        r.conflict_worktree = None
-        r.save()
-    added = run(
-        ["git", "worktree", "add", "--detach", str(landing_worktree), branch_tip], check=False
-    )
-    if added.returncode != 0:
-        detail = (added.stderr or added.stdout or "unknown git error").strip()
-        raise SystemExit(f"cannot create detached landing worktree at {landing_worktree}: {detail}")
+    fetch_refusal = fetch_default_branch(args.remote, args.compare)
+    compare_ref = f"{args.remote}/{args.compare}"
+    if fetch_refusal is not None:
+        print(f"  MERGE TURN REFUSED: {fetch_refusal}")
+        return 1
 
-    keep_land_worktree = False
     try:
         for unit in r.units:
             if unit.status != DONE or not unit.branch:
                 continue
             if not unit.merge:
                 held.append(unit.name)
+                continue
+            blocker = next(
+                (
+                    row
+                    for row in unit.shared_blockers
+                    if str(row.get("owner_unit") or "") not in ("", unit.name)
+                ),
+                None,
+            )
+            if blocker is not None:
+                refusals.append(
+                    f"{unit.name}: blocker {blocker.get('blocker_id', '?')!r} is owned by "
+                    f"{blocker.get('owner_unit')}, so this unit does not repair it"
+                )
                 continue
             ahead = run(
                 ["git", "rev-list", "--count", f"{branch_tip}..{unit.branch}"], check=False
@@ -4916,78 +5056,101 @@ def cmd_land(args: argparse.Namespace) -> int:
                 if unit.name not in landed_names:
                     (already if produced_anything(unit, r) else empty).append(unit.name)
                 continue
-            expected_tip = branch_tip
-            merge = run(
-                [
-                    "git",
-                    "-C",
-                    str(landing_worktree),
-                    "merge",
-                    "--no-ff",
-                    "--no-edit",
-                    unit.branch,
-                ],
-                check=False,
+
+            turn_worktree = fresh_unit_worktree_path(
+                root / WORKTREE_STATE_DIR / f"merge-{r.run_id}"
             )
-            if merge.returncode != 0:
-                keep_land_worktree = True
-                r.conflict_worktree = str(landing_worktree)
-                r.save()
-                print(
-                    f"  CONFLICT landing {unit.name}; retained worktree at {landing_worktree}. "
-                    "Resolve the conflicts there, stage and commit the merge, then rerun "
-                    "`orchestrate.py land`; it will publish that exact merge with a guarded ref "
-                    f"advance. The failed command was `git merge --no-ff {unit.branch}`"
+            added = run(
+                ["git", "worktree", "add", "--detach", str(turn_worktree), branch_tip], check=False
+            )
+            if added.returncode != 0:
+                detail = (added.stderr or added.stdout or "unknown error").strip()
+                raise SystemExit(
+                    f"cannot create the merge turn's worktree at {turn_worktree}: {detail}"
                 )
-                # Name any writeback that already failed before the conflict buries the return.
-                _report_failed_writebacks(writeback_failures)
-                _report_landing_cleanup_failures(cleanup_failures)
-                return 1
-            merged_tip = run(
-                ["git", "-C", str(landing_worktree), "rev-parse", "HEAD"]
-            ).stdout.strip()
-            advanced = run(["git", "update-ref", branch_ref, merged_tip, expected_tip], check=False)
-            if advanced.returncode != 0:
-                keep_land_worktree = True
-                r.conflict_worktree = str(landing_worktree)
-                r.save()
-                detail = (advanced.stderr or advanced.stdout or "unknown git error").strip()
-                print(
-                    f"  LANDING REF UPDATE FAILED for {r.branch}: {detail}; "
-                    f"recovery worktree retained at {landing_worktree}"
+            unit.merge_state = MERGE_MERGING
+            unit.merge_worktree = str(turn_worktree)
+            r.save()
+
+            expected_tip = branch_tip
+            merged_tip = ""
+            try:
+                merge = run(
+                    ["git", "-C", str(turn_worktree), "merge", "--no-ff", "--no-edit", unit.branch],
+                    check=False,
                 )
-                _report_failed_writebacks(writeback_failures)
-                _report_landing_cleanup_failures(cleanup_failures)
-                return 1
+                if merge.returncode != 0:
+                    run(["git", "-C", str(turn_worktree), "merge", "--abort"], check=False)
+                    unit.merge_state = MERGE_READY
+                    refusals.append(
+                        f"{unit.name}: CONFLICT merging {unit.branch} onto {r.branch}; the turn "
+                        "is released and the parent branch is untouched. Merge the parent branch "
+                        "into the unit branch, resolve it there, then take the turn again"
+                    )
+                    continue
+                head = run(["git", "-C", str(turn_worktree), "rev-parse", "HEAD"], check=False)
+                if head.returncode != 0 or not head.stdout.strip():
+                    unit.merge_state = MERGE_READY
+                    refusals.append(f"{unit.name}: the merge result could not be read")
+                    continue
+                merged_tip = head.stdout.strip()
+                reverted = main_regression_files(merged_tip, compare_ref)
+                if reverted:
+                    unit.merge_state = MERGE_READY
+                    shown = ", ".join(reverted[:20]) + (" ..." if len(reverted) > 20 else "")
+                    refusals.append(
+                        f"{unit.name}: this merge would revert {len(reverted)} file(s) that "
+                        f"{compare_ref} carries more recently: {shown}. Merge {compare_ref} into "
+                        "the unit branch first, then take the turn again"
+                    )
+                    continue
+                advanced = run(
+                    ["git", "update-ref", branch_ref, merged_tip, expected_tip], check=False
+                )
+                if advanced.returncode != 0:
+                    unit.merge_state = MERGE_READY
+                    detail = (advanced.stderr or advanced.stdout or "unknown error").strip()
+                    refusals.append(
+                        f"{unit.name}: advancing {r.branch} failed: {detail}; the parent branch "
+                        "is unchanged and the turn is released"
+                    )
+                    continue
+            finally:
+                unit.merge_worktree = None
+                removed = run(
+                    ["git", "worktree", "remove", "--force", str(turn_worktree)], check=False
+                )
+                if removed.returncode != 0 and os.path.lexists(turn_worktree):
+                    detail = (removed.stderr or removed.stdout or "unknown error").strip()
+                    cleanup_failures.append((turn_worktree, detail))
+                r.save()
+
             branch_tip = merged_tip
             r.record_branch_advance(merged_tip)
+            unit.merge_state = MERGE_MERGED
             landed.append(f"{unit.name} (+{ahead})")
             landed_names.append(unit.name)
             landed_tips[unit.name] = branch_tip
             completed_fix_ids.extend(complete_landed_fix_requests(r, [unit.name]))
             r.save()
-            # The boundary just passed: write it back to the board here, where it happened, rather
-            # than as a separate operator step -- and now, before the next merge is attempted, so
-            # a later conflict cannot discard this unit's announcement. A no-op for a run with no
-            # `issues` mapping; a missing saga says so on stderr. Re-runs dedup on the
-            # controller's idempotency keys.
+            released, why = release_unit_worktree(unit, root)
+            print(f"  {unit.name}: {why}")
+            # A release DEFERRED because the unit still records a tab is the correct order, not a
+            # cleanup failure: `clean` closes the tab and then removes the worktree. Only a
+            # release that was attempted and could not be made records a failure, so the exit
+            # status keeps meaning "something was left behind that should not have been".
+            if not released and unit.worktree and not unit.tab_id:
+                cleanup_failures.append((Path(unit.worktree), why))
+            r.save()
+            # The boundary just passed: write it back to the board here, where it happened, and
+            # now, before the next turn, so a later conflict cannot discard this announcement.
             records = announce_units(r, [unit.name])
             report_announcements(records)
             writeback_failures.extend(_failed_writebacks(records))
             announced_units.append(unit.name)
-            record_writeback_outcome(r, records)
             r.save()
     finally:
-        if not keep_land_worktree:
-            # Safe by construction: this invocation created `landing_worktree` with
-            # `git worktree add --detach` and has not exposed it to an external actor. A conflict
-            # sets `keep_land_worktree` and skips this removal.
-            removed = run(
-                ["git", "worktree", "remove", "--force", str(landing_worktree)], check=False
-            )
-            if removed.returncode != 0:
-                detail = (removed.stderr or removed.stdout or "unknown git error").strip()
-                cleanup_failures.append((landing_worktree, detail))
+        report_cleanup_failures(cleanup_failures)
 
     resubmit_failed = False
     resubmit_owed_unmade = False
@@ -4997,10 +5160,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     if any_pending:
         try:
             if resubmit_review_if_ready(
-                r,
-                branch_tip,
-                landed_names=landed_names,
-                landed_revisions=landed_tips,
+                r, branch_tip, landed_names=landed_names, landed_revisions=landed_tips
             ):
                 print(f"resubmitted landed revision {branch_tip} to the Code Review controller")
         except StagedInputError as exc:
@@ -5029,8 +5189,6 @@ def cmd_land(args: argparse.Namespace) -> int:
             )
 
     outstanding_work = any(unit.fix_requests for unit in r.units)
-    # Read the slot, not the run-level flags: scoped writes never mirror onto them, so reading them
-    # here is the same class of miss that left the multi-target loop unwired (#877).
     unscoped_slot = r.review_slot(
         None if any(u.lifecycle for u in r.review_controllers()) else r.review_controller()
     )
@@ -5046,34 +5204,26 @@ def cmd_land(args: argparse.Namespace) -> int:
         request_label = "request" if len(r.operator_fix_requests) == 1 else "requests"
         print(f"Code Review resubmission held by operator-owned fix {request_label}: {fix_ids}")
 
-    print(f"landed on {r.branch}: {', '.join(landed) or 'nothing new'}")
+    print(f"merged onto {r.branch}: {', '.join(landed) or 'nothing new'}")
     if completed_fix_ids:
         print(f"review fixes landed: {', '.join(completed_fix_ids)}")
     if already:
         print(f"already there: {', '.join(already)}")
     if held:
-        # Named, not passed over. A unit that finishes and never lands is the same shape of quiet
-        # loss as one that finishes without committing, and it stays quiet for longer -- the branch
-        # is right there, so nothing looks wrong until the phase that needed it opens on nothing.
         print(
             f"NOT MERGED BY REQUEST: {', '.join(held)} -- "
             f"their branches hold work that is not on {r.branch}; read them yourself"
         )
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
+    for refusal in refusals:
+        print(f"  MERGE TURN REFUSED: {refusal}")
     _report_failed_writebacks(writeback_failures)
-    outstanding_writebacks = _report_outstanding_writebacks(r, announced_units)
-    if cleanup_failures:
-        _report_landing_cleanup_failures(cleanup_failures)
-        if resubmit_owed_unmade or resubmit_failed:
-            return 4
-        return 3
-    # ``getattr``: a caller that built its own Namespace before this flag existed has no
-    # ``clean`` attribute, and a land that worked yesterday must keep working today. Reaping comes
-    # after the announcement, not before: it removes the worktrees the announcement reads from. A
-    # failed writeback does not hold the reap back: reaping turns on the merge, and the merge
-    # landed. The sweep names only the units THIS land merged: reaping the whole run here also
-    # closed the worktrees an earlier invocation deliberately kept.
+
+    # Reaping comes after the announcement, not before: it removes the worktrees the announcement
+    # reads from. The sweep names only the units THIS invocation merged. It runs even when a
+    # cleanup failure has already been recorded -- issue 960 reported the opposite, a reap skipped
+    # entirely because one path could not be cleaned, with nothing said about the skip.
     if getattr(args, "clean", False):
         kept_reasons: dict[str, str] = {}
         closed, _ = reap(r, merged_only=True, only=landed_names, kept_reasons=kept_reasons)
@@ -5081,37 +5231,42 @@ def cmd_land(args: argparse.Namespace) -> int:
         if closed:
             print(f"reaped: {', '.join(closed)}")
         elif not landed_names:
-            print("nothing to reap: this land merged nothing")
+            print("nothing to reap: this invocation merged nothing")
         else:
-            # Everything this land merged was kept, each for a reason printed below; that is
-            # not "merged nothing" (cycle 2, F70).
-            print("nothing reaped: every unit this land merged was kept, for the reasons below")
+            print("nothing reaped: every unit this invocation merged was kept, reasons below")
         for name, reason in kept_reasons.items():
             print(f"kept {name}: {reason}")
+
+    if refusals and not landed_names:
+        return 1
     if resubmit_owed_unmade or resubmit_failed:
         return 4
-    return 2 if (writeback_failures or outstanding_writebacks) else 0
+    if cleanup_failures:
+        return 3
+    return 2 if writeback_failures else 0
 
 
 def cmd_announce(args: argparse.Namespace) -> int:
     """Write a unit's passed phase boundary back to its issue's board card.
 
-    ``land`` already does this for the units it merges; this is the operator's door for the
-    boundaries land does not cover -- a unit announced at the wrong moment, or one whose writeback
-    failed at the time because saga was missing. Safe to re-run: the controller's idempotency keys
-    coalesce a repeat into a skip, so announcing twice posts one comment, not two.
+    ``merge`` already does this for the units it merges; this is the operator's door for the
+    boundaries a merge turn does not cover -- a unit announced at the wrong moment, or one whose
+    writeback failed at the time because saga was missing. Safe to re-run: the controller's
+    idempotency keys coalesce a repeat into a skip, so announcing twice posts one comment, not two.
+
+    There is no outstanding-failure ledger behind this any more (issue #1025 removes the writeback
+    records). A failure is reported here, with its reason and its exit code, and re-running this
+    command is the retry.
     """
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     if not r.issues:
         print("this run has no `issues` mapping, so there is nothing to announce")
         return 0
     records = announce_units(r, args.units)
     report_announcements(records, verbose=True)
-    record_writeback_outcome(r, records)
-    r.save()
     failures = _failed_writebacks(records)
     if failures:
-        # `land` has always exited 2 on this; `announce` exited 0, which is worse here than there.
+        # `merge` exits 2 on this; `announce` exited 0, which is worse here than there.
         # This IS the retry door, so a green exit from it is a direct claim that the card is now
         # right -- and an operator who ran it precisely because the board was wrong reads that
         # exit code as the answer.
@@ -5152,33 +5307,6 @@ def landed(branch: str, r: Run) -> bool | None:
     return None
 
 
-def cmd_collect(args: argparse.Namespace) -> int:
-    """Merge the run branch into the operator's tree -- one merge, at the end.
-
-    Units land on the run branch as they finish (``land``); this brings that single branch home, the
-    way a feature branch merges once rather than each contributor merging separately.
-    """
-    r = Run.load()
-    if not r.branch:
-        raise SystemExit("this run has no run branch; it predates `collect` — start a new run")
-    dirty = run(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.strip()
-    if dirty:
-        print("your working tree has uncommitted changes; git will refuse to merge into it.")
-        print("commit or stash them, then rerun collect. what is uncommitted:\n")
-        print("\n".join(f"  {line}" for line in dirty.splitlines()[:15]))
-        return 1
-    ahead = run(["git", "rev-list", "--count", f"HEAD..{r.branch}"]).stdout.strip()
-    if ahead in ("", "0"):
-        print(f"{r.branch} has nothing your tree does not already have — did you `land` first?")
-        return 0
-    proc = run(["git", "merge", "--no-ff", "--no-edit", r.branch], check=False)
-    if proc.returncode != 0:
-        print(f"  CONFLICT merging {r.branch} — resolve it, then rerun collect")
-        return 1
-    print(f"merged {r.branch} (+{ahead})")
-    return 0
-
-
 def reapable(unit: Unit, r: Run) -> bool:
     """May ``--merged`` reap this unit: its DONE work is landed and no review needs its controller.
 
@@ -5209,18 +5337,39 @@ class RemoteCleanReport:
     refused: list[tuple[str, str]] = field(default_factory=list)
 
 
+#: The reference names no run may ever delete from a remote. Membership is unchanged by #1025.
+PROTECTED_BRANCH_NAMES = frozenset({"main", "master", "head", "develop", "release", "trunk"})
+
+_REFS_HEADS_PREFIX = re.compile(r"^refs/heads/", re.IGNORECASE)
+
+
+def normalize_branch_name(branch: str) -> str:
+    """Strip, casefold, and only THEN peel any ``refs/heads/`` prefix (issue 874).
+
+    The old ordering peeled first, case-sensitively, so four spellings of ``main`` escaped the
+    denylist entirely: a leading space or tab meant the prefix did not match and the peel was a
+    no-op, and ``refs/HEADS/`` or ``Refs/Heads/`` failed the same way. That is hygiene rather than
+    a live exploit -- the current push encoding does not turn those spellings into a real deletion
+    -- but the denylist is the last guard on the only destructive thing this plugin does, and it
+    should hold on its own terms rather than by depending on how a caller normalises a name today.
+    """
+    return _REFS_HEADS_PREFIX.sub("", branch.strip().casefold()).strip()
+
+
 def is_protected_remote_branch(branch: str, r: Run) -> bool:
     """Check if a branch is protected from remote deletion."""
-    norm = branch.removeprefix("refs/heads/").strip()
+    norm = normalize_branch_name(branch)
     if not norm:
         return True
-    if norm.lower() in {"main", "master", "head", "develop", "release", "trunk"}:
+    if norm in PROTECTED_BRANCH_NAMES:
         return True
-    if r.branch and norm == r.branch.removeprefix("refs/heads/").strip():
+    # The run branch, the resolved branch and the base get the SAME normalisation, not only the
+    # literal denylist: a run branch spelled with a stray prefix escaped by the identical route.
+    if r.branch and norm == normalize_branch_name(r.branch):
         return True
-    if r.resolved_branch and norm == r.resolved_branch.removeprefix("refs/heads/").strip():
+    if r.resolved_branch and norm == normalize_branch_name(r.resolved_branch):
         return True
-    return bool(r.base and norm == r.base.removeprefix("refs/heads/").strip())
+    return bool(r.base and norm == normalize_branch_name(r.base))
 
 
 def prove_remote_branch_merged(
@@ -5450,6 +5599,7 @@ def reap(
     only: Sequence[str] | None = None,
     remote: str = "origin",
     kept_reasons: dict[str, str] | None = None,
+    failures: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
 
@@ -5459,21 +5609,22 @@ def reap(
     because it also discards the worktree that is the evidence a unit failed.
 
     ``only`` narrows the sweep to those unit names; every other unit is kept, whatever its
-    state. ``land --clean`` passes the units that land just merged, so reaping there is a
+    state. ``merge --clean`` passes the units that turn just merged, so reaping there is a
     consequence of what that invocation did -- not a licence to close work an earlier one
     deliberately kept. ``clean`` never passes it: the operator's own sweep still sees the whole
     run, and its behaviour is unchanged.
 
-    ``branches`` deletes the branches of the units it closes. Reaping itself never does: a branch
-    is cheap, and it is the last copy of a failed unit's work. Deleting one stays an explicit
-    ``clean --branches``; ``land --clean`` never passes this.
+    ``branches`` deletes the branches of the units it closes, and ONLY after that unit's worktree
+    is gone: git refuses to delete a branch a worktree still holds, so the other order fails on
+    every unit that still has one. A removal that failed keeps the unit, so the branch stays too
+    -- it is the last copy of a failed unit's work.
+
+    **The sweep never stops early.** One unit whose path cannot be removed keeps that unit, names
+    it, and the loop continues: issue 960 reported the opposite, a whole reap skipped because one
+    path could not be cleaned, with nothing in the output saying the reap did not happen.
     """
     kept, closed = [], []
     root = repo_root()
-    discovered_landing_paths = landing_worktree_paths(r, root=root)
-    recorded_conflict = (
-        Path(os.path.abspath(Path(r.conflict_worktree))) if r.conflict_worktree else None
-    )
     scope = set(only) if only is not None else None
     for unit in r.units:
         if scope is not None and unit.name not in scope:
@@ -5498,6 +5649,10 @@ def reap(
                 # what names the tab the operator must close by hand, and the session in it
                 # may still be standing in this unit's worktree.
                 if kept_reasons is not None:
+                    # Reported, but NOT a failure of this run's cleanup: the run never owned
+                    # this tab, so there is nothing here it failed to clean. Exit 3 means
+                    # "something this run owns was left behind", and widening it to include a
+                    # borrowed tab would make the honest signal fire on a healthy sweep.
                     kept_reasons[unit.name] = f"tab left open (not owned): tab {unit.tab_id}"
                 kept.append(unit.name)
                 continue
@@ -5508,6 +5663,8 @@ def reap(
                 # repeated failure must not stack a second copy on it.
                 if kept_reasons is not None:
                     kept_reasons[unit.name] = failure
+                if failures is not None:
+                    failures[unit.name] = failure
                 kept.append(unit.name)
                 continue
             tab_closed = True
@@ -5525,6 +5682,10 @@ def reap(
                     kept_reasons[unit.name] = (
                         f"{closed_tab}worktree removal failed ({removed.returncode}): {detail}"
                     )
+                if failures is not None:
+                    failures[unit.name] = (
+                        f"worktree removal failed ({removed.returncode}): {detail}"
+                    )
                 kept.append(unit.name)
                 continue
         if branches and unit.branch:
@@ -5540,89 +5701,108 @@ def reap(
         for b, reason in remote_report.refused:
             print(f"retained remote branch {b}: {reason}")
 
-    if r.conflict_worktree:
-        conflict_path = Path(r.conflict_worktree)
-        label = f"conflict worktree at {conflict_path}"
-        if conflict_path.exists() and merged_only:
-            # A conflicted merge is, by definition, not merged. Name the recovery surface in the
-            # ordinary kept report so `clean --merged` cannot look like it silently swept it up.
-            kept.append(label)
-            if kept_reasons is not None:
-                kept_reasons[label] = "conflict worktree"
-        elif conflict_path.exists():
-            if not live_linked_worktree_at(conflict_path, operator_worktree=root):
-                kept.append(label)
-                if kept_reasons is not None:
-                    kept_reasons[label] = "conflict worktree"
-            else:
-                # Protected by live_linked_worktree_at immediately above: the record names an
-                # exact separate linked worktree, not a symlink or another untrusted path.
-                removed = run(
-                    ["git", "worktree", "remove", "--force", str(conflict_path)], check=False
-                )
-                if removed.returncode == 0 or not conflict_path.exists():
-                    closed.append(label)
-                    r.conflict_worktree = None
-                    r.save()
-                else:
-                    kept.append(label)
-                    if kept_reasons is not None:
-                        kept_reasons[label] = "conflict worktree removal failed"
-        else:
-            # The directory was removed by hand. Clear the pointer so clean reports the filesystem
-            # truth. `land` independently inspects and prunes the canonical path's Git registration
-            # before reuse, because this record pointer is not the registration's owner.
-            r.conflict_worktree = None
-            r.save()
-
-    for landing_path in discovered_landing_paths:
-        candidate = Path(os.path.abspath(landing_path))
-        # The recorded conflict path is governed by the recovery rules immediately above. Skipping
-        # it here preserves the existing `clean --merged` contract and avoids a duplicate report.
-        if recorded_conflict is not None and candidate == recorded_conflict:
-            continue
-        label = f"landing worktree at {candidate}"
-        if not os.path.lexists(candidate):
-            pruned = run(["git", "worktree", "prune", "--expire", "now"], check=False)
-            if pruned.returncode == 0 and not worktree_registration_exists(candidate):
+    if scope is None:
+        for label, reason in retire_run_workspaces(r):
+            if reason is None:
                 closed.append(label)
             else:
                 kept.append(label)
                 if kept_reasons is not None:
-                    kept_reasons[label] = "landing worktree removal failed"
-            continue
-        if not live_linked_worktree_at(candidate, operator_worktree=root):
-            kept.append(f"landing path at {candidate}")
-            if kept_reasons is not None:
-                kept_reasons[f"landing path at {candidate}"] = "landing worktree"
-            continue
-        if merged_only:
-            recovered = resolved_retained_land(r, candidate)
-            if isinstance(recovered, str) or r.resolved_branch is None:
-                kept.append(label)
-                if kept_reasons is not None:
-                    kept_reasons[label] = "landing worktree"
-                continue
-            _, recovered_tip, _ = recovered
-            published = run(
-                ["git", "merge-base", "--is-ancestor", recovered_tip, r.resolved_branch],
-                check=False,
-            )
-            if published.returncode != 0:
-                kept.append(label)
-                if kept_reasons is not None:
-                    kept_reasons[label] = "landing worktree"
-                continue
-        # Protected by live_linked_worktree_at above: the discovered candidate is an exact
-        # separate linked worktree; `--merged` additionally proves its merge was published.
-        removed = run(["git", "worktree", "remove", "--force", str(candidate)], check=False)
-        if removed.returncode == 0 or not os.path.lexists(candidate):
-            closed.append(label)
-        else:
+                    kept_reasons[label] = reason
+                if failures is not None:
+                    failures[label] = reason
+        for label, reason in report_unattended_worktrees(r, root):
             kept.append(label)
             if kept_reasons is not None:
-                kept_reasons[label] = "landing worktree removal failed"
+                kept_reasons[label] = reason
     return closed, kept
+
+
+def retire_run_workspaces(r: Run) -> list[tuple[str, str | None]]:
+    """Retire the herdr workspaces THIS RUN created; return ``(label, reason kept)`` rows.
+
+    Ownership comes from the record's ``workspaces_created`` list, never from a name pattern: a
+    prefix match would eventually retire someone else's workspace. A workspace still holding a
+    live agent, or a tab this run does not own, is refused with the agent named -- the cleanup's
+    own docstring has always warned about a workspace list that accumulates dead lanes, and this
+    is that warning one level up (issue 876).
+    """
+    rows: list[tuple[str, str | None]] = []
+    if not r.workspaces_created:
+        return rows
+    try:
+        agents = live_agents()
+    except SystemExit as exc:
+        return [
+            (f"workspace {name}", f"herdr could not be asked which agents are live: {exc}")
+            for name in r.workspaces_created
+        ]
+    owned_panes = {unit.pane_id for unit in r.units if unit.pane_id}
+    for name in list(r.workspaces_created):
+        label = f"workspace {name}"
+        occupant = next(
+            (
+                row
+                for row in agents
+                if str(row.get("pane_id", "")).partition(":")[0] == name
+                and row.get("pane_id") not in owned_panes
+            ),
+            None,
+        )
+        if occupant is not None:
+            rows.append((label, f"it still holds {occupant.get('name', 'an agent')}"))
+            continue
+        still_live = [
+            row for row in agents if str(row.get("pane_id", "")).partition(":")[0] == name
+        ]
+        if still_live:
+            rows.append((label, f"{len(still_live)} of this run's tabs are still open in it"))
+            continue
+        closed_proc = run(["herdr", "workspace", "close", name], check=False, timeout=60)
+        if closed_proc.returncode != 0:
+            detail = (closed_proc.stderr or closed_proc.stdout or "unknown error").strip()
+            rows.append((label, f"closing it failed ({closed_proc.returncode}): {detail}"))
+            continue
+        r.workspaces_created.remove(name)
+        rows.append((label, None))
+    return rows
+
+
+def report_unattended_worktrees(r: Run, root: Path) -> list[tuple[str, str]]:
+    """The one check worth keeping from the retired fleet-doctor command.
+
+    A worktree this run manages with no live session in it is a leaked resource: nothing else
+    reports it, and it is the state that leaves a remote branch undeletable long after the run
+    has finished. Reported by path; never removed here, because a unit's worktree is also the
+    evidence its session failed.
+    """
+    findings: list[tuple[str, str]] = []
+    try:
+        agents = live_agents()
+    except SystemExit:
+        return findings
+    live_cwds = {str(row.get("cwd")) for row in agents if row.get("cwd")}
+    live_names = {str(row.get("name")) for row in agents if row.get("name")}
+    for unit in r.units:
+        if not unit.worktree or unit.status in (DONE, *TERMINAL_UNIT_STATUSES):
+            continue
+        if not os.path.lexists(Path(unit.worktree)):
+            continue
+        if str(Path(unit.worktree)) in live_cwds:
+            continue
+        # Match on the agent NAME as well as the working directory. herdr does not always report
+        # a cwd, and "this session did not say where it is" must not read as "no session is
+        # there" -- absence of information is not evidence of absence, which is the rule this
+        # file already applies to a companion it cannot ask.
+        if (unit.agent_name or unit.name) in live_names:
+            continue
+        findings.append(
+            (
+                f"managed worktree at {unit.worktree}",
+                f"{unit.name} is {unit.status} but no live session is standing in it",
+            )
+        )
+    return findings
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
@@ -5641,17 +5821,20 @@ def cmd_clean(args: argparse.Namespace) -> int:
     Branches are deleted only with ``--branches``: a branch is cheap, and it is the last copy of
     a failed unit's work.
 
-    With ``--all``, run state is deleted only when the sweep keeps nothing. Any retained unit or
-    landing worktree keeps the run record that names and explains that work. Canonical and numbered
-    landing paths that no conflict record owns are discovered here as cleanup debt; only a proven
-    separate linked worktree is removed, so an untrusted directory or symlink stays untouched.
+    It also retires the herdr workspaces this run created -- ownership read from the record, never
+    from a name pattern -- and reports a managed worktree with no live session in it, which is the
+    one check worth keeping from the retired fleet-doctor command.
 
-    Run it after every ``land``, not once at the end. A phase's sessions are finished the moment
-    their work is on the run branch, and leaving them open for the rest of the run is how a
+    **The sweep is total.** Every unit in scope is visited even when an earlier one could not be
+    cleaned, and every leftover is named with git's own message. The exit status says so: 0 when
+    nothing was left behind, 3 when something was.
+
+    Run it after every ``merge``, not once at the end. A phase's sessions are finished the moment
+    their work is on the parent branch, and leaving them open for the rest of the run is how a
     workspace ends up with a dozen idle tabs nobody can tell apart.
     """
     assert_agent_launcher_available()  # reaching `close_run_session`: gate first
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     if r.unresolvable_branch:
         print(
             f"WARNING: run branch {r.unresolvable_branch!r} does not resolve; "
@@ -5659,26 +5842,31 @@ def cmd_clean(args: argparse.Namespace) -> int:
         )
     remote = getattr(args, "remote", "origin") or "origin"
     kept_reasons: dict[str, str] = {}
-    closed, kept = reap(
-        r,
-        merged_only=args.merged,
-        branches=args.branches,
-        remote=remote,
-        kept_reasons=kept_reasons,
-    )
-    if args.all and not kept:
-        shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
-    else:
-        r.save()
-        if args.all:
-            print("run state retained because cleanup kept work")
+    # Kept-by-rule and could-not-be-removed are different things, and only the second is a
+    # cleanup failure. `--merged` keeping a running unit is the rule working; an exit code that
+    # called that incomplete would make the honest signal useless.
+    failures: dict[str, str] = {}
+    try:
+        closed, kept = reap(
+            r,
+            merged_only=args.merged,
+            branches=args.branches,
+            remote=remote,
+            kept_reasons=kept_reasons,
+            failures=failures,
+        )
+    finally:
+        # Exception-proof by construction: printing, and nothing else. A leftover named only on
+        # the happy path is a leftover nobody hears about when it matters (issue 979).
+        for name, reason in kept_reasons.items():
+            print(f"kept {name}: {reason}")
+        with contextlib.suppress(RecordError):
+            r.save()
     print(f"closed: {', '.join(closed) or 'nothing'}")
     ordinary_kept = [name for name in kept if name not in kept_reasons]
     if ordinary_kept:
         print(f"kept (not done, or its work not on the run branch): {', '.join(ordinary_kept)}")
-    for name, reason in kept_reasons.items():
-        print(f"kept {name}: {reason}")
-    return 0
+    return 3 if failures else 0
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -5691,7 +5879,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     repair for the first one, and ``settle`` is the repair for the last -- it reads idle twice,
     ``interval`` seconds apart, and only marks the unit done when both readings agree.
     """
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     findings: list[str] = []
     branch_error = r.unresolvable_branch
     branch_tip = r.resolved_branch
@@ -5700,25 +5888,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         findings.append(f"RUN BRANCH -- run branch {branch_error!r} does not resolve")
 
     root = repo_root()
-    recorded_conflict = (
-        Path(os.path.abspath(Path(r.conflict_worktree))) if r.conflict_worktree else None
-    )
-    for landing_path in landing_worktree_paths(r, root=root):
-        candidate = Path(os.path.abspath(landing_path))
-        # A live conflict pointer remains the accepted recovery surface and keeps its existing
-        # reporting behavior. This check is for otherwise unrecorded landing cleanup debt.
-        if recorded_conflict is not None and candidate == recorded_conflict:
-            continue
-        if live_linked_worktree_at(candidate, operator_worktree=root):
-            findings.append(
-                f"LANDING WORKTREE {candidate} -- no run record owns this cleanup path; "
-                "run `orchestrate.py clean --merged` to retry cleanup"
-            )
-        else:
-            findings.append(
-                f"LANDING PATH {candidate} -- not a proven separate linked worktree; "
-                "it is left untouched for inspection"
-            )
+    for label, reason in report_unattended_worktrees(r, root):
+        findings.append(f"UNATTENDED {label} -- {reason}")
 
     for name, branch in discover_unrecorded(r):
         findings.append(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
@@ -5930,7 +6101,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
     With no unit name, prints the stat summary of every unit that has a branch -- the shape of
     the whole run in one read.
     """
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     cmp_ref = diff_against(r)
     if cmp_ref is None:
         print("neither the run branch nor the run base resolves -- nothing to compare against")
@@ -5950,7 +6121,7 @@ def cmd_adopt(args: argparse.Namespace) -> int:
     Without ``--yes`` nothing is written; the discovery is printed so the operator can see what
     would be added.
     """
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     if r.unresolvable_branch:
         print(
             f"WARNING: run branch {r.unresolvable_branch!r} does not resolve; commit-based "
@@ -6207,7 +6378,7 @@ def resume_unit(
 
 
 def cmd_park(args: argparse.Namespace) -> int:
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     evidence = args.evidence.strip()
     if not evidence:
         raise SystemExit("failure evidence must not be empty")
@@ -6218,51 +6389,8 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_redrive(args: argparse.Namespace) -> int:
-    """Re-prompt a unit recorded as sent-but-never-started, once its session is idle.
-
-    ``prompt_undelivered`` was a terminal bucket: ``go`` skips a unit with a tab, ``settle``
-    reads only running units, and nothing returned it to pending (cycle 2, F76). This is the
-    one door out. It writes a pane, so it gates on the companion floor like the other write
-    commands, and it goes through the launcher's ``redeliver`` -- the same inspected writer
-    as every other write, and the same never-started gate: a session that visibly started may
-    already hold the task and is refused with the tab named for the operator to read.
-    """
-    assert_agent_launcher_available()
-    r = Run.load()
-    unit = r.unit(args.unit)
-    if unit.status != PROMPT_UNDELIVERED:
-        raise SystemExit(
-            f"{unit.name} is {unit.status!r}, not {PROMPT_UNDELIVERED!r}; redrive only "
-            "re-prompts a unit whose prompt was never observed to be taken"
-        )
-    if not unit.pane_id:
-        raise SystemExit(f"{unit.name}: no pane recorded; relaunch it under a new name instead")
-    row = agent_row(unit)
-    if session_has_started(row):
-        status = row.get("agent_status") if row is not None else None
-        raise SystemExit(
-            f"{unit.name}: its session is {status!r}, so it may already hold the task; read "
-            f"tab {unit.tab_id} before prompting it again"
-        )
-    clear_delivery_warning(unit)
-    print(f"redriving {unit.name} ({unit.vendor}) into pane {unit.pane_id} -> {unit.task}")
-    try:
-        redeliver(unit, r.backend, review_elsewhere=r.reviews_separately())
-    except StagedInputError as exc:
-        unit.status = PENDING
-        if str(exc) not in unit.note:
-            append_unit_note(unit, str(exc))
-        print(f"  {unit.name} PENDING: {exc}")
-        r.save()
-        return 1
-    r.save()
-    print(f"  {unit.name}: {unit.status}")
-    return 0 if unit.status == RUNNING else 1
-
-
 def cmd_resume(args: argparse.Namespace) -> int:
-    r = Run.load()
+    r = Run.load(args.issue, args.store_root)
     unit, info = resume_unit(
         r,
         args.unit,
@@ -6284,9 +6412,33 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="orchestrate", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("start", help="create worktrees and the run file from a plan")
+    def stateful(name: str, help_text: str) -> argparse.ArgumentParser:
+        """A subcommand that reads or writes one issue's run record.
+
+        Every one of them takes ``--issue``: the record is per issue, which is what lets two
+        issues be driven in one repository at once. ``--store-root`` exists for the tests and for
+        reading a record that belongs to another checkout; nothing in the test suite may write
+        into the primary checkout's live store.
+        """
+        child = sub.add_parser(name, help=help_text)
+        child.add_argument("--issue", type=int, required=True, help="the issue this run is for")
+        child.add_argument(
+            "--store-root", default=None, help="override the resolved run-record store"
+        )
+        return child
+
+    s = sub.add_parser("plan-check", help="validate a plan completely and create nothing")
+    s.add_argument("--plan", required=True)
+    s.set_defaults(func=cmd_plan_check)
+
+    s = stateful("start", "create the parent branch and the unit rows from a plan")
     s.add_argument("--plan", required=True)
     s.add_argument("--base", help="commit to branch every unit from (default HEAD)")
+    s.add_argument(
+        "--branch",
+        help="name the run's shared branch; without it, parent/<issue> when the issue has "
+        "sub-issues and issue/<issue> when it does not",
+    )
     s.set_defaults(func=cmd_start)
 
     s = sub.add_parser("roster", help="list the agents this machine can actually run")
@@ -6299,13 +6451,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("cap", help="the bare capability name, e.g. plan")
     s.set_defaults(func=cmd_saga)
 
-    s = sub.add_parser("expand", help="append units to a run in flight, once a phase names them")
+    s = stateful("expand", "append units to a run in flight, once a phase names them")
     s.add_argument("--plan", required=True)
     s.set_defaults(func=cmd_expand)
 
-    s = sub.add_parser(
+    s = stateful(
         "review-result",
-        help="persist a typed Code Review result verbatim and route its fix requests",
+        "persist a typed Code Review result verbatim and route its fix requests",
     )
     s.add_argument("--file", required=True, help="UTF-8 file containing the complete typed result")
     s.add_argument(
@@ -6315,14 +6467,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.set_defaults(func=cmd_review_result)
 
-    s = sub.add_parser("go", help="launch every unit whose dependencies are met")
-    s.add_argument("--limit", type=int, default=0, help="launch at most this many now")
+    s = stateful("go", "launch every unit whose dependencies are met")
+    s.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="launch at most this many in THIS call. Not a cap: the run's concurrency allocation "
+        "in the record is the cap, and it counts open role panes as well as running units",
+    )
     s.set_defaults(func=cmd_go)
 
-    s = sub.add_parser("status", help="show the table")
+    s = stateful("status", "show the table")
     s.set_defaults(func=cmd_status)
 
-    s = sub.add_parser("settle", help="mark running units done when their session goes idle")
+    s = stateful("settle", "mark running units done when their session goes idle")
     s.add_argument(
         "--interval",
         type=int,
@@ -6336,9 +6494,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.set_defaults(func=cmd_settle)
 
-    s = sub.add_parser(
-        "wait", help="block until a running unit settles (herdr events, not polling)"
-    )
+    s = stateful("wait", "block until a running unit settles (herdr events, not polling)")
     s.add_argument("--timeout", type=int, default=1800, help="seconds to wait at most")
     s.add_argument(
         "--interval",
@@ -6354,33 +6510,31 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.set_defaults(func=cmd_wait)
 
-    s = sub.add_parser("land", help="merge finished units onto the run branch")
+    s = stateful("merge", "take a merge turn per ready unit onto the run's parent branch")
     s.add_argument(
         "--clean",
         action="store_true",
-        help="after a successful land, reap the units the merged rule allows; never their branches",
+        help="after a successful turn, reap the units the merged rule allows; never their branches",
     )
-    s.set_defaults(func=cmd_land)
+    s.add_argument("--remote", default="origin", help="remote to compare against (default origin)")
+    s.add_argument(
+        "--compare",
+        default="main",
+        help="the branch a merge may never take backwards (default main)",
+    )
+    s.set_defaults(func=cmd_merge)
 
-    s = sub.add_parser("announce", help="write a unit's phase boundary back to its board card")
+    s = stateful("announce", "write a unit's phase boundary back to its board card")
     s.add_argument("units", nargs="+", help="unit names whose boundary has passed")
     s.set_defaults(func=cmd_announce)
 
-    s = sub.add_parser("collect", help="merge the run branch into your tree")
-    s.set_defaults(func=cmd_collect)
-
-    s = sub.add_parser("clean", help="close tabs and remove worktrees")
+    s = stateful("clean", "close tabs, remove worktrees, and retire this run's workspaces")
     s.add_argument(
         "--merged",
         action="store_true",
-        help="only DONE units whose commits are all on the run branch",
+        help="only DONE units whose commits are all on the parent branch",
     )
     s.add_argument("--branches", action="store_true", help="delete the unit branches too")
-    s.add_argument(
-        "--all",
-        action="store_true",
-        help="delete run state only when cleanup keeps no work",
-    )
     s.add_argument(
         "--remote",
         default="origin",
@@ -6388,12 +6542,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.set_defaults(func=cmd_clean)
 
-    s = sub.add_parser("check", help="report where the run record and the repository disagree")
+    s = stateful("check", "report where the run record and the repository disagree")
     s.set_defaults(func=cmd_check)
 
-    s = sub.add_parser(
-        "diff", help="what a unit actually changed: merge base to its branch, nothing else"
-    )
+    s = stateful("diff", "what a unit actually changed: merge base to its branch, nothing else")
     s.add_argument(
         "unit",
         nargs="?",
@@ -6404,15 +6556,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.set_defaults(func=cmd_diff)
 
-    s = sub.add_parser("adopt", help="write units for run branches the table does not know")
+    s = stateful("adopt", "write units for run branches the table does not know")
     s.add_argument(
-        "--yes", action="store_true", help="write the discovered units into the run file"
+        "--yes", action="store_true", help="write the discovered units into the run record"
     )
     s.set_defaults(func=cmd_adopt)
 
-    s = sub.add_parser(
+    s = stateful(
         "park",
-        help="record a typed parked state for a unit whose push succeeded but PR creation blocked",
+        "record a typed parked state for a unit whose push succeeded but PR creation blocked",
     )
     s.add_argument("--unit", required=True, help="unit name to park")
     s.add_argument(
@@ -6426,9 +6578,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--base", help="authoritative base branch (defaults to run branch, or main)")
     s.set_defaults(func=cmd_park)
 
-    s = sub.add_parser(
+    s = stateful(
         "resume",
-        help="idempotently open or adopt a pull request for a parked unit and continue the run",
+        "idempotently open or adopt a pull request for a parked unit and continue the run",
     )
     s.add_argument("--unit", required=True, help="parked unit name to resume")
     s.add_argument("--title", help="PR title (default derived from unit name/task)")
@@ -6441,15 +6593,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.set_defaults(func=cmd_resume)
 
-    s = sub.add_parser(
-        "redrive",
-        help="re-prompt a unit recorded as sent-but-never-started once its session is idle",
-    )
-    s.add_argument("--unit", required=True, help="unit in the prompt_undelivered state")
-    s.set_defaults(func=cmd_redrive)
-
     args = p.parse_args(argv)
-    return int(args.func(args))
+    # Every record refusal reaches the operator as one line, never a traceback, and the exit codes
+    # are the run record's own: 2 a refusal, 3 a version this Orchestrate does not know.
+    try:
+        return int(args.func(args))
+    except UnknownRecordVersionError as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+    except RecordError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

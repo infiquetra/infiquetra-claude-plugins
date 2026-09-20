@@ -9,7 +9,7 @@ and every write goes through saga's ``reconcile_controller`` -- never a second d
 The controller subprocess is faked, but the fake is faithful to the one contract that matters
 here: one write per idempotency key, with the key assembled from the ARGUMENTS exactly the way
 saga's ``reversibility_certificate.idempotency_key`` does. Every assertion reads what orchestrate
-actually passed, not that a mock was waved at. The merging tests drive ``cmd_land`` against a real
+actually passed, not that a mock was waved at. The merging tests drive ``cmd_merge`` against a real
 git repository, the way ``test_orchestrate_launch_and_land`` does, because the merge is what the
 writeback hangs off.
 """
@@ -23,12 +23,54 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -212,29 +254,24 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(
-    repo: Path,
-    units: list[dict[str, Any]],
-    issues: dict[str, str] | None = None,
-    status_map: dict[str, Any] | None = None,
-) -> None:
-    base = subprocess.run(
-        ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
     ).stdout.strip()
-    payload: dict[str, Any] = {
-        "run_id": "r1",
-        "source": "board writeback test",
-        "base": base,
-        "branch": "orch/r1",
-        "units": units,
-    }
-    if issues is not None:
-        payload["issues"] = issues
-    if status_map is not None:
-        payload["status_map"] = status_map
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _unit(name: str, **over: Any) -> dict[str, Any]:
@@ -322,7 +359,7 @@ class TestStatusMapping:
     def test_no_rung_reaches_verify_or_retro(self, orchestrate: ModuleType) -> None:
         """Neither stage is reachable, because Orchestrate can check neither W-D2 conjunct.
 
-        `cmd_land` merges onto the run branch rather than the default branch, and the module carries
+        `cmd_merge` merges onto the run branch rather than the default branch, and the module carries
         no deployment or artifact-verification signal, so a gate on the rule would be permanently
         false. `landed` is retired for that reason; `codereview` was remapped for the same one.
         """
@@ -362,7 +399,7 @@ class TestNoIssuesMeansNoWrite:
     ) -> None:
         _write_run(repo, [_unit("work-alpha")])  # run.json carries no `issues` key at all
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_merge(NS()) == 0
 
         assert fake_controller.calls == []
         assert _on(repo, "orch/r1", "work-alpha.txt"), "land itself must be unaffected"
@@ -377,7 +414,7 @@ class TestNoIssuesMeansNoWrite:
     ) -> None:
         _write_run(repo, [_unit("work-alpha")])
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 0
+        assert orchestrate.cmd_announce(NS(units=["work-alpha"])) == 0
         assert fake_controller.calls == []
         assert "no `issues` mapping" in capsys.readouterr().out
 
@@ -387,11 +424,11 @@ class TestNoIssuesMeansNoWrite:
         """A run.json written before this feature has neither field; both default to nothing."""
         _write_run(repo, [_unit("work-alpha")])
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         assert r.issues == {}
         assert r.status_map == {}
         r.save()
-        payload = json.loads((repo / ".orchestrate" / "run.json").read_text())
+        payload = _support.read_record(test_store(), _support.TEST_ISSUE)["orchestrate"]
         assert payload["issues"] == {}
         assert payload["status_map"] == {}
 
@@ -409,7 +446,7 @@ class TestALandedUnitAnnounces:
     ) -> None:
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_merge(NS()) == 0
 
         assert len(fake_controller.status_writes) == 1
         assert fake_controller.status_writes[0] == {
@@ -435,7 +472,7 @@ class TestALandedUnitAnnounces:
     ) -> None:
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_merge(NS()) == 0
         assert len(fake_controller.calls) == 2
 
         status_opts = _options_of(fake_controller.calls[0])
@@ -471,7 +508,7 @@ class TestALandedUnitAnnounces:
             status_map={"work": ["Active", "Integrating"]},
         )
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_merge(NS()) == 0
         assert fake_controller.status_writes == [
             {
                 "repo": "infiquetra/orch",
@@ -498,7 +535,7 @@ class TestALandedUnitAnnounces:
             status_map={"work": ["Active", "Invented status"]},
         )
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         records = orchestrate.announce_units(r, ["work-alpha"])
         assert fake_controller.calls == [], "an unresolvable rung must not reach the controller"
         assert "skipped" not in records[0]
@@ -523,7 +560,7 @@ class TestALandedUnitAnnounces:
             status_map={"work": "Ready"},
         )
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         records = orchestrate.announce_units(r, ["work-alpha"])
         assert fake_controller.calls == []
         assert records[0]["writes"][0]["status"] == "failed"
@@ -541,14 +578,14 @@ class TestALandedUnitAnnounces:
         """No schema means no way to tell a live rung from an invented one -- and that is a FAILURE.
 
         An earlier form recorded a skip here. `report_announcements` prints a skip only under
-        `verbose`, both `cmd_land` call sites pass the default False, and `_failed_writebacks`
+        `verbose`, both `cmd_merge` call sites pass the default False, and `_failed_writebacks`
         excludes skips by design -- so `land` wrote nothing to any board, printed nothing about it,
         and exited 0. That is the same silence this whole change exists to end, one layer up.
         """
         monkeypatch.setenv("ORCHESTRATE_SDLC_SCHEMA", str(tmp_path / "no-such-schema.json"))
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         records = orchestrate.announce_units(r, ["work-alpha"])
 
         assert fake_controller.calls == [], "no rung can be validated, so nothing is submitted"
@@ -585,7 +622,7 @@ class TestALandedUnitAnnounces:
         monkeypatch.setattr(fake_controller, "identity_of", _old_saga)
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        r = orchestrate.Run.load()
+        r = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         records = orchestrate.announce_units(r, ["work-alpha"])
 
         status_write = records[0]["writes"][0]
@@ -638,7 +675,7 @@ class TestALandedUnitAnnounces:
     ) -> None:
         _write_run(repo, [_unit("settle-gamma")], issues={"settle-gamma": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["settle-gamma"])) == 0
+        assert orchestrate.cmd_announce(NS(units=["settle-gamma"])) == 0
         assert fake_controller.calls == []
         assert "no status mapped" in capsys.readouterr().out
 
@@ -659,7 +696,7 @@ class TestALandedUnitAnnounces:
         """
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "not-an-issue-ref"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 2
+        assert orchestrate.cmd_merge(NS()) == 2
         assert fake_controller.calls == []
         assert _on(repo, "orch/r1", "work-alpha.txt"), "the merge must not care about the ref"
         out = capsys.readouterr().out
@@ -679,8 +716,8 @@ class TestRerunsDoNotDuplicate:
     ) -> None:
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 0
+        assert orchestrate.cmd_merge(NS()) == 0
+        assert orchestrate.cmd_announce(NS(units=["work-alpha"])) == 0
 
         assert len(fake_controller.comment_writes) == 1
         assert len(fake_controller.status_writes) == 1
@@ -698,8 +735,8 @@ class TestRerunsDoNotDuplicate:
     ) -> None:
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_merge(NS()) == 0
+        assert orchestrate.cmd_merge(NS()) == 0
 
         assert len(fake_controller.comment_writes) == 1
         assert len(fake_controller.status_writes) == 1
@@ -720,7 +757,7 @@ class TestAMissingControllerNeverFailsALand:
         monkeypatch.setenv("ORCHESTRATE_RECONCILE_CONTROLLER", str(repo / "no-such-controller.py"))
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+        assert orchestrate.cmd_merge(NS()) == 0
 
         assert _on(repo, "orch/r1", "work-alpha.txt"), "the merge must happen regardless"
         assert fake_controller.calls == []
@@ -737,7 +774,7 @@ class TestAMissingControllerNeverFailsALand:
         monkeypatch.setenv("ORCHESTRATE_RECONCILE_CONTROLLER", str(repo / "no-such-controller.py"))
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 0
+        assert orchestrate.cmd_announce(NS(units=["work-alpha"])) == 0
         assert fake_controller.calls == []
         assert "not importable" in capsys.readouterr().err
 
@@ -925,7 +962,7 @@ class TestNoBoundaryReachesAStageItCannotObserve:
             status_map={"work": [stage, status]},
         )
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 2
+        assert orchestrate.cmd_announce(NS(units=["work-alpha"])) == 2
         assert fake_controller.calls == [], "nothing may reach the controller"
         out = capsys.readouterr().out
         assert f"names the {stage} stage" in out
@@ -955,7 +992,7 @@ class TestNoBoundaryReachesAStageItCannotObserve:
         """Retiring `landed` must not convert its loud failure into a silent no-op."""
         _write_run(repo, [_unit("landed-52")], issues={"landed-52": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["landed-52"])) == 2
+        assert orchestrate.cmd_announce(NS(units=["landed-52"])) == 2
         assert fake_controller.calls == []
         assert "was retired in Orchestrate" in capsys.readouterr().out
 
@@ -974,7 +1011,7 @@ class TestNoBoundaryReachesAStageItCannotObserve:
             status_map={"landed": ["Active", "Implementing"]},
         )
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["landed-52"])) == 0
+        assert orchestrate.cmd_announce(NS(units=["landed-52"])) == 0
         assert fake_controller.calls, "the override is submitted normally"
 
 
@@ -999,7 +1036,7 @@ class TestTheFailureSignalsThemselves:
             status_map={"work": ["Active", "No Such Status"]},
         )
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 2
+        assert orchestrate.cmd_announce(NS(units=["work-alpha"])) == 2
 
     def test_announce_exits_zero_when_the_writeback_converges(
         self,
@@ -1011,7 +1048,7 @@ class TestTheFailureSignalsThemselves:
         """Control: exit 2 must discriminate, not be what this command always returns."""
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 0
+        assert orchestrate.cmd_announce(NS(units=["work-alpha"])) == 0
 
     def test_converged_statuses_is_exactly_the_three_that_mean_the_board_moved(
         self, orchestrate: ModuleType
@@ -1087,9 +1124,9 @@ class TestTheBudgetsAndFloorsAreDerivedFromWhatTheyGuard:
     ) -> None:
         """A declared floor nothing checks is a comment."""
         floors = orchestrate.declared_dependency_floors()
-        assert "saga" in floors and floors["saga"] >= (0, 151, 0)
-        below = Path("/c/plugins/cache/mkt/saga/0.136.0/scripts/reconcile_controller.py")
-        at = Path("/c/plugins/cache/mkt/saga/0.151.0/scripts/reconcile_controller.py")
+        assert "saga" in floors and floors["saga"] >= (0, 164, 0)
+        below = Path("/c/plugins/cache/mkt/saga/0.151.0/scripts/reconcile_controller.py")
+        at = Path("/c/plugins/cache/mkt/saga/0.164.0/scripts/reconcile_controller.py")
         assert orchestrate.dependency_floor_violation("saga", below) is not None
         assert orchestrate.dependency_floor_violation("saga", at) is None
         # An install with no readable version is not refused -- a repo checkout has none.
@@ -1110,7 +1147,7 @@ class TestTheBudgetsAndFloorsAreDerivedFromWhatTheyGuard:
         monkeypatch.setenv("ORCHESTRATE_RECONCILE_CONTROLLER", str(controller))
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 2
+        assert orchestrate.cmd_announce(NS(units=["work-alpha"])) == 2
         assert fake_controller.calls == [], "a stale saga must never be handed a submission"
 
 
@@ -1202,169 +1239,12 @@ class TestARealTimeoutReturnsTheSafetyRecord:
         assert isinstance(proc, subprocess.CompletedProcess)
 
 
-class TestAFailedWritebackOutlivesTheInvocationThatSawIt:
-    def test_a_second_land_still_reports_an_outstanding_failure(
-        self,
-        orchestrate: ModuleType,
-        repo: Path,
-        fake_controller: FakeReconcileController,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """`land` announces only what it merged, so a second land saw no failure and exited 0."""
-        _write_run(
-            repo,
-            [_unit("work-alpha")],
-            issues={"work-alpha": "infiquetra/orch#52"},
-            status_map={"work": ["Active", "No Such Status"]},
-        )
-        monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 2
-        capsys.readouterr()
-        # Nothing new to merge: without the ledger this land attempts no write and exits 0.
-        assert orchestrate.cmd_land(argparse.Namespace()) == 2
-        assert "BOARD WRITEBACK STILL OUTSTANDING" in capsys.readouterr().out
-
-    def test_a_converged_announce_clears_the_outstanding_entry(
-        self,
-        orchestrate: ModuleType,
-        repo: Path,
-        fake_controller: FakeReconcileController,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Control: the ledger must clear, or every run reports a failure forever."""
-        _write_run(
-            repo,
-            [_unit("work-alpha")],
-            issues={"work-alpha": "infiquetra/orch#52"},
-            status_map={"work": ["Active", "No Such Status"]},
-        )
-        monkeypatch.chdir(repo)
-        assert orchestrate.cmd_land(argparse.Namespace()) == 2
-        run_path = repo / ".orchestrate" / "run.json"
-        payload = json.loads(run_path.read_text())
-        assert "work-alpha" in payload["writeback_failed"]
-        payload["status_map"] = {"work": ["Active", "Implementing"]}
-        run_path.write_text(json.dumps(payload))
-        assert orchestrate.cmd_announce(argparse.Namespace(units=["work-alpha"])) == 0
-        assert json.loads(run_path.read_text())["writeback_failed"] == {}
-
-
-# The Unit field set each run-file contract string was issued for. A contract names the shape
-# an older Orchestrate would misread: a 4.0.x reader passes the contract gate on a string it
-# knows and then dies in a bare ``Unit(**raw)`` on a key it does not (terminal review F05/F21).
-# So the string moves whenever Unit gains or loses a field, and this table is the binding.
-UNIT_FIELDS_BY_CONTRACT: dict[str, tuple[str, ...]] = {
-    "2026-08-31.stage-status-pair": (
-        "name",
-        "vendor",
-        "task",
-        "task_file",
-        "model",
-        "effort",
-        "account",
-        "permission",
-        "setup",
-        "launch_args",
-        "workspace",
-        "merge",
-        "role",
-        "lifecycle",
-        "paths",
-        "fix_requests",
-        "after",
-        "serialize",
-        "worktree",
-        "branch",
-        "branched_from",
-        "tab_id",
-        "pane_id",
-        "agent_name",
-        "status",
-        "note",
-        "variant",
-        "launch_receipt",
-        "parked_state",
-    ),
-    "2026-09-02.permission-declared": (
-        "name",
-        "vendor",
-        "task",
-        "task_file",
-        "model",
-        "effort",
-        "account",
-        "permission",
-        "permission_declared",
-        "setup",
-        "launch_args",
-        "workspace",
-        "merge",
-        "role",
-        "lifecycle",
-        "paths",
-        "fix_requests",
-        "after",
-        "serialize",
-        "worktree",
-        "branch",
-        "branched_from",
-        "tab_id",
-        "pane_id",
-        "agent_name",
-        "status",
-        "note",
-        "variant",
-        "launch_receipt",
-        "parked_state",
-    ),
-}
+# `TestAFailedWritebackOutlivesTheInvocationThatSawIt` went with the outstanding-writeback
+# ledger it named (issue #1025): a failure is reported where it happens and re-running
+# `announce` is the retry, so there is no record to outlive an invocation.
 
 
 class TestTheRunFileNamesItsOwnContract:
-    def test_the_contract_string_moves_with_the_unit_field_set(
-        self, orchestrate: ModuleType
-    ) -> None:
-        """Terminal review F05/F21: ``permission_declared`` shipped under the 2026-08-31
-        string, so an installed 4.0.1 accepted the file and raised a bare TypeError instead
-        of the named refusal. The current field set must be the one recorded for the
-        current contract string; a new field without a new string fails here."""
-        fields = tuple(orchestrate.Unit.__dataclass_fields__)
-        assert orchestrate.RUN_FILE_CONTRACT in UNIT_FIELDS_BY_CONTRACT, (
-            "record the Unit field set for the new RUN_FILE_CONTRACT in UNIT_FIELDS_BY_CONTRACT"
-        )
-        assert fields == UNIT_FIELDS_BY_CONTRACT[orchestrate.RUN_FILE_CONTRACT], (
-            "Unit gained or lost a field: bump RUN_FILE_CONTRACT to a new dated string and "
-            "record the field set it was issued for"
-        )
-        assert max(UNIT_FIELDS_BY_CONTRACT) == orchestrate.RUN_FILE_CONTRACT, (
-            "the current contract must be the newest dated string"
-        )
-        assert set(UNIT_FIELDS_BY_CONTRACT) <= set(orchestrate.KNOWN_RUN_FILE_CONTRACTS), (
-            "every contract this Orchestrate ever wrote must still be readable"
-        )
-        assert "" in orchestrate.KNOWN_RUN_FILE_CONTRACTS
-
-    def test_a_reader_that_knows_only_the_previous_contract_refuses_this_run_file(
-        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The backward half F05 names: the contract gate an installed 4.0.1 runs is
-        ``contract not in {"", "2026-08-31.stage-status-pair"}``. A run file this version
-        writes must trip that gate, so the older reader stops with RunFileContractError and
-        its update remedy instead of reaching ``Unit(**raw)``."""
-        previous_reader_knows = frozenset({"", "2026-08-31.stage-status-pair"})
-        _write_run(repo, [_unit("work-alpha")])
-        monkeypatch.chdir(repo)
-        orchestrate.Run.load().save()
-        payload = json.loads((repo / ".orchestrate" / "run.json").read_text())
-        assert payload["contract"] not in previous_reader_knows
-        assert "permission_declared" in payload["units"][0]
-        # Cycle 2, F73: exercise the gate itself as the older reader would run it, not only
-        # the membership of two literals.
-        monkeypatch.setattr(orchestrate, "KNOWN_RUN_FILE_CONTRACTS", previous_reader_knows)
-        with pytest.raises(orchestrate.RunFileContractError, match="Update the orchestrate plugin"):
-            orchestrate.Run.load()
-
     def test_a_legacy_row_without_the_permission_key_reads_as_not_declared(
         self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1372,32 +1252,12 @@ class TestTheRunFileNamesItsOwnContract:
         as a posture somebody chose. Only the plan parser sets it true."""
         _write_run(repo, [_unit("work-alpha")])
         monkeypatch.chdir(repo)
-        assert orchestrate.Run.load().unit("work-alpha").permission_declared is False
-
-    def test_a_run_file_from_a_newer_orchestrate_is_refused_not_read(
-        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A downgrade reads an unknown `status_map` shape as "no status mapped" -- silence again."""
-        _write_run(repo, [_unit("work-alpha")])
-        path = repo / ".orchestrate" / "run.json"
-        payload = json.loads(path.read_text())
-        payload["contract"] = "2099-01-01.something-later"
-        path.write_text(json.dumps(payload))
-        monkeypatch.chdir(repo)
-        with pytest.raises(orchestrate.RunFileContractError, match="does not know"):
-            orchestrate.Run.load()
-
-    def test_a_run_file_this_version_wrote_round_trips(
-        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Control, and the backward-compatible half: a file with no contract key still opens."""
-        _write_run(repo, [_unit("work-alpha")])
-        monkeypatch.chdir(repo)
-        run = orchestrate.Run.load()
-        run.save()
-        payload = json.loads((repo / ".orchestrate" / "run.json").read_text())
-        assert payload["contract"] == orchestrate.RUN_FILE_CONTRACT
-        assert orchestrate.Run.load().run_id == "r1"
+        assert (
+            orchestrate.Run.load(_support.TEST_ISSUE, test_store())
+            .unit("work-alpha")
+            .permission_declared
+            is False
+        )
 
 
 class TestProvenanceIsRecorded:
@@ -1412,7 +1272,7 @@ class TestProvenanceIsRecorded:
         """Sixty saga copies are installed here; "the write succeeded" named none of them."""
         _write_run(repo, [_unit("work-alpha")], issues={"work-alpha": "infiquetra/orch#52"})
         monkeypatch.chdir(repo)
-        run = orchestrate.Run.load()
+        run = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
         records = orchestrate.announce_units(run, ["work-alpha"])
         assert records[0]["provenance"]["controller"] == str(CONTROLLER)
         assert "board writeback via saga" in capsys.readouterr().err

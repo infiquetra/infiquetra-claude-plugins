@@ -2,6 +2,58 @@
 
 ## 2026-09-20
 
+### A card-scoped inner loop proves the card and nothing else  {#1025-card-scoped-inner-loop-is-not-the-suite}
+
+**Evidence.** Issue #1025, commit `d2f9c0b4`. The card's inner loop was
+`pytest tests/test_orchestrate*.py`, which was green at 896 passed. The first whole-repository run
+was 3 failed, 8,778 passed, and all three failures were real consequences of the card:
+`tests/test_lint_test_shape.py` (five new modules read as fake-only because the real driver was
+loaded inside a helper the static lint cannot follow), `tests/test_review_loop_end_to_end.py` (a
+hand-built `Run` calling `save()`, `Run.load()` and `cmd_land`, all three moved by the card), and
+`plugins/agent-launcher/tests/test_launcher_contract.py` (a cross-plugin guard asserting the driver
+cites a decision whose behaviour the card removed).
+
+**Mechanism.** The glob a card uses to iterate is named after the card, not after the blast radius
+of the module it edits. Every suite that imports the changed module is outside that glob by
+construction, and a cross-plugin guard is outside it twice over — different plugin, different
+pytest root. Three separate classes of breakage all hid in the same place for the same reason.
+
+**Generalizable rule.** When a card changes a module other suites import, run the whole repository
+before the merge, not after it — the card-scoped loop is the fast loop, never the proof.
+
+### Updating the existing tests was the larger half of the work, and the plan called it incidental  {#1025-updating-in-place-was-the-larger-half}
+
+**Evidence.** Issue 1025's plan, unit U8 (`docs/plans/2026-09-19-issue-1025-orchestrate-slim-run-driver-plan.md`), said four test modules would be deleted and named the rule for deleting them; everything else it called "updated in place where the record replaces the run file", in one clause, with no unit of its own. The driver rewrite was 6,450 lines going to 6,237. The test migration that followed touched 26 modules, needed ten mechanical passes plus per-test work, and ran from 276 failing tests to zero. It was reported honestly as unfinished once, mid-flight, because it could not be finished in the session that started it.
+
+**Mechanism.** The plan sized the work by the diff it expected to write, and a rewrite's diff is in the source file. What it did not size is that 17,953 lines of tests were written against the interface being replaced: every one that constructed a `Run`, called a command with a hand-built `argparse.Namespace`, or read `.orchestrate/run.json` had to move, and "move" is not one edit repeated — the mechanical passes got the shape right and then each module had a tail of tests whose *premise* had changed, not just their plumbing. Those are the ones that take judgment: a test asserting `land --clean` exits 0 on a close failure is not broken plumbing, it is a contract that moved, and deciding whether to move the assertion or keep it is the same work as writing the test the first time.
+
+**It also found four defects the driver's own new tests did not.** Dropping the persisted launch receipt took the launcher's tab-ownership proof with it; the saga resolver could not see a saga installed beside orchestrate in a versioned cache; a plan that was not JSON died in a decode error six frames deep once the companion floor stopped refusing earlier; and the unattended-worktree check read only a session's working directory. Every one surfaced in a legacy test, because legacy tests are the ones that exercise paths a rewrite's author is not thinking about.
+
+**Generalizable rule.** When a plan replaces an interface, count the tests written against that interface and give their migration its own unit with its own estimate. A plan that says "updated in place" about more lines than it is rewriting has not planned the larger half — and those tests are not overhead to get past, they are where a rewrite's real defects are found.
+
+### A card that cites a defect by line number can be citing a defect that has since been fixed  {#1025-issue-879-assert-review-transport-is-stale}
+
+**Evidence.** Issue 879 states that `assert_review_transport` "is **not** among" the assertions `start` runs, and warns that a validator aiming to match `start` "must not silently add it" — verified there against `origin/main` on 2026-08-28. At this card's base commit `4e951f0e` it is no longer true: `orchestrate.py:1103` calls `assert_review_transport(units)` inside `plan_units`, and `cmd_start` calls `plan_units(plan)` at `orchestrate.py:3441`. So `start` runs it today, by way of the plan parser.
+
+**Mechanism.** The card's author read the call list inside `cmd_start` and did not follow `plan_units` into its own body, and in the three weeks between that reading and this one the call moved into the parser. A line-numbered citation is a claim about a revision, and the card named the revision honestly; what it could not do is stay true. An implementer following the card's warning literally would have gone looking for a call to *remove* from the validation path, found none where the card said it was, and either added a deliberate exclusion (making the validator disagree with `start`, which is the exact failure issue 879 exists to prevent) or spent the time discovering this.
+
+**Generalizable rule.** Re-verify a card's code claims against the revision you are working on before you act on them, especially a claim of ABSENCE — an absent thing has no line number to check, so nothing about it looks stale.
+
+### Two of three names in an acceptance criterion had never existed in the file  {#1025-grep-criterion-named-absent-symbols}
+
+**Evidence.** Issue 1025's second acceptance criterion asks that `grep -c -E "reserved_landing_paths|launch_reservation|record_writeback_outcome"` over the driver print 0. Checked against base commit `4e951f0e`: `reserved_landing_paths` and `launch_reservation` appear nowhere in the 6,450-line file. Only `record_writeback_outcome` is present, at line 3389 with two call sites.
+
+**Mechanism.** The criterion was written from the card's prose — "launch reservations, landing reservations" — rather than from the symbols the code actually carries. The nearest real things are a local named `preserved_landing_paths` inside `cmd_land` and the "already has tab" skip in `cmd_go`, neither of which the grep names. The criterion therefore passed on two of its three terms before any work was done, and a reader checking it afterwards would conclude three subsystems had been removed when the evidence covers one.
+
+**Generalizable rule.** A grep-based acceptance criterion must name symbols that exist at the base revision; run it before you start, and say in the plan which terms it already satisfies. A criterion that is green before the work begins proves nothing about the work.
+
+### One concurrency number, two consumers, and no arithmetic between them  {#1025-width-must-count-role-panes-too}
+
+**Evidence.** `roster.py` refuses to stand up more role panes than the run record's `concurrency_allocation` allows (`plugins/agent-launcher/skills/agent-launcher/scripts/roster.py`, the allocation check in `up`). Orchestrate's own launch bound, written for card 901, initially counted only units with status `running`.
+
+**Mechanism.** Both readings are locally correct and together they are wrong: with an allocation of ten, six role panes and ten units are sixteen agent sessions on one account, against a number that exists for that account's rate limit. Neither consumer could see the error from inside itself, because each one's count was true. The repair is that orchestrate's `live` count is units plus the record's open `roster` rows — the record is where both consumers already meet, so the shared budget needs no new mechanism, only one of the two to stop counting half of it.
+
+**Generalizable rule.** When a limit is shared by two consumers, the one that adds its count second is the one that must add the other's; a limit each consumer reads independently is not a limit.
 ### A trust boundary held as a document plus a scanning guard survives losing one of its scanned call sites  {#938-trust-boundary-is-a-document-not-a-module}
 
 **Evidence.** Issue 938 deleted `plugins/saga/scripts/second_opinion.py` (2,076 lines). The card's stated risk was that the external-content trust boundary would go with it and break three consumers. It did not, and the reason is visible in two files: the boundary is `plugins/saga/references/engine-output-trust-boundary.md`, a contract document, enforced by `tests/test_engine_output_trust_boundary.py`, whose `PYTHON_CALL_SITES` tuple named exactly two modules — `engine_dispatch.py` and the deleted one. Removing the module narrowed that tuple to one entry and changed nothing else: the contract anchors, the three seeded-unsafe fixtures, the adversarial-payload test, and the two team-execution references all passed untouched.

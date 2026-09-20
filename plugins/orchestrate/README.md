@@ -34,7 +34,6 @@ python3 "$S" settle
 python3 "$S" status
 python3 "$S" land
 python3 "$S" check
-python3 "$S" collect
 python3 "$S" clean --merged --branches
 ```
 
@@ -44,7 +43,7 @@ stored vendor list.
 
 ## State and task files
 
-The run record is `.orchestrate/run.json`. Long task text and hand-authored briefs belong under
+The run record is `the per-issue run record`. Long task text and hand-authored briefs belong under
 `.orchestrate/tasks/`; do not point a unit at a session scratchpad or temporary directory that can
 disappear before the unit reads it. `start` adds `.orchestrate/` once to the driven repository's
 local `.git/info/exclude`, preserving existing rules, so run state does not appear as untracked work
@@ -64,8 +63,8 @@ edges gate launch in the same way but carry different meaning:
 - `after` means the unit needs another unit's output.
 - `serialize` means the units must not overlap, without claiming an output dependency.
 
-`land` merges completed unit branches into the run branch through a detached throwaway worktree. A
-merge conflict retains and names that worktree for recovery. `collect` is the separate, final merge
+`merge` merges completed unit branches into the run branch through a detached throwaway worktree. A
+merge conflict retains and names that worktree for recovery. `merge` is the separate, final merge
 from the run branch into the operator's current tree and therefore still requires that tree to be
 clean.
 
@@ -77,8 +76,8 @@ successful work.
 ## Board writeback
 
 A run file may carry an `issues` mapping (unit name to `owner/repo#N`) and an optional `status_map`.
-With it, `land` writes each merged unit's phase boundary back to that unit's issue card and
-`announce` covers the boundaries `land` does not. Without the mapping, this is a no-op.
+With it, `merge` writes each merged unit's phase boundary back to that unit's issue card and
+`announce` covers the boundaries `merge` does not. Without the mapping, this is a no-op.
 
 Orchestrate never writes GitHub itself. Every write is a submission through saga's
 `reconcile_controller`, which owns the certificate gate and the replay key and stops at Mission
@@ -95,10 +94,10 @@ mission-control and agent-launcher. A resolved saga below its floor is refused b
 submission is made. The agent-launcher floor is enforced at runtime as a command-by-state
 matrix: `--help` survives a stale or missing companion; `status` and `check` degrade to
 liveness-unknown when the companion is missing or unusable; the seven commands that write a pane,
-create a session or worktree, or close a tab -- `start`, `expand`, `go`, `review-result`, `land`,
-`clean`, and `redrive` -- refuse with an update or install remedy; `roster` and `saga` write nothing and run
+create a session or worktree, or close a tab -- `start`, `expand`, `go`, `review-result`, `merge`,
+`clean`, and `go` -- refuse with an update or install remedy; `roster` and `saga` write nothing and run
 against a stale companion, refusing only when none was ingested. The mission-control floor is
-declared for the installer. `land` and `announce` exit 2 when a card
+declared for the installer. `merge` and `announce` exit 2 when a card
 was not updated, print the reason, say whether a retry can clear it, and name which saga and
 schema were used.
 

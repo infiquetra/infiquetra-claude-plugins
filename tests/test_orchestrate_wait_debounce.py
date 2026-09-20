@@ -22,6 +22,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
 
 SCRIPT = (
@@ -60,26 +61,22 @@ def _event(pane_id: str, status: str) -> SimpleNamespace:
     return SimpleNamespace(pane_id=pane_id, agent_status=status)
 
 
-def _write_run(root: Path) -> None:
-    run_file = root / ".orchestrate" / "run.json"
-    run_file.parent.mkdir()
-    run_file.write_text(
-        json.dumps(
-            {
-                "run_id": "wait-contract",
-                "source": "test",
-                "base": "HEAD",
-                "units": [
-                    {
-                        "name": "alpha",
-                        "vendor": "claude",
-                        "task": "test wait",
-                        "agent_name": "alpha",
-                        "status": "running",
-                    }
-                ],
-            }
-        )
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
+    ).stdout.strip()
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        repo.parent / "orch-test-store",
+        _support.TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
     )
 
 
@@ -144,7 +141,22 @@ def _run_wait(
 ) -> tuple[subprocess.CompletedProcess[str], float, list[list[str]]]:
     root = tmp_path / "repo"
     root.mkdir()
-    _write_run(root)
+    _write_run(
+        root,
+        [
+            {
+                "name": "alpha",
+                "vendor": "claude",
+                "task": "test wait",
+                "agent_name": "alpha",
+                "status": "running",
+                "branch": None,
+            }
+        ],
+        run_id="wait-contract",
+        base="HEAD",
+        branch="",
+    )
     fake_bin = _install_fake_herdr(root)
     log = root / "herdr.jsonl"
     state = root / "state"
@@ -163,7 +175,16 @@ def _run_wait(
     )
     started = time.monotonic()
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "wait", *args],
+        [
+            sys.executable,
+            str(SCRIPT),
+            "wait",
+            "--issue",
+            str(_support.TEST_ISSUE),
+            "--store-root",
+            str(root.parent / "orch-test-store"),
+            *args,
+        ],
         cwd=root,
         env=env,
         capture_output=True,

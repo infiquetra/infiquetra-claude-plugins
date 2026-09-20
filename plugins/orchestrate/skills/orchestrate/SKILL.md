@@ -32,14 +32,14 @@ S="$CLAUDE_PLUGIN_ROOT/skills/orchestrate/scripts/orchestrate.py"
 [ -f "$S" ] || S=$(ls -d ~/.claude/plugins/cache/*/orchestrate/*/skills/orchestrate/scripts/orchestrate.py | sort -V | tail -1)
 
 python3 "$S" roster                                # agents this machine can launch
-python3 "$S" start --plan .orchestrate/plan.json   # record the run
+python3 "$S" plan-check --plan plan.json           # validate a plan, create nothing
+python3 "$S" start --issue 42 --plan plan.json     # branch + unit rows onto the record
 python3 "$S" go                                    # launch every eligible unit
 python3 "$S" status                                # the table, with live herdr state
 python3 "$S" settle                                # sessions with branch evidence become done
-python3 "$S" expand --plan .orchestrate/next.json  # append units a finished phase named
+python3 "$S" expand --issue 42 --plan next.json    # append units a finished phase named
 python3 "$S" review-result --file <result.json>     # persist the typed result and route repairs
-python3 "$S" land                                  # merge finished unit branches onto the run branch
-python3 "$S" collect                               # merge the run branch into the operator tree
+python3 "$S" merge --issue 42                      # one merge turn per ready unit, onto the parent branch
 python3 "$S" park --unit <name> --evidence "<err>" # record push-succeeded / PR-blocked unit
 python3 "$S" resume --unit <name>                  # open/adopt missing PR and continue run
 python3 "$S" clean --branches                      # close tabs, remove worktrees
@@ -72,7 +72,7 @@ one. The command file's Phase 4 carries a worked `serialize` pair.
 **The later phases have no units until an earlier one names them.** What `/work` splits into is
 decided by the plan, which does not exist when the operator approves the first table. So the run
 starts with only what can launch now, and `expand` appends the rest once the operator has approved
-them — same run, so `after` still reaches back and one `collect` covers everything. `expand` refuses
+them — same run, so `after` still reaches back and one parent branch carries everything. `expand` refuses
 a duplicate name or a dependency that is in no run.
 
 **Single launch seam and no-focus invariant.** Every run unit, including units added at a later
@@ -85,7 +85,7 @@ keep a private copy. Orchestrate declares its Agent Launcher floor in its plugin
 that same declaration at runtime. Discovery and import never kill `--help`, `status`, or other
 read-only recovery commands merely because the companion is stale or unusable. Seven commands write
 a pane, create a session or worktree, or close a tab -- `start`, `expand`, `go`, `review-result`,
-`land`, `clean`, and `redrive` -- and those seven enforce the floor before doing so; each fault names its own
+`merge` and `clean` -- and those five enforce the floor before doing so; each fault names its own
 cause and remedy: a companion below the floor refuses with
 `claude plugin update agent-launcher@infiquetra-plugins`, a missing or unusable one with
 `claude plugin install agent-launcher@infiquetra-plugins`. `roster` and `saga` write nothing, so a
@@ -93,19 +93,16 @@ companion below the floor still serves them; they refuse, with the install remed
 companion was ingested at all. `status` and `check` survive a missing or unusable companion by
 reading liveness as `unknown` and printing the fault once; `wait`, `settle`, and `adopt` need the
 companion's Herdr reads and refuse without it.
-**A staged-input stop is retryable through the same pane.** When a launch refuses to prompt because
-the pane's composer holds an unsent operator draft, the unit stops `PENDING` with its tab, pane and
-launch receipt recorded and the draft's size — never its text — in the note. The recovery has two
-exits. Clear the composer and rerun `go`: the retry re-prompts that same pane and creates no
-session, and `already has tab` never applies to a staged unit, so nothing needs editing by hand.
-Or give the unit up: `clean` closes the tab when Orchestrate owns it and reports a tab it does not
-own as left open, never as closed.
-**A unit recorded `prompt_undelivered` has one door back: `redrive --unit <name>`.** That status
-means the task was sent and the session was never observed to start; `go` skips the unit because it
-has a tab, and `settle` reads only running units. Read the tab first. If the session is idle and
-never took the task, `redrive` re-prompts it through the same inspected writer `go` uses; if the
-session has visibly started, `redrive` refuses and names the tab, because it may already hold the
-task.
+**A staged-input stop keeps its pane and is reported.** When a launch refuses to prompt because the
+pane's composer holds an unsent operator draft, the unit stops `PENDING` with its tab and pane
+recorded and the draft's size — never its text — in the note. The recovery has two exits, and
+neither is a second launch, which would put a second session on one worktree. Clear the composer
+and redeliver into that same pane by hand with the launcher's own `redeliver`: it creates no
+session. Or give the unit up: `clean` closes the tab when Orchestrate owns it and reports a tab it
+does not own as left open, never as closed. `go` reports the unit as `already has tab` and leaves
+it alone; `redrive` is gone with issue #1025, and ordinary recovery for a unit that FAILED is
+simply `go` again — it builds a FRESH worktree from the unit's branch, releasing the stale one
+first, so nothing is inherited from the attempt that failed.
 Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step, not a license to bypass `expand` or `go`. A branch in the run's
 `orch/<run-id>-<unit>` series with no row in the table is flagged as unrecorded drift by `status` and
@@ -135,7 +132,7 @@ campaign can hold several ready targets at once, and a controller carries target
 across different targets risks reading one target's state as another's. Each scoped controller keeps
 its own typed state, and `review-result` then requires `--controller <name-or-lifecycle>`; omitting it
 when several exist is refused rather than guessed, an ambiguous selector is refused, and a result
-aimed at a unit that is not a controller is refused outright. Repair routing, `land`, `reap` and
+aimed at a unit that is not a controller is refused outright. Repair routing, `merge`, `reap` and
 `status` all read that controller's own slot, so a fix never lands on another lifecycle's worker and
 cleanup never closes a session a controller still needs. Declare `review_controller_ceiling` to cap how many run at once; the
 surplus waits for a live one to finish rather than being refused at load.
@@ -153,11 +150,11 @@ and launches through `go`. A scoped replacement's name and workspace name the co
 lifecycle, not an unrelated template slice, and do not compound `-fix-` segments; the unit note
 records the template it was minted from. `human` and `release` requests are printed and retained as
 operator actions and never become Work units. `clean --merged` keeps every worker carrying an
-outstanding request; once all Work repairs land, `land` resubmits that lifecycle's landed revision
+outstanding request; once all Work repairs land, `merge` resubmits that lifecycle's landed revision
 through the same controller, never a controller already `running` on another frozen target, and
 never a controller whose lifecycle did not land in this invocation. A write failure on one
 controller does not skip the others. Operator-owned requests, a staged composer, or a failed
-prompt leave the owed resubmission unmade and `land` exits 4, which outranks a leftover landing
+prompt leave the owed resubmission unmade and `merge` exits 4, which outranks a leftover cleanup
 path (exit 3). `status` prints `recorded-but-unrouted` when a result is stored and the outcome is
 still unset, and names a note that contradicts the typed outcome. `review-result` refuses a
 cycle-regressed artifact and any non-identical ingest into a terminal slot; a retry after a
@@ -167,36 +164,27 @@ a conflicting named slot is a stop, not an overwrite.
 
 ## State
 
-One file, `.orchestrate/run.json`: run id, source, base commit, the verbatim review result and routing
-state, and per unit its name, vendor, model, effort, account, `permission` (`auto` or `bypass`),
-`permission_declared` (whether the plan row named that posture or the unit inherited the default), task,
-role, owned paths, outstanding fix requests, dependencies, worktree, branch, tab, Herdr agent name, status,
-`variant`, `launch_receipt`, and `parked_state`. If session state is wrong, `herdr agent list` is the real
-truth.
+One file per ISSUE: saga's run record, `run_record.v1`, at
+`<primary checkout>/.claude/saga/runs/issue-<N>.json`. Orchestrate keeps its own run-level state
+under that document's `orchestrate` key -- run id, source, base commit, the parent branch, the
+verbatim review result and routing state, the issue mapping and the status-map overrides -- and one
+row per unit in the record's own `units` array.
 
-The file names its own shape under a `contract` key. An Orchestrate from 4.0.0 up to 4.1.x refuses a
-run file this version writes, by name, with the update remedy, rather than reading it wrong. An
-Orchestrate older than 4.0.0 has no contract gate at all: it opens the file blind and fails without a
-named cause. This Orchestrate still opens every run file an older one wrote. So after updating
-Orchestrate, finish or `clean` a run with the version that started it, or update every seat that will
-touch the run.
+Two issues can therefore be driven in one repository at the same time, by construction rather than
+by convention. The store root is resolved from the git **common** directory, so a unit's own
+worktree reads exactly the file the coordinator writes: a repository-relative, git-ignored path
+resolves to an empty directory inside a worktree, which is what made the old `.orchestrate/`
+directory unreachable from a unit (issue 886's fifth finding).
 
-`start` adds `.orchestrate/` to the driven repository's local `.git/info/exclude`, preserving every
-existing rule and never duplicating its own. The run record and task material therefore stay local
-without making a fresh run appear as untracked source work.
+**`start` requires the record and never creates one.** Saga's admission step writes it, and that is
+what fills the thirteen run-configuration parameters and the seven approval boundaries. Running
+`start` without one refuses with exit 2 and names the admission command.
 
-**Hand-authored briefs belong in `.orchestrate/tasks/`.** Create that directory in the driven
-repository, put the brief there, and give the unit the brief's absolute path (a unit runs in a
-different worktree, so a repository-relative path points at the wrong tree). Do not use a session
-scratchpad or `/tmp`: those paths can disappear while the run record still names them. Generated
-long-task handovers already use this directory and the same containment boundary, stamped with an
-Orchestrate ownership marker (`<!-- orchestrate:owner json={"run_id": "...", "unit": "..."} -->`). Orchestrate refuses
-to overwrite unmarked existing files (such as hand-authored briefs) or files owned by another
-run/unit, preserving their original bytes and naming the conflicting path. Same-owner updates remain
-idempotent.
+Every stateful subcommand takes `--issue <N>`. `--store-root` overrides the resolution, for tests
+and for reading a record that belongs to another checkout.
 
-The unit's `name` is the dependency key and never changes. The wrapper uniquifies agent names, so
-what herdr calls the session is recorded separately as `agent_name`.
+There is no task-spill file, no `info/exclude` rule, no landing-recovery pointer and no
+outstanding-writeback ledger: issue #1025 removed all four with the fixed-path run file.
 
 ## Parked State and Resume
 
@@ -236,7 +224,7 @@ python3 "$S" clean --branches
 ```
 
 Remote branch cleanup adheres strictly to these safety boundaries:
-- **Run-owned branches only:** Considers only exact branch names recorded in `run.json` (`unit.branch`).
+- **Run-owned branches only:** Considers only exact branch names recorded in the run record (`unit.branch`).
   It never sweeps branches by prefix or touches branches belonging to another run.
 - **Merge or ancestry proof required:** Deletes a remote branch only after verifying merged-PR proof (via
   `gh pr list`) or committed ancestry proof that the remote head is contained in the authoritative branch
@@ -504,10 +492,10 @@ Shared files re-dirty every still-open pull request on each merge; in this repos
 `plugin.json`, `CHANGELOG.md` and `.claude-plugin/marketplace.json`. Immediate reintegration is the
 standing response.
 
-## Board writeback — what `land` and `announce` do to a card
+## Board writeback — what `merge` and `announce` do to a card
 
 A run file may carry an `issues` mapping (unit name to `owner/repo#N`) and an optional `status_map`.
-With it, `land` and `announce` write each landed unit's phase boundary back to its issue's card.
+With it, `merge` and `announce` write each landed unit's phase boundary back to its issue's card.
 Without it, this whole feature is a no-op and nothing about the run changes.
 
 **Orchestrate never writes GitHub.** Every write is a *submission* through saga's
@@ -522,7 +510,7 @@ no copy of its own.
 
 **No boundary reaches the `Verify` or `Retro` stage, by any door.** `Verify` is entered only after
 merge plus the applicable non-production deployment, or after installed or published artifact
-verification when nothing deploys; `Retro` after that. `land` merges onto the run branch
+verification when nothing deploys; `Retro` after that. `merge` merges onto the parent branch
 `orch/<run-id>` rather than the default branch and has no deployment signal at all, so it can
 observe neither condition. The `landed` rung that used to name `Verify` is **retired**, and a run
 file's `status_map` override naming either stage is refused at submission — the restriction is on
@@ -532,18 +520,15 @@ the write, not only on the default map, because an override never passes through
 
 | What happens | What you see |
 | --- | --- |
-| The rung is not a live option combination on the board | a failure record naming the rung; `land` exits 2 |
-| The rung names the `Verify` or `Retro` stage, from any source | a failure record naming the stage; `land` exits 2 |
-| A unit's prefix names a retired rung, such as `landed` | a failure record naming the retirement; `land` exits 2 |
-| Mission Control's schema does not resolve here | a line on stderr and a failure record; `land` exits 2 |
-| The `issues` mapping holds a reference that is not `owner/repo#N` | a failure record naming the bad reference; `land` exits 2 |
+| The rung is not a live option combination on the board | a failure record naming the rung; `merge` exits 2 |
+| The rung names the `Verify` or `Retro` stage, from any source | a failure record naming the stage; `merge` exits 2 |
+| A unit's prefix names a retired rung, such as `landed` | a failure record naming the retirement; `merge` exits 2 |
+| Mission Control's schema does not resolve here | a line on stderr and a failure record; `merge` exits 2 |
+| The `issues` mapping holds a reference that is not `owner/repo#N` | a failure record naming the bad reference; `merge` exits 2 |
 | The installed saga is older than the declared `plugin.json` floor | refused before any submission, naming the install path and version |
 | The installed saga is older than the pair contract and wrote one field | a failure record naming the identity it recorded; no progress comment is posted |
 
-**A failed writeback outlives the invocation that saw it.** `land` announces only the units it
-merged in that invocation, so a second `land` merges nothing, attempts no write and would otherwise
-exit 0 over a card that is still wrong. The run file carries the outstanding units; every later
-`land` reports them and exits 2 until an `announce` clears them.
+**A failed writeback is reported where it happens, and re-running `announce` is the retry.** The outstanding-failure ledger that used to carry a failure across invocations went with the receipt and writeback records in issue #1025: a record that outlives its invocation is the thing that card removes, and `announce` is idempotency-keyed, so a repeat is safe.
 
 **Every writeback names its own provenance** on stderr and in each record — which saga executed the
 submission and which Mission Control schema validated the rung. Several copies of both are usually

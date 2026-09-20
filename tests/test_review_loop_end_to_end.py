@@ -7,7 +7,6 @@ transport behavior is outside this test's contract.
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
 import os
 import subprocess
@@ -17,8 +16,15 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from orchestrate_support import args as record_args
+from orchestrate_support import ensure_origin, save_run, write_record
 
 ROOT = Path(__file__).resolve().parents[1]
+
+#: The issue whose record this run lives in. Since issue #1025 a run's state is the per-issue
+#: ``run_record.v1`` document, so this end-to-end flow needs a record and an issue number where it
+#: used to need only a run file beside the repository.
+ISSUE = 1025
 CONSENSUS_SCRIPT = ROOT / "plugins" / "saga" / "scripts" / "review_consensus.py"
 ORCHESTRATE_SCRIPT = (
     ROOT / "plugins" / "orchestrate" / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
@@ -113,8 +119,15 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
         run_branch,
     )
 
+    ensure_origin(repo)
+
     transport_log = _install_herdr_transport(tmp_path, monkeypatch)
     monkeypatch.chdir(repo)
+
+    # The record store is a directory under ``tmp_path``; nothing here touches the developer's own
+    # ``.claude/saga/runs``.
+    store = tmp_path / "store"
+    write_record(store, ISSUE, units=[], branch=run_branch, base=base_revision)
 
     worker = orchestrate.Unit(
         name="worker",
@@ -146,7 +159,7 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
         branch=run_branch,
         units=[worker, controller],
     )
-    run.save()
+    save_run(run, store, ISSUE)
 
     # The thresholds come from a resolved roster since issue 1001; the plugin
     # ships no policy file of its own to load.
@@ -203,9 +216,14 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
 
     first_result_path = tmp_path / "first-review.json"
     first_result_path.write_text(first_result.to_json())
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(first_result_path))) == 0
+    assert (
+        orchestrate.cmd_review_result(
+            record_args(ISSUE, store, file=str(first_result_path), controller=None)
+        )
+        == 0
+    )
 
-    routed = orchestrate.Run.load()
+    routed = orchestrate.Run.load(ISSUE, store)
     routed_worker = routed.unit("worker")
     assert [item["fix_id"] for item in routed_worker.fix_requests] == [
         first_result.fix_requests[0].fix_id
@@ -218,7 +236,14 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
     routed_worker.status = orchestrate.DONE
     routed.save()
 
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+    # `land` became `merge` in issue #1025. The command is renamed and its state moved into the
+    # record; the repair-lands-then-resubmits behaviour this test is about is unchanged.
+    assert (
+        orchestrate.cmd_merge(
+            record_args(ISSUE, store, clean=False, remote="origin", compare="main")
+        )
+        == 0
+    )
     landed_revision = _git_out(repo, "rev-parse", run_branch)
     assert landed_revision != repaired_revision
     assert _git_out(repo, "show", f"{run_branch}:service.py") == (
@@ -226,7 +251,7 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
     )
     assert _git_out(repo, "merge-base", "--is-ancestor", repaired_revision, run_branch) == ""
 
-    landed = orchestrate.Run.load()
+    landed = orchestrate.Run.load(ISSUE, store)
     assert landed.unit("worker").fix_requests == []
     assert landed.review_resubmit_pending is False
     assert landed.review_controller().status == orchestrate.RUNNING
@@ -267,8 +292,13 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
 
     final_result_path = tmp_path / "final-review.json"
     final_result_path.write_text(final_result.to_json())
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(final_result_path))) == 0
-    completed = orchestrate.Run.load()
+    assert (
+        orchestrate.cmd_review_result(
+            record_args(ISSUE, store, file=str(final_result_path), controller=None)
+        )
+        == 0
+    )
+    completed = orchestrate.Run.load(ISSUE, store)
     assert completed.review_outcome == "accepted"
     assert completed.review_result == final_result.to_json()
     assert transport_log.read_text().count("agent prompt") == 2

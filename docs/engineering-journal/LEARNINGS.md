@@ -2,6 +2,22 @@
 
 ## 2026-09-20
 
+### A score answer is a position, not a verdict — map it to the nearest anchor  {#score-position-nearest-anchor-1034}
+
+**Evidence:** Issue 1034's severity flag scores each finding against the catalogue's four severity
+anchors (P3, P2, P1, P0, least severe first). The live TypeSafe score primitive returns a
+probability-weighted position on the ordered levels (for example 1.43 over three levels), plus
+per-level probabilities and a confidence.
+
+**Mechanism:** The suggestion is the nearest rung to the returned position, clamped into range — not
+a threshold comparison. A threshold compares a yes/no probability against a floor; a score position
+means nothing except against the level order it was computed on. That is why the anchors travel as
+the question's criteria in catalogue order, and why a drift test re-reads them from the sibling
+lifecycle checkout (skipping when it is absent) rather than trusting a copy.
+
+**Generalizable rule:** when consuming a score answer, convert position to nearest-level at the
+boundary and carry the level forward; never threshold the raw position.
+
 ### The CI workflow and the gate script are release surfaces of a removal too
 
 **Evidence:** pull request 1050's `Validate Plugins` job failed at the `Engine Registry` step after issue 1030 deleted `check_engine_registry.py` and `engine_registry_conformance.py`; `scripts/gate.sh` carried the same two steps.

@@ -2,6 +2,56 @@
 
 ## 2026-09-20
 
+### Saga's board moves are named by lifecycle boundary, and the allowed list is the only vocabulary  {#1028-board-boundaries}
+
+**Decision.** The board-move module takes a lifecycle boundary name, not a target status. A fixed
+table maps each of the run's six boundaries onto a `(Stage, Status)` pair drawn from
+`lifecycle_field_mutation.allowed_submissions` in the vendored schema, and nothing outside that list
+can be submitted. A caller that wants a different status has no way to ask for one.
+
+**Rationale.** The lifecycle repository calls that list "the single authority" and renders it into
+two prose chapters as a generated region so the chapters cannot disagree with it. Nothing in this
+repository read it: `grep -rn "allowed_submissions" --include=*.py plugins/ tests/` returned zero
+hits at base commit `87a5329e`, while `board_progression.py` accepted any `--target-state` a caller
+typed. A free-text target is how a card ends up in a status the lifecycle never authorised, and the
+certificate gate does not catch it because the certificate authorises the *field*, not the *value*.
+
+**The map is not one-to-one, and that is the finding.** Six boundaries, six rows, and they do not
+pair off: review acceptance has no allowed row at all, and close has two, chosen by whether a retro
+trigger fired. The module therefore reports "no allowed submission at this boundary" for review
+acceptance rather than inventing a move. Two statuses the live Operations board carries —
+`Ready to merge` and `Closeout` — are not in the allowed list, so saga never submits them even
+though card 1028's own acceptance criterion names them.
+
+**Rejected alternatives.** Submitting `Ready to merge` at review acceptance because the board offers
+it: that is saga granting itself board authority the lifecycle withholds. Deriving the table from
+the board census instead of the schema: the census says what the board *can* hold, never what a
+caller *may* submit.
+
+**Revisit when** the lifecycle repository's allowed list gains an `Active` / `Ready to merge` row —
+the repair proposed to the operator on `infiquetra/infiquetra-sdlc#170` — at which point review
+acceptance gains a move and the table gains a row.
+
+### Two of saga's four ledgers are removed with their card; two wait for the removals card  {#1028-ledger-removal-split}
+
+**Decision.** Card 1028 removes `effort_ledger.py` and `evidence_ledger.py` and repairs every
+importer. It defers `run_ledger.py` and `dispatch_settlement.py` to the removals card, issue 1030.
+The rule: remove a ledger when every importer can be repaired; defer it when removal would require
+deleting modules the card does not name.
+
+**Rationale.** `effort_ledger` has one importer and it is its own test. `evidence_ledger` has two
+production importers, one of which (`review_consensus.py`) survives the removals card and is
+repaired onto the run record. `run_ledger` has sixteen, fifteen of them modules issue 1030 deletes
+outright — repairing them is work thrown away, and deleting them here is another card's scope.
+`dispatch_settlement` imports `run_ledger`, so it cannot outlive that deferral.
+
+**Rejected alternative.** Removing all four and deleting whatever broke. That turns a bounded card
+into the largest deletion in the repository's history a card early, without the command-surface and
+importability guards issue 1030 brings with it.
+
+**Revisit when** issue 1030 lands; the deferral list is discharged there, and card 1028's own test
+asserts the two deferred modules are still importable so a premature removal fails loudly.
+
 ### A staged-input stop reports and stops; it no longer retries through the pane  {#1025-staged-stop-does-not-auto-redeliver}
 
 **Decision.** When the composer holds staged input, `go` returns the unit to `PENDING`, appends

@@ -46,7 +46,12 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.162.0"  # 0.162.0: the per-repository tier overlay
+    assert plugin_json["version"] == "0.163.0"  # 0.163.0: one JSON run record per issue,
+    # outside every worktree and addressed by an absolute path, plus the admission questionnaire
+    # asked once at the front of /plan issue (issue #1023). Bumped from 0.161.0, the saga version
+    # on origin/parent/1018 at 550ae6ce; the fold of main into that branch then renumbered the
+    # tier-overlay release to 0.162.0, which 0.163.0 still clears.
+    # Predecessor 0.162.0: the per-repository tier overlay
     # reads through one implementation in fleet-core (issue #1021); renumbered from 0.161.0
     # when main was folded into parent/1018.
     # Predecessor 0.161.0: shaping_judgments.py asks the eleven advisory typed judgments inside

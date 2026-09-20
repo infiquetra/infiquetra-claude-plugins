@@ -250,6 +250,45 @@ def freeze_dag(repo_root: Path, outcome_id: str | None) -> dict[str, Any] | None
 # ---------------------------------------------------------------------------
 
 
+def freeze_run_record(repo_root: Path, box: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Freeze the active issue's run record for re-injection after compaction (#1023).
+
+    The record is the authority on ``next_step``, so it is the fact the continuing session most
+    needs back. This freezes a small READ of it — never a copy of the whole file and never a store
+    of its own: the card's non-goal is explicit that the spore keeps no second store.
+
+    Returns ``None`` whenever there is nothing to freeze: no active saga, a task rather than an
+    issue, no record yet, or a record that cannot be read. A spore must never fail a compaction
+    boundary, so every failure here is an absent block rather than an exception.
+    """
+    if not box:
+        return None
+    saga_id = str(box.get("saga_id") or "")
+    if not saga_id.startswith("issue-"):
+        return None
+    number = saga_id.removeprefix("issue-")
+    if not number.isdigit():
+        return None
+    try:
+        import run_record  # noqa: PLC0415  (optional at call time, by design)
+
+        store_root = run_record.resolve_store_root(repo_root)
+        record = run_record.load(store_root, int(number), warn=None)
+    except Exception:
+        return None
+    if record is None:
+        return None
+    return {
+        "path": str(run_record.record_path(store_root, int(number))),
+        "issue": record.issue,
+        "next_step": record.next_step,
+        "destination": record.admission.get("destination"),
+        "pending_questions": list(record.admission.get("pending_questions") or []),
+        "units": len(record.units),
+        "review_cycles": len(record.review_cycles),
+    }
+
+
 def build_spore(repo_root: Path, session_id: str, *, now: str) -> dict[str, Any]:
     """Assemble the structured spore: ``{provenance, saga_box, dag, pointers}`` (``dag`` None for the
 
@@ -283,7 +322,13 @@ def build_spore(repo_root: Path, session_id: str, *, now: str) -> dict[str, Any]
             "outcome_id": dag["outcome_id"],
             "outcome_objective": dag["objective"],
         }
-    return {"provenance": provenance, "saga_box": box, "dag": dag, "pointers": pointers}
+    return {
+        "provenance": provenance,
+        "saga_box": box,
+        "dag": dag,
+        "pointers": pointers,
+        "run_record": freeze_run_record(repo_root, box),
+    }
 
 
 def _repo_relative(path: Path | None, repo_root: Path) -> str:
@@ -363,6 +408,21 @@ def serialize(spore: dict[str, Any]) -> str:
     else:
         head.append("")
         head.append("ACTIVE SAGA: (none resolved at the boundary)")
+
+    # The run record is part of the resumable core: it is the AUTHORITY on next_step (#1023), so a
+    # continuing session that loses it re-grounds on the envelope's possibly stale copy instead.
+    record = spore.get("run_record")
+    if record:
+        head.append("")
+        head.append("RUN RECORD (authoritative on next_step)")
+        head.append(f"  path: {record.get('path')}")
+        head.append(f"  next_step: {record.get('next_step')}")
+        head.append(
+            f"  destination: {record.get('destination')} · units: {record.get('units')} · "
+            f"review_cycles: {record.get('review_cycles')}"
+        )
+        if record.get("pending_questions"):
+            head.append("  admission still to answer: " + ", ".join(record["pending_questions"]))
 
     # The ready frontier is part of the resumable core — always inline, never dropped.
     frontier_block: list[str] = []

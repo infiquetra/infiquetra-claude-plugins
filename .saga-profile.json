@@ -1,0 +1,19 @@
+{
+  "schema": "repository_profile.v1",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "concurrency_allocation": 10,
+  "nonproduction_destination": "none",
+  "branch_preview": false,
+  "main_consumed_directly": false,
+  "mechanical_tool_baseline": [
+    "uv run ruff check .",
+    "uv run ruff format --check .",
+    "uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports",
+    "uv run pytest tests/ plugins/*/tests/ -q"
+  ],
+  "preflight_checks": [
+    "the plan cleared /doc-review with nothing above P3 open",
+    "the work branch exists and is not the default branch",
+    "the release surfaces named in CLAUDE.md move in the same pull request"
+  ]
+}

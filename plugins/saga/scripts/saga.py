@@ -1081,6 +1081,13 @@ def mirror_next_step_to_record(
     The write direction that KTD8a allows: a tick that sets a next step updates the authority.
     Silent on every failure a caller cannot act on — a saga tick must not fail because the run
     record's store is unreachable, since the tick is the older and more fundamental artifact.
+
+    **``save`` deliberately does not call this.** Mirroring automatically would resolve the real
+    store — the primary checkout's live ``.claude/saga/runs`` — from every test in the suite that
+    saves a tick against a temporary root, which is a live write from a unit test. A caller that
+    wants the mirror asks for it and, in a test, names the store
+    (``tests/test_run_record.py::test_saving_a_saga_tick_does_not_write_into_the_record_store_by_itself``
+    pins that).
     """
     if saga.kind != "issue" or not saga.id.isdigit() or not saga.next_step:
         return None

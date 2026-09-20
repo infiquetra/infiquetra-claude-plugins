@@ -345,6 +345,45 @@ def test_get_next_step_on_a_missing_record_is_empty_not_an_error(
     assert rr.get_next_step(store, 4242) == ""
 
 
+def test_saving_a_saga_tick_does_not_write_into_the_record_store_by_itself(
+    rr: ModuleType, tmp_path: Path
+) -> None:
+    """The mirror is an explicit call, never a side effect of ``saga.save`` (plan KTD9, R13).
+
+    If ``save`` mirrored automatically it would resolve the REAL store — the primary checkout's
+    live `.claude/saga/runs` — from every test in the suite that saves a tick against a temporary
+    root. That is a live write from a unit test, and it is why the write direction is a named
+    function a caller opts into rather than something the engine does on its own.
+    """
+    saga = _load("saga")
+    saga_root = tmp_path / "saga-root"
+    saga_root.mkdir()
+    live_store = rr.resolve_store_root(REPO_ROOT)
+    before = sorted(p.name for p in live_store.glob("*.json")) if live_store.exists() else []
+
+    saga.save(
+        saga_root,
+        saga.Saga(saga_id="issue-999999", kind="issue", id="999999", next_step="do not mirror me"),
+    )
+
+    after = sorted(p.name for p in live_store.glob("*.json")) if live_store.exists() else []
+    assert after == before
+    assert not (live_store / "issue-999999.json").exists()
+
+
+def test_the_mirror_writes_only_when_a_caller_asks_and_names_the_store(
+    rr: ModuleType, store: Path
+) -> None:
+    saga = _load("saga")
+    tick = saga.Saga(saga_id="issue-1023", kind="issue", id="1023", next_step="mirrored")
+    written = saga.mirror_next_step_to_record(tick, store_root=store)
+    assert written is not None
+    assert rr.get_next_step(store, 1023) == "mirrored"
+
+    task = saga.Saga(saga_id="task-slug", kind="task", id="slug", next_step="not an issue")
+    assert saga.mirror_next_step_to_record(task, store_root=store) is None
+
+
 def test_the_record_is_authoritative_over_a_stale_saga_envelope_next_step(
     rr: ModuleType, store: Path, tmp_path: Path
 ) -> None:

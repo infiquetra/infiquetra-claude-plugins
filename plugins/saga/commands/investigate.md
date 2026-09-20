@@ -16,8 +16,8 @@ The **IRON LAW**: no fix without root-cause investigation first. The **causal-ch
 `/investigate` is **diagnosis-PRIMARY**: the deliverable is an agent-consumable **DEBUG REPORT**
 (`docs/investigations/`). The user chooses fix-vs-diagnosis. Only a trivial / single-concern fix is
 applied inline (test-first + the engine's **own** fresh-reproduce verification); real implementation work
-routes to `/work` via a `/handoff` issue, design problems to `/brainstorm`, trackable defects to
-`/handoff` with the report **linked as evidence** (never passed to the classifier).
+routes to `/work` via a `mission-control` issue, design problems to `/brainstorm`, trackable defects to
+`mission-control` with the report **linked as evidence** (never passed to the classifier).
 
 It is **READ-ONLY** on the world and the saga (`gh` / `git` / `saga.py restore`/`ticks` only). It does
 **NOT** commit, push, open or merge a PR, deploy, file SDLC issues, write the saga, or route to `/qa` to

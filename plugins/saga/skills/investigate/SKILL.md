@@ -6,11 +6,11 @@ description: >-
   trigger→symptom causal chain with no gaps, ground every hypothesis in observed
   evidence, and only then apply a GATED, trivial-scope, self-verified fix.
   Diagnosis is the primary deliverable: it writes an agent-consumable DEBUG
-  REPORT, routes real implementation work to /work via a /handoff issue, design
-  problems to /brainstorm, and trackable defects to /handoff. READ-ONLY on the
+  REPORT, routes real implementation work to /work via a mission-control issue, design
+  problems to /brainstorm, and trackable defects to mission-control. READ-ONLY on the
   world and the saga; never commits, pushes, opens a PR, or deploys. Triggers on
   "investigate", "debug this", "why is this failing", "trace this error", "root
-  cause", a pasted stack trace / error message / issue ref, or a /qa or /loop
+  cause", a pasted stack trace / error message / issue ref, or a /qa
   hand-in for a deep failure.
 ---
 
@@ -30,17 +30,17 @@ the **multi-component boundary instrumentation** technique are BORROWED from sup
 
 ## Position in the lifecycle
 
-`/investigate` is **OFF-CHAIN** (like `/loop`, `/doc-review`, and `/founder-review`): it is **not** a
+`/investigate` is **OFF-CHAIN** (like `/doc-review` and `/founder-review`): it is **not** a
 lifecycle phase, it does **not** advance `lifecycle_phase`, and it writes **no** saga tick. It is a
 **routed diagnostic lens** reachable three ways:
 
 - **(a) directly** — `/investigate <error | test | issue# | description>`;
-- **(b) via `/loop`** — when the router meets a failure that wants root-cause work;
+- **(b) via `/qa`** — when a functional test meets a failure that wants root-cause work;
 - **(c) via `/qa`** — `/qa` routes deep **post-merge** failures here for root-cause analysis (`/qa`'s
   Phase 6.2 routes deep post-merge root-cause failures here).
 
 It is not on the linear spine. Its outputs route **back** onto the
-spine: an applied trivial fix ships through `/work` or `/code-review`; a real fix becomes a `/handoff`
+spine: an applied trivial fix ships through `/work` or `/code-review`; a real fix becomes a `mission-control`
 issue that `/work` then executes; a design problem goes to `/brainstorm`.
 
 ## Core principles
@@ -69,7 +69,7 @@ issue that `/work` then executes; a design problem goes to `/brainstorm`.
    `/work`**. `/investigate` never commits, pushes, opens a PR, or deploys.
 6. **Read-only on the world and the saga.** `gh` and `saga.py` are used **read-only** (`restore` /
    `ticks` for evidence; never mint, never `save`). Real fixes route to `/work`; trackable defects route
-   to `/handoff`; design problems route to `/brainstorm`. Large or parallel read-only investigation is
+   to `mission-control`; design problems route to `/brainstorm`. Large or parallel read-only investigation is
    **offered** a backend (operator-choice), never auto-launched.
 7. **Leave the system smarter.** The deliverable is an **agent-consumable DEBUG REPORT** a future agent
    can act on cold. A **non-obvious** root cause is promoted (gated, selective) to the engineering
@@ -309,7 +309,7 @@ Use the enum'd shape in `references/debug-report.md`: **Symptom** / **Root cause
   the lesson is generalizable (a wrong assumption about a shared dependency, a pattern in 3+ locations).
   Skip silently when the fix is mechanical with no insight. Promotion is a pure append per the journal
   rules; offer it neutrally when the lesson is one sentence.
-- **Trackable confirmed defect → `/handoff`** (as a **defect-type SDLC issue**, `--issue-type defect`):
+- **Trackable confirmed defect → `mission-control`** (as a **defect-type SDLC issue**, `--issue-type defect`):
   the report is **agent-consumable EVIDENCE**, not a handoff source. Open the defect by **describing the
   bug** with the report **LINKED** as evidence inside the issue. **NEVER pass the report path to
   `handoff_envelope`'s classifier** — `infer_maturity` keys on `docs/plans/` / `docs/brainstorms/` etc.
@@ -320,7 +320,7 @@ Use the enum'd shape in `references/debug-report.md`: **Symptom** / **Root cause
 
 - **inline fix applied + self-verified** → `/work` or `/code-review` to **SHIP** it via a PR (the fix is
   on a branch; `/investigate` does not push it);
-- **real fix needed** → `/handoff` → SDLC issue → `/work` executes it (NOT by handing `/work` a
+- **real fix needed** → `mission-control` → SDLC issue → `/work` executes it (NOT by handing `/work` a
   `docs/investigations/` path — `/work` consumes a plan path, a GitHub issue, or a resume request);
 - **design problem** → `/brainstorm`;
 - **diagnosis-only** → stop.
@@ -337,7 +337,7 @@ REPORT, and routes — then stops. It does **NOT**:
 - mutate the world or the saga — `gh` / `git` / `saga.py` are **READ-ONLY** (`restore` / `ticks` for
   evidence only; never `save`, never mint);
 - **commit, push, open / update / merge a PR, or deploy** — even after a successful fix;
-- **file SDLC issues** — mission-control owns the SDLC; defects route through `/handoff`;
+- **file SDLC issues** — `mission-control` owns the SDLC, and defects route through it;
 - **route to `/qa` to verify** — it does its **own** fresh-reproduce verification; the acceptance gate is
   downstream and separate;
 - **write the saga** — off-chain, no `lifecycle_phase` advance, no tick;
@@ -364,8 +364,8 @@ default action; the diagnosis is.
   a symptom→suspect map, and the anti-patterns catalog (shotgun debugging, confirmation bias, "it works
   now move on", prediction quality bad-vs-good, rationalization-spiral red flags).
 - `references/debug-report.md` — the DEBUG REPORT template (the gstack enum'd shape), the journal-
-  LEARNINGS promotion template, and the `/handoff` defect-routing note (report = evidence, fix reaches
-  `/work` via a `/handoff` ISSUE, never via the report path through the classifier).
+  LEARNINGS promotion template, and the `mission-control` defect-routing note (report = evidence, fix reaches
+  `/work` via a `mission-control` ISSUE, never via the report path through the classifier).
 - `../../references/operator-choice.md` — the execution-backend contract; one value, `inline`,
   since issue #1030 archived the others.
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).

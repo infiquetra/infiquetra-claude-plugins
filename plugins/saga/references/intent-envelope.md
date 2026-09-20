@@ -1,5 +1,10 @@
 # The IntentEnvelope — one committed run-start posture (#380)
 
+> **Issue 1030 removed the `/outcome` coordinator this envelope was captured for.**
+> `intent_envelope.py` survives and its schema is unchanged, but every `/outcome` verb named below
+> is gone. Read this as the record of a captured posture and its schema, not as a set of commands
+> to run.
+
 Run-start posture — attended vs. unattended, which ceremony gates apply, what spend posture
 follows — is captured **once**, as one committed, schema-validated envelope, and every consumer
 resolves through it. No plugin asks its own posture question; the fleet drift-guard test

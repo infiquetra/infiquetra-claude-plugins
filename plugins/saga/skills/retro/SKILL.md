@@ -1,6 +1,6 @@
 ---
 name: retro
-description: The Infiquetra lifecycle META-IMPROVEMENT ENGINE. The TERMINAL, ADVISORY lifecycle phase downstream of /qa — it reads the work that shipped, gathers evidence (git forensics behind a stale-base/wrong-today BLOCK guard, saga trajectory, gh issues/PRs READ-ONLY, session transcripts), interviews the operator, writes a concise agent-consumable retro doc, PROMOTES generalizable findings into the engineering journal (pure-append, auto), CURATES the journal + auto-memory (staleness / contradiction / dedup / rule-enforcement sweeps, propose-diff-and-wait), MARKS the select cross-repo learnings transcendent for the promote layer (single-repo, propose-diff-and-wait), and runs net-new meta-improvement passes (new-skill detection, refine the lifecycle SKILLs, refine directives, prune memory) — every one gated. It never blocks /loop, never mutates the world, never writes the saga, and never self-applies a non-journal edit. Triggers on "retro", "retrospective", "what did we learn", "leave the system smarter", a /qa or /handoff hand-in, or the end of a meaningful work loop / PR / deploy.
+description: The Infiquetra lifecycle META-IMPROVEMENT ENGINE. The TERMINAL, ADVISORY lifecycle phase downstream of /qa — it reads the work that shipped, gathers evidence (git forensics behind a stale-base/wrong-today BLOCK guard, saga trajectory, gh issues/PRs READ-ONLY, session transcripts), interviews the operator, writes a concise agent-consumable retro doc, PROMOTES generalizable findings into the engineering journal (pure-append, auto), CURATES the journal + auto-memory (staleness / contradiction / dedup / rule-enforcement sweeps, propose-diff-and-wait), MARKS the select cross-repo learnings transcendent for the promote layer (single-repo, propose-diff-and-wait), and runs net-new meta-improvement passes (new-skill detection, refine the lifecycle SKILLs, refine directives, prune memory) — every one gated. It never blocks the chain it follows, never mutates the world, never writes the saga, and never self-applies a non-journal edit. Triggers on "retro", "retrospective", "what did we learn", "leave the system smarter", a /qa hand-in, or the end of a meaningful work loop / PR / deploy.
 ---
 
 # Retro
@@ -24,11 +24,11 @@ maturity (`scripts/saga.py:56`, `:72`):
 - `/qa` answers: "Does the shipped thing actually work?" (the acceptance gate)
 - **`/retro` answers: "What did we learn, and how does the system get smarter?"** (this engine — terminal)
 
-`/retro` is **ADVISORY**: `/loop` names it as the next command after `/qa` but **never blocks the router**
+`/retro` is **ADVISORY**: the chain names it as the step after `/qa` but **never blocks it**
 on its output. It is **READ-ONLY on the world** — it reads issues,
 PRs, checks, and the board via `gh` and never mutates them (**mission-control owns the SDLC**); it reads git
 and the saga and writes **no** saga tick (the `->retro` advance is dead wiring — `/retro` is saga
-READ-ONLY). Surfaced follow-ups become a `/handoff` (new issue) or a `QUEUED.md` entry — `/retro` routes
+READ-ONLY). Surfaced follow-ups become a `mission-control` issue or a `QUEUED.md` entry — `/retro` routes
 them, it does not file them.
 
 ## Core principles
@@ -175,7 +175,7 @@ questions got answered — the trajectory of the work.
 for the thread or window via `gh` — read commands only (`gh pr view`, `gh issue view`, `gh pr checks`).
 Never `gh issue create`, never `gh pr merge`.
 
-**1.5 Session-transcript skeletons.** Reuse the `/resume` forensic substrate — **file-mediated,
+**1.5 Session-transcript skeletons.** Reuse the transcript-forensics substrate — **file-mediated,
 context-safe**. Identify sessions from the saga / branch for a thread-scoped retro, or via
 `discover_sessions.py` for the windowed mode; extract each with `extract_session_skeleton.py` to a scratch
 dir; an **optional generic-sub-agent fan-out (one per session)** synthesizes them — offered per
@@ -229,7 +229,7 @@ produces the evidence only; it never itself widens any allowlist (issue #399's o
 
 **1.7 OutcomeOrchestrator realized economics (read-only, R24).** When the retro covers an **outcome**
 (a DAG of leaf sagas), read its per-outcome realized-cost rollup — the falsifiable proof of the
-cost-vs-operator-time thesis — from the materialized `spec.cost_rollup` (in `/outcome report`) or live
+cost-vs-operator-time thesis — from whatever cost record the run kept, or live
 via `scripts/outcome_costs.py` `rollup(spec, store)`. Surface, in the evidence block:
 
 - **tokens / operator_touches / retries** (per outcome) + **by_executor** (which backends actually ran);
@@ -372,7 +372,7 @@ latent cross-repo lessons this sweep does not.
 The passes neither source had, all gated (`references/retro-passes.md`):
 
 - **(a) new-skill / plugin detection** — repeated friction that a new skill or plugin would remove →
-  propose a `QUEUED.md` entry or a `/handoff`.
+  propose a `QUEUED.md` entry or a `mission-control` issue.
 - **(b) refine-lifecycle** — propose diffs to the saga SKILLs when the thread exposed a
   gap or a wrong instruction (including `skills/retro/SKILL.md` — proposal only, never self-applied).
 - **(c) refine-directives** — propose diffs to the **repo `CLAUDE.md`** (in-repo) or the **global
@@ -390,7 +390,7 @@ backend is `inline`, the only value since issue #1030 (`../../references/operato
 
 Surfaced follow-ups exit to:
 
-- **`/handoff`** — a follow-up that should become an SDLC issue (envelope per `/loop`'s Phase 4.2);
+- **`mission-control`** — a follow-up that should become an SDLC issue, prepared there;
 - **`QUEUED.md`** — a follow-up that is durable backlog, not yet an issue.
 
 `/retro` is terminal: there
@@ -421,7 +421,7 @@ It never blocks the router.
 - `references/retro-passes.md` — the multi-pass procedure: the stale-base guard pre-flight, the lean-metrics
   git queries (team-perf shed, solo-framed) + diff-vs-last, the gstack-`learn` curation sweeps
   (staleness / contradiction / dedup / rule-enforcement), the transcript-review fan-out (reusing the
-  `/resume` scripts + operator-choice + generic agents), the interview question bank, and the three
+  transcript-forensics scripts + operator-choice + generic agents), the interview question bank, and the three
   self-refinement passes + memory pruning.
 - `references/self-edit-safety.md` — the load-bearing tiered self-edit contract: the auto vs
   propose-diff-and-wait gate, the propose-diff presentation format, the in-repo vs global/cross-project

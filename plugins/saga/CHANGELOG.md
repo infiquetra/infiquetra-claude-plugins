@@ -30,6 +30,13 @@ crash behind.
   `/founder-review`, `/retro` and `/investigate`, with their reference documents, state `inline`
   rather than rendering a choice; `/work`'s Phase 1.5 Claude Code Workflow step says it cannot be
   entered; `/qa` no longer cites the deleted dispatch table.
+- **The surviving skills stop routing to removed commands.** `/handoff` becomes `mission-control`,
+  which is what it always meant, across `/brainstorm`, `/spec`, `/investigate`, `/office-hours`,
+  `/ideate`, `/founder-review`, `/retro` and their reference documents. `/loop`, `/resume`, `/tier`
+  and `/outcome report` are restated per sentence, because each meant something different where it
+  stood. `/plan` no longer tells the agent to resolve tiers through the removed
+  `scripts/tier_defaults.py`; it reads fleet-core's staffing component directly, as that module
+  already did.
 - **`qa_strategies` parses a declared command the way its sibling does.** The strategy runner built
   its argument vector with `str.split`, so a profile command holding a quoted argument with a space
   (`pytest -k "not slow"`) ran as a different command with no error anywhere; `build_loop` has

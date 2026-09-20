@@ -24,7 +24,10 @@ document says *how the choice is made*. Lifecycle owns the **CHOICE**, not the e
 > archived and the `cc-workflows` plugin was removed, so neither backend is installed and neither
 > can be selected. **Sections 3, 4 and 8 below are a historical record** of how the three-way menu
 > was offered; read them to understand a saga written before the release, not to make a choice
-> today. Sections 1, 2, 5, 6 and 7 are current.
+> today. Sections 1 and 2 are current. Sections 5, 6 and 7 are current about the transport and the
+> storage, and they name `/loop`, `/resume`, `/optimize` and `/outcome` as writers and consumers.
+> All four were removed by the same issue, so read each such row as a record of which command wrote
+> a field, never as a command to run.
 
 There is exactly one selectable enum value: the stored `orchestration_mode` a new run writes is
 `inline`. That string is the contract, and it matches `ORCHESTRATION_MODES` in

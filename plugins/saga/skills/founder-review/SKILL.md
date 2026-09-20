@@ -204,7 +204,7 @@ once built." Without writing the artifact and naming its path, expanding scope t
 
 Write `docs/founder-reviews/YYYY-MM-DD-<topic>-founder-review.md` — its **own** scope-decision
 directory (**NOT** `docs/reviews/` = readiness, **NOT** `docs/code-reviews/` = code, and deliberately
-**not** a `/handoff` artifact source). Format (full template in `references/review-modes.md`):
+**not** a `mission-control` artifact source). Format (full template in `references/review-modes.md`):
 
 - **Frontmatter** — `status`, `type: founder-review`, `date`, `origin` (the target path/identity).
 - **Mode** + target (type + path).

@@ -1542,12 +1542,21 @@ def test_intake_exit_saga_creates_no_issue() -> None:
     # the commands produce. Each corpus still carries its producing verbs + paths. ---
     assert "diagnos" in office_doc.lower(), "office-hours must keep its diagnostic identity"
     assert "frame" in office_doc.lower(), "office-hours must keep its frame-finding identity"
-    for route in ("/ideate", "/brainstorm", "/plan", "/handoff"):
+    # ``/handoff`` was the fourth route until issue 1030 removed the command. Its
+    # destination did not move -- Mission Control still owns the issue -- so the
+    # boundary assertion above carries that half, and this loop pins only routes that
+    # still resolve. A guard that required a removed command's name would have made
+    # the dangling route impossible to fix.
+    for route in ("/ideate", "/brainstorm", "/plan"):
         assert route in office_doc, f"office-hours routing must still name {route}"
+    assert "Mission Control" in office_doc, "office-hours must still name where an issue comes from"
     for verb in ("generate", "critique", "reject"):
         assert verb in ideate_doc.lower(), f"ideate must keep its {verb} identity"
     assert "docs/ideation/" in ideate_doc, "ideate's durable artifact path must survive"
-    assert "/handoff" in convergence_doc, "/ideate must still route to /handoff (Mission Control)"
+    assert "`mission-control`" in convergence_doc, (
+        "/ideate must still route to Mission Control for the issue; the `/handoff` command\n"
+        "that fronted that route was removed by issue 1030, and the destination was not"
+    )
 
     # --- SEEDED VIOLATION: the same check FAILS on a bare runnable `gh issue create`.
     # The seed keeps its token >60 chars away from any negation the doc happens to carry. ---

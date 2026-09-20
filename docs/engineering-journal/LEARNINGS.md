@@ -110,33 +110,56 @@ maintained user-facing reference" — still carried a full command card for each
 values ... they match `ORCHESTRATION_MODES`", which had become one. Eight surviving skills told the
 reader the default offer presents `inline` and `team-execution`.
 
+And then, underneath the manual, the routing instructions themselves: **eighty-five** references to
+a removed command across the thirteen surviving skills and their reference documents. `/handoff` as
+the way to file an SDLC issue in seven skills. `/loop` as the router that reaches `/investigate`,
+`/spec`, `/plan`, `/strategy` and `/retro`. `/resume` as the re-entry path in `/work`. `/tier` as a
+live mid-run lever in `/plan`. `/plan` also told the agent to resolve tiers through
+`scripts/tier_defaults.py`, a module the same card deleted.
+
 **Mechanism.** The removal was driven by the code surface: the guard counts command files and skill
 directories, and it passed. Prose has no such guard, so every sentence describing the removed
 surface survived the card that removed it. For a skills-based plugin this is not documentation lag —
 the prose *is* what the agent executes, so a skill that says "route this through `/handoff`" is a
-broken call, not a stale sentence.
+broken call, not a stale sentence. The scale is the second lesson: the first sweep found the front
+door and the manual, and the number only became visible on a second grep that excluded the
+sentences already marked as history. One grep is a spot check; the number is the finding.
 
 **Generalizable rule.** When a card removes a command, the same card removes the command from every
-routing table, manual card, scenario row and reference list in the plugin, and the removal test
-names the prose surfaces as well as the file count. A count guard proves the files are gone; it
-proves nothing about whether anything still tells a reader to use them.
+routing table, manual card, scenario row, reference list and skill instruction in the plugin, and
+the removal test names the prose surfaces as well as the file count. A count guard proves the files
+are gone; it proves nothing about whether anything still tells a reader to use them. Grep for the
+removed name across the whole plugin, excluding the sentences that deliberately record its removal,
+and drive that count to zero.
 
 ### A guard can pin a dangling reference, and then it enforces the breakage  {#guard-pinned-a-dangling-path-1030}
 
-**Evidence.** `tests/test_saga_plugin.py::test_qa_functional_test_step_contract` asserted
-`"loop/references/dispatch-table.md" in skill_doc`. `/loop` and its dispatch table were removed by
-issue 1030, so the guard required `plugins/saga/skills/qa/SKILL.md` to keep citing a path that no
-longer resolves — and the rewritten `/qa` skill duly did, at line 223.
+**Evidence.** Three guards, all found the same way — by repairing the dangling reference and
+watching the suite go red.
 
-**Mechanism.** The floor's real subject was that `/qa` does not restate the routing map, and the
-author encoded it as "cites the map by path", which is a proxy that stops being equivalent the
-moment the map is deleted. Retargeting it to the negative (`not in`) plus the positive half (the
-skill names where the next step is read from) keeps the floor and drops the dependency on a file.
+1. `tests/test_saga_plugin.py::test_qa_functional_test_step_contract` asserted
+   `"loop/references/dispatch-table.md" in skill_doc`. `/loop` and its dispatch table were removed
+   by issue 1030, so the guard required `plugins/saga/skills/qa/SKILL.md` to keep citing a path that
+   no longer resolves — and the rewritten `/qa` skill duly did, at line 223.
+2. `tests/test_doc_review_loop.py` required `references/workflow-backend.md` in the backend-offer
+   section of `/plan` and `/work`. That file never existed in the merged tree, which is why three
+   links to it were added by the very release that removed it.
+3. `tests/test_saga_plugin.py::test_intake_exit_saga_creates_no_issue` required `/handoff` in
+   `/office-hours` and in `/ideate`'s convergence document.
 
-**Generalizable rule.** When a guard asserts that a document cites a path, the guard now depends on
-that path existing. Prefer asserting the property (the map is not restated here, and the source is
-named) over asserting a specific citation, or the guard becomes the reason a dangling reference
-cannot be fixed.
+**Mechanism.** Each floor's real subject was a property — `/qa` does not restate the routing map,
+the reader can decide without following a link, Mission Control owns the issue — and each author
+encoded it as "cites this specific name", which is a proxy that stops being equivalent the moment
+the name is deleted. The proxy then holds the breakage in place: fixing the dangling reference fails
+the guard, so the dangling reference stays. And the third one was invisible until the full suite ran
+against the repaired tree, which is the argument for running it rather than the touched modules.
+
+**Generalizable rule.** When a guard asserts that a document cites a path or a command name, the
+guard now depends on that name existing. Assert the property — the map is not restated here, the
+owner is named, the source of the next step is named — not the citation. Otherwise the guard becomes
+the reason a dangling reference cannot be fixed, and a removal card inherits a red suite it did not
+cause.
+
 ### The CI workflow and the gate script are release surfaces of a removal too
 
 **Evidence:** pull request 1050's `Validate Plugins` job failed at the `Engine Registry` step after issue 1030 deleted `check_engine_registry.py` and `engine_registry_conformance.py`; `scripts/gate.sh` carried the same two steps.

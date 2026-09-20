@@ -177,7 +177,7 @@ gh pr view <N> --json state,reviewDecision,mergeable,mergeStateStatus,statusChec
 
 Then run the total PR-state transition table in `references/pr-continuation-loop.md` (draft / await-review /
 changes-requested / pending-or-failing-checks / conflicting / approved-stale / approved-fresh / merged /
-closed). `/work` **owns this re-entry** — it does not depend on `/resume` being rebuilt. Round bumps go
+closed). `/work` **owns this re-entry**, and is the only thing that does. Round bumps go
 through `--rounds-seen` (never `next_round`). Branches that re-execute units re-enter Phases 2-5 with the
 round incremented; branches that merge or pause set `status`/`phase_status` and stop.
 
@@ -968,4 +968,4 @@ Build, run the criterion, record, merge, release, test again, close — then sto
   "What holds around the loop." The risk-gated hard test gate is gone; the criterion is written.
 - `references/pr-continuation-loop.md` — the total PR-state transition table (the `gh pr view --json`
   reads, the per-state actions, round-bump via `rounds_seen`, merge-under-confirmation, and the
-  qa/resume advisory routing + the qa-deferral). "How the round-N loop runs after PR-ready."
+  qa advisory routing + the qa-deferral). "How the round-N loop runs after PR-ready."

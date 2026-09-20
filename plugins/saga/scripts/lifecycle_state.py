@@ -446,7 +446,7 @@ def _assert_known_tier(model: str, effort: str, *, source: str) -> None:
     """Refuse a model, an effort, or a COMBINATION the shared tier vocabulary does not carry.
 
     The vocabulary is ``fleet_commons.tier_palette``'s ``MODELS`` / ``EFFORTS``, reached through the
-    same shim :mod:`tier_defaults` uses, so there is one authority rather than a second copy here.
+    ``fleet_commons_shim``, so there is one authority rather than a second copy here.
 
     Membership in each list separately is not enough, and checking only that was the gap: every
     effort is a legal effort and every model a legal model, but not every pairing runs. ``haiku``
@@ -484,8 +484,9 @@ def resolve_build_unit_tier(
 
     Precedence mirrors the shared tier chain: an explicit ``plan_tier`` wins; otherwise the work
     shape (default ``mechanical`` for an undeclared unit per
-    ``references/execution-strategy.md``) is resolved through :mod:`tier_defaults` /
-    :mod:`fleet_commons.tier_resolver`, never a literal at the spawn site.
+    ``references/execution-strategy.md``) is resolved through
+    :mod:`fleet_commons.tier_resolver`, never a literal at the spawn site. The ``tier_defaults``
+    rung that sat in front of it was removed with issue 1030.
 
     **An explicit tier is validated against the same vocabulary its sibling path resolves from.**
     It used to be returned after a key-presence check alone, so a plan naming ``{"model": "gpt-5"}``

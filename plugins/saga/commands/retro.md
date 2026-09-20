@@ -17,7 +17,7 @@ carries the cross-project warning. See `skills/retro/references/self-edit-safety
 
 **Boundary:** READ-ONLY on the world (`gh` / `git` read-only, never mutates issues / PRs / the board —
 mission-control owns the SDLC); never writes the saga (terminal, saga read-only); never auto-launches an
-execution backend or a destructive self-edit; never blocks `/loop`.
+execution backend or a destructive self-edit; never blocks the chain it follows.
 
 Arguments provided to the command:
 

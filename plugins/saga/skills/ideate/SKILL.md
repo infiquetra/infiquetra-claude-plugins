@@ -32,7 +32,7 @@ requirements, plans, or code.
    only by re-entering the filter with new evidence (see the convergence reference).
 5. **Durable source material only — never issue creation.** Ideate produces durable source material
    (the ranked ideation artifact under `docs/ideation/`) and creates or mutates no GitHub issue: it
-   never runs `gh issue create`. Mission Control owns issue creation, reached through `/handoff`.
+   never runs `gh issue create`. Mission Control owns issue creation; route there.
 
 ## Interaction method
 

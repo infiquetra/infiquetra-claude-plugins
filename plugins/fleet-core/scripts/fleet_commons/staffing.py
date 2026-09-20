@@ -3,7 +3,7 @@
 
 Choosing a subagent's model, a workflow unit's tier, and a herdr role's vendor and model are
 one decision whose inputs used to sit in four places: the work-shape tier policy and model
-palette here in fleet-core, the per-repository tier overlay in saga's ``tier_defaults.py``, the
+palette here in fleet-core, the per-repository tier overlay saga's ``tier_defaults.py`` read, the
 capability ratings and trust tiers in saga's ``references/engine-registry.yaml``, and the
 software-development-lifecycle repository's ledger of which executor has been qualified against
 which review lens. ``staffing.json`` now carries all four, and this module is the only thing that
@@ -226,8 +226,10 @@ def capability_ratings(registry: dict[str, Any] | None = None) -> dict[str, Any]
 def overlay_path(root: Path | None = None) -> Path:
     """Where the per-repository overlay lives, relative to ``root`` or the working directory.
 
-    Public because saga's ``tier_defaults`` writes the file this module reads; a second copy of
-    the path would let the writer and the reader drift onto different files silently.
+    Public because a writer of the overlay and this reader must agree on one path; a second copy
+    would let them drift onto different files silently. Saga's ``tier_defaults`` was that writer
+    until issue 1030 removed it, and the path stays public because the overlay is an operator-
+    committed file that anything may write.
     """
     return (root or Path.cwd()) / OVERLAY_PATH
 
@@ -235,8 +237,8 @@ def overlay_path(root: Path | None = None) -> Path:
 def load_overlay(root: Path | None = None) -> dict[str, dict[str, str]]:
     """Return the per-repository overlay; absent means ``{}``, malformed raises.
 
-    This is the one implementation of the read and its validation; saga's ``tier_defaults``
-    delegates here. An unknown work shape, an off-palette model or effort, and a model-effort pair
+    This is the one implementation of the read and its validation. Saga's ``tier_defaults``
+    delegated here until issue 1030 removed it; callers now read this directly. An unknown work shape, an off-palette model or effort, and a model-effort pair
     above the model's ceiling are each a loud failure rather than a silent fall-through to the
     policy default.
     """
@@ -273,9 +275,10 @@ def validate_tier(
 ) -> dict[str, str]:
     """Validate one ``{work_shape: {model, effort}}`` pair against the palette.
 
-    Public because saga's ``tier_defaults.write_tier_default`` validates an operator-confirmed
-    override before persisting it, and that check must be the same one the overlay reader uses —
-    two copies is how a write starts accepting a pair the read would refuse.
+    Public because a writer validating an operator-confirmed override before persisting it must
+    use the same check the overlay reader uses — two copies is how a write starts accepting a pair
+    the read would refuse. Saga's ``tier_defaults.write_tier_default`` was that writer until issue
+    1030 removed it.
     """
     registry = registry if registry is not None else work_shapes()
     if work_shape not in registry:

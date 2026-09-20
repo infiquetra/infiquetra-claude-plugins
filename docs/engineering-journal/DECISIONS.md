@@ -2,6 +2,48 @@
 
 ## 2026-09-19
 
+### Orchestrate's state moves into the per-issue run record, and the issue number replaces the run identifier  {#1025-record-replaces-run-file}
+
+**Decision.** The orchestrate driver stops writing `.orchestrate/run.json` and reads and writes issue 1023's `run_record.v1` document for one issue, resolved through `run_record.resolve_store_root()`. Every mutating subcommand takes `--issue <N>`. Two issues driven in one repository have two record files and never contend for one path. The task-spill mechanism goes with the run file.
+
+**Rationale.** The fixed path was one file per repository, so a finished run blocked the next (card 878) and a unit's own worktree could not see it at all, because `.orchestrate/` is git-ignored and a repository-relative path resolves inside the worktree rather than in the primary checkout (issue 886's fifth finding). The record resolves its store root from the git *common* directory, which is the same directory from the primary checkout and from every linked worktree, so the same file is visible to the coordinator and to every unit. The record also already answers two defects the run file carried separately: an unknown version is a one-line refusal with exit 3 rather than a traceback (card 975), and an unknown top-level field round-trips and is named rather than silently dropped on save (card 989). The spill existed because the run file was rewritten whole on every save and 83% of a 75-unit record was task text; one issue's state is not that file.
+
+**Alternatives rejected.** Keeping a second orchestrate-owned file beside the record, rejected because it reintroduces the two-authorities problem the record exists to end. Keeping the fixed path with a `--run` selector, rejected because that is what card 878 asked for before the record existed and it solves the singleton without solving the worktree-visibility half.
+
+**Revisit when.** The record's `schema` token moves past `run_record.v1`.
+
+### A launch persisted immediately is what makes two `go` calls launch once — not a reservation  {#1025-immediate-persist-not-a-reservation}
+
+**Decision.** The launch loop writes the unit row with `status = running` and a `launch_started_at` stamp and saves *before* calling the launcher, persists the wrapper identity through a launcher callback at session creation rather than after delivery returns, and wraps the whole window so a `BaseException` saves the record and re-raises. There is no claim, no owner token, and no expiry.
+
+**Rationale.** Parent issue 1018 forbids a new lease, reservation, receipt, or ledger, and says to stop and report if a child needs one to pass its own tests. It does not: eligibility reads only `pending` units, so a repeated `go` in the launch window finds the unit `running` and skips it, which is the collision card 900 actually recorded — a polling driver calling twice in sequence. Card 990's half is the interrupt window: the identity was written onto the in-memory unit inside the launch and nothing persisted it until a second save after delivery, so a keyboard interrupt anywhere in a window of up to two minutes left the record claiming the unit was never launched while a real tab existed. A keyboard interrupt is a `BaseException`, which neither existing `except SystemExit` clause catches.
+
+**The residual is named rather than hidden.** Two `go` processes that read the record at the same instant can both see `pending`. That case is not in the record, and the *harm* it would cause — two sessions in one worktree — is separately impossible once every launch builds its own fresh worktree (`{#1025-fresh-worktree-per-launch}`).
+
+**Alternatives rejected.** A durable claim written before launch with an owner and an expiry, rejected as a reservation by another name.
+
+**Revisit when.** A simultaneous double launch is actually observed, at which point the answer is the simplest mechanism covering that demonstrated case, not the protective layer back.
+
+### Every launch gets a fresh worktree; the branch, not the directory, is the unit's identity  {#1025-fresh-worktree-per-launch}
+
+**Decision.** The worktree helper takes the canonical path and, when that path exists on disk or is registered with git, uses the lowest unused numbered sibling instead. It never checks out into an existing directory. The unit's branch is reused when it exists, because the branch holds that unit's history and a relaunch continues it; only the working directory is new. After creation the helper runs a declared setup command in the worktree: `ORCHESTRATE_WORKTREE_SETUP` when set, otherwise `uv sync --locked --extra dev` when a `uv.lock` exists at the worktree root, otherwise nothing, with one printed line saying so.
+
+**Rationale.** Reusing a worktree is what makes "fast-forward it, adopt or close the prior session, preserve the unknown fields" a question at all (card 886); a fresh directory removes the question rather than answering it. The environment step is the fifth recorded collision: a session in a worktree with no virtual environment produces confident work that cannot run its own tests, and the failure surfaces much later as a test result nobody can reproduce.
+
+**Alternatives rejected.** Fast-forwarding or refusing a reused worktree, rejected as above. Copying or symlinking the primary checkout's `.venv`, rejected because a virtual environment carries recorded absolute paths that then point at another directory.
+
+**Revisit when.** Worktree creation cost becomes the dominant cost of a launch.
+
+### The merge turn is ordinary record state, and it carries the guard against reverting a newer `main`  {#1025-merge-turn-carries-the-main-guard}
+
+**Decision.** Each unit row carries `merge_state`, one of `ready`, `merging`, `merged`. A merge refuses to open a second turn while any unit is `merging` and names that unit. Before the parent branch pointer advances, if `origin/main` is not an ancestor of the merge result, the files the merge changes are intersected with the files `origin/main` changed since their merge base, and a non-empty intersection refuses the turn and names every file in it.
+
+**Rationale.** The software-development-lifecycle repository's parent-branch chapter, at revision `5efc869f`, describes merge turns as execution state the Delivery Manager tracks — "not an operator approval, a receipt ceremony, or a separate lock service" — and records that a dedicated lock service was considered and explicitly rejected as overcomplicated race management. A status field with no expiry and no ownership token is that state. The regression guard is card 875 restated: that card reported `collect` merging a run branch into the operator's tree with no currency check, so a per-unit-pull-request run could silently revert work on `main`. The `collect` path is removed by this card, so the concern survives as a rule of the merge turn rather than as a check inside a command that no longer exists.
+
+**Alternatives rejected.** Refusing any merge whose parent branch is behind `main`, rejected because it makes ordinary parallel work unmergeable. A lock service or a turn token, rejected by the source-of-truth document itself.
+
+**Revisit when.** A merge turn needs to be handed between machines, where a status field with no owner stops being enough.
+
 ### The roster helper creates panes through the launcher, never through raw herdr calls  {#1024-roster-creates-through-the-launcher}
 
 **Decision.** `roster.py up` shells out to `launcher.py launch` for every pane it creates, and `roster.py down` closes through `launcher.py close --receipt-json`. It issues no `herdr tab create`, no `herdr agent start`, and no `herdr pane close` of its own.

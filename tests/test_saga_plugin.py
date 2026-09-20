@@ -46,7 +46,14 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.168.0"  # 0.168.0: the run record reference documents the
+    assert plugin_json["version"] == "0.170.0"  # 0.170.0: /work becomes the build loop — the
+    # exit criterion is written in the run record at admission and read rather than judged, and
+    # build_loop.py runs it and records every result under the unit row's `build_loop` key
+    # (issue #1027). The five ship-ceremony modules are removed with their tests, the hook entry
+    # and their importers. Bumped from 0.169.0, the saga version on origin/parent/1018 at
+    # 23959a80: issue #1029 took 0.169.0 while this card's suite ran.
+    # Predecessor 0.169.0 was issue #1029: every lifecycle skill ends by invoking the next step.
+    # Predecessor 0.168.0: the run record reference documents the
     # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
     # unit row (issue #1025). Bumped from 0.167.0, the saga version on origin/parent/1018 at
     # 54a526b1: issues #1001, #1026 and #938 took 0.165.0, 0.166.0 and 0.167.0 while this card's
@@ -845,7 +852,13 @@ def test_work_engine_merge_contract() -> None:
     assert "deploy" in corpus  # deploy mutation is delegated, not owned
     assert "mission-control" in corpus  # issue comments routed out, not filed by /work
     assert "Parallel Safety Check" in corpus  # CE execution mechanics carried
-    assert "requires_hard_test_gate" in corpus  # the canonical change-kind gate is named
+    # The canonical change-kind gate was the floor here until issue #1027 removed it. What
+    # replaced it is the written exit criterion, so the floor moves with it: naming the runner and
+    # its record block is the same class of check -- a mechanism a vibes reskin could not satisfy --
+    # about the thing that now decides when the work is done.
+    assert "build_loop.py" in corpus  # the runner that executes the written criterion
+    assert "exit criterion" in corpus.lower()  # the criterion itself, read rather than judged
+    assert "requires_hard_test_gate" not in corpus  # the removed gate must not creep back
     assert "merge-base" in corpus.lower()  # gstack merge-base-before-tests carried
     # qa/resume routing is advisory and lifecycle does not advance past work.
     assert "advisor" in corpus.lower()  # advisory qa/resume routing
@@ -3956,7 +3969,14 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # card is the operator status HEADER, not an afterthought — and the continuation-routing step that
     # was step 3 is pushed to step 4 by the insertion (proves a real reorder, not a keyword sprinkle).
     assert "1. **Render the operator status header**" in work_doc
-    assert "4. **Present continuation routing**" in work_doc
+    # Step 4 is the last step of the section, and its presence proves the card render is a real
+    # reorder rather than a keyword sprinkle. Issue #1027 renamed it: the ship ceremony that used
+    # to run there was removed, and the merge turn belongs to the integrate step. The guard holds
+    # the position, not the old wording.
+    assert re.search(r"^4\. \*\*[^*]+\*\*", work_doc, flags=re.MULTILINE), (
+        "section 5.4 must still carry a fourth step after the status-card render"
+    )
+    assert "4. **Hand over to the integrate step.**" in work_doc
     # STILL PRESENT (KTD5): detailed work-session evidence reference.
     assert "work-session" in work_doc
 

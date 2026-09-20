@@ -1,16 +1,29 @@
 ---
 name: work
-description: Execute a settled Infiquetra plan to PR-ready, then own the round-N PR continuation loop. Restores and writes the work-thread saga (the primary writer), recommends an execution backend, runs risk-gated tests, calls /code-review programmatically and reads its typed outcome, blocks on repair, incomplete, or stale review state, and coordinates PR-open/review-request/merge under explicit confirmation — without owning deploy. Triggers on "build it", "work this plan", "execute the plan", "resume work on #N", or a plan-ready / resume-ready handoff issue.
+description: Run the build loop for a settled Infiquetra plan. One worktree and branch per unit, implement, then run the written exit criterion from the run record — the mechanical baseline, the plan's functional checks, the branch preview where the repository declares one, and the scenario smoke — repeating until green, and hand the exact revision to /code-review. Restores and writes the work-thread saga (the primary writer). Triggers on "build it", "work this plan", "execute the plan", "resume work on #N", or a plan-ready / resume-ready handoff issue.
 ---
 
 # Work
 
 `/work` answers **"Build it."** It takes a settled plan — from `/plan`, a `plan-ready` / `resume-ready`
-handoff issue, or an approved ad-hoc request — and executes it phase by phase to PR-ready, then **owns
-the round-N PR continuation loop** around the resulting PR. It does **not** invent product behavior
-(that came from `/brainstorm` and the issue), it does **not** re-run the plan interrogation (`/plan`
-settled the HOW), and it does **not** own deploy mutation (`deploy` does). It builds, tests,
-gates, records, and coordinates — under explicit confirmation for every outward mutation.
+handoff issue, or an approved ad-hoc request — and runs the **build loop**: implement, run the
+written exit criterion, repeat until green, hand the exact revision to `/code-review`. It does
+**not** invent product behavior (that came from `/brainstorm` and the issue), it does **not** re-run
+the plan interrogation (`/plan` settled the HOW), and it does **not** own deploy mutation (`deploy`
+does).
+
+**The finish line is written down before the first line of code, and it is read, not judged.** The
+exit criterion lives in the run record, put there at admission and by the plan: the mechanical
+baseline from the repository profile, the plan's child-scoped functional checks, a branch preview
+deployment where the repository declares one, and the plan's scenario smoke. `/work` runs it with
+`plugins/saga/scripts/build_loop.py` and repeats until every part is green. Its full contract — the
+check map, the three statuses, the record block and the exit codes — is in
+`plugins/saga/references/mechanical-baseline.md`.
+
+**A failing check is a loop iteration, not a refusal.** Nothing in the loop blocks, stops, or asks
+the operator. `build_loop.py` exits 4 to say "not green yet"; the answer is to implement again and
+run it again. There is no risk-gated test judgment any more, and there is no ship ceremony: the
+worker checks a fact rather than concluding one, and the merge turn belongs to the integrate step.
 
 `/work` is the saga's **primary writer**: it `restore`s on resume, mints/advances the work-thread saga
 to `lifecycle_phase=work`, writes a tick per phase, and — crucially — **mints the *findable* work-thread
@@ -46,10 +59,12 @@ legitimately sits at `work` from merge until `/qa` runs and passes (see Phase 5)
    write a tick per phase boundary; round-N is deterministic. `/work` is the **primary writer** and mints
    the saga with the identity keys (`issue_ref` / `plan_path` / branch) a standalone `/code-review` needs
    to find and append `review_paths` to. Never set `next_round` — it is derived (saga-spec §6.1).
-3. **Test as you go, gate hard on risk.** Test discovery + scenario completeness + a system-wide check
-   at execution time; before PR-ready, `requires_hard_test_gate` change-kinds (behavior/security/infra/
-   api/deployment/data) **block** unless overridden with a recorded rationale. Run tests against the
-   merge base, not stale local state.
+3. **The exit criterion is written, and the loop reads it.** What a unit must clear was settled at
+   admission and by the plan, and it sits in the run record where the worker can read it before
+   writing a line. `/work` runs it, records every result, and repeats until green. It does not
+   weigh whether the tests are adequate and it does not decide which change kinds deserve a gate —
+   that judgment was the thing the written criterion replaced. Run the criterion against the merge
+   base, not stale local state.
 4. **Recommend a Saga backend, the operator confirms.** Compute the cheapest-correct Saga execution
    backend (`inline` or `team-execution`) with `recommend_execution_backend()`, pre-select that Saga
    backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default
@@ -311,11 +326,11 @@ python3 plugins/saga/scripts/saga.py save \
   --rounds-seen "1"
 ```
 
-**Front-loaded ceremony start (R7, issue #345).** Immediately after this mint, when `issue_ref` is set,
-offer to run `ship_ceremony.py start --issue-ref <issue_ref>` — it pushes the working branch and opens a
-draft PR carrying the plan link, recording `pr_refs` on the saga right away. Reaching "ship" later then
-flips this same draft ready instead of opening a fresh PR. Skip this offer for `--kind task` work (no
-`issue_ref` to link) or when the operator declines.
+**No front-loaded ceremony start.** Issue #345's `start` transition pushed the working branch and
+opened a draft pull request right after this mint, so that reaching "ship" later flipped the draft
+ready rather than opening a fresh one. It went with the ship ceremony in issue #1027, and nothing
+replaces it: the build loop opens no pull request, because there is nothing to review until the
+criterion is green. The pull request is opened once, at Phase 5.4, under explicit confirmation.
 
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc `task` work pass
 `--kind task --id <slug>` and omit `--issue-ref` (then `--plan-path` + the on-branch save are the match
@@ -402,25 +417,58 @@ lease preflight retires with U6.
   - Absent any `pause_after`, only irreversible actions pause; reversible board/label/issue/branch/PR
     mutations proceed and are reported to the operator after the fact. They are **not** recoverable
     by a saga command — the undo ledger and `/undo` were removed in #666 (never wired to any
-    producer, never wrote a record). For ceremony rollback use `/ship --undo`.
+    producer, never wrote a record), and `/ship --undo` went with the ship ceremony in #1027.
+    There is no rollback command; a merge is undone with ordinary git.
 
 ---
 
-## Phase 3 — Test gates (hard on risk)
+## Phase 3 — The build loop: run the written exit criterion until it is green
 
-Apply `references/test-and-gates.md`:
+The criterion was written before the work started. Read it, run it, and repeat — that is the whole
+of this phase. Its contract, the check map with every divergence this repository has, the three
+statuses and the exit codes are in `plugins/saga/references/mechanical-baseline.md`.
 
-- **Test discovery** — find existing tests for each changed file before implementing; start from the
-  plan's named test scenarios, then check for coverage the plan did not enumerate.
-- **Scenario completeness** — confirm each feature-bearing unit covers the four categories (happy path,
-  edge cases, error/failure paths, integration); supplement gaps before writing tests.
-- **System-wide check** — trace two levels out (callbacks, middleware, observers) and write at least one
-  integration test through the real chain (no mocks for the interacting layers) when the change touches
-  callbacks, error handling, or multi-interface behavior.
-- **Hard gate** — `requires_hard_test_gate(change_kinds)` (behavior/security/infra/api/deployment/data)
-  **blocks** PR-ready without tests; docs/config/trivial may skip only with an explicit rationale.
-- **Merge-base before tests** — fetch the base and run against the merged state so tests reflect what
-  actually lands, not stale local state.
+**Read it first, before implementing.** A worker that has seen the finish line writes toward it:
+
+```bash
+uv run python plugins/saga/scripts/build_loop.py --issue <N> --dry-run
+```
+
+That prints the mechanical baseline with the lens-catalogue check each command answers, any
+catalogue check this repository's baseline does not cover and why, any named scanner it has not
+configured, the plan's functional checks, the plan's scenario smoke, and whether a branch preview
+is declared. It runs nothing and writes nothing.
+
+**Then run it, once per iteration:**
+
+```bash
+uv run python plugins/saga/scripts/build_loop.py --issue <N> --unit <unit-id>
+```
+
+One invocation is one iteration. It runs every part of the criterion, appends the results to the
+unit's `build_loop` block in the run record, and prints what passed and what did not.
+
+**Read the exit code, and nothing else:**
+
+- **0 — green.** Every check passed and the preview is either green or undeclared. The block now
+  carries `handed_to_code_review` with the full forty-character revision. Go to Phase 5.
+- **4 — not green yet.** At least one entry is `fail` or `could-not-execute`. **This is a loop
+  iteration, not a refusal and not a gate.** Fix what the results name, commit, and run it again.
+  Do not ask the operator, do not record an override, and do not proceed to code review: there is
+  nothing here to override, because nothing here is refusing.
+- **2 or 3 — a refusal.** The record could not be read, the unit was not named, or its version is
+  not one this saga writes. Say which and stop; these are the only stops in the loop.
+
+**Fetch the base before the first iteration** so the criterion runs against the merged state and
+reflects what actually lands, not stale local state.
+
+**What a failing entry means, by status.** `fail` is a defect in the work: the check ran and said
+no. `could-not-execute` is an environment problem — a missing program, a timeout, a command that
+does not parse — and is never reported as a pass and never as a defect, which is the lens
+catalogue's own rule. Fix the environment for the second; fix the code for the first.
+
+**The repository's own pre-push gate stays.** It is the repository's rule, not saga's, and the loop
+neither replaces nor suppresses it.
 
 ---
 
@@ -431,12 +479,18 @@ After each meaningful phase:
 ### 4.1 Work-session writeup
 
 Write a concise `docs/work-sessions/YYYY-MM-DD-<topic>.md` for the phase: what was built (by U-ID), the
-key decisions, files modified, `change_kinds` (the derived list that decides which tests the hard gate
-demands), checks run, and the single next step. Record the derived `change_kinds` value verbatim in the
-writeup and pass that same recorded list to `requires_hard_test_gate` at
-`plugins/saga/scripts/lifecycle_state.py:111` to decide whether the hard test gate applies — the writeup
-field and the gate input are the same list, not two separate derivations. This is the canonical, durable
-home (`handoff_envelope.py` classifies it resume-ready) — no new directory.
+key decisions, files modified, `change_kinds` (the derived list, recorded because a later reader wants
+to know what kind of change this was), the build loop's result, and the single next step.
+
+**Record the exit criterion the loop ran and the criterion the record holds as the same thing, not as
+two derivations.** The writeup names the iteration number, its revision, and each check's status
+verbatim from the unit's `build_loop` block — it never re-derives a criterion of its own, and it
+never summarises a `could-not-execute` as a pass or a fail. The block is the authority and the
+writeup is a rendering of it; two derivations of one criterion is exactly the drift the written
+criterion was introduced to remove.
+
+This is the canonical, durable home (`handoff_envelope.py` classifies it resume-ready) — no new
+directory.
 
 ### 4.2 Save a saga tick
 
@@ -689,11 +743,22 @@ already establish (#450 non-goal).
 
 Call `/code-review` in `programmatic` / `report-only` mode. In that mode `/code-review` returns its
 structured findings envelope to the caller and writes nothing durable — **the caller owns persistence**
-(its own contract). Capture the reviewed commit at call time:
+(its own contract).
+
+**The reviewed revision is the one the loop went green at, read from the record — not a fresh
+`git rev-parse`.** The build loop wrote it into the unit's `build_loop.handed_to_code_review` on the
+green iteration, and that is the whole point of recording it: the revision the review covers must be
+the revision the criterion passed at, and re-reading `HEAD` here would silently hand over a later
+commit that nothing has checked.
 
 ```bash
-REVIEWED_SHA=$(git rev-parse HEAD)
+REVIEWED_SHA=$(uv run python plugins/saga/scripts/run_record.py show <N> \
+  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["units"][0]["build_loop"]["handed_to_code_review"]["revision"])')
 ```
+
+It is a full forty-character commit identifier, which is the only shape `/code-review` accepts. If
+the block carries no `handed_to_code_review`, the loop never went green: go back to Phase 3 rather
+than reviewing unchecked work.
 
 The findable saga `/work` minted in Phase 1.4 (`issue_ref` / `plan_path` / branch) is what a *standalone*
 `/code-review` would later append `review_paths` to. For this in-loop gate, `/work` reads the envelope
@@ -758,37 +823,35 @@ On a clean gate (or recorded override):
    fixed-position glyph card with an indexed footer pointing to the underlying evidence. The detailed
    work-session notes, code-review findings body, and test outputs remain as drill-down detail below
    the card — they are the evidence the card cells reference, not replaced by the card.
-2. **Offer to open the PR + request review** by running `plugins/saga/scripts/ship_ceremony.py run`
-   through its `open_pr` and `request_review` transitions (issue #345) — outward-facing,
-   **offered/confirmed, never auto-fired**. If the operator declines, hand them the prepared PR body
-   (links the plan, work-sessions, and the code-review artifact) + branch and let them run
-   `ship_ceremony.py` themselves (or `git ship`, once installed).
-3. **Record `pr_refs`** — `ship_ceremony.py`'s `open_pr` transition writes this on the saga itself; set
-   `next_step="await review on PR #N"`; comment the PR status to the issue via the extended
-   `issue_progress.py` CLI (`--pr-url`, `--review-status`).
-4. **Present continuation routing** and pause. On re-entry, Phase 0.4 reads the live PR state and runs the
-    transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
-    approved + clean + fresh, **offer to run the rest of the ceremony** — five separate
-    `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
-    a bare `run` for `checkout_main`, a bare `run` for `pull`,
-    `run --operator-confirmed branch_delete:<target>` naming the resolved head branch (issue
-    #635/KTD6), then a bare `run` for `teardown` (issue #347 — the terminal reclamation gate that
-    closes the opened-resource manifest; `teardown` is `CeremonyTier.REVERSIBLE` and structurally
-    required) — each explicitly confirmed, never silent; merge is a
-    git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
-    On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
-   See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.
-   When the destination includes deploy, route the merged item's ownership transfer through the
-   offer step in `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept
-   the handoff itself.
+2. **Open the pull request and request review.** The ship ceremony that used to do this was removed
+   in issue #1027: there is no ceremony, no transition table, no reversibility tier and no receipt.
+   Opening the pull request and requesting the review are ordinary `gh` operations. **Each of them,
+   and the merge, stays explicitly confirmed** — that is the preservation contract issue #1029
+   declared, and removing the ceremony removed the mechanism, never the confirmation. If the
+   operator declines, hand them the prepared pull-request body (it links the plan, the work-sessions
+   and the code-review artifact) and the branch.
+3. **Record `pr_refs`** on the saga; set `next_step="await review on PR #N"`; comment the pull
+   request's status to the issue via the extended `issue_progress.py` CLI (`--pr-url`,
+   `--review-status`).
+4. **Hand over to the integrate step.** The merge turn — taking the turn, merging onto the parent
+   branch or `main`, and re-integrating `main` into surviving branches — is the integrate step's,
+   not this skill's. On re-entry, Phase 0.4 reads the live pull-request state and runs the
+   transition table in `references/pr-continuation-loop.md`. When the destination includes deploy,
+   route the merged item's ownership transfer through the offer step in
+   `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept the handoff
+   itself.
 
 At thread completion set `status=done`.
 
 ### 5.5 Hard boundary
 
-`/work` builds, tests, gates, records, and coordinates the PR loop. It does **NOT** silently mutate
-GitHub (PR-open, review-request, and merge are each explicitly confirmed; merge is a git op `/work` owns
-only under confirmation). It does **NOT** own deploy or canary (`deploy` owns deployment
+`/work` builds, runs the written criterion until it is green, records, and hands over. It does
+**NOT** silently mutate GitHub (pull-request open, review request, and merge are each explicitly
+confirmed — issue #1029's preservation contract, which outlived the ceremony that used to carry
+it). It does **NOT** refuse: the loop's only non-green outcome is another iteration, and the only
+stops in it are an unreadable record or an unnamed unit. It does **NOT** judge whether the tests are
+adequate — the criterion was written at admission, and re-deciding it here would be the judgment the
+criterion replaced. It does **NOT** own deploy or canary (`deploy` owns deployment
 mutation and production-health revert). It does **NOT** file SDLC issues (`mission-control` owns issue
 creation). It does **NOT** advance `lifecycle_phase` past `work` — the advance to `qa` is **`/qa`'s
 to make, and only on a PASS**; on a FAIL `/qa` keeps the phase at `work` and records the evidence.
@@ -806,10 +869,13 @@ gate, record, coordinate the PR loop under confirmation — then stop.
   table, the Parallel Safety Check (overlap → worktree / shared-dir fallback / downgrade), subagent
   dispatch (U-ID preservation), the incremental-commit heuristic, already-shipped-verify, and the
   runnable `recommend_execution_backend()` integration. "How work gets executed."
-- `references/test-and-gates.md` — test discovery, scenario completeness, the system-wide check,
-  `requires_hard_test_gate` rules, merge-base-before-tests, the computed review-staleness mechanism,
-  override-with-recorded-rationale, and the gstack autonomy contract (stop-for / never-stop-for). "What
-  must pass before PR-ready."
+- `../../references/mechanical-baseline.md` — the build loop's contract: the check map from the lens
+  catalogue to this repository's commands with every divergence named, the three check statuses, the
+  branch-preview rule in all three of its cases, the `build_loop` record block, and the exit-code
+  table. "What green means, and where it is written down."
+- `references/test-and-gates.md` — merge-base-before-tests, the computed review-staleness mechanism,
+  override-with-recorded-rationale, and the gstack autonomy contract (stop-for / never-stop-for).
+  "What holds around the loop." The risk-gated hard test gate is gone; the criterion is written.
 - `references/pr-continuation-loop.md` — the total PR-state transition table (the `gh pr view --json`
   reads, the per-state actions, round-bump via `rounds_seen`, merge-under-confirmation, and the
   qa/resume advisory routing + the qa-deferral). "How the round-N loop runs after PR-ready."

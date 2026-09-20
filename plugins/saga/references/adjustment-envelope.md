@@ -133,9 +133,12 @@ the "only irreversibles pause" rule was never actually decided by it.
 What survives is the behavior, which is unchanged: reversible mutations proceed without pausing,
 irreversible ones pause. What is gone is the claim that a proceeded mutation is recoverable.
 
-**For real rollback, use `/ship --undo`** (`plugins/saga/scripts/ship_undo.py`), which is wired,
-tested, and has produced 16 real `rollback_manifest.json` files. It covers ceremony rollback —
-merge, branch, and PR state — which is where rollback was actually needed.
+**There is no rollback command any more.** Ceremony rollback lived in `/ship --undo` — wired,
+tested, and the producer of 16 real `rollback_manifest.json` files — and it went with the ship
+ceremony itself in issue #1027, because what it rolled back no longer happens: the build loop opens
+no ceremony, and the merge turn that replaced the ceremony is an ordinary merge onto the parent
+branch, undone with ordinary git. A mutation that proceeds here is still not recoverable by a saga
+command, which is the claim this section was rewritten to stop making.
 
 
 ## Writer helpers (the producers)

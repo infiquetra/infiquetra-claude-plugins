@@ -80,31 +80,25 @@ Rules (all load-bearing):
   auto-applied — cheapening is the operator's call at the next `/plan` (the #368 write-back is the
   durable home for that judgment).
 
-## Merge is a confirmed git op `/work` owns
+## The merge turn belongs to the integrate step
 
-When `destination ⊇ merge` and the approved-fresh row fires, `/work` performs the merge itself — but only
-as an **explicitly operator-confirmed** ceremony — four separate `ship_ceremony.py run` invocations,
-one transition each: `run --operator-confirmed merge`, a bare `run` for `checkout_main`, a bare `run`
-for `pull`, then `run --operator-confirmed branch_delete:<target>` naming the resolved head branch
-(issues #345/#526/#635) — never silent. There is
-no separate "git/human" skill; merge is a
-git op `/work` owns under confirmation (saga-spec §1.1 keeps deploy as deploy's hard boundary, but merge
-is a git operation, not a deployment) — `ship_ceremony.py` is the mechanism that carries out that
-confirmed op and records each transition's reversibility tier on the saga tick, not a new authority. Use
-the repo's merge method; respect branch protections (if the operator cannot merge, hand back the PR and
-stop, and `ship_ceremony.py`'s state stays at the last successful transition, ready to resume).
+When `destination ⊇ merge` and the approved-fresh row fires, the merge is the **integrate step's**
+merge turn onto the parent branch or `main`, not a ceremony this skill runs. The ship ceremony that
+used to carry it — four confirmed `ship_ceremony.py run` invocations, one transition each, with a
+merge expectation, a hazard vocabulary and an undo path — was removed in issue #1027 along with its
+five modules.
 
-## Merge-watcher and hazards — safety contracts around merge
+**What was removed is the mechanism, not the confirmation.** The pull-request open, the review
+request, and the merge each stay explicitly confirmed — the preservation contract issue #1029
+declared — and each is now an ordinary `gh` or `git` operation rather than a transition in a table.
+There is still no separate "git/human" skill, and merge is still a git operation rather than a
+deployment (saga-spec §1.1 keeps deploy as deploy's hard boundary). Use the repository's merge
+method and respect branch protections: if the operator cannot merge, hand back the pull request and
+stop.
 
-The ceremony records a **merge expectation** at PR-open (target head SHA, required-check names,
-review state) before any poll loop begins. At merge time, the expectation is re-validated against
-live PR state; divergence (head moved, check flipped/missing, review regressed) blocks merge with
-a named failure. A branch-delete refuses unless the merge is confirmed landed (`mergedAt`
-non-null); deleting a base branch while child PRs are stacked on it triggers a stacked-PR hazard.
-Both are blockable until resolved or acknowledged with `--acknowledge-hazard <hazard-id>`.
-`git ship --undo` is gated like forward merge: `--operator-confirmed undo` for reversals of
-landed merges, bare `--undo` for reversible-only plans. Undo is forward-only (new revert commit
-on `main`, branch resurrected from recorded SHA), never history-rewriting.
+There is **no rollback command**. `/ship --undo` went with the ceremony, because what it reversed —
+a multi-transition ceremony caught mid-flight — no longer happens. A merge is undone with ordinary
+git, and a revert is a forward commit as it always was.
 
 ## Deploy / canary belong to deploy
 

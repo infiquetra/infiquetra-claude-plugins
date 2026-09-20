@@ -57,6 +57,23 @@ It also supplies two admission answers that are repository facts rather than run
 `branch_preview` and `main_consumed_directly`. Both are among the questions the card lists, and both
 have the same answer every time for a given repository — which is exactly what a profile is for.
 
+## One optional key, for the build loop
+
+| Key | Type | Holds |
+|---|---|---|
+| `branch_preview_command` | string, optional | what the build loop runs to deploy a branch preview, in a repository whose `branch_preview` is `true` |
+
+It is **optional**, so a profile without it stays valid and `repository_profile.v1` does not change.
+It is written down here rather than only read in code because a key one consumer reads and no
+document describes is precisely the drift this repository keeps tests for.
+
+Where `branch_preview` is `true` and this key is absent, the build loop records the preview as
+`could-not-execute` with the reason "the profile declares a preview but names no command". It does
+**not** guess a deployment command: guessing a deployment is the one class of guess that can do
+real damage. Where `branch_preview` is `false` the key is ignored and the loop records
+`no-preview-declared`. Both cases are in
+`plugins/saga/references/mechanical-baseline.md` under "The branch preview".
+
 The remaining nine parameters come from elsewhere and are not the profile's business:
 `staffing_models_and_efforts` from the staffing component in fleet-core; `applicable_lenses` and
 `per_lens_score_threshold` from the lens catalogue; and `standard_cycle_allowance`,

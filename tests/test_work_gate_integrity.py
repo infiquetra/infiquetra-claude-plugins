@@ -20,9 +20,14 @@ CODE_REVIEW_SKILL = ROOT / "plugins" / "saga" / "skills" / "code-review" / "SKIL
 SAGA_PY = ROOT / "plugins" / "saga" / "scripts" / "saga.py"
 
 
-# The single-sourcing clause section 4.1 must carry -- "the ... and the ... are the same list".
+# The single-sourcing clause section 4.1 must carry. Until issue #1027 this pinned the writeup's
+# change_kinds value to the hard test gate's input. That gate was removed with the risk-gated test
+# prose, so the clause now pins the writeup to the BUILD LOOP's recorded criterion -- the same
+# property (one authority, rendered once, never re-derived) about the thing that replaced it.
 _SINGLE_SOURCE_CLAUSE = re.compile(
-    r"writeup\s+field\s+and\s+the\s+gate\s+input\s+are\s+the\s+same\s+list", re.IGNORECASE
+    r"criterion\s+the\s+loop\s+ran\s+and\s+the\s+criterion\s+the\s+record\s+holds"
+    r"\s+as\s+the\s+same\s+thing",
+    re.IGNORECASE,
 )
 
 
@@ -184,22 +189,30 @@ def test_malformed_verdict_no_colon_is_refused(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_work_writeup_records_change_kinds_and_single_sources_gate() -> None:
-    """The writeup field and the gate input must be ONE list, and the section must say so.
+def test_work_writeup_single_sources_the_build_loop_criterion() -> None:
+    """The writeup and the run record must be ONE criterion, and the section must say so.
 
-    `assert "same" in collapsed.lower()` was the whole single-sourcing check, and the word "same"
-    appears in ordinary prose for a hundred unrelated reasons -- it could not distinguish the
-    contract from a sentence that happened to contain it. These assert the clause itself, and the
-    control below proves they discriminate.
+    `assert "same" in collapsed.lower()` was once the whole single-sourcing check, and the word
+    "same" appears in ordinary prose for a hundred unrelated reasons -- it could not distinguish
+    the contract from a sentence that happened to contain it. This asserts the clause itself, and
+    the control below proves it discriminates.
+
+    Issue #1027 moved what the clause pins. The hard test gate is gone, so there is no gate input
+    to single-source any more; what a second derivation would now corrupt is the build loop's
+    recorded result, and a writeup that re-derived a criterion of its own would reintroduce exactly
+    the drift the written criterion was built to remove.
     """
     text = _read_skill()
     sec = _section(text, "### 4.1 ", "### 4.2 ")
     collapsed = " ".join(sec.split())
-    assert "change_kinds" in sec
-    assert "requires_hard_test_gate" in collapsed
+    assert "change_kinds" in sec, "the derived value is still recorded, it just gates nothing"
+    assert "requires_hard_test_gate" not in collapsed, (
+        "the hard test gate was removed in #1027; section 4.1 must not feed a gate that is gone"
+    )
+    assert "build_loop" in collapsed, "the writeup must name the block it renders"
     assert _SINGLE_SOURCE_CLAUSE.search(collapsed), (
-        "section 4.1 must state that the recorded change_kinds value and the gate input are the "
-        "same list, not two derivations"
+        "section 4.1 must state that the criterion the loop ran and the criterion the record "
+        "holds are the same thing, not two derivations"
     )
     assert "verbatim" in collapsed, "the recorded value must be required to be verbatim"
 
@@ -241,7 +254,8 @@ def test_the_change_kinds_gate_is_driven_not_merely_described() -> None:
 def test_the_single_source_clause_pattern_discriminates() -> None:
     """Control: the pattern must reject prose that merely contains the word "same"."""
     assert _SINGLE_SOURCE_CLAUSE.search(
-        "the writeup field and the gate input are the same list, not two separate derivations"
+        "record the criterion the loop ran and the criterion the record holds as the same thing, "
+        "not as two derivations"
     )
     assert not _SINGLE_SOURCE_CLAUSE.search(
         "run the tests in the same directory as the plan, then record the same day's date"
@@ -327,10 +341,28 @@ def test_issue_progress_cli_both_flags_render() -> None:
 
 
 def test_merge_confirmation_still_present() -> None:
+    """The confirmation must outlive the mechanism that used to carry it.
+
+    This guard used to assert two literal ceremony invocations -- `run --operator-confirmed merge`
+    and `run --operator-confirmed branch_delete`. That pinned the MECHANISM, so when issue #1027
+    removed the ship ceremony the guard failed for a change it should have permitted, while a
+    change that quietly dropped the confirmation and kept the strings would have passed it. It now
+    asserts the property: issue #1029's preservation contract says the pull-request open, the
+    review request and the merge each stay explicitly confirmed, whatever runs them.
+    """
     text = _read_skill()
-    # 5.4 lists four ceremony runs with --operator-confirmed on merge and branch_delete.
-    assert "run --operator-confirmed merge" in text
-    assert "run --operator-confirmed branch_delete" in text
+    collapsed = " ".join(text.split())
+    assert "explicitly confirmed" in collapsed, (
+        "the preservation contract from #1029 must be stated somewhere in the skill"
+    )
+
+    boundary = _section(text, "### 5.5 ", "\n---")
+    boundary_collapsed = " ".join(boundary.split())
+    for mutation in ("pull-request open", "review request", "merge"):
+        assert mutation in boundary_collapsed, (
+            f"the hard boundary must still name {mutation!r} as explicitly confirmed"
+        )
+    assert "silently mutate" in boundary_collapsed
 
 
 def test_four_typed_review_outcomes_still_pinned() -> None:

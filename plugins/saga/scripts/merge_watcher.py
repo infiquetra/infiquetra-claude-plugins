@@ -8,10 +8,11 @@ records a merge *expectation* — head SHA, the full set of check contexts obser
 and the review decision — at PR-open time (KTD1), and offers two verbs to hold a
 later merge to that baseline:
 
-* ``validate`` — a point-in-time comparison against live PR state, the hard gate
-  wired into ``ship_ceremony.run()``'s merge preflight (R4). Refuses on any named
-  divergence: ``head_moved``, ``check_flipped``, ``check_missing``,
-  ``review_regressed``, ``pr_not_open``.
+* ``validate`` — a point-in-time comparison against live PR state. It was the hard
+  gate wired into the ship ceremony's merge preflight (R4); that ceremony was removed
+  with issue #1027, so this module now has no caller inside saga and issue #1030
+  retires it. Refuses on any named divergence: ``head_moved``, ``check_flipped``,
+  ``check_missing``, ``review_regressed``, ``pr_not_open``.
 * ``watch`` — polls N ticks through an injectable poll source and fails on any tick
   where a previously-passing required check goes non-passing, even if a later tick
   is green again (a mid-poll flip). This is a standalone CLI/library utility, not an
@@ -25,7 +26,7 @@ is a named refusal with a remedy (KTD8), never a silent pass. Divergence never
 auto-heals (KTD7): ``record --force`` is the only re-baseline path; a plain re-record
 over an existing sidecar refuses.
 
-House testability pattern (mirrors ``ship_ceremony.py`` / ``outcome_store.py``): every
+House testability pattern (mirrors ``run_record.py`` / ``outcome_store.py``): every
 function that shells out takes a ``runner`` callable, defaulted to ``subprocess.run``
 resolved at call time (never bound as a default argument). No sleeping in library
 code — ``watch()``'s core loop never calls ``time.sleep`` itself; a real-world caller
@@ -57,7 +58,7 @@ SIDECAR_NAME = "merge_expectation.json"
 
 # Divergence kinds (R4) — the full, closed vocabulary MergeExpectationDivergedError.kind
 # is drawn from. Kept as a tuple (not an Enum) to match the plain-string vocabulary
-# style used by ship_ceremony.CeremonyTier/TRANSITIONS.
+# style the ship ceremony's tier and transition tuples used (removed in #1027).
 DIVERGENCE_KINDS: tuple[str, ...] = (
     "pr_not_open",
     "head_moved",
@@ -74,8 +75,9 @@ _PASSING_CONCLUSIONS = frozenset({"SUCCESS", "NEUTRAL"})
 # saga_id becomes a path component under .claude/saga/sagas/ — a traversal value
 # ("../..", absolute path) would read/write outside the sidecar directory. Single
 # path segment, alphanumeric first char (also excludes "." / ".." / leading "-").
-# Duplicated in ship_undo.py, not shared — both modules are deliberately
-# dependency-free ("Depends on: nothing").
+# Was duplicated in the ship-undo module rather than shared, because both were
+# deliberately dependency-free ("Depends on: nothing"); that module was removed
+# in #1027 and this is now the only copy.
 _SAGA_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _PR_NUMBER_RE = re.compile(r"[0-9]+")
 

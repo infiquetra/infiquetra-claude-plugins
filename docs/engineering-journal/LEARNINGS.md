@@ -417,6 +417,37 @@ property, and prove the new guard red before you accept it green.
 
 **Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
 [[#1020-census-keyed-by-field-name]].
+### A guard in a file your change never touches is invisible to every diff-scoped check  {#full-suite-catches-untouched-guards-1037}
+
+**Evidence.** Issue #1037, commit `4c0a2ac7`. The inner loop was green — `ruff check`, `ruff format --check`, `mypy plugins/ scripts/ tests/`, the whole new test file, both brainstorm guard files, release-surface parity, the release-surface diff guard, the marketplace sync check and the marketplace validator. The full suite across both pytest roots then failed one test: `tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module`.
+
+**Mechanism.** The new module declared `RUBRIC_LEVELS = ("low", "medium", "high")` as the ordered levels for its score questions. Those three words are a strict subset of `tier_palette.EFFORTS` (`low`, `medium`, `high`, `xhigh`), and the fleet guard walks every production Python file's syntax tree looking for a bare tuple, list or set whose members are *all* drawn from the closed model or effort vocabulary. It cannot tell a rubric ladder from a truncated re-declaration of the fleet's effort ladder, and neither can a reader — which is the whole reason the guard exists.
+
+Nothing scoped to the diff could have caught it. The guard lives in a test file the card never edits, over a vocabulary the card never mentions, in a plugin the card only imports from. A reviewer reading the diff would have to already know that constant exists.
+
+The repair was to change the levels to `weak` / `moderate` / `strong` rather than to exempt the file. The words are better rubric positions anyway, so the collision and the weaker prompt wording had the same fix.
+
+**Generalizable rule.** Run the whole test suite, not the touched-file subset, before pushing any change that adds a module-level constant or bumps a version — the guards most likely to catch a real defect are the ones living furthest from the diff, and a diff-scoped loop reports green right through them.
+### A Jev score answer's distribution is keyed by level INDEX, so a recorded fixture hides it  {#1035-score-distribution-keyed-by-index}
+
+**Evidence.** Issue #1035; `plugins/mission-control/scripts/triage_suggest.py`
+(`relabel_score_distribution`); guard `plugins/mission-control/tests/test_triage_suggest.py::test_a_score_distribution_is_relabelled_from_indices_onto_level_names`. Found by running
+`sdlc_manager.py issue prepare --suggest` against a real card body on 2026-09-19, not by any test.
+
+**Mechanism.** A `choice` answer returns `probabilities` keyed by the option names the question
+supplied, so a choice renders itself. A `score` answer returns `probabilities` keyed by the
+**index** of the level: a four-level risk rubric came back as `{"1": 0.58, "0": 0.25, "2": 0.16,
+"3": 0.01}`. Rendering that beside three name-keyed questions printed `risk: 1 0.58, 0 0.25` — a
+line that looks like data and means nothing to the reader. The recorded body in
+`tests/test_typesafe_client.py:56` is `{"type": "score", "score": 1.2, "confidence": 0.8}` with no
+`probabilities` key at all, so every test written from that fixture passed while the real output
+was unreadable. The fleet-core reference documents the score primitive's `score` and `confidence`
+and is silent on the key shape of its distribution, so there was nothing to read either.
+
+**Generalizable rule.** A fixture copied from another card's recorded response proves the fields
+that card used, not the fields yours will use. Before trusting a typed answer's shape, run the
+command once against real input and read the output as a person would — the fields a fixture
+omits are exactly the ones no test can miss.
 ### The flag that gates security review missed its own card because the prose said "credentials"  {#1036-plural-of-credential}
 
 **Evidence.** Issue #1036. Its body is about credentials, production and destructive operations by name, and `uv run python plugins/saga/scripts/parse_issue.py` reported `has_security: false` for it. The pattern at `plugins/saga/scripts/parse_issue.py:19` alternates on `credential`, bounded by `\b` on both sides, and the body says `credentials` — the trailing `s` is a word character, so the closing boundary never matches.

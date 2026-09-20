@@ -3,8 +3,8 @@
 ## [0.163.0] - 2026-09-19
 
 **Bumped from 0.161.0, the saga version on `origin/parent/1018` at commit `550ae6ce` when this card
-was built.** The coordinator's fold of `main` into that integration branch sets saga to 0.162.0, so
-0.163.0 is the next free minor whether or not the fold has landed — the two cannot collide.
+was built.** The fold of `main` into that integration branch has since landed as `132ea6ab` and
+renumbered the tier-overlay release to 0.162.0, which this 0.163.0 sits above.
 
 - **One JSON run record per issue, and an admission questionnaire asked once (#1023).**
   `scripts/run_record.py` and `scripts/admission.py` are new. The record holds the admission
@@ -39,7 +39,10 @@ was built.** The coordinator's fold of `main` into that integration branch sets 
   the removals card (#1030) deletes them once every reader has moved. The replacement map is in
   `references/run-record.md`.
 
-## [0.161.0] - 2026-09-19
+## [0.162.0] - 2026-09-19
+
+Renumbered from 0.161.0 when `main` was folded into `parent/1018`: issue #1037 took 0.161.0 on `main`
+first (commit 1a29774a), so this integration-branch section sits above it.
 
 **Requires fleet-core 0.28.0 or later.** `scripts/tier_defaults.py` loads
 `fleet_commons.staffing`, which fleet-core gained in the release that became 0.28.0, at import time. Installing this saga
@@ -63,6 +66,10 @@ and not the other six times, so check both.
   documents that named the deleted `tier_policy.json` — `references/sandbox-spawn-sites.md`,
   `skills/work/references/execution-strategy.md`, `skills/work/SKILL.md` and
   `skills/plan/SKILL.md` — together with two comments in `scripts/lifecycle_state.py`.
+
+## [0.161.0] - 2026-09-19
+
+- **Eleven advisory typed judgments inside `/ideate`, `/brainstorm` and `/office-hours` (#1037).** The three shaping commands each make small repeated judgments per run that an orchestrating model made by reading prose: the same candidate list deduped differently between runs, forty candidates meant 780 pairwise comparisons nobody wanted to make by hand, and none of it left a record anyone could score later. `plugins/saga/scripts/shaping_judgments.py` now asks those judgments as typed questions -- six for `/ideate` (`dedupe`, `axis`, `grounding-fit`, `tactical-scope`, `rubric`, `revival`), four for `/brainstorm` (`scope-tier`, `consequence`, `question-order`, `readiness`) and the routing distribution for `/office-hours` (`route`) -- batched one request per body of text through the fleet-core TypeSafe client that #1032 shipped. There is no HTTP, retry or redaction code in saga: the client owns all of it, and its `prepare_state` is the only path to a transport, so redaction cannot be skipped from here. Every judgment is **advisory** and none is a gate: no existing question, rule or hard gate changed, a confident answer never suppresses a question the skill would otherwise ask, the `dedupe` judgment **groups** and the identifier set coming out equals the set going in, the `tactical-scope` keyword list and the revival new-evidence gate stay floors a judgment may only widen, the consequence factors come back one probability per factor and are never aggregated into a tier, and the `/office-hours` distribution is shown but never routed on. Each fails open with a one-line note to exactly the behaviour the command had before. Bumped to 0.161.0 rather than 0.160.0: issue #1036 took 0.160.0 on `main` first (`f70a63c0`), so this section sits above it and the two releases stay distinguishable.
 
 ## [0.160.0] - 2026-09-19
 

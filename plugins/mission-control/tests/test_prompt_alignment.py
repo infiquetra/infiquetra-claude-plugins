@@ -43,10 +43,12 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.18.0"
-    )  # 2.18.0: the tier-band comment names fleet-core's merged staffing data (issue 1021).
-    # Predecessor 2.17.0: board census regenerated and keyed by field name, stage-flow prose,
-    # drift guard (issue 1020).
+        plugin_json["version"] == "2.19.0"
+    )  # 2.19.0: the tier-band comment names fleet-core's merged staffing data (issue 1021);
+    # renumbered from 2.18.0 when main was folded into parent/1018.
+    # Predecessor 2.18.0: board census regenerated and keyed by field name, stage-flow prose,
+    # drift guard (issue 1020); renumbered from 2.17.0 in the same fold.
+    # Predecessor 2.17.0: advisory triage suggestions and the widen-only labels union (issue 1035)
     # Predecessor 2.16.0: schema resync, Risk body field, Saga readiness delegation
     # (issues 999/1000/942)
     assert entry["version"] == plugin_json["version"]

@@ -48,6 +48,34 @@ a widget error, or a dropped session is never consent — do not proceed on a de
 invent an answer. Ask one question at a time and read the decision from the operator's actual
 answer, never from a widget's raw return value.
 
+## Advisory typed judgments
+
+Six of the mechanical judgments around the critique can be asked as typed questions instead of
+eyeballed, through `plugins/saga/scripts/shaping_judgments.py`. Every one of them is **advisory**:
+it informs a judgment this skill already makes, it is never a gate, it never promotes or cuts an
+idea, and the operator can ignore it. Each **fails open** — when the call fails, times out, or the
+key is absent, run the phase exactly as this skill describes it below, with a one-line
+non-blocking note. Never block a phase on one.
+
+| Judgment | Phase | What it informs | Fails open to |
+|---|---|---|---|
+| `dedupe` | 2 (merge and dedupe) | which candidates describe the same idea; it returns **groups** and never removes a candidate | merging by reading, as today |
+| `axis` | 2 (axis-coverage check) | which axis a candidate most centrally targets, with a "none" option so a real gap is visible | assigning axes by reading |
+| `grounding-fit` | 0.2 | which of the four outcomes the topic falls into | asking the operator, which the gate already requires |
+| `tactical-scope` | 0.4 | whether the focus opts into tactical scope | the keyword list alone |
+| `rubric` | 3 (survivor scoring) | per-survivor scores beside the critics' prose verdicts | the prose verdicts alone |
+| `revival` | 6.3 (step 1) | whether new evidence addresses the recorded rejection reason | adjudicating novelty by reading |
+
+Two rules bind all six. A confident answer **never suppresses a question this skill would
+otherwise ask** — the Phase 0.2 rule "ASK when unsure, never silently auto-route" is unchanged, and
+an answer is evidence, not permission to skip the gate. And the keyword floor at Phase 0.4 and the
+revival gate at 6.3 step 2a are **floors**: a judgment may only widen what they catch, never narrow
+it.
+
+```bash
+python3 plugins/saga/scripts/shaping_judgments.py dedupe --state '{"candidates": [...]}'
+```
+
 ## Reviewer-session transport
 
 Orchestrate owns cross-vendor session transport. Do not run `engine_offer.py` and do

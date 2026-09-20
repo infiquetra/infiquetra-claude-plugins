@@ -220,6 +220,19 @@ Every session ends by naming the next command and offering **plural clean exits*
 - **"Drop it"** — the diagnostic showed the thing isn't worth pursuing; a clean exit is a valid
   outcome.
 
+**Advisory typed judgment — the `route` distribution.** Before asking the routing question, you may
+ask `plugins/saga/scripts/shaping_judgments.py route` over the **settled frame from Phase 2** — the
+real problem and the key assumptions, never the dialogue that produced it, because the fleet-core
+data rule excludes a raw transcript. Show the full distribution over the five routes as one line of
+evidence beneath the question, and use it to pre-select. It is **advisory**: it never routes, it
+never replaces the blocking question, and the hard gate below is untouched. It **fails open** — when
+the call fails or the key is absent, ask the routing question exactly as described above with no
+distribution line.
+
+```bash
+python3 plugins/saga/scripts/shaping_judgments.py route --doc docs/office-hours/<frame-note>.md
+```
+
 Hand off with the frame: pass the settled problem statement (and the frame-note path, if one was
 written) to the next command so it does not re-derive what office-hours just settled.
 

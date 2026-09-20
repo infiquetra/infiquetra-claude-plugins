@@ -250,6 +250,109 @@ in `sdlc-schema.json` first and in the reference only as a transcription of it.
 
 **Refs.** Issue #1020 unit 4; `sdlc-schema.json` migration note `2026-09-07.1` decision E6;
 `sdlc_manager.py:1227-1228`, `:1409`.
+### Saga owns its shaping question sets; fleet-core owns the client  {#shaping-judgments-live-in-saga-1037}
+
+**Context.** `docs/plans/2026-09-19-shaping-judgments-plan.md` (issue #1037). Issue #1032 shipped a
+named-verb registry in `plugins/fleet-core/scripts/fleet_commons/jev_verbs.py` whose docstring says
+the policy lives in exactly one place, and it already carries generic `dedupe` and `readiness` verbs.
+The obvious move was to add the eleven shaping judgments there beside them.
+
+**Decision.** The question sets live in `plugins/saga/scripts/shaping_judgments.py`. Everything
+fleet-wide still comes from fleet-core: the client, redaction, retry, the verdict log, the cache and
+the data rule. Only the questions are saga's.
+
+**Why.** These questions quote saga's own prose contracts — ideate's four grounding-fit outcomes, its
+per-idea rubric dimensions, brainstorm's six consequence factors, office-hours' route list. In
+fleet-core, every wording edit to a saga skill would become a fleet-core release. And the two
+existing generic verbs ask a different question from a different state shape, so reusing them would
+have silently changed what was being asked while looking like reuse.
+
+**Rejected.** Eleven new fleet-core verbs (moves saga's skill prose into fleet-core); reusing the
+generic `dedupe` and `readiness` verbs (changes the question without changing the name).
+
+*Revisit when:* a second plugin needs the same question set. One caller is a saga concern; two is a
+fleet concern, and the verb registry is where it should then move.
+
+### An advisory judgment may widen a floor and may group, but may never narrow or drop  {#advisory-judgments-widen-and-group-1037}
+
+**Context.** Issue #1037 wires typed judgments into three conversational commands whose operator
+rule is "add no rigidity without demonstrated value". The failure mode is not a wrong probability;
+it is a probability quietly acquiring authority.
+
+**Decision.** Three mechanical properties, each with a guard test rather than a sentence of prose:
+
+- The `dedupe` judgment returns **groups**, and the identifier set coming out equals the set going
+  in (`tests/test_shaping_judgments.py::test_grouping_never_removes_a_candidate`). A candidate no
+  pair matched is its own single-member group.
+- The `tactical-scope` keyword list is a **floor**, unioned in code rather than in prose
+  (`tactical_scope_union`), so a judgment answering "no" cannot clear a keyword hit.
+- The per-factor consequence probabilities are **never aggregated** into a level, tier or score, so
+  brainstorm's "No named tiers are used" rule survives a card that adds a classifier next to it.
+
+**Why.** A rule that lives only in a skill's prose is a rule the next edit can drop without anything
+reddening. Each of these is now a property of the code that a test kills on mutation — both
+mutations were run and both guards died before the change was trusted.
+
+*Revisit when:* the evaluation harness reports agreement per confidence band for one of these
+decisions, which is when a judgment may be promoted above a band — and the promotion itself is the
+thing to re-decide, not these three properties.
+
+### A verdict is recorded for an answered call only  {#verdicts-for-answers-only-1037}
+
+**Context.** Issue #1037's doc review left one open question: whether a declined judgment (an empty
+state, or a candidate list above the pairwise cap) or a failed call still writes to the fleet-core
+verdict log.
+
+**Decision.** No. Only a call that produced answers records a verdict, which is what
+`plugins/fleet-core/scripts/jev.py` already does — it returns before its logging block on any
+non-`ok` status.
+
+**Why.** The harness joins answers to labels on `decision_id` and scores agreement per confidence
+band. A record with no answer has nothing to score and nothing to band, so it would only inflate the
+denominator of "thirty real uses" with calls the model never made. The declined case is still
+visible to the operator: it comes back as an advisory result whose note says why.
+
+**Rejected.** Logging declines as a separate record kind. That is telemetry about this module's own
+availability, not a verdict, and mixing the two in one file is how the harness's input stops meaning
+one thing.
+
+*Revisit when:* the decline rate itself becomes a question worth measuring; it wants its own counter,
+not the verdict log.
+### Mission-control's triage judgment lives in mission-control, not in the shared fleet-core verb registry  {#1035-triage-questions-live-in-mission-control}
+
+**Decision.** The issue-type, risk, Objective and board-Status questions for `issue prepare --suggest` are built in a new `plugins/mission-control/scripts/triage_suggest.py`, which calls the fleet-core TypeSafe client through the vendored shim. The fleet-core `triage` verb at `plugins/fleet-core/scripts/fleet_commons/jev_verbs.py:85-102` is left exactly as it is, and this card changes no file under `plugins/fleet-core/`. A guard test asserts both question sets enumerate the same five issue types.
+
+**Rationale.** The policy state this judgment depends on is mission-control's own data: the issue-types reference document, the board Status vocabulary in the vendored schema, and the Objective candidates. Putting the questions in fleet-core would make the shared library read a consumer plugin's configuration, which inverts the dependency the shim exists to express. Issue #1035 also names only mission-control files and release surfaces. Practically, every card in the improve-claude-plugins run that touches fleet-core competes for one version number that the coordinator then has to serialise by hand at merge time; leaving fleet-core alone takes this card out of that contention. The fleet-core verb keeps its role as the generic, policy-free command-line shape.
+
+**Alternatives rejected.** Extending the fleet-core `triage` verb with the repository's issue-types policy and the two new questions — tidier against the "policy lives in one place" house rule, but it buys a cross-plugin configuration dependency and a version collision to save one module. Vendoring a copy of the issue-types criteria into fleet-core — the same drift problem with none of the benefit.
+
+**Revisit when.** A third consumer needs the same repository-policy triage question, at which point the shared shape has earned a home in fleet-core and mission-control's copy becomes the caller.
+
+**Refs.** Issue #1035; parent issue #1019; plan `docs/plans/2026-09-19-mission-control-triage-suggestions-plan.md` KTD1.
+
+### The author's own flag is the decision, and a disagreeing suggestion is logged as an override  {#1035-flag-is-the-decision-difference-is-the-override}
+
+**Decision.** `issue prepare --suggest` records its suggestions beside the author's existing `--type`, `--risk` and `--status` values and never writes one into a field. Where a suggestion differs from the corresponding flag, the run appends an override record to the verdict log linking back to the verdict by hash. Suggestions land in the sidecar JSON, never in the compiled issue body. The flag itself is opt-in and defaults off, so a prepare without it makes no model call and imports no client.
+
+**Rationale.** The card says twice that nothing auto-applies, and the strongest form of that promise is structural: there is no code path from an answer to a field, so the property holds by construction rather than by review. Because `issue prepare` already requires `--type` and accepts `--risk` and `--status`, the author's choice is already recorded before the model answers — which means acceptance and override need no new interaction and a scripted prepare stays non-interactive. Keeping the suggestions out of the compiled body keeps the card validator untouched, which the card puts out of scope, and keeps them out of the created issue. Opt-in keeps the existing prepare tests and every automated prepare offline: a command designed to make no network call should not reach a paid third-party endpoint by default.
+
+**Alternatives rejected.** An interactive prompt offering to accept the suggestion (makes a scripted path interactive — the exact failure the prepare-then-approve pipeline was built to avoid). A block in the draft's front matter (the front-matter parser is naive and the block is re-rendered on every revision). On by default with an opt-out (wrong default for a command that runs in automation, in worktrees and on machines with no key).
+
+**Revisit when.** The accumulated verdict log shows a decision agreeing above a measured confidence band across roughly thirty real uses, which is when the parent card decides whether anything graduates past advisory.
+
+**Refs.** Issue #1035; parent issue #1019; plan `docs/plans/2026-09-19-mission-control-triage-suggestions-plan.md` KTD2, KTD3, KTD4.
+
+### A failed suggestion costs nothing: the draft is written, the note is recorded, the command succeeds  {#1035-suggestion-failure-fails-open}
+
+**Decision.** Any client outcome other than success — error, timeout, malformed body, or an unexpected exception — leaves the draft markdown and the sidecar exactly as a prepare without `--suggest` would have written them, plus one `suggestions` block carrying the status and the client's note. No blocking readiness gap is added and the exit status is unchanged. An unwritable verdict log is swallowed the same way. In the labels path, a failed call prints the regular-expression labels alone with a note, and the union stays widen-only.
+
+**Rationale.** House rule 8 of `plugins/fleet-core/references/typesafe.md` requires every gate to say which side it fails open on, and for an advisory this is the only defensible direction: a suggestion carries no authority, so losing one costs an author a hint, while blocking on a vendor outage would stop the whole issue-intake path. Keeping the regular expressions as the floor in the labels path means a failure degrades to today's behaviour rather than to nothing.
+
+**Alternatives rejected.** Recording a blocking gap on failure (makes a third-party endpoint's availability a precondition for preparing an issue). Retrying in the caller (the client already retries with backoff under a total deadline; a second retry loop would multiply the wait an author sees). Silent failure with no note (an absent suggestion and a failed suggestion would look identical, and the verdict log would under-count the decision's real use).
+
+**Revisit when.** A judgment in this repository is ever promoted from advisory to automatic, at which point that specific gate needs its own fail-open statement and this one stops covering it.
+
+**Refs.** Issue #1035; parent issue #1019; plan `docs/plans/2026-09-19-mission-control-triage-suggestions-plan.md` KTD5, KTD9.
 ### The widen-only union lives in one fleet-core primitive, and the five gated flags keep their names  {#1036-widen-only-union-one-primitive}
 
 **Decision.** `plugins/fleet-core/scripts/fleet_commons/jev_widen.py` holds the union rule — `floor or probability >= threshold` — and both callers use it. The question sets live in the verb registry `jev_verbs.py` as `issue-flags` and `journal-nudge`, not in the callers. The five keyword flags `parse_issue.py` already emits keep their exact key names and gain a judgment each; the seven approval boundaries from the sdlc chapter `docs/process/operator-escalations.md` arrive as a separate advisory key with no pattern floor and no consumer.

@@ -97,14 +97,25 @@ def _fake_staffing() -> SimpleNamespace:
         calls.append(role)
         return SimpleNamespace(vendor="claude", model="opus", effort="high")
 
-    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], None]:
+    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
+        # The real function returns (mapping keyed by lens identifier, version).
+        # This fake used to return the catalogue DOCUMENT, which is the shape the
+        # consumer wrongly assumed — so the fake agreed with the bug and the bug
+        # survived. See the shape tests at the end of this file.
         return {
-            "lenses": {"correctness": {"always_on": True}, "security": {"always_on": True}},
-            "strictness_ladder": {"baseline": 8.0},
-        }, None
+            "correctness": {"always_on": True},
+            "security": {"always_on": True},
+        }, "1.0.0"
+
+    def sdlc_root(*_args: Any, **_kwargs: Any) -> None:
+        return None
 
     return SimpleNamespace(
-        roles=roles, resolve_role=resolve_role, lens_catalogue=lens_catalogue, calls=calls
+        roles=roles,
+        resolve_role=resolve_role,
+        lens_catalogue=lens_catalogue,
+        sdlc_root=sdlc_root,
+        calls=calls,
     )
 
 
@@ -197,11 +208,23 @@ def test_every_defaultable_parameter_is_filled_without_a_question(
         for name in run_record.RUN_CONFIGURATION_PARAMETERS
         if record.run_configuration[name]["source"] != "unset"
     }
-    # Eleven of the thirteen fill themselves; only the two the operator must choose remain.
+    # Eleven of the thirteen fill themselves here. Two do not: the response to
+    # unfinished testing, which the operator must choose from a closed set of two,
+    # and the strictness ladder, because this fake resolves no lifecycle checkout
+    # for the ladder to be read from.
+    #
+    # That second exclusion is the repair of issue 1001 showing through. Before it,
+    # this assertion passed with `per_lens_score_threshold` filled — but only
+    # because the fake returned the catalogue DOCUMENT, the shape the consumer
+    # wrongly assumed. Against the real `lens_catalogue`, which returns a mapping
+    # keyed by lens identifier, the old consumer filled it for no checkout at all.
+    # The fake now returns the real shape, so this line states what actually
+    # happens with no checkout. The filled case is covered by
+    # `test_resolve_catalogue_reads_the_ladder_from_the_checkout`.
     assert filled == set(run_record.RUN_CONFIGURATION_PARAMETERS) - {
         "unfinished_testing_response",
-        "repair_custody",
-    } | {"repair_custody"}
+        "per_lens_score_threshold",
+    }
     asked = {question.key for question in outstanding}
     assert "concurrency_allocation" not in asked
     assert "mechanical_tool_baseline" not in asked
@@ -631,3 +654,141 @@ def test_default_repo_reads_the_origin_remote(adm: ModuleType, tmp_path: Path) -
         )
 
     assert adm.default_repo(tmp_path, runner=_runner) == "infiquetra/infiquetra-claude-plugins"
+
+
+# ---------------------------------------------------------------------------
+# The catalogue read, pinned against the REAL staffing function (issue 1001)
+# ---------------------------------------------------------------------------
+#
+# Until issue 1001 this module's `_resolve_catalogue` read `catalogue["lenses"]`
+# and `catalogue["strictness_ladder"]` off the first element of what
+# `staffing.lens_catalogue()` returns. That element is a mapping keyed by LENS
+# IDENTIFIER, so neither key exists and both reads yielded None for every
+# checkout: `per_lens_score_threshold` could not be filled by any path.
+#
+# The bug survived because the fake above was shaped like the consumer's wrong
+# assumption rather than like the real function. These tests fix that: the first
+# asserts the real function's shape directly, and the second drives
+# `_resolve_catalogue` with a fake built to match it.
+
+
+def _real_staffing() -> ModuleType | None:
+    """fleet-core's staffing component, or None when it cannot be reached."""
+    root = Path(__file__).resolve().parents[1]
+    path = root / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "staffing.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("real_staffing_for_admission", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["real_staffing_for_admission"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_real_lens_catalogue_returns_a_pair_keyed_by_lens_identifier() -> None:
+    """Pin the sibling's actual return shape, not a fake's.
+
+    One test against the real function is what the old fake could not give. If
+    issue 1023 ever changes `lens_catalogue` to return the catalogue document
+    instead of a mapping, this fails here rather than silently re-emptying
+    `per_lens_score_threshold` in a run nobody is watching.
+    """
+    staffing = _real_staffing()
+    if staffing is None:
+        pytest.skip("fleet-core's staffing component is not in this tree")
+
+    returned = staffing.lens_catalogue()
+    assert isinstance(returned, tuple), (
+        "lens_catalogue returns a pair; a consumer unpacking it as one value reads the "
+        "mapping's version string as its catalogue"
+    )
+    assert len(returned) == 2
+    mapping, _version = returned
+    assert isinstance(mapping, dict)
+    # The mapping is keyed by lens identifier. These two keys are the shape the
+    # consumer reads, and neither exists — which is the defect this pins.
+    assert "lenses" not in mapping, (
+        "the first element is a mapping of lens identifier to entry, not the catalogue "
+        "document; reading a 'lenses' key off it always yields None"
+    )
+    assert "strictness_ladder" not in mapping, (
+        "the strictness ladder is not in this return value at all; it is read from the "
+        "checkout through staffing.sdlc_root()"
+    )
+
+
+def test_resolve_catalogue_reads_the_real_shape(adm: ModuleType) -> None:
+    """`_resolve_catalogue` fills always-on lenses from a mapping keyed by identifier.
+
+    The fake here returns what the real function returns. Against the pre-repair
+    consumer this test fails: it read `catalogue["lenses"]`, found nothing, and
+    returned an empty result.
+    """
+
+    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
+        return (
+            {
+                "correctness": {"always_on": True, "name": "Correctness"},
+                "security": {"always_on": True, "name": "Security"},
+                "performance": {"always_on": False, "name": "Performance"},
+            },
+            "1.0.0",
+        )
+
+    staffing = SimpleNamespace(lens_catalogue=lens_catalogue, sdlc_root=lambda: None)
+    resolved = adm._resolve_catalogue(staffing)
+
+    assert resolved["applicable_lenses"]["always_on"] == ["correctness", "security"], (
+        "always-on lenses come from the mapping's KEYS, which are lens identifiers; a "
+        "conditional lens is never in the list"
+    )
+
+
+def test_resolve_catalogue_reads_the_ladder_from_the_checkout(
+    adm: ModuleType, tmp_path: Path
+) -> None:
+    """The strictness ladder is read from the checkout staffing resolves, not from the pair."""
+    checkout = tmp_path / "sdlc"
+    (checkout / "config").mkdir(parents=True)
+    (checkout / "config" / "lens-catalogue.json").write_text(
+        json.dumps(
+            {
+                "schema": "lens_catalogue.v1",
+                "strictness_ladder": {
+                    "levels": [
+                        {
+                            "id": "standard",
+                            "derived_overall_minimum": 9.0,
+                            "applicable_dimension_minimum": 7,
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
+        return {"correctness": {"always_on": True}}, "1.0.0"
+
+    staffing = SimpleNamespace(lens_catalogue=lens_catalogue, sdlc_root=lambda: checkout)
+    resolved = adm._resolve_catalogue(staffing)
+
+    ladder = resolved["per_lens_score_threshold"]
+    assert ladder["levels"][0]["derived_overall_minimum"] == 9.0
+    assert ladder["levels"][0]["applicable_dimension_minimum"] == 7
+
+
+def test_resolve_catalogue_survives_an_absent_checkout(adm: ModuleType) -> None:
+    """No checkout is a fact about the machine: the ladder is absent, not an error."""
+
+    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
+        return {"correctness": {"always_on": True}}, "1.0.0"
+
+    staffing = SimpleNamespace(lens_catalogue=lens_catalogue, sdlc_root=lambda: None)
+    resolved = adm._resolve_catalogue(staffing)
+
+    assert resolved["applicable_lenses"]["always_on"] == ["correctness"]
+    assert "per_lens_score_threshold" not in resolved

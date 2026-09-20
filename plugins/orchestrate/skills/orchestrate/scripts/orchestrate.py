@@ -189,7 +189,13 @@ WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
 _REVIEW_SHAPED = re.compile(r"(?i)\breview\b")
 _RETIRED_TRANSPORT = re.compile(r"engine_session_runner|engine_offer|external_only")
 OPERATOR_FIX_ROLES = frozenset({"human", "release"})
-REVIEW_RESULT_SCHEMA = "review_result.v1"
+#: The code-review result Orchestrate consumes. Moved to v2 by issue 1001, when the
+#: review began taking its lenses and thresholds from the lifecycle repository's
+#: catalogue instead of a policy file inside the Saga plugin. The pair of schema
+#: identifiers is the only persistent compatibility contract between the two
+#: repositories, so a consumer that does not recognise one must refuse rather than
+#: guess — which is why this is a named constant and not an inline string.
+REVIEW_RESULT_SCHEMA = "review_result.v2"
 REVIEW_OUTCOMES = frozenset(
     {"accepted", "repairs_requested", "cycle_cap_best_available", "review_incomplete"}
 )

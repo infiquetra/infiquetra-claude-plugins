@@ -334,32 +334,69 @@ def _resolve_staffing(staffing: Any) -> dict[str, Any] | None:
 
 
 def _resolve_catalogue(staffing: Any) -> dict[str, Any]:
-    """Read the always-on lens names and the threshold ladder through the staffing component."""
+    """Read the always-on lens names and the threshold ladder through the staffing component.
+
+    ``staffing.lens_catalogue()`` returns a **pair**: a mapping keyed by lens
+    identifier, and the catalogue's version string. It does not return the
+    catalogue document, so the mapping has no ``lenses`` key and no
+    ``strictness_ladder`` key — reading those off it yields ``None`` for every
+    checkout, which is how ``per_lens_score_threshold`` came to be unfillable by
+    any path. Issue 1023 owns ``lens_catalogue``; this is the consumer's half of
+    the repair, and ``tests/test_admission.py`` pins the real function's shape
+    rather than a fake's.
+
+    The ladder is not in that return value at all, so it is read from the same
+    checkout the staffing component resolves, through that component's own public
+    ``sdlc_root``. Resolving the path here independently would put a second copy
+    of the resolution order in the tree, which is the thing that made the two
+    environment-variable names diverge in the first place.
+    """
     try:
-        catalogue, _problem = staffing.lens_catalogue()
+        catalogue, _version = staffing.lens_catalogue()
     except Exception:
         return {}
     if not isinstance(catalogue, dict):
         return {}
-    lenses = catalogue.get("lenses")
-    always_on: list[str] = []
-    if isinstance(lenses, dict):
-        always_on = sorted(
-            name for name, row in lenses.items() if isinstance(row, dict) and row.get("always_on")
-        )
-    elif isinstance(lenses, list):
-        always_on = sorted(
-            str(row.get("name"))
-            for row in lenses
-            if isinstance(row, dict) and row.get("always_on") and row.get("name")
-        )
+
+    # The mapping is {lens identifier: catalogue entry}. A lens identifier is the
+    # key, never an entry's "name" field, which carries the human-readable title.
+    always_on = sorted(
+        str(lens_id)
+        for lens_id, row in catalogue.items()
+        if isinstance(row, dict) and row.get("always_on")
+    )
+
     result: dict[str, Any] = {}
     if always_on:
         result["applicable_lenses"] = {"always_on": always_on, "conditional": "proposed at review"}
-    ladder = catalogue.get("strictness_ladder") or catalogue.get("thresholds")
+
+    ladder = _resolve_strictness_ladder(staffing)
     if ladder is not None:
         result["per_lens_score_threshold"] = ladder
     return result
+
+
+def _resolve_strictness_ladder(staffing: Any) -> Any | None:
+    """The catalogue's strictness ladder, or ``None`` when the checkout is unreadable.
+
+    Absent is a fact about the machine, not an error: an unfilled parameter leaves
+    a question to ask, and a missing sibling repository must not stop admission.
+    """
+    try:
+        checkout = staffing.sdlc_root()
+    except Exception:
+        return None
+    if checkout is None:
+        return None
+    path = Path(checkout) / "config" / "lens-catalogue.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    ladder = document.get("strictness_ladder")
+    return ladder if ladder is not None else None
 
 
 def _is_answered(record: run_record.RunRecord, key: str) -> bool:

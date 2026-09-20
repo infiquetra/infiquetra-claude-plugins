@@ -1,5 +1,78 @@
 # Changelog
 
+## [0.165.0] - 2026-09-19
+
+**Bumped from 0.164.0**, the saga version on `origin/parent/1018` at commit `4e951f0e` when this
+card branched.
+
+### Code review becomes a policy-free executor (issue #1001)
+
+Until now this plugin decided for itself what good code means. It shipped
+`references/lens-roster.json`, a fourteen-lens quality policy with its own dimensions, anchors and
+acceptance thresholds, and scored against it. A plugin upgrade could therefore change the
+acceptance bar for every repository, with no decision anywhere that said so. That is the problem
+architecture decision record ADR-001 in `infiquetra/infiquetra-sdlc` — the lifecycle repository —
+exists to fix.
+
+**Added**
+
+- `plugins/saga/scripts/review_roster.py` — builds an `applicability_declaration.v1` from the run
+  record's lens declaration and resolves `review_roster.v1` by **invoking the lifecycle
+  repository's own `tools/docs/gen_review_roster.py` as a subprocess**. No copy of that generator
+  is vendored here and the resolution is never reimplemented. The card carried a stop condition —
+  stop if the generator cannot be invoked without vendoring it — and it does not fire: the
+  generator imports only the standard library and resolves its inputs from its own location.
+- `plugins/saga/scripts/review_result.py` — the `review_result.v2` writer. Finding identity is the
+  catalogue's fingerprint of path, line and category; one review history per unit, with a second
+  refused; one cycle counter per repair loop; residual defects prepared at the cycle cap; and
+  publication as exactly one pull-request comment.
+- `review_consensus.compute_verdict` — the verdict as a total function of three facts about the
+  cycle, and a command line that prints one of `accepted`, `repairs_requested`,
+  `cycle_cap_best_available`, `review_incomplete` and nothing else.
+
+**Removed**
+
+- `plugins/saga/references/lens-roster.json`, and with it `ROSTER_PATH`, `load_scoring_policy`,
+  `always_on_lenses`, `recommend_conditional_lenses`, `resolve_lens_selection`,
+  `launch_approved_lenses` and the four conditional-approval classes. Thresholds now arrive as an
+  argument — the roster the run resolved — rather than being looked up in a file this plugin owns.
+- The review-side whole-diff external advisory seat, `ExternalAdvisoryReview` and
+  `ExternalFindingAdjudication`. Removing Work's own in-process second-opinion offer and its
+  private dispatch, sidecar, streak and state modules is **issue 938**, a separate card: those
+  files are not in issue 1001's list.
+- The evidence-ledger write and the `docs/reviews/` publication lane from this skill. The evidence
+  lands in the run record's `review_cycles`, where every later step of the run already reads. The
+  `evidence_ledger.py` module stays — it has other callers; only this call site went.
+- The per-commit conditional-lens approval prompt. The lens set is settled once, at admission.
+
+**Changed**
+
+- `review_result.v1` becomes `review_result.v2`, and Orchestrate's consumer moves with it. The
+  pair of schema identifiers is the only persistent compatibility contract between the two
+  repositories, so a consumer that does not recognise one refuses rather than guesses.
+- `references/lens-catalog.md` is renamed `references/lens-execution.md`. It sat one letter from
+  the lifecycle repository's `config/lens-catalogue.json`, which is the collision child #939
+  reported.
+- `plugins/saga/scripts/admission.py` reads `staffing.lens_catalogue()` correctly. It returns a
+  pair — a mapping keyed by lens identifier, and a version — and the consumer was reading `lenses`
+  and `strictness_ladder` keys off the mapping, so `per_lens_score_threshold` could not be filled
+  by any path. Admission now fills **13 of 13** run-configuration parameters. The origin of the
+  defect is issue #1023, which owns `lens_catalogue`.
+
+**Known state, on purpose**
+
+The lifecycle repository's `config/executor-verifications.json` has no entries: no executor has
+been qualified against any lens's fixtures. The roster generator therefore assigns no scoring
+executor, no lens establishes a threshold, and **every review returns `review_incomplete` today**.
+That is the honest answer rather than a failure — a score from an unqualified model is not weak
+evidence, it is not evidence — and it changes when the first qualification lands, with no change
+here. `tests/test_review_dry_run.py` asserts it, so the day it changes is a diff someone reads.
+
+Issue 1001's fifth acceptance criterion, one real review on a pull request, is **deferred to the
+parent pull request that issue 1030 opens**: children of parent 1018 open no pull request of their
+own. What ships proved instead is the four scripted criteria plus a full dry run of the review
+against this branch's own diff, with the lens sessions replaced by an injected fake executor.
+
 ## [0.164.0] - 2026-09-19
 
 **Bumped from 0.163.0**, the saga version on `origin/parent/1018` at commit `0fa2ea32` when this

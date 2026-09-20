@@ -1,7 +1,7 @@
 """#776: Orchestrate owns reviewer-session transport; saga's runner is gone.
 
 The required regression is one Opus review-controller plus one Grok 4.6 reviewer
-seat, both launched as Orchestrate-owned named units, one typed review_result.v1,
+seat, both launched as Orchestrate-owned named units, one typed review_result.v2,
 and no engine_session_runner process. Mutation: a plain review prompt or a direct
 reviewer launch is refused before any session is created.
 """
@@ -116,7 +116,7 @@ def _grok_seat_row(
 def _accepted_result() -> str:
     return json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "accepted",
             "fix_requests": [],
         },
@@ -181,7 +181,7 @@ def test_review_transport_records_one_typed_result_and_no_duplicate_review(
     assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
     restored = orchestrate.Run.load()
     assert restored.review_outcome == "accepted"
-    assert json.loads(restored.review_result)["schema"] == "review_result.v1"
+    assert json.loads(restored.review_result)["schema"] == "review_result.v2"
     with pytest.raises(SystemExit, match="exactly one top-level Code Review controller"):
         orchestrate.plan_units(
             {

@@ -175,15 +175,81 @@ questions got answered — the trajectory of the work.
 for the thread or window via `gh` — read commands only (`gh pr view`, `gh issue view`, `gh pr checks`).
 Never `gh issue create`, never `gh pr merge`.
 
-**1.5 What the run recorded, not what a ledger recorded.** The three telemetry passes that lived
-here read the session-transcript skeletons through the `/resume` forensic scripts, the
-backend override-rate ledger, the gate-divergence ledger and the outcome cost rollup. Issue 1030
-removed all four with the commands and machinery they read. The evidence they used to supply now
-comes from the run record (1.9 below) and the engineering journal, which is where a decision and
-its rationale already live.
+**1.5 Session-transcript skeletons.** Reuse the `/resume` forensic substrate — **file-mediated,
+context-safe**. Identify sessions from the saga / branch for a thread-scoped retro, or via
+`discover_sessions.py` for the windowed mode; extract each with `extract_session_skeleton.py` to a scratch
+dir; an **optional generic-sub-agent fan-out (one per session)** synthesizes them — offered per
+operator-choice, **never** via an `agents/` dir (this plugin has none; use generic `Explore` / `Task`).
+The orchestrator never reads a raw `.jsonl` or a skeleton file — paths only.
+
+**1.6 R12 orchestration telemetry (read-only).** Run the override-rate reader to surface
+backend choice-vs-recommendation signals across all sagas:
+
+```bash
+python3 plugins/saga/scripts/override_rate_reader.py --root . [--json]
+```
+
+This surfaces three R12 signals:
+
+- **Override rate** — fraction of decisions where the operator's explicit pick differed from
+  the recommender's suggestion (only sagas where both `orchestration_recommended` and
+  `orchestration_operator_choice` are recorded count toward the denominator).
+- **Tier direction** — of those overrides, how many escalated to a richer backend
+  (over-tier) vs. de-escalated to a cheaper one (under-tier).
+- **Budget-exhaustion / capability degradation** — sagas with a non-empty
+  `orchestration_downgrade` note (recorded by U12 on off-host resume).
+
+**Zero-data contract**: if no sagas have been recorded with recommendation data yet, the
+reader reports "no data yet" rather than a rate. Do not fabricate a narrative from zero data;
+carry the "no data yet" state into the retro doc as-is and note that signal accrues over time.
+
+This pass is **read-only** — the reader never writes to disk. Include the output verbatim in
+the Phase-1 evidence block. A non-zero override rate or a skew toward over/under-tier is
+signal worth surfacing in Phase 2 interview and the Phase-3 retro doc, so any future default
+re-weighting is evidence-driven (R12's intent: measure before re-weighting).
+
+**1.6a Gate-divergence telemetry (read-only, issue #399).** Run the gate-divergence reader to
+surface per-gate rubber-stamp rates across all sagas, alongside the R12 reader above:
+
+```bash
+python3 plugins/saga/scripts/gate_divergence_reader.py --root . [--json]
+```
+
+This generalizes the R12 reader shape from one gate (orchestration-backend choice) to the
+fleet's other interactive decision gates (mode selection, fix-vs-diagnosis-vs-rethink,
+per-expansion opt-in, coordinator-level decisions — see
+`plugins/saga/references/gate-divergence-instrumentation.md` for the full list of instrumented
+`gate_id`s). For each `gate_id`, it reports the rubber-stamp rate (fraction of interactions
+where the operator's answer matched the offered default/recommendation), the interaction count,
+and mean latency.
+
+**Zero-data contract**: a `gate_id` (or the reader overall) with no recorded interactions
+reports "no data yet" rather than a fabricated rate. Do not fabricate a narrative from zero
+data; carry the "no data yet" state into the retro doc as-is and note that signal accrues over
+time as instrumented gates fire.
+
+This pass is **read-only** — the reader never writes to disk. Include the output verbatim in
+the Phase-1 evidence block. A gate with a high rubber-stamp rate over enough interactions is
+signal worth surfacing in Phase 2 interview as an auto-progression candidate — but this reader
+produces the evidence only; it never itself widens any allowlist (issue #399's own non-goal).
+
+**1.7 OutcomeOrchestrator realized economics (read-only, R24).** When the retro covers an **outcome**
+(a DAG of leaf sagas), read its per-outcome realized-cost rollup — the falsifiable proof of the
+cost-vs-operator-time thesis — from the materialized `spec.cost_rollup` (in `/outcome report`) or live
+via `scripts/outcome_costs.py` `rollup(spec, store)`. Surface, in the evidence block:
+
+- **tokens / operator_touches / retries** (per outcome) + **by_executor** (which backends actually ran);
+- the **DAG-vs-one-thread** verdict — `wall_seconds_parallel` (critical path) vs `wall_seconds_serial`
+  (the one-long-thread sum) and **`beat_one_thread`** — so the retro states, with numbers, whether the
+  coordinated DAG actually beat a single inline thread (or did not — both are honest learnings);
+- `sunk` (cost of pruned leaves, R33) — work spent then abandoned, a real signal for the interview.
+
+**Zero-data contract** (same as 1.6): an empty rollup is **"no data yet"** — carry it verbatim, never
+fabricate a zero. This pass is **read-only**; the leaves produce the telemetry (`record_cost`), the retro
+only consumes it.
 
 **1.8 Provenance-manifest signals (read-only, R16/R18).** Run the manifest reader beside the
-run record to surface parroting count, disposition rate, and the adjudicated
+override-rate reader (1.6) to surface parroting count, disposition rate, and the adjudicated
 verified-vs-inferred/not-checked ratio across the manifest tree:
 
 ```bash
@@ -199,7 +265,7 @@ This surfaces three R7/R16/R18 signals:
 - **Adjudicated verified ratio** — `verified / (verified + inferred + not-checked)` among
   adjudicated claims (R16), the confidence signal `/qa` also consumes directly (Phase 2.x there).
 
-**Zero-data contract**: an empty manifest tree is **"no data yet"** — carry it
+**Zero-data contract** (same as 1.6/1.7): an empty manifest tree is **"no data yet"** — carry it
 verbatim, never fabricate a rate. This pass is **read-only and advisory-only** (R8/R12): a low
 verified ratio or a nonzero parroting count is signal for the interview, never a gate.
 
@@ -221,7 +287,7 @@ terminal and advisory: it writes no saga tick, and even an approved proposal mus
 separate authorized implementation path — a proposal is never an authorization to edit, which is
 what the retired readers' `approval_required` flag said and what still holds without them.
 
-**Zero-data contract**: a run with no record — work done before the record
+**Zero-data contract** (same as 1.6/1.7): a run with no record — work done before the record
 existed, or outside a saga run — contributes nothing here. Carry that as "no run record for this
 work," never a reconstruction.
 
@@ -293,7 +359,9 @@ latent cross-repo lessons this sweep does not.
 - **Form + placement (frozen — do not redefine).** Exactly `**Transcendent.**` on its own line directly
   below the rule it elevates, with an optional one-line reason it crosses. The canonical form, the
   detection anchor, and the `<repo>:<hash>` source key are frozen in
-  `../promote/references/promotion-contract.md` §1–§2 — quote that contract, it is the single definition.
+  the promotion contract that lived in the removed `/promote` skill. `/retro` now carries the rule
+  itself: a learning is promotable when it is repo-independent, evidence-backed, and stated as a rule
+  a future reader could apply without this repository in front of them.
 - **Tier.** It **edits an existing entry**, so it is **PROPOSE-DIFF-AND-WAIT** (never the Tier-1 AUTO
   append) — show the one-line insertion as a diff + `AskUserQuestion` (apply / skip / modify the reason).
   Skip any entry that already carries the marker (a human may have written it — idempotent, never
@@ -370,7 +438,13 @@ It never blocks the router.
   (narrow default offer: inline / team-execution).
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).
 - `../../references/saga-spec.md` — the saga contract (`restore` / `ticks`; `/retro` is read-only).
+- `../../scripts/override_rate_reader.py` — R12 telemetry reader: scans saga envelopes for
+  override-rate, over/under-tier, and budget-exhaustion signals (Phase 1.6). Zero-data reports
+  "no data yet"; read-only; `--json` for machine-readable output.
 - `../../scripts/manifest_reader.py` — R7/R16/R18 telemetry reader: scans the provenance-manifest
   tree for parroting count, disposition rate, and the adjudicated verified ratio (Phase 1.8).
   Zero-data reports "no data yet"; read-only and advisory-only (R8/R12); `--json` for
   machine-readable output.
+- `../../references/benchmark-loop.md` — the benchmark propose-not-commit gate: suite versioning
+  (immutable `suite_id`), threshold semantics, and how a contradiction becomes a Phase-5(f)
+  proposal a human applies by hand.

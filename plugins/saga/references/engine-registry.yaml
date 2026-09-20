@@ -1,0 +1,584 @@
+# Saga external-engine capability registry (R1-R4).
+#
+# NON-TRANSPORT METADATA (issue #776 / KTD4). This file is capability and calibration data only.
+# It is not a session-launch authority and cannot override the live Orchestrate/Herdr roster.
+# Reviewer sessions launch only as named units in an Orchestrate run record.
+#
+# SEED DATA (2026-06-27), not a permanent ranking. This is current benchmark + practitioner
+# evidence, tagged per row by source + corroboration strength. The architecture does not depend on
+# any cell being eternally correct -- last_validated (R3) makes staleness visible, and the data is
+# re-validated by use through /retro (R21), NOT by an automated measurement loop.
+#
+# cost_speed_rank is the KTD9 tie-break key: lower = cheaper+faster. It only breaks ties between
+# variants that rate a requested capability EQUALLY (rating dominates first).
+# Any variant may declare an optional positive `max_concurrent` lane override. Saga applies the
+# override only to units explicitly routed to that exact engine/variant key.
+
+capabilities:
+  - code-generation
+  - adversarial-review
+  - second-opinion
+  - debug
+  - refactor
+  - scaffold
+  - long-form-writing
+  - bulk-classification
+  - structured-extraction
+  - embedding
+
+model_families:
+  # GPT-5.6 capability guidance is official model positioning, while the concrete ratings below
+  # remain provisional until /retro has enough exact-variant evidence to revalidate them.
+  gpt-5.6-sol:
+    capability_profile:
+      adversarial-review: {rating: STRONG, note: "flagship complex coding and security reviewer"}
+      refactor: {rating: MODERATE, note: "multi-file terminal-oriented"}
+  gpt-5.6-terra:
+    capability_profile:
+      adversarial-review: {rating: MODERATE, note: "everyday reviewer; below Sol for complex judgment"}
+      refactor: {rating: WEAK, note: "conservative until multi-file evidence accumulates"}
+  gpt-5.6-luna:
+    capability_profile:
+      adversarial-review: {rating: WEAK, note: "clear repeatable review only; not a complex reviewer"}
+      refactor: {rating: WEAK, note: "structured transformations preferred over open-ended refactors"}
+  gpt-5.5:
+    capability_profile:
+      adversarial-review: {rating: STRONG, note: "top composite reasoning; repo-access verification"}
+      refactor: {rating: MODERATE, note: "multi-file terminal-oriented"}
+
+engines:
+  # ---- Codex / GPT-5.6 (external marketplace plugin; codex CLI) -------------------------------
+  # Sol is the flagship default; Terra and Luna are intentionally conservative provisional rows.
+  - engine_id: codex
+    variant: gpt-5.6-sol-high
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: true
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-sol -c model_reasoning_effort=high"
+      write_capable: false
+      model: gpt-5.6-sol
+      effort: high
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 2
+    cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: standard
+    model_identity: gpt-5.6-sol
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "multi-file refactor, structured-output fidelity"}
+      second-opinion: {rating: MODERATE, note: "cross-family; refuter behavior still unmapped"}
+      debug: {rating: MODERATE, note: "tool-orchestrated; give it tools to iterate"}
+      scaffold: {rating: WEAK, note: "greenfield architecture is a caution area"}
+      long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
+      - "Manage context actively; it does not self-manage."
+      - "Reserve xhigh for the hardest tasks (cost multiplier)."
+    sources:
+      - {claim: "flagship for complex coding, research, and security", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: STRONG}
+
+  - engine_id: codex
+    variant: gpt-5.6-sol-xhigh
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-sol -c model_reasoning_effort=xhigh"
+      write_capable: false
+      model: gpt-5.6-sol
+      effort: xhigh
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 3
+    cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: slow
+    model_identity: gpt-5.6-sol
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: STRONG, note: "hardest bounded implementation; reserve for tough units"}
+      debug: {rating: STRONG, note: "tool-orchestrated root-cause"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
+      - "Manage context actively; it does not self-manage."
+      - "Reserve xhigh for the hardest tasks (cost multiplier)."
+    sources:
+      - {claim: "extra high reasoning suits difficult multi-step work", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: MODERATE}
+
+  - engine_id: codex
+    variant: gpt-5.6-terra-high
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-terra -c model_reasoning_effort=high"
+      write_capable: false
+      model: gpt-5.6-terra
+      effort: high
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 4
+    cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: standard
+    model_identity: gpt-5.6-terra
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "everyday implementation workhorse"}
+      second-opinion: {rating: MODERATE, note: "useful everyday cross-check"}
+      debug: {rating: MODERATE, note: "bounded tool-assisted debugging"}
+      scaffold: {rating: MODERATE, note: "routine scaffolding"}
+      long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Use for everyday work previously routed to GPT-5.5."
+      - "Increase effort only when the task needs deeper checking."
+    sources:
+      - {claim: "everyday workhorse competitive with GPT-5.5 at lower cost", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: STRONG}
+
+  - engine_id: codex
+    variant: gpt-5.6-terra-xhigh
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-terra -c model_reasoning_effort=xhigh"
+      write_capable: false
+      model: gpt-5.6-terra
+      effort: xhigh
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 5
+    cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: slow
+    model_identity: gpt-5.6-terra
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: STRONG, note: "harder everyday implementation with extra checking"}
+      debug: {rating: STRONG, note: "bounded tool-assisted root-cause work"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Use xhigh for bounded tasks with multiple checks or tradeoffs."
+      - "Do not treat Terra as Sol for complex review or refactor work."
+    sources:
+      - {claim: "extra high reasoning suits difficult multi-step work", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: MODERATE}
+
+  - engine_id: codex
+    variant: gpt-5.6-luna-high
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-luna -c model_reasoning_effort=high"
+      write_capable: false
+      model: gpt-5.6-luna
+      effort: high
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 6
+    cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: standard
+    model_identity: gpt-5.6-luna
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "clear, repeatable transformations"}
+      second-opinion: {rating: MODERATE, note: "structured sanity checks"}
+      debug: {rating: WEAK, note: "avoid open-ended root-cause work"}
+      scaffold: {rating: MODERATE, note: "routine repeatable scaffolding"}
+      bulk-classification: {rating: STRONG, note: "high-volume classification lane"}
+      structured-extraction: {rating: STRONG, note: "structured data extraction lane"}
+      long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Prefer clear, repeatable, high-volume tasks with explicit completion criteria."
+      - "Do not use for complex review or multi-file refactors."
+    sources:
+      - {claim: "fastest and lowest-cost model for clear repeatable work", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: STRONG}
+
+  - engine_id: codex
+    variant: gpt-5.6-luna-xhigh
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -m gpt-5.6-luna -c model_reasoning_effort=xhigh"
+      write_capable: false
+      model: gpt-5.6-luna
+      effort: xhigh
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 7
+    cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: slow
+    model_identity: gpt-5.6-luna
+    last_validated: 2026-07-10
+    receipt_emitter: codex-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "repeatable transformation with extra checking"}
+      second-opinion: {rating: MODERATE, note: "structured sanity checks"}
+      debug: {rating: MODERATE, note: "bounded debug with explicit completion criteria"}
+      scaffold: {rating: MODERATE, note: "routine repeatable scaffolding"}
+      bulk-classification: {rating: STRONG, note: "high-volume classification lane"}
+      structured-extraction: {rating: STRONG, note: "structured data extraction lane"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Prefer explicit, repeatable tasks over open-ended reasoning."
+      - "Use xhigh only when the bounded task benefits from additional checking."
+    sources:
+      - {claim: "extra high reasoning suits difficult multi-step work", url: "https://learn.chatgpt.com/docs/models", date: 2026-07-10, tag: OFFICIAL, corroboration: MODERATE}
+
+  # ---- Codex / gpt-5.5 legacy selectors -------------------------------------------------------
+  - engine_id: codex
+    variant: gpt-5.5-high
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false         # legacy selector; GPT-5.6 Sol is the current default
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -c model_reasoning_effort=high"
+      write_capable: false            # evidence-only default (R23)
+      model: gpt-5.5
+      effort: high
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000            # R25 -- Codex CLI ChatGPT-account limit
+    cost_speed_rank: 8                 # legacy selector; current rows rank ahead
+    cost_per_token: {input_usd: 0.000005, output_usd: 0.000015}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: standard
+    model_identity: gpt-5.5
+    last_validated: 2026-07-06
+    receipt_emitter: codex-bridge      # R9/KTD9 -- #476 tracks the codex-side emit wiring
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "multi-file refactor, structured-output fidelity"}
+      second-opinion: {rating: MODERATE, note: "cross-family; refuter behavior still unmapped"}
+      debug: {rating: MODERATE, note: "tool-orchestrated; give it tools to iterate"}
+      scaffold: {rating: WEAK, note: "greenfield architecture is a caution area"}
+      long-form-writing: {rating: WEAK, note: "route expert prose to Claude"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
+      - "Manage context actively; it does not self-manage."
+      - "Reserve xhigh for the hardest tasks (cost multiplier)."
+    sources:
+      - {claim: "top composite reasoning", url: "OpenAI GPT-5.5 model card", date: 2026-06-27, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "multi-file refactor / structured-output / DevOps", url: "Artificial Analysis; LM Council", date: 2026-06-27, tag: INDEPENDENT, corroboration: MODERATE}
+      - {claim: "route expert long-form writing to Claude", url: "MindStudio GPT-5.5 review; readiness review correction", date: 2026-06-27, tag: INDEPENDENT, corroboration: MODERATE}
+
+  - engine_id: codex
+    variant: gpt-5.5-xhigh
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: codex:delegate
+      recipe: "codex exec -s read-only -c model_reasoning_effort=xhigh"
+      write_capable: false
+      model: gpt-5.5
+      effort: xhigh
+      cli: codex
+      auth:
+        mode: files
+        paths:
+          - "~/.codex/auth.json"
+          - "~/.codex/config.toml"
+    context_window: 400000
+    cost_speed_rank: 9                 # legacy selector; xhigh is the cost multiplier
+    cost_per_token: {input_usd: 0.000015, output_usd: 0.000045}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: slow
+    model_identity: gpt-5.5
+    last_validated: 2026-07-06
+    receipt_emitter: codex-bridge      # R9/KTD9 -- #476 tracks the codex-side emit wiring
+    capability_profile:
+      code-generation: {rating: STRONG, note: "hardest bounded implementation; reserve for the tough unit"}
+      debug: {rating: STRONG, note: "tool-orchestrated root-cause"}
+    prompting_protocol:
+      - "Run read-only when generating against the repo."
+      - "Give it tools to iterate when debugging (quality drops in pure-chat mode)."
+      - "Manage context actively; it does not self-manage."
+      - "Reserve xhigh for the hardest tasks (cost multiplier)."
+    sources:
+      - {claim: "xhigh materially improves the hardest reasoning", url: "OpenAI GPT-5.5 model card; LLM-Stats GPT-5.5", date: 2026-06-27, tag: OFFICIAL, corroboration: MODERATE}
+
+  # ---- Gemini 3.5 Flash (via the in-repo agy plugin) ------------------------------------------
+  - engine_id: agy
+    variant: gemini-3.5-flash-high
+    substrate: in-repo
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: true          # engine-only "use agy" resolves here (cheapest/fastest default)
+    invocation:
+      via: agy:delegate
+      recipe: "agy delegate --mode no-write --model 'Gemini 3.5 Flash (High)'"
+      write_capable: false
+      model: "Gemini 3.5 Flash (High)"   # verbatim canonical --model string (agy forwards it byte-for-byte)
+      cli: agy
+      auth:
+        mode: files
+        paths:
+          - "~/.config/agy/config.json"
+          - "~/.gemini/settings.json"
+    context_window: 1000000
+    cost_speed_rank: 1                 # cheapest + fastest (STRONG)
+    cost_per_token: {input_usd: 0.0000005, output_usd: 0.000002}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: fast
+    model_identity: gemini-3.5-flash
+    last_validated: 2026-06-27
+    receipt_emitter: agy-delegate      # R9/KTD9
+    capability_profile:
+      scaffold: {rating: STRONG, note: "greenfield scaffolding, one-shot coding"}
+      code-generation: {rating: MODERATE, note: "one-shot; structured output"}
+      second-opinion: {rating: MODERATE, note: "cheap cross-family sanity pass"}
+      debug: {rating: WEAK, note: "iterative repair adds rather than fixes; over-enriches"}
+      refactor: {rating: WEAK, note: "ignores completion criteria on long-horizon edits"}
+    prompting_protocol:
+      - "Assign an explicit adversarial/critic role; do not rely on goodwill."
+      - "Put behavioral constraints at the top; keep prompts terse and command-style."
+      - "Avoid vague blanket negatives ('don't infer' breaks reasoning)."
+      - "Give explicit stop conditions to counter over-eagerness; put the question last."
+      - "Set thinking level High on hard tasks; keep temperature default."
+    sources:
+      - {claim: "best absolute agentic/tool-use; fastest+cheapest", url: "Google DeepMind Gemini 3.5 Flash model card; PromptLayer latency/cost", date: 2026-06-27, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "over-eagerness / ignores completion criteria (recurring family failure)", url: "HN Gemini 3.5 Flash thread; Phil Schmid Gemini 3 prompting", date: 2026-06-27, tag: INDEPENDENT, corroboration: STRONG}
+
+  # ---- Gemini 3.1 Pro (via the in-repo agy plugin) --------------------------------------------
+  - engine_id: agy
+    variant: gemini-3.1-pro-high
+    substrate: in-repo
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    invocation:
+      via: agy:delegate
+      recipe: "agy delegate --mode no-write --model 'Gemini 3.1 Pro (High)'"
+      write_capable: false
+      model: "Gemini 3.1 Pro (High)"     # verbatim canonical --model string
+      cli: agy
+      auth:
+        mode: files
+        paths:
+          - "~/.config/agy/config.json"
+          - "~/.gemini/settings.json"
+    context_window: 1000000
+    cost_speed_rank: 4                 # largest / priciest / slowest of the seed set
+    cost_per_token: {input_usd: 0.0000035, output_usd: 0.0000105}
+    cost_class: metered
+    budget_ceiling_usd: 25.0
+    latency_class: standard
+    model_identity: gemini-3.1-pro
+    last_validated: 2026-06-27
+    receipt_emitter: agy-delegate      # R9/KTD9
+    capability_profile:
+      adversarial-review: {rating: STRONG, note: "strong cross-family reviewer; converges with Codex on real findings"}
+      second-opinion: {rating: STRONG, note: "different model family = best sycophancy mitigation"}
+      code-generation: {rating: MODERATE, note: "capable; not the first pick over Codex"}
+      debug: {rating: MODERATE, note: "useful second opinion"}
+      long-form-writing: {rating: WEAK, note: "NOT the expert-writing engine -- route prose to Claude"}
+    prompting_protocol:
+      - "Assign an explicit adversarial/critic role; disagreement-first."
+      - "Put behavioral constraints at the top; keep prompts terse and command-style."
+      - "Avoid vague blanket negatives; use a structural adversarial frame, not 'be brutally honest'."
+      - "Give explicit stop conditions; set thinking level High; keep temperature default."
+    sources:
+      - {claim: "strong cross-family reviewer; different-family = best sycophancy mitigation", url: "Google DeepMind Gemini 3.1 Pro model card; SycEval; readiness review panel", date: 2026-06-27, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "not the expert long-form writing engine", url: "readiness review correction; contracollective/gitautoreview write-ups", date: 2026-06-27, tag: INDEPENDENT, corroboration: MODERATE}
+
+  # ---- Ollama Cloud / gpt-oss:120b (generic OpenAI-compatible HTTP bridge, R3/AC3') ------------
+  # Base URL + auth verified against https://docs.ollama.com/api/openai-compatibility and
+  # https://docs.ollama.com/cloud on 2026-07-06 (U3 authoring step, KTD3). Ratings held at or
+  # below MODERATE and omit refactor/scaffold/long-form-writing so this row cannot outrank the
+  # current by_capability winners (routing-stability regression, KTD3).
+  - engine_id: ollama-cloud
+    variant: gpt-oss-120b
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: true
+    transport: http
+    invocation:
+      via: engine-bridge-http
+      recipe: "POST https://ollama.com/v1/chat/completions (gpt-oss:120b)"
+      write_capable: false
+      base_url: "https://ollama.com/v1"
+      model: "gpt-oss:120b"
+      effort: default
+      auth:
+        mode: bearer
+        key_env: OLLAMA_API_KEY
+    context_window: 128000
+    cost_speed_rank: 5                 # conservative seed rank -- ties always lose to rank 1-4
+    cost_per_token: {input_usd: 0.0, output_usd: 0.0}
+    cost_class: free
+    latency_class: standard
+    model_identity: gpt-oss-120b
+    last_validated: 2026-07-06
+    receipt_emitter: http-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "$0-marginal subscription offload; seed rating, availability-gated smoke only"}
+      debug: {rating: MODERATE, note: "seed rating pending live-dispatch corroboration"}
+      second-opinion: {rating: WEAK, note: "seed rating; cheap cross-family sanity pass at most"}
+      bulk-classification: {rating: STRONG, note: "local/Ollama-class batch classification lane"}
+      structured-extraction: {rating: STRONG, note: "local/Ollama-class JSON/data extraction lane"}
+    prompting_protocol:
+      - "Resolve the bearer token from OLLAMA_API_KEY at request-build time only; never log it."
+      - "Availability-gated: skip (never fail) when OLLAMA_API_KEY is absent or endpoint unreachable."
+      - "Advisory only -- never a gate/verdict source (R6, {#external-engines-never-gatekeepers})."
+    sources:
+      - {claim: "OpenAI-compatible base URL https://ollama.com/v1; bearer auth via OLLAMA_API_KEY", url: "https://docs.ollama.com/api/openai-compatibility", date: 2026-07-06, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "gpt-oss:120b is a current Ollama Cloud model id", url: "https://docs.ollama.com/cloud", date: 2026-07-06, tag: OFFICIAL, corroboration: MODERATE}
+
+  # ---- Ollama / nomic-embed-text (embeddings-only model) --------------------------------------
+  - engine_id: ollama-cloud
+    variant: nomic-embed-text
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: false
+    transport: http
+    invocation:
+      via: engine-bridge-http
+      recipe: "POST https://ollama.com/v1/embeddings (nomic-embed-text)"
+      write_capable: false
+      base_url: "https://ollama.com/v1"
+      model: "nomic-embed-text"
+      effort: default
+      auth:
+        mode: bearer
+        key_env: OLLAMA_API_KEY
+    context_window: 2048
+    cost_speed_rank: 1
+    cost_per_token: {input_usd: 0.0, output_usd: 0.0}
+    cost_class: free
+    latency_class: batch
+    model_identity: nomic-embed-text
+    last_validated: 2026-07-09
+    receipt_emitter: http-bridge
+    capability_profile:
+      embedding: {rating: STRONG, note: "Ollama model library identifies this as embeddings-only"}
+    prompting_protocol:
+      - "Use only for embedding generation; do not route chat/completion work here."
+      - "Advisory only -- never a gate/verdict source."
+    sources:
+      - {claim: "nomic-embed-text is an embeddings-only model", url: "https://ollama.com/library/nomic-embed-text", date: 2026-07-09, tag: OFFICIAL, corroboration: STRONG}
+
+  # ---- DeepSeek / deepseek-chat (generic OpenAI-compatible HTTP bridge, R4) ---------------------
+  # Base URL + model id verified against https://api-docs.deepseek.com/ on 2026-07-06 (U3
+  # authoring step, KTD3). Ratings held at or below MODERATE per the same routing-stability rule.
+  - engine_id: deepseek
+    variant: deepseek-chat
+    substrate: external
+    egress_policy: networked
+    trust_tier: advisory
+    default_for_engine: true
+    transport: http
+    invocation:
+      via: engine-bridge-http
+      recipe: "POST https://api.deepseek.com/chat/completions (deepseek-chat)"
+      write_capable: false
+      base_url: "https://api.deepseek.com"
+      model: "deepseek-chat"
+      effort: default
+      auth:
+        mode: bearer
+        key_env: DEEPSEEK_API_KEY
+    context_window: 64000
+    cost_speed_rank: 6                 # conservative seed rank -- ties always lose to rank 1-4
+    cost_per_token: {input_usd: 0.00000014, output_usd: 0.00000028}
+    cost_class: metered
+    budget_ceiling_usd: 5.0
+    latency_class: standard
+    model_identity: deepseek-chat
+    last_validated: 2026-07-06
+    receipt_emitter: http-bridge
+    capability_profile:
+      code-generation: {rating: MODERATE, note: "seed rating; API-key routing, never hardcoded (R4)"}
+      adversarial-review: {rating: WEAK, note: "seed rating; advisory-tagged, never a gate verdict"}
+      second-opinion: {rating: WEAK, note: "seed rating; cheap cross-family sanity pass at most"}
+    prompting_protocol:
+      - "Resolve the bearer token from DEEPSEEK_API_KEY at request-build time only; never log it."
+      - "Output is advisory-tagged; it never carries a gate/verdict field (R4/R6)."
+    sources:
+      - {claim: "OpenAI-compatible base URL https://api.deepseek.com; bearer auth via DEEPSEEK_API_KEY env convention", url: "https://api-docs.deepseek.com/", date: 2026-07-06, tag: OFFICIAL, corroboration: STRONG}
+      - {claim: "deepseek-chat is a current (non-deprecated at seed time) DeepSeek model id", url: "https://api-docs.deepseek.com/", date: 2026-07-06, tag: OFFICIAL, corroboration: MODERATE}
+
+roles:
+  # The doc-review external-reviewer panel (R16) -- a first-class composing role, not a one-off.
+  cross-family-review-panel:
+    members:
+      - codex/gpt-5.6-sol-xhigh
+      - agy/gemini-3.1-pro-high
+      - agy/gemini-3.5-flash-high
+    verdict: advisory                 # R15 -- never gated
+    verifier: claude                  # R13 -- Claude verifies each finding against source

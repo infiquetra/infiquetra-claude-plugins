@@ -77,7 +77,7 @@ to the top** of each file. New entries are Tier-1 AUTO (pure append).
 The `**Transcendent.**` line is **not** part of the auto-append — most entries never carry it. It marks the
 select few rules that cross repositories, and it is added later by the Phase-4 transcendence-marking sweep
 as a **Tier-2 propose-diff-and-wait** edit (it modifies an existing entry), in the one canonical form
-frozen by `../promote/references/promotion-contract.md` §1. `/retro` writes it into this repo only; the
+frozen by the promotability rule in `../SKILL.md`. `/retro` writes it into this repo only; the
 cross-repo collection and the gated `infiquetra-context-library` upsert are the separate `promote` skill.
 
 ### DECISIONS.md

@@ -39,7 +39,7 @@ lifecycle phase, it does **not** advance `lifecycle_phase`, and it writes **no**
 - **(c) via `/qa`** — `/qa` routes deep **post-merge** failures here for root-cause analysis (`/qa`'s
   Phase 6.2 routes deep post-merge root-cause failures here).
 
-It is not on the linear spine (`loop/references/dispatch-table.md`). Its outputs route **back** onto the
+It is not on the linear spine. Its outputs route **back** onto the
 spine: an applied trivial fix ships through `/work` or `/code-review`; a real fix becomes a `/handoff`
 issue that `/work` then executes; a design problem goes to `/brainstorm`.
 
@@ -241,7 +241,7 @@ silence (`HALT`).
    Size alone never makes a bug a design problem.
 
 Gate-divergence telemetry (optional, issue #399): record via `gate_id`
-`investigate-fix-vs-diagnosis` per `plugins/saga/references/gate-divergence-instrumentation.md` —
+`investigate-fix-vs-diagnosis`, recorded in the run record --
 the offered default is whichever option the presented findings most directly recommend.
 
 ---
@@ -316,7 +316,7 @@ Use the enum'd shape in `references/debug-report.md`: **Symptom** / **Root cause
   and does not recognize `docs/investigations/`, so it would fall through to `requirements-ready` and
   mis-classify the report. See `references/debug-report.md`.
 
-**4.3 Route** per `loop/references/dispatch-table.md` (**read** it; never restate it):
+**4.3 Route** to the command that owns what the investigation found:
 
 - **inline fix applied + self-verified** → `/work` or `/code-review` to **SHIP** it via a PR (the fix is
   on a branch; `/investigate` does not push it);
@@ -368,6 +368,5 @@ default action; the diagnosis is.
   `/work` via a `/handoff` ISSUE, never via the report path through the classifier).
 - `../../references/operator-choice.md` — the decision contract for offering an execution backend for
   large/parallel read-only investigation (narrow default offer: inline / team-execution).
-- `loop/references/dispatch-table.md` — the outbound routing reference (read, never restate).
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).
 - `../../references/saga-spec.md` — the saga contract (`restore` / `ticks`; `/investigate` is read-only).

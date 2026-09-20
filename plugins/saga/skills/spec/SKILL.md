@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Interrogate a vague ask into a precise, backlog-ready WHAT spec — five-Why, scope/MVP lock, failure-mode enumeration, read-code-first, quantify-everything. Convergent and relentless on one decided direction. Triggers on "spec this out", "turn this into a spec", "what exactly are we building", "sharpen this ask before handoff", and when /office-hours, /loop, or /brainstorm have settled the WHY but the WHAT is still fuzzy.
+description: Interrogate a vague ask into a precise, backlog-ready WHAT spec — five-Why, scope/MVP lock, failure-mode enumeration, read-code-first, quantify-everything. Convergent and relentless on one decided direction. Triggers on "spec this out", "turn this into a spec", "what exactly are we building", "sharpen this ask before handoff", and when /office-hours or /brainstorm have settled the WHY but the WHAT is still fuzzy.
 argument-hint: "[vague ask | issue# | rough doc path]"
 ---
 
@@ -28,17 +28,17 @@ never enters the work thread and never writes the saga. Its lane, vs its neighbo
 - **vs `/plan`** — `/plan` settles the HOW (architecture, approach, KTDs, the implementation register).
   `/spec` pins the precise **WHAT** (who, current behavior, target, scope boundaries, acceptance,
   failure modes) and stops at the water's edge of design.
-- **vs `/handoff`** — `/handoff` is the thin envelope that routes an artifact to `mission-control`.
+- **vs filing the card** — filing routes an artifact to `mission-control`.
   `/spec` produces the sharp **source** that envelope points at.
 
 **Routes IN:** `/office-hours` frame-diagnostic (a settled "what exactly are we building" question),
 `/loop`, `/brainstorm` (a convergent ask emerging from divergent exploration), or direct invocation.
 
-**Routes OUT:** `/handoff` (-> `mission-control` -> issue -> `/work`); `/plan` (when the WHAT is locked
-but a HOW must still be settled); an **optional `/doc-review`** readiness pass before handoff.
+**Routes OUT:** `mission-control` (-> issue -> `/plan`); `/plan` (when the WHAT is locked
+but a HOW must still be settled); an **optional `/doc-review`** readiness pass before filing.
 
 Resolve any cross-command route through the lifecycle routing reference at
-`saga/skills/loop/references/dispatch-table.md` (referenced by path; do not copy the
+the routing each command's own skill states (do not copy the
 routing table here).
 
 ## Core principles

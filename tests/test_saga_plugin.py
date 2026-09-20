@@ -1262,9 +1262,8 @@ def test_strategy_engine_merge_contract() -> None:
     # --- MECHANISM FLOOR 11: dispatch-table is REFERENCED but NOT restated (one source of truth,
     # no /strategy<->/loop duplication). The path is cited; the table's own unique H1 title + lead
     # sentence (which live ONLY in loop/references/dispatch-table.md) must NOT appear here. ---
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "cross-command routing must REFERENCE the dispatch-table by path"
-    )
+    # The cited file went with the /loop skill in issue 1030; the surviving half of this floor is
+    # the no-restatement rule below, which is the half that was load-bearing.
     assert "# Dispatch Table" not in corpus, (
         "the dispatch-table H1 title must not be restated in /strategy"
     )
@@ -1435,10 +1434,12 @@ def test_retro_engine_merge_contract() -> None:
             f"found near: {flat[max(0, match.start() - 50) : match.end() + 30]!r}"
         )
 
-    # --- MECHANISM FLOOR 6: reuse-not-reimplement — the /resume forensic substrate is referenced by
-    # NAME (not duplicated), and zero new .py lands under skills/retro (only the test file changes). ---
-    assert "discover_sessions.py" in corpus, "the windowed session-discovery script must be reused"
-    assert "extract_session_skeleton.py" in corpus, "the skeleton-extraction script must be reused"
+    # --- MECHANISM FLOOR 6: reuse-not-reimplement — zero new .py lands under skills/retro. ---
+    # The first half of this floor named the two /resume forensic scripts /retro reused by name.
+    # Issue 1030 removed /resume and both scripts, and Pass 3 now reads the run record, which the
+    # run writes as it happens rather than reconstructing afterwards. The floor that survives is the
+    # one that still has a subject: /retro reimplements nothing of its own.
+    assert "run record" in corpus, "Pass 3 must name the run record as its evidence source"
     assert not list((retro).glob("**/*.py")), (
         "no new .py may land under skills/retro — the engine reuses existing scripts by name"
     )
@@ -1490,9 +1491,9 @@ def test_retro_engine_merge_contract() -> None:
     # --- MECHANISM FLOOR 10: dispatch-table is REFERENCED by path, never restated (one source of
     # truth, no /retro<->/loop duplication). The table's unique H1 + lead sentence (which live ONLY
     # in loop/references/dispatch-table.md) must NOT appear in the retro corpus. ---
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "outbound routing must REFERENCE the dispatch-table by path"
-    )
+    # The positive half of this floor cited loop/references/dispatch-table.md by path; issue 1030
+    # deleted the /loop skill that held it. The negative half is the one with a subject left, and
+    # it is the half that was load-bearing: no skill may restate the routing table.
     assert "# Dispatch Table" not in corpus, "the dispatch-table H1 must not be restated in /retro"
     assert "The designed routing map for" not in corpus, (
         "the dispatch-table lead sentence must not be restated in /retro"
@@ -1853,9 +1854,8 @@ def test_investigate_engine_merge_contract() -> None:
 
     # --- MECHANISM FLOOR 10: docs/investigations/ artifact + dispatch REFERENCED not restated +
     # /brainstorm route (no /ce-brainstorm). The dispatch-table is one source of truth. ---
-    assert "loop/references/dispatch-table.md" in corpus, (
-        "outbound routing must REFERENCE the dispatch-table by path"
-    )
+    # As in the /retro floor above: the cited file went with the /loop skill in issue 1030, and the
+    # surviving half is the no-restatement rule.
     assert "# Dispatch Table" not in corpus, (
         "the dispatch-table H1 title must not be restated in /investigate"
     )
@@ -2098,11 +2098,12 @@ def test_spec_engine_merge_contract() -> None:
     # and the dispatch table is REFERENCED by path, NOT restated (one source of truth, no
     # /spec<->/loop duplication). operator-choice is NOT asserted (decision (c) — /spec never offers
     # it). ---
-    for route in ("/handoff", "/plan", "/doc-review"):
+    # /handoff was in this list until issue 1030 removed the command; the run record's next_step
+    # replaced it, so the onward routing names the two commands that still exist.
+    for route in ("/plan", "/doc-review"):
         assert route in skill_doc, f"the onward routing must name {route!r}"
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "cross-command routing must REFERENCE the dispatch-table by path"
-    )
+    # The cited file went with the /loop skill in issue 1030; the surviving half of this floor is
+    # the no-restatement rule below, which is the half that was load-bearing.
     assert "# Dispatch Table" not in corpus, (
         "the dispatch-table H1 title must not be restated in /spec"
     )

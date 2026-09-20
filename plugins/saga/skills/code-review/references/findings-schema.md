@@ -239,6 +239,6 @@ The `evidence_ledger.py` write is gone from this skill too. The evidence now lan
 record's `review_cycles`, which is where every other step of the run already reads. The ledger module
 itself stays: it has other callers, and only this skill's call site went.
 
-Removing Work's own in-process second-opinion offer and its private dispatch, sidecar, streak and
-state modules is **issue 938**, not this card — those files are not in issue 1001's list, and nothing
-goes that a card does not name.
+Work's own in-process second-opinion offer and its private dispatch, sidecar, streak and state
+modules were removed separately, by **issue 938**. They were not removed here because those files
+are not in issue 1001's list, and nothing goes that a card does not name.

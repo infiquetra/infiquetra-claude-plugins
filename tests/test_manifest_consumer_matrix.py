@@ -15,7 +15,6 @@ benign matrix reformatting without caring about path notation.
 
 from __future__ import annotations
 
-import ast
 import dataclasses
 import importlib.util
 import re

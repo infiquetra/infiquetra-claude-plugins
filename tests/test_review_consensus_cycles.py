@@ -33,13 +33,48 @@ def _load_module() -> ModuleType:
 CONSENSUS: Any = _load_module()
 
 
+# The lens dimensions and thresholds these tests score against, in the shape the
+# lifecycle repository's generator emits. Issue 1001 deleted the plugin's own
+# policy file; a review takes its thresholds from the roster resolved for the run,
+# so a test takes them from a roster too. The dimension names are the catalogue's.
+TEST_ROSTER: dict[str, Any] = {
+    "schema": "review_roster.v1",
+    "hash": "sha256:test-roster",
+    "lenses": [
+        {
+            "id": lens_id,
+            "always_on": True,
+            "scorable": True,
+            "threshold": {
+                "strictness": "standard",
+                "derived_overall_minimum": 9.0,
+                "applicable_dimension_minimum": 7,
+            },
+            "dimensions": [{"id": f"{lens_id}-d{index}"} for index in range(1, count + 1)],
+        }
+        # The counts are the lifecycle catalogue's own, at revision 5efc869f:
+        # seven dimensions on architecture and maintainability, five on each of
+        # the other three always-on lenses. A fixture with the wrong count would
+        # let a lens pass here that the real catalogue would not.
+        for lens_id, count in (
+            ("architecture-maintainability", 7),
+            ("correctness", 5),
+            ("security", 5),
+            ("testing", 5),
+        )
+    ],
+}
+
+TEST_POLICY: Any = CONSENSUS.policy_from_roster(TEST_ROSTER)
+
+
 def _score(
     lens_id: str,
     value: float,
     *,
     findings: tuple[Any, ...] = (),
 ) -> Any:
-    dimensions = dict.fromkeys(CONSENSUS.DEFAULT_SCORING_POLICY.dimensions_for(lens_id), value)
+    dimensions = dict.fromkeys(TEST_POLICY.dimensions_for(lens_id), value)
     return CONSENSUS.score_lens_review(lens_id, dimensions, findings=findings)
 
 
@@ -75,9 +110,7 @@ def _finding(
         finding_id=finding_id,
         lens_id=lens_id,
         dimension_id=(
-            None
-            if lens_id == "external-reviewer"
-            else CONSENSUS.DEFAULT_SCORING_POLICY.dimensions_for(lens_id)[0]
+            None if lens_id == "external-reviewer" else TEST_POLICY.dimensions_for(lens_id)[0]
         ),
         title=f"Repair {finding_id}",
         severity=severity,
@@ -383,10 +416,10 @@ def test_result_serialization_round_trips_schema_revision_bindings_and_routes() 
     payload = json.loads(serialized)
 
     assert restored.to_json() == serialized
-    assert payload["schema"] == "review_result.v1"
+    assert payload["schema"] == "review_result.v2"
     assert payload["collection_operation"] == {
         "operation": "collect",
-        "schema": "review_result.v1",
+        "schema": "review_result.v2",
     }
     assert payload["revision_binding"]["lens_revisions"] == {
         "correctness": "0123456789abcdef0123456789abcdef01234567"
@@ -397,7 +430,7 @@ def test_result_serialization_round_trips_schema_revision_bindings_and_routes() 
 
 def test_unknown_result_schema_is_refused_instead_of_guessed() -> None:
     payload = _accepted_result().to_dict()
-    payload["schema"] = "review_result.v2"
+    payload["schema"] = "review_result.v3"
 
     with pytest.raises(
         CONSENSUS.UnsupportedReviewResultSchemaError,
@@ -535,83 +568,6 @@ def test_cycle_state_round_trips_and_resumes_the_same_selective_rerun() -> None:
         delta_checks=(_delta("correctness", "revision-1", "revision-2", passed=True),),
     )
     assert result.outcome == "accepted"
-
-
-def test_external_whole_diff_finding_is_adjudicated_but_never_scores_or_gates() -> None:
-    finding = _finding(
-        "external-reviewer",
-        "external-new-finding",
-        autofix_class="advisory",
-        owner="downstream-resolver",
-    )
-    external = CONSENSUS.ExternalAdvisoryReview(
-        reviewer_id="external-seat-1",
-        reviewer_vendor="vendor-b",
-        home_vendor="vendor-a",
-        request_id="request-1",
-        request_digest="digest-1",
-        reviewed_revision="revision-1",
-        findings=(finding,),
-        adjudications=(
-            CONSENSUS.ExternalFindingAdjudication(
-                finding_id="external-new-finding",
-                decision="keep",
-                rationale="The independent whole-diff evidence is valid.",
-                final_severity="P1",
-                final_status="active",
-            ),
-        ),
-    )
-    state = CONSENSUS.ReviewCycleState(("correctness",))
-
-    result = state.record_cycle(
-        "revision-1",
-        {"correctness": _score("correctness", 9.4)},
-        external_review=external,
-    )
-
-    assert result.outcome == "accepted"
-    assert result.lens_results[0].score.derived_overall == pytest.approx(9.4)
-    assert "external-reviewer" not in result.attempted_lenses
-    assert [item.finding_id for item in result.findings] == ["external-new-finding"]
-    assert result.external_advisory_reviews[0].scoring_authority is False
-    assert not hasattr(result.external_advisory_reviews[0], "external_only_admitted")
-
-
-def test_external_only_admitted_is_ignored_on_load() -> None:
-    finding = _finding(
-        "external-reviewer",
-        "external-new-finding",
-        autofix_class="advisory",
-        owner="downstream-resolver",
-    )
-    payload = {
-        "reviewer_id": "external-seat-1",
-        "reviewer_vendor": "vendor-b",
-        "home_vendor": "vendor-a",
-        "request_id": "request-1",
-        "request_digest": "digest-1",
-        "reviewed_revision": "revision-1",
-        "whole_diff": True,
-        "request_bound": True,
-        "external_only_admitted": False,
-        "scoring_authority": False,
-        "findings": [finding.to_dict()],
-        "adjudications": [
-            {
-                "finding_id": "external-new-finding",
-                "decision": "keep",
-                "rationale": "The independent whole-diff evidence is valid.",
-                "final_severity": "P1",
-                "final_status": "active",
-            }
-        ],
-    }
-    loaded = CONSENSUS.ExternalAdvisoryReview.from_dict(payload)
-    dumped = loaded.to_dict()
-    assert "external_only_admitted" not in dumped
-    assert loaded.whole_diff is True
-    assert loaded.request_bound is True
 
 
 def test_finding_routes_serialize_into_consolidated_fix_requests() -> None:

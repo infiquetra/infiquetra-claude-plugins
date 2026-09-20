@@ -43,6 +43,39 @@
 **Alternatives rejected.** Moving the generated regions too and teaching `plan_save_contract.py` a second target document — rejected: a generator contract this card does not own, with three tests and a proof script keyed to its single-target shape. Deleting the guards as belonging to removed prose — rejected as above.
 
 **How the second and third relocation misses were found.** Neither `tests/test_operator_choice_drift.py` nor `tests/test_saga_spec_consumer_row.py` was in the targeted test set; both surfaced only in the full suite, the first because the §3.2 purposes travelled with the offer and the second because a generated region's renderer could not follow it. The rule that falls out: after moving a section that contains a generated region or a marker pair, run the full suite before believing the move is finished — a targeted run over the files you edited cannot see a guard that names the file you edited *from somewhere else*.
+### The lifecycle repository's roster generator is invoked, never reimplemented and never vendored  {#1001-invoke-the-generator}
+
+**Decision.** `plugins/saga/scripts/review_roster.py` runs `python3 <sdlc-checkout>/tools/docs/gen_review_roster.py --declaration <file>` as a subprocess and carries the document it prints through unchanged. This plugin holds no copy of that generator and reimplements no part of the resolution.
+
+**Rationale.** Architecture decision record ADR-001 makes the plugin a policy-free executor: the lifecycle repository owns what a lens means, which lenses exist, what strictness applies and what threshold must be met. A second implementation of the resolution would be a second policy owner whatever its author intended, and the two would drift the first time either repository changed.
+
+It is possible because the generator is self-contained: it imports only `argparse`, `hashlib`, `json`, `pathlib`, `sys` and `typing`, and resolves the catalogue, the quality profile and the ledger relative to its own location. This was proved before it was planned — run from an export of revision `5efc869f` with a hand-built declaration, it produced a `review_roster.v1` and its validation report with no dependency install and no working-directory requirement. Issue #1001 carried a stop condition on exactly this question, and the condition does not fire.
+
+**Rejected alternatives.** *Vendor the generator.* It buys nothing — no dependency to carry — and guarantees two copies to keep in step. *Keep a fallback roster for when the checkout is absent.* A fallback policy is still a policy; the absence is a named refusal instead, and the review writes `review_incomplete`.
+
+**Revisit when.** The generator gains a third-party dependency, or the lifecycle repository publishes the roster as a build artifact a consumer can fetch rather than compute.
+
+### A run has one review-cycle counter per repair loop, not one per run  {#1001-one-counter-per-loop}
+
+**Decision.** Every `review_result.v2` entry carries a `loop` field valued `code_review` or `post_merge`, and the repair allowance is checked by counting entries whose loop matches — never by the length of the run record's `review_cycles` array.
+
+**Rationale.** The lifecycle repository's rule is that a run has two repair loops, the pre-merge code-review loop and the post-merge loop that functional testing drives, and **each keeps its own allowance and its own counter** under the same three-standard-then-two-escalated rules. Without the field, a long testing phase would silently spend the pre-merge budget, and the cycle number printed in a result would stop matching the ledger it is read against.
+
+**Rejected alternatives.** *One counter per run.* Simpler, and wrong in the one case that matters: a run that needed several post-merge repairs would arrive at its next pre-merge review already capped. *A separate array per loop.* Two arrays where the reader expects one history, and every consumer would have to know to merge them.
+
+**Revisit when.** A third repair loop is introduced, at which point the field is already the extension point.
+
+### A review publishes one comment and never an approving review  {#1001-comment-never-approval}
+
+**Decision.** `review_result.publish` issues exactly one `gh pr comment` naming the reviewed revision as a full forty-character commit identifier. It never submits a pull-request review in any form, commits nothing, and pushes nothing.
+
+**Rationale.** Two failures, both reported as cards under this parent. An approving review attaches an outcome to the pull request that a **later commit inherits** without ever being read — child #937's finding, and the reason a reviewed revision must be bound in the artifact rather than implied by the branch. And a publication step that commits and pushes its own artifact **advances `HEAD`**, which invalidates the freshness check of whatever called the review — child #935's finding.
+
+An abbreviated identifier or a symbolic reference such as `HEAD` is refused at construction, because both stop meaning anything once the branch moves.
+
+**Rejected alternatives.** *An approving review on success only.* The asymmetry does not help: the carry-over problem is about what a later commit inherits, and a pass is exactly the outcome that is dangerous to inherit. *Publish the artifact as a committed document.* That is the arrangement child #935 reports; the evidence lands in the run record's `review_cycles` instead, where every later step of the run already reads.
+
+**Revisit when.** The forge offers a review object that is explicitly bound to a revision and does not transfer.
 
 ### The roster helper creates panes through the launcher, never through raw herdr calls  {#1024-roster-creates-through-the-launcher}
 

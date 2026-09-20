@@ -162,7 +162,7 @@ description. A finding without evidence is not a finding.
 literal `|` inside cells as `\|`. Then a Coverage section (suppressed count, residual risks, testing gaps)
 and a blockquote naming the typed outcome, next action, and fix order.
 
-**Programmatic / report-only output:** canonical `review_result.v1` JSON from
+**Programmatic / report-only output:** canonical `review_result.v2` JSON from
 `ReviewResult.to_json()`. A human rendering may follow with findings grouped by `autofix_class`, but it
 does not add another decision field. Programmatic mode writes zero files to reviewed code.
 
@@ -170,8 +170,8 @@ The top-level serialized contract is:
 
 ```json
 {
-  "schema": "review_result.v1",
-  "collection_operation": {"operation": "collect", "schema": "review_result.v1"},
+  "schema": "review_result.v2",
+  "collection_operation": {"operation": "collect", "schema": "review_result.v2"},
   "revision_binding": {
     "best_available_revision": "<commit>",
     "lens_revisions": {"correctness": "<commit>"}
@@ -201,55 +201,44 @@ The top-level serialized contract is:
 
 `outcome` is exactly one of `accepted`, `repairs_requested`, `cycle_cap_best_available`, or
 `review_incomplete`. It is the sole decision field. Each outcome names exactly one allowed resume
-transition; `ReviewResult.require_resume_transition()` rejects any other value. Priority, confidence,
-and the external-reviewer seat never change the outcome.
+transition; `ReviewResult.require_resume_transition()` rejects any other value. Priority and
+confidence never change the outcome.
 
-**Durable artifact** — persisted through the evidence ledger (#398, `SKILL.md` §5.3) in **interactive**
-mode rather than a bare file write: `evidence_ledger.py write --check-id code-review ...`
-content-addresses it under `docs/evidence/<saga-id>/artifacts/`. It carries the reviewed SHA, the complete
-typed result, independent-gate state, coverage, and linked issue, plan, and work-session paths. The
-ledger's generic command-line `--verdict` field stores the typed `outcome`; no `verdict` key is added to
-`review_result.v1`.
+**Durable artifact** — one `review_result.v2` entry in the run record's `review_cycles`, written by
+`review_result.py`. It carries the reviewed revision in full, the roster hash, the per-lens results
+with their thresholds and executors, the findings, the repair accounting, and the residual issue
+numbers when the cycle cap was reached. Every later step of the run reads the run record already, so
+the evidence lands where the next reader is looking rather than in a second store of its own.
 
-## Whole-diff external advisory review
+## The fingerprint, and what it deliberately excludes
 
-The optional external-reviewer seat reviews the whole revision-bound diff and may introduce findings no
-native lens raised. It is cross-vendor, request-bound, and non-scoring. Orchestrate owns the seat's
-session transport; Code Review adjudicates every returned finding before active survivors join normal
-deduplication and routing. The retired `external_only_admitted` field is ignored on load (#776).
+A finding's identity is the lifecycle catalogue's fingerprint of **path, line and category**, stable
+across every cycle of the run, so the same defect keeps one identity however many lenses report it.
 
-The managed-session claim store keeps its existing lifecycle vocabulary for wire compatibility:
-`recommended | requested | available | unavailable | declined`, `intent: second-opinion`,
-`role_kind: advisory-reviewer`, and `requested_by: human | claude`. Its bounded source records retain
-`source_finding_id`, `keep|downgrade|dismiss`, `active|dismissed`, and the cumulative `256 KiB` limit.
-These are transport and adjudication fields, not a second schema or an acceptance rule.
+Wording is **not** part of it. Two findings worded alike are not thereby the same defect, and folding
+them together on wording would merge two real problems into one repair — after which the second is
+never fixed. Two reviewers reporting the same defect produce **one** finding with the agreement
+recorded; the duplicate is kept as `duplicate-of` the survivor, visible and counted once.
 
-```json
-{
-  "reviewer_id": "external-seat-1",
-  "reviewer_vendor": "vendor-b",
-  "home_vendor": "vendor-a",
-  "request_id": "request-1",
-  "request_digest": "<digest>",
-  "reviewed_revision": "<commit>",
-  "whole_diff": true,
-  "request_bound": true,
-  "scoring_authority": false,
-  "findings": [],
-  "adjudications": [
-    {
-      "finding_id": "external-F1",
-      "decision": "keep",
-      "rationale": "The independent evidence is valid.",
-      "final_severity": "P1",
-      "final_status": "active"
-    }
-  ]
-}
-```
+## Status vocabulary
 
-`keep` preserves severity and active status. `downgrade` must select a strictly lower active severity.
-`dismiss` preserves audit severity and sets `dismissed`. Prose such as `PASS`, shell syntax, or path-like
-strings remains opaque evidence: it cannot select a route, execute, or decide the outcome. A pending
-runner result is collected with its stored handle and never relaunched; `ran-empty` or `died` maps to
-`review_incomplete` without a fabricated score or consumed cycle.
+The catalogue's eight values, and no others: `open`, `fixed-verified`, `unresolved`, `disputed`,
+`out-of-scope`, `evidence-gap`, `withdrawn`, `duplicate-of`.
+
+A withdrawn finding stays visible with its disposition — withdrawing a finding is not a successful
+repair. A repair whose evidence is insufficient is `unresolved`, never `fixed-verified`.
+
+## What was removed here, and why
+
+The whole-diff external advisory seat and its claim lifecycle are gone (issue 1001). They were a
+narrower legacy path than the operator's session-based reviewer model, and the vocabulary they
+carried — `recommended | requested | available | unavailable | declined`, `intent: second-opinion`,
+`role_kind: advisory-reviewer` — described machinery with no caller left in this skill.
+
+The `evidence_ledger.py` write is gone from this skill too. The evidence now lands in the run
+record's `review_cycles`, which is where every other step of the run already reads. The ledger module
+itself stays: it has other callers, and only this skill's call site went.
+
+Removing Work's own in-process second-opinion offer and its private dispatch, sidecar, streak and
+state modules is **issue 938**, not this card — those files are not in issue 1001's list, and nothing
+goes that a card does not name.

@@ -25,7 +25,19 @@ ENGINE_REGISTRY = SAGA / "references" / "engine-registry.yaml"
 #: differently-named equivalent.
 RETIRED_SCRIPTS = ("engine_session_runner.py", "engine_offer.py")
 
-TRANSPORT_CLAUSE = "**The operator is the transport.**"
+#: The clause itself, matched case- and punctuation-tolerantly. Document Review and Code Review
+#: state it in their own words -- issue 1026 wrote one, issue 1001's rewrite wrote the other -- and
+#: what has to agree is the rule, not the sentence. Pinning one file's exact wording onto the other
+#: would fail the next time either is edited for reasons that have nothing to do with transport.
+TRANSPORT_CLAUSE = re.compile(r"the operator is the transport", re.IGNORECASE)
+
+#: Each file's general prohibition, pinned by the phrase that carries the quantifier. Both forbid
+#: *any* script rather than a named one; they differ in how they say so, and both are recorded here
+#: so that dropping either one fails rather than silently weakening to a by-name rule.
+GENERAL_PROHIBITIONS = {
+    "doc-review": "prohibited whatever it is called",
+    "code-review": "through any saga",
+}
 
 
 def test_the_retired_scripts_really_are_absent() -> None:
@@ -47,18 +59,23 @@ def test_no_script_is_prohibited_by_name() -> None:
 
 
 def test_both_capabilities_carry_the_operator_is_the_transport_clause() -> None:
-    """Checked between the two files so they cannot drift apart."""
+    """Checked between the two files so the rule cannot drift out of one of them."""
     for skill in (DOC_REVIEW, CODE_REVIEW):
-        assert TRANSPORT_CLAUSE in skill.read_text(encoding="utf-8"), (
+        assert TRANSPORT_CLAUSE.search(skill.read_text(encoding="utf-8")), (
             f"{skill.name} is missing the standalone operator-is-the-transport clause"
         )
 
 
-def test_both_capabilities_carry_the_same_general_prohibition() -> None:
-    needle = "prohibited whatever it is called"
-    for skill in (DOC_REVIEW, CODE_REVIEW):
-        assert needle in " ".join(skill.read_text(encoding="utf-8").split()), (
-            f"{skill.name} does not state the general form of the prohibition"
+def test_both_capabilities_state_a_prohibition_that_quantifies_over_scripts() -> None:
+    """The prohibition must cover *any* script, not a list of names.
+
+    A by-name prohibition goes stale the day the named file is deleted -- it then reads as
+    satisfied whatever the code does -- and it never covered a differently-named equivalent.
+    """
+    for name, skill in (("doc-review", DOC_REVIEW), ("code-review", CODE_REVIEW)):
+        flat = " ".join(skill.read_text(encoding="utf-8").split())
+        assert GENERAL_PROHIBITIONS[name] in flat, (
+            f"{skill.name} no longer states the general form of the prohibition"
         )
 
 

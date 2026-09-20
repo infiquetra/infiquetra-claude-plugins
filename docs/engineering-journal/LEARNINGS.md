@@ -33,6 +33,41 @@
 **Mechanism.** In a plugin repository a script has two kinds of caller: Python that imports it, and a skill or command whose Markdown instructs an agent to execute it. Only the first appears in an import grep, and the second fails later and less legibly — the agent runs a command that is not there, mid-run, with no import error to read.
 
 **Generalizable rule.** Before removing a script from a plugin, scan for every syntax that reaches it — the import, the `spec_from_file_location`, the path expression, and the command line in Markdown — and make the guard that proves the removal scan all four, with a case proving the scanner fires on each.
+### An empty verification ledger means the gate reports `review_incomplete` for every review, and that is the designed state  {#1001-empty-ledger-review-incomplete}
+
+**Context.** Issue #1001 made Saga's code review consume the lens roster that `infiquetra/infiquetra-sdlc` — the lifecycle repository — generates, instead of a policy file shipped inside the plugin. The expectation going in was that reviews would start producing catalogue-backed scores.
+
+**Evidence.** `config/executor-verifications.json` at revision `5efc869f` has `"entries": []`, and that revision is also the lifecycle repository's `origin/main` — both read with `git show` after a fetch on 2026-09-19, not recalled. Running the generator against a real declaration returns `status: refused` on its `verification_presence` check and exits 1: `tools/docs/gen_review_roster.py` refuses to assign a scoring executor to a lens with no matching ledger entry.
+
+**Mechanism.** The ledger is the gate between a model producing a number and that number being allowed to establish a threshold. With no entries, no lens has a qualified scoring executor; with no qualified executor, no lens establishes a threshold; with no threshold met, the verdict function's first row fires — an unusable result is decided before any low score — and every review returns `review_incomplete`. Nothing is broken. A score from an unqualified model is not weak evidence, it is not evidence, and inventing one locally would make the plugin a policy owner again, which is the whole thing ADR-001 removes.
+
+The trap is that this reads exactly like a failure to anyone who did not know. `tests/test_review_dry_run.py::test_the_verdict_is_review_incomplete_while_the_ledger_is_empty` asserts the honest outcome, so the day the first qualification lands the assertion changes in a diff someone reads rather than the behaviour changing silently.
+
+**Generalizable rule.** When a gate depends on a qualification ledger that is empty on purpose, assert the degraded outcome as the expected one and say why in the same place — otherwise the first reader diagnoses the design as a bug.
+
+### Two environment variables named the same lifecycle checkout, and only one was read by code  {#1001-two-sdlc-env-vars}
+
+**Context.** `review_roster.py` needed to find the sibling `infiquetra-sdlc` checkout in order to invoke its roster generator.
+
+**Evidence.** `plugins/fleet-core/scripts/fleet_commons/staffing.py:59` sets `SDLC_PATH_ENV = "INFIQUETRA_SDLC_PATH"`, and mission-control's README, its card-validator test and its project-mapping override read the same name. Sixteen role prompts under `plugins/agent-launcher/roles/` — the lens reviewer's at line 59, and fifteen siblings at the same position in their files — tell the session to read `INFIQUETRA_SDLC_ROOT` instead. Both landed on `parent/1018`, from issues #1021 and #1022.
+
+**Mechanism.** Setting one does not set the other. A review whose controller resolved the checkout through `_PATH` would brief lens sessions that look for `_ROOT`, find nothing, and stop — and the failure would present as "the lifecycle repository is missing" on a machine where it is plainly present. Neither half is wrong in isolation; the divergence is only visible when something reads both, which nothing did until the roster resolver had to.
+
+The repair here is deliberately not a rename: `plugins/agent-launcher/roles/` is issue #1022's file and issue #1001 names none of it. `review_roster.py` reads `_PATH` first, accepts `_ROOT` second, and **reports which of the two it used**, so the mismatch surfaces as a sentence in the provenance rather than as an empty resolution.
+
+**Generalizable rule.** When two cards in one release each need to name the same external thing, the name is a shared contract — and prose that names it is as load-bearing as code that reads it. A resolver that accepts both and reports which it used converts a silent failure into a readable one.
+
+### A consumer that reads a sibling's return shape needs one test against the real function, not a fake  {#1001-fake-agreed-with-the-bug}
+
+**Context.** `admission.py` fills the run's thirteen configuration parameters. `per_lens_score_threshold` was `unset` after every run, including a real one against a real lifecycle checkout.
+
+**Evidence.** `staffing.lens_catalogue()` returns a **pair**: a mapping keyed by lens identifier, and a version string. The consumer at `plugins/saga/scripts/admission.py:339` unpacked the pair, then read `catalogue.get("lenses")` and `catalogue.get("strictness_ladder")` off the mapping — keys that shape does not have. Both returned `None` for every checkout, so the parameter could not be filled by any path. `tests/test_admission.py` passed anyway: its `_fake_staffing` returned `{"lenses": ..., "strictness_ladder": ...}`, the catalogue **document**, which is the shape the consumer wrongly assumed.
+
+**Mechanism.** The fake agreed with the bug. Every assertion about the consumer held, because both sides of the test shared one wrong belief about the producer, and nothing in the suite ever compared that belief to the producer itself. The failure mode is specific to a fake written from the consumer's reading rather than from the producer's signature — which is the easy way to write one.
+
+The repair pins the real function's shape directly (`test_real_lens_catalogue_returns_a_pair_keyed_by_lens_identifier`), skipping when fleet-core is not in the tree, and corrects the fake to match. Admission now fills 13 of 13. The defect originates in issue #1023, which owns `lens_catalogue`.
+
+**Generalizable rule.** A fake encodes a belief about the thing it replaces. Where that belief is the thing under test — a consumer reading a sibling's return shape — one test must assert against the real function, or the suite proves only that the consumer is self-consistent.
 
 ### There is no `herdr agent close`, so "close the agent" is always a tab operation with an ownership question attached  {#1024-no-herdr-agent-close}
 

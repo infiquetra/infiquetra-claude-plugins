@@ -46,16 +46,23 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.165.0"  # 0.165.0: /plan ends by dispatching the plan
+    assert plugin_json["version"] == "0.166.0"  # 0.166.0: /plan ends by dispatching the plan
     # review to the Plan Reviewer and looping on repair until no P0 or P1 remains, the /work floor
     # gate stays blocking on the operator's one-word override alone, the Workflow-backend and
     # team-execution prose moves to references/workflow-backend.md, and team_emitter.py and
-    # spec_table.py are removed (issue #1026). Bumped from 0.164.0, the saga version on
+    # spec_table.py are removed (issue #1026). Bumped from 0.165.0, the saga version on
+    # origin/parent/1018 at 542e9810: issue #1001 took 0.165.0 while this card's suite ran, so this
+    # card renumbered above it rather than shipping a colliding version.
+    # Predecessor 0.165.0: code review becomes a policy-free
+    # executor -- it reads the lens declaration from the run record, resolves review_roster.v1 with
+    # the lifecycle repository's own generator, computes the verdict from that catalogue's
+    # strictness ladder, writes review_result.v2 into the run record, and publishes exactly one
+    # pull-request comment and never an approving review. The plugin's private fourteen-lens
+    # roster is deleted (issue #1001). Bumped from 0.164.0, the saga version on
     # origin/parent/1018 at 4e951f0e.
     # Predecessor 0.164.0: /work and /code-review stand role and
     # lens-reviewer sessions up through agent-launcher's roster helper, which closes only the panes
-    # the run record says it created (issue #1024). Bumped from 0.163.0, the saga version on
-    # origin/parent/1018 at 0fa2ea32.
+    # the run record says it created (issue #1024).
     # Predecessor 0.163.0: one JSON run record per issue,
     # outside every worktree and addressed by an absolute path, plus the admission questionnaire
     # asked once at the front of /plan issue (issue #1023). Bumped from 0.161.0, the saga version
@@ -525,7 +532,7 @@ def test_code_review_engine_merge_contract() -> None:
     skill_doc = _read(review / "SKILL.md")
     built_doc = _read(review / "references" / "built-vs-planned.md")
     schema_doc = _read(review / "references" / "findings-schema.md")
-    lens_doc = _read(review / "references" / "lens-catalog.md")
+    lens_doc = _read(review / "references" / "lens-execution.md")
 
     # built-vs-planned.md: all 5 plan-completion states + all 3 verification modes.
     # E1 used the hyphenated "NOT-DONE" token (not "NOT DONE").
@@ -542,8 +549,10 @@ def test_code_review_engine_merge_contract() -> None:
     for owner in ("review-fixer", "downstream-resolver", "human", "release"):
         assert owner in schema_doc
 
-    # lens-catalog.md: the 4 always-on lenses + >= 4 conditional lenses, incl.
-    # the distinct deploy/migration-verification lens (never folded away).
+    # lens-execution.md: the 4 always-on lenses + >= 4 conditional lenses. The lens
+    # SEMANTICS now live in the lifecycle repository's config/lens-catalogue.json;
+    # what this file must still name is which lenses exist and how execution treats
+    # them, so the vocabulary check stands.
     for always_on in ("correctness", "security", "testing", "maintainability"):
         assert always_on in lens_doc
     conditional = (
@@ -552,10 +561,9 @@ def test_code_review_engine_merge_contract() -> None:
         "performance",
         "api-contract",
         "adversarial",
-        "agent-native",
+        "agent-usability",
     )
     assert sum(1 for lens in conditional if lens in lens_doc) >= 4
-    assert "deploy/migration-verification" in lens_doc
 
     # SKILL.md: gate-only negatives under the W18 publication lane (does not mutate reviewed
     # source / commit an implementation change / implement fixes / open or update a PR / file).
@@ -578,20 +586,27 @@ def test_code_review_engine_merge_contract() -> None:
         "does **NOT** file",
     ):
         assert negative in flat_skill
-    # Saga literals: an append-only review-track write with both flags.
-    assert "saga.py" in skill_doc
-    assert "--review-paths" in skill_doc
-    assert "--orchestration-mode" in skill_doc
-    # Own-dir durable artifact path (evidence ledger, #398) (NOT docs/reviews/).
-    assert "docs/evidence/" in skill_doc
-    assert "docs/reviews/" in skill_doc and "handoff/sdlc classifiers" in skill_doc
+    # The durable surface, retargeted by issue 1001: the evidence lands in the run
+    # record's review_cycles rather than an evidence-ledger artifact under docs/, and
+    # the review writes no saga tick of its own. Same strictness, new target.
+    assert "review_result.v2" in skill_doc
+    assert "review_cycles" in skill_doc
+    assert "run_record.py" in skill_doc
+    assert "docs/evidence/" not in skill_doc, (
+        "the evidence-ledger write was removed from this skill by issue 1001; the "
+        "ledger module stays for its other callers, but this call site is gone"
+    )
+    assert "--review-paths" not in skill_doc, (
+        "the saga review-track tick was removed by issue 1001; the run record is the "
+        "one place a later step reads"
+    )
     # Operator-choice citation at the plugin-root path + the 3 backend enums.
     assert "references/operator-choice.md" in skill_doc
     for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
         assert backend in skill_doc
 
     # Blunt thin-port tripwire: each of the 4 reference files carries real content.
-    for ref in ("lens-catalog.md", "findings-schema.md", "validator.md", "built-vs-planned.md"):
+    for ref in ("lens-execution.md", "findings-schema.md", "validator.md", "built-vs-planned.md"):
         ref_path = review / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60
@@ -924,41 +939,16 @@ def test_work_second_opinion_trigger_contract_is_operator_confirmed_and_non_gati
         assert boundary in corpus
 
 
-def test_review_second_opinion_contracts_preserve_native_findings_and_gate_authority() -> None:
-    """Issue #394 gives each review surface an exact optional advisory block, never a shared schema."""
-    code_review = PLUGIN_ROOT / "skills" / "code-review"
-    doc_review = PLUGIN_ROOT / "skills" / "doc-review"
-    code_skill = _read(code_review / "SKILL.md")
-    schema = _read(code_review / "references" / "findings-schema.md")
-    doc_skill = _read(doc_review / "SKILL.md")
+def test_document_review_second_opinion_contract_is_intact() -> None:
+    """Issue #394 gave each review surface its own advisory block, never a shared schema.
 
-    for token in (
-        "Second-opinion point-out (after Stage A numbering)",
-        "stable `#N`",
-        "external_opinion.state=recommended",
-        "Review complete",
-        "keep`/`downgrade`/`dismiss",
-        "available`/`apply",
-        "Claude-owned final severity/status",
-    ):
-        assert token in code_skill
-    for token in (
-        "recommended | requested | available | unavailable | declined",
-        "intent: second-opinion",
-        "role_kind: advisory-reviewer",
-        "requested_by: human | claude",
-        "source_finding_id",
-        "keep|downgrade|dismiss",
-        "active|dismissed",
-        "256 KiB",
-    ):
-        assert token in schema
-    # The path string `../code-review/references/findings-schema.md` used to be asserted here.
-    # That assertion was the defect card 931 names: it checked a *string*, so it passed for
-    # months while the reference was broken -- the file exists and defines neither
-    # `external_opinion` nor `claude_adjudication`. Issue 1026 removed the dangling reference,
-    # and the replacement guard resolves the target and reads it:
-    # tests/test_doc_review_transport.py::test_every_cross_reference_target_defines_what_is_cited.
+    Issue #1001's rewrite removed Code Review's half along with the prose it pinned -- none of
+    its seven tokens survives the rewrite -- so only Document Review's half is asserted here.
+    The negative at the end is issue #1026's card-931 repair: the reference that used to be
+    asserted as a *path string* pointed at a file defining neither name it cited.
+    """
+    doc_skill = _read(PLUGIN_ROOT / "skills" / "doc-review" / "SKILL.md")
+
     for token in (
         "stable `D1..Dn`",
         "`D<N>`",

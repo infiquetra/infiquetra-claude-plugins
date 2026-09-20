@@ -109,8 +109,10 @@ def test_off_host_downgrades_with_a_one_line_note(lifecycle: ModuleType) -> None
     )
     assert result["downgraded"] is True
     assert result["from"] == "cc-workflows-ultracode"
-    # Recompiled DOWN to a host-portable tier (not the dynamic-workflow tier).
-    assert result["to"] == "team-execution"
+    # Recompiled DOWN to a host-portable tier (not the dynamic-workflow tier). That was
+    # team-execution until issue #1030 archived the plugin; the ladder is two rungs now, so the
+    # only host-portable tier -- and therefore the landing -- is inline.
+    assert result["to"] == "inline"
     assert result["to"] != "cc-workflows-ultracode"
     # The downgrade is SURFACED: a non-empty, single-line note.
     assert result["note"]
@@ -140,18 +142,6 @@ def test_inline_fallback_is_honored_when_requested(lifecycle: ModuleType) -> Non
     assert result["to"] == "inline"
 
 
-def test_team_execution_tier_is_host_portable_no_downgrade(lifecycle: ModuleType) -> None:
-    """team-execution runs on any host, so an off-host resume of a team-execution plan is
-    NOT a downgrade — it runs as authored."""
-    result = lifecycle.recheck_orchestration_capability(
-        orchestration_mode="team-execution",
-        workflow_available=False,
-    )
-    assert result["downgraded"] is False
-    assert result["to"] == "team-execution"
-    assert result["note"] == ""
-
-
 def test_inline_tier_off_host_is_a_noop(lifecycle: ModuleType) -> None:
     result = lifecycle.recheck_orchestration_capability(
         orchestration_mode="inline",
@@ -173,6 +163,8 @@ def test_empty_or_unknown_mode_floors_to_inline_never_errors(lifecycle: ModuleTy
         assert result["to"]  # never empty — never "run nothing"
 
 
+# "team-execution" stays in this list on purpose: it is now an unrecognized value, and the case
+# is precisely that no mode -- known, archived or nonsense -- lands on an unrunnable tier.
 @pytest.mark.parametrize("mode", ["cc-workflows-ultracode", "team-execution", "inline", "", "x"])
 @pytest.mark.parametrize("available", [True, False])
 def test_recheck_never_errors_and_always_returns_a_runnable_tier(
@@ -201,7 +193,7 @@ def test_recheck_cli_emits_json(lifecycle: ModuleType, capsys: pytest.CaptureFix
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["downgraded"] is True
-    assert payload["to"] == "team-execution"
+    assert payload["to"] == "inline"
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +231,7 @@ def test_recompile_to_team_tier_floors_to_the_runnable_baseline(es: ModuleType) 
     ``## Team Structure`` heading of a removed emitter would pin the removal, not the contract.
     """
     spec = es.ExecutionSpec.from_dict(_spec_dict())
-    out = es.recompile_for_tier(spec, "team-execution")
+    out = es.recompile_for_tier(spec, "inline")
     assert out.strip()  # runnable, never empty (AE3)
     assert "Team Structure" not in out  # the removed emitter's format must not come back
     assert "await agent(" not in out  # not the workflow harness either
@@ -304,12 +296,12 @@ def test_baseline_cli_writes_a_file(es: ModuleType, tmp_path: Path) -> None:
 
 def test_saga_records_the_downgrade_note(tmp_path: Path) -> None:
     saga_mod = _load("saga.py")
-    note = "Downgraded cc-workflows-ultracode -> team-execution: Workflow tool unavailable."
+    note = "Downgraded cc-workflows-ultracode -> inline: Workflow tool unavailable."
     saga = saga_mod.Saga(
         saga_id="task-degrade",
         kind="task",
         id="degrade",
-        orchestration_mode="team-execution",
+        orchestration_mode="inline",
         orchestration_downgrade=note,
     )
     text = saga_mod.render_envelope(saga)
@@ -664,15 +656,15 @@ def test_genuine_downgrade_direction_with_a_real_note_succeeds(
             "--id",
             "real-degrade",
             "--orchestration-mode",
-            "team-execution",
+            "inline",
             "--orchestration-operator-choice",
             "cc-workflows-ultracode",
             "--orchestration-downgrade",
-            "Workflow tool unavailable; recompiled to team-execution.",
+            "Workflow tool unavailable; recompiled to inline.",
         ]
     )
     assert rc == 0
     restored = saga_mod.restore(tmp_path, "task-real-degrade")
     assert restored is not None
-    assert restored.orchestration_mode == "team-execution"
+    assert restored.orchestration_mode == "inline"
     assert restored.orchestration_operator_choice == "cc-workflows-ultracode"

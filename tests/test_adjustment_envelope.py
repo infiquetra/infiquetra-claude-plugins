@@ -266,18 +266,6 @@ def test_andon_blocks_next_wave(repo: Path) -> None:
     assert "andon_halt" in surfaced and "reviewer" in surfaced  # operator-surface HALT record
 
 
-def test_andon_does_not_weaken_team_execution_iteration_caps() -> None:
-    # R9: the andon-cord is an ORTHOGONAL halt path — it must not remove or relax the existing
-    # per-loop iteration caps. Review's cap is executable policy; Team Execution points to its
-    # terminal result instead of restating the numeric limit.
-    consensus = (TEAM_REFS / "consensus-protocol.md").read_text(encoding="utf-8")
-    validator = (TEAM_REFS / "validator-execution-order.md").read_text(encoding="utf-8")
-    assert REVIEW_CONSENSUS.MAX_REVIEW_CYCLES == 3
-    assert consensus.count("**Cycle-cap termination:**") == 1
-    assert "`cycle_cap_best_available`, stop review\nattempts" in consensus
-    assert "maximum of 3 remediation loops" in validator  # the re-run loop cap survives
-
-
 def test_andon_writer_helper_rejects_non_worker_writer(tmp_path: Path) -> None:
     p = tmp_path / "env.json"
     with pytest.raises(AE.EnvelopeError, match="andon writer must be worker/reviewer"):

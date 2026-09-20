@@ -101,7 +101,7 @@ ORCHESTRATION_MODE_LABELS: dict[str, str] = {
     # Kept deliberately after issue #1030 archived the plugin: a persisted saga can still carry
     # this string, and a reader that fell back to the raw enum would show a worse label for a
     # historical tick than the one it was written with. The map is additive and never gates a choice.
-    "team-execution": "team execution (archived)",
+    "team-execution": "team execution",
     "inline": "inline",
 }
 
@@ -715,11 +715,16 @@ class SagaTickIndexWriteError(OSError):
 
 
 def _orchestration_rank(mode: str) -> int | None:
-    """Tier rank of an orchestration mode (inline < team-execution < cc-workflows-ultracode).
+    """Tier rank of an orchestration mode (inline < cc-workflows-ultracode).
 
     Returns the index in ``ORCHESTRATION_MODES`` (a higher index is a richer/costlier tier),
     or ``None`` for an unrecognized value (the guard then can't reason about direction and is
     lenient).
+
+    That leniency is what keeps a saga written before issue #1030 readable: ``team-execution`` was
+    the middle rung until that card archived the plugin, and a persisted tick still carrying the
+    string ranks ``None`` rather than raising. The value is refused at the command line, where a
+    new choice is made, and accepted on the way back in, where history is only being read.
     """
     try:
         return ORCHESTRATION_MODES.index(mode)

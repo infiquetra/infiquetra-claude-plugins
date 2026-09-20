@@ -366,17 +366,6 @@ def _tier_token_drift(text: str) -> list[str]:
     return bad
 
 
-def test_tier_catalog_check() -> None:
-    """AC8 (team-execution half): no unspaced `model/effort` token in the team-execution
-    worker table drifts from the vocabulary. That table uses unspaced tokens (`opus/high`);
-    the /plan table is spaced and is guarded by render-equality instead — see
-    test_plan_table_render_synced (and test_tier_resolver.py::test_skill_registry_sync).
-    A spaced regex here would false-positive on prose ("high / low"), so the two tables use
-    the guard each fits."""
-    drift = sorted(set(_tier_token_drift(TEAM_SKILL_MD.read_text(encoding="utf-8"))))
-    assert drift == [], f"team-execution SKILL.md tier tokens drift from the palette: {drift}"
-
-
 def test_plan_table_render_synced() -> None:
     """AC8 (/plan half): the /plan tier table equals a fresh render from staffing.json, so
     a spaced-token drift (`opus / superhigh`) OR removal of the generated block reds this —

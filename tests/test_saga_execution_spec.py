@@ -1251,7 +1251,6 @@ def test_advisory_consensus_defaults_to_inline_with_alternatives() -> None:
     result = recommend_execution_backend(needs_consensus=True, consensus_is_gated=False)
 
     assert result["recommended"] == "inline"
-    assert "team-execution" in result["alternatives"]
     assert "cc-workflows-ultracode" in result["alternatives"]
 
 

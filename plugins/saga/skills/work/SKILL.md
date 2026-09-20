@@ -304,7 +304,7 @@ The offer renders from `references/operator-choice.md` as narrowed by issue #808
 the runnable recommender call, and the rules that keep a Claude Code Workflow behind an explicit
 invocation are in [`references/workflow-backend.md`](../../references/workflow-backend.md).
 
-**`inline` is the default and the only recommended backend.** The offer was `inline` or
+**The default offer is `inline`, and it is the only recommended backend.** The offer was `inline` or
 `team-execution` until issue #1030 archived that plugin; what it provided -- reviewer consensus and
 named scanners -- is now the lensed code review and the build loop's mechanical baseline, which an
 inline run already performs. `cc-workflows-ultracode` is never a default or automatic backend and

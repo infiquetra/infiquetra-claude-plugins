@@ -40,7 +40,7 @@ def test_infiquetra_deploy_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "deploy"
     assert (
-        plugin_json["version"] == "0.2.1"
+        plugin_json["version"] == "0.2.2"
     )  # house-style presentation contract on release-orchestrator (#704)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/deploy"

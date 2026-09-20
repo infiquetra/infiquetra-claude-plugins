@@ -395,7 +395,7 @@ def test_plan_engine_merge_contract() -> None:
 
     # Operator-choice citation: the doc-only decision contract plus the 3 backend enum strings.
     assert "references/operator-choice.md" in skill_doc
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+    for backend in ("inline", "cc-workflows-ultracode"):
         assert backend in skill_doc
 
     # Deepening / confidence pass: Phase 4 conditional strengthening, with the rubric in the ref.
@@ -491,7 +491,7 @@ def test_code_review_engine_merge_contract() -> None:
     )
     # Operator-choice citation at the plugin-root path + the 3 backend enums.
     assert "references/operator-choice.md" in skill_doc
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+    for backend in ("inline", "cc-workflows-ultracode"):
         assert backend in skill_doc
 
     # Blunt thin-port tripwire: each of the 4 reference files carries real content.
@@ -607,7 +607,7 @@ def test_founder_review_engine_port_contract() -> None:
 
     # Operator-choice citation at the plugin-root path + the 3 backend enums.
     assert "references/operator-choice.md" in skill_doc
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+    for backend in ("inline", "cc-workflows-ultracode"):
         assert backend in skill_doc
 
     # NO SAGA WRITE (the mechanism that separates /founder-review from /code-review):
@@ -744,7 +744,8 @@ def test_plan_and_work_cc_workflows_explicit_invocation_only() -> None:
     """#808 NARROW: Plan and Work cannot silently select a Claude Code Workflow.
 
     Instruction-text contract (runtime helper unchanged this unit): the default
-    Saga offer is inline | team-execution; cc-workflows-ultracode is entered only
+    Saga offer is inline only since issue #1030 archived team-execution;
+    cc-workflows-ultracode is entered only
     by explicit invocation, never as a default/automatic or interchangeable backend.
     """
     plan = _read(PLUGIN_ROOT / "skills" / "plan" / "SKILL.md")
@@ -1456,7 +1457,7 @@ def test_retro_engine_merge_contract() -> None:
     # --- MECHANISM FLOOR 8: the operator-choice offer — a big multi-file refactor is OFFERED with a
     # backend, never auto-run (references operator-choice.md + the 3 backend enums). ---
     assert "operator-choice.md" in corpus, "the operator-choice contract must be cited by path"
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+    for backend in ("inline", "cc-workflows-ultracode"):
         assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
     # generic-agent fan-out for non-mechanical work; the agents/ dir now exists but must contain
     # ONLY the mechanical-executor (the cheap-tier Bash-only agent added by U14/R16).
@@ -1819,7 +1820,7 @@ def test_investigate_engine_merge_contract() -> None:
     assert "../../../references/operator-choice.md" in corpus, (
         "the refs must cite operator-choice.md at the deeper depth (../../../references/)"
     )
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
+    for backend in ("inline", "cc-workflows-ultracode"):
         assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
     assert re.search(r">5 files|>5-file|blast-radius", corpus, re.IGNORECASE), (
         "the >5-file blast-radius FLAG must be present (a FLAG, not the inline-vs-route discriminator)"
@@ -2145,7 +2146,7 @@ def test_operator_choice_framework_is_documented_and_cited() -> None:
     operator_choice_path = PLUGIN_ROOT / "references" / "operator-choice.md"
     assert operator_choice_path.exists()
     operator_choice_doc = _read(operator_choice_path)
-    for enum_value in ("inline", "team-execution", "cc-workflows-ultracode"):
+    for enum_value in ("inline", "cc-workflows-ultracode"):
         assert enum_value in operator_choice_doc
 
     # /loop cited this reference too; issue 1030 removed that skill, so /work is the one
@@ -2190,21 +2191,23 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
     """Unit-level contract for the backend helper under the C5 narrow policy.
 
     Precedence is the lean operator-choice section 3.3 ladder: a size/risk OR gated consensus
-    signal -> team-execution; neither -> inline. Under operator ruling C5 (issue #840),
+    signal -> the escalating rationale; neither -> the plain one. Since issue #1030 archived
+    team-execution both recommend `inline`: the signal selects what the tick records, not a
+    different backend. Under operator ruling C5 (issue #840),
     broad independent fan-out without elevated risk never recommends cc-workflows-ultracode
     (default remains inline with ultracode as an alternative).
     """
     lifecycle = _load_module("lifecycle_state.py")
 
-    # Precedence: a size/risk trigger (file_count >= 8) -> team-execution. The helper
+    # Precedence: a size/risk trigger (file_count >= 8) escalates the rationale. The helper
     # reuses should_offer_team_execution's thresholds, so the >= 8 boundary must carry.
     risky_by_size = lifecycle.recommend_execution_backend(file_count=9)
-    assert risky_by_size["recommended"] == "team-execution"
+    assert risky_by_size["recommended"] == "inline"
     risky_by_security = lifecycle.recommend_execution_backend(has_security=True)
-    assert risky_by_security["recommended"] == "team-execution"
+    assert risky_by_security["recommended"] == "inline"
 
     # Reuses should_offer_team_execution thresholds: file_count == 8 trips, 7 does not.
-    assert lifecycle.recommend_execution_backend(file_count=8)["recommended"] == "team-execution"
+    assert lifecycle.recommend_execution_backend(file_count=8)["recommended"] == "inline"
     assert lifecycle.recommend_execution_backend(file_count=7)["recommended"] == "inline"
 
     # Under C5: broad independent fan-out defaults to inline with ultracode as an alternative.
@@ -2212,24 +2215,25 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
     assert fanout["recommended"] == "inline"
     assert "cc-workflows-ultracode" in fanout["alternatives"]
 
-    # An elevated-risk signal routes to team-execution.
+    # An elevated-risk signal escalates the rationale; the backend stays inline.
     risky_fanout = lifecycle.recommend_execution_backend(
         broad_independent_fanout=True, has_infra=True
     )
-    assert risky_fanout["recommended"] == "team-execution"
+    assert risky_fanout["recommended"] == "inline"
 
     # Precedence: neither signal -> inline.
     assert lifecycle.recommend_execution_backend()["recommended"] == "inline"
 
     # OVERLAP: consensus (-> team wins precedence) AND broad fan-out (-> ultracode reachable).
-    # Recommended is team-execution, but cc-workflows-ultracode MUST still be an alternative.
+    # Recommended is inline, and cc-workflows-ultracode MUST still be enumerated as an
+    # alternative -- never dropped silently, which is the property this case exists for.
     overlap = lifecycle.recommend_execution_backend(
         broad_independent_fanout=True, needs_consensus=True
     )
-    assert overlap["recommended"] == "team-execution"
+    assert overlap["recommended"] == "inline"
     assert "cc-workflows-ultracode" in overlap["alternatives"]
     # The recommended backend is never echoed back into its own alternatives.
-    assert "team-execution" not in overlap["alternatives"]
+    assert "inline" not in overlap["alternatives"]
 
     # KTD4: the Workflow tool unavailable -> cc-workflows-ultracode is dropped from alternatives
     # (no longer reachable) but ENUMERATED in backends with status="unavailable" (never a silent
@@ -2241,7 +2245,6 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
     assert "cc-workflows-ultracode" not in no_workflow["alternatives"]
     assert [b["backend"] for b in no_workflow["backends"]] == [
         "inline",
-        "team-execution",
         "cc-workflows-ultracode",
     ]
     ultra_entry = next(
@@ -2259,7 +2262,7 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
     # never unavailable) and omit_ultracode is gone.
     available = lifecycle.recommend_execution_backend()
     assert "omit_ultracode" not in available
-    assert len(available["backends"]) == 3
+    assert len(available["backends"]) == 2
     available_ultra = next(
         b for b in available["backends"] if b["backend"] == "cc-workflows-ultracode"
     )
@@ -2279,12 +2282,12 @@ def test_lifecycle_state_cli_subcommands(capsys: pytest.CaptureFixture[str]) -> 
     # recommend-backend subcommand -> JSON on stdout, parsed and asserted.
     assert lifecycle.main(["recommend-backend", "--file-count", "9"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["recommended"] == "team-execution"
+    assert payload["recommended"] == "inline"
 
     # The overlap escalation survives the CLI surface end-to-end.
     assert lifecycle.main(["recommend-backend", "--broad-fanout", "--needs-consensus"]) == 0
     overlap = json.loads(capsys.readouterr().out)
-    assert overlap["recommended"] == "team-execution"
+    assert overlap["recommended"] == "inline"
     assert "cc-workflows-ultracode" in overlap["alternatives"]
 
     # --no-workflow flows through to the ultracode backend's "unavailable" status via the CLI,
@@ -2323,7 +2326,7 @@ def test_recommend_execution_backend_adversarial_confidence() -> None:
     assert "cc-workflows-ultracode" in result["alternatives"]
 
     # The risk gate routes to team-execution.
-    assert rec(adversarial_confidence=True, has_security=True)["recommended"] == "team-execution"
+    assert rec(adversarial_confidence=True, has_security=True)["recommended"] == "inline"
 
     # Capability gate: with the Workflow tool absent it marks ultracode unavailable.
     gated = rec(adversarial_confidence=True, workflow_available=False)
@@ -2337,7 +2340,7 @@ def test_recommend_execution_backend_adversarial_confidence() -> None:
     # Overlap: adversarial_confidence AND needs_consensus (team wins)
     # still lists ultracode as a one-keystroke alternative.
     overlap = rec(adversarial_confidence=True, needs_consensus=True)
-    assert overlap["recommended"] == "team-execution"
+    assert overlap["recommended"] == "inline"
     assert "cc-workflows-ultracode" in overlap["alternatives"]
 
 
@@ -2355,13 +2358,12 @@ def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
     # AE2 — GATED consensus (the default) -> team-execution. A bare
     # needs_consensus=True keeps the legacy behavior (default consensus_is_gated=True).
     gated = rec(needs_consensus=True)
-    assert gated["recommended"] == "team-execution"
-    assert rec(needs_consensus=True, consensus_is_gated=True)["recommended"] == "team-execution"
+    assert gated["recommended"] == "inline"
+    assert rec(needs_consensus=True, consensus_is_gated=True)["recommended"] == "inline"
 
     # AE1 — ADVISORY consensus, no risk -> inline (under C5, never ultracode recommended).
     advisory = rec(needs_consensus=True, consensus_is_gated=False)
     assert advisory["recommended"] == "inline"
-    assert "team-execution" in advisory["alternatives"]
     assert "cc-workflows-ultracode" in advisory["alternatives"]
 
     # consensus_is_gated is INERT when there is no consensus signal at all:
@@ -2372,7 +2374,7 @@ def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
     # Advisory consensus with elevated-risk code surface routes to team-execution.
     assert (
         rec(needs_consensus=True, consensus_is_gated=False, has_security=True)["recommended"]
-        == "team-execution"
+        == "inline"
     )
 
     # Advisory consensus rides the capability gate: absent the Workflow tool
@@ -2389,7 +2391,7 @@ def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
     # OVERLAP — gated consensus AND broad fan-out: team wins precedence, but
     # cc-workflows-ultracode is still listed as a one-keystroke escalation.
     overlap = rec(needs_consensus=True, consensus_is_gated=True, broad_independent_fanout=True)
-    assert overlap["recommended"] == "team-execution"
+    assert overlap["recommended"] == "inline"
     assert "cc-workflows-ultracode" in overlap["alternatives"]
     assert "team-execution" not in overlap["alternatives"]
 
@@ -2399,7 +2401,7 @@ def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
     assert "cc-workflows-ultracode" in docs_advisory["alternatives"]
     # GATED consensus survives the docs neutralizer (it is governance, not code).
     docs_gated = rec(needs_consensus=True, consensus_is_gated=True, has_code_surface=False)
-    assert docs_gated["recommended"] == "team-execution"
+    assert docs_gated["recommended"] == "inline"
 
 
 def test_recommend_backend_cli_advisory_consensus(capsys: pytest.CaptureFixture[str]) -> None:
@@ -2409,13 +2411,12 @@ def test_recommend_backend_cli_advisory_consensus(capsys: pytest.CaptureFixture[
     # Default (gated): --needs-consensus alone -> team-execution.
     assert lifecycle.main(["recommend-backend", "--needs-consensus"]) == 0
     gated = json.loads(capsys.readouterr().out)
-    assert gated["recommended"] == "team-execution"
+    assert gated["recommended"] == "inline"
 
     # --advisory-consensus leaves default as inline with both alternatives.
     assert lifecycle.main(["recommend-backend", "--needs-consensus", "--advisory-consensus"]) == 0
     advisory = json.loads(capsys.readouterr().out)
     assert advisory["recommended"] == "inline"
-    assert "team-execution" in advisory["alternatives"]
     assert "cc-workflows-ultracode" in advisory["alternatives"]
 
 
@@ -2432,7 +2433,7 @@ def test_recommend_execution_backend_docs_no_code_surface() -> None:
     rec = lifecycle.recommend_execution_backend
 
     # Default (has_code_surface=True): the size proxy still trips team-execution.
-    assert rec(file_count=12)["recommended"] == "team-execution"
+    assert rec(file_count=12)["recommended"] == "inline"
 
     # Docs: the size/sequencing proxies are voided -> inline.
     assert rec(file_count=12, has_code_surface=False)["recommended"] == "inline"
@@ -2455,8 +2456,8 @@ def test_recommend_execution_backend_docs_no_code_surface() -> None:
 
     # The output-AGNOSTIC governance signals SURVIVE the neutralizer: cross_repo
     # (ownership boundary) and needs_consensus (contested) still fire on docs.
-    assert rec(cross_repo=True, has_code_surface=False)["recommended"] == "team-execution"
-    assert rec(needs_consensus=True, has_code_surface=False)["recommended"] == "team-execution"
+    assert rec(cross_repo=True, has_code_surface=False)["recommended"] == "inline"
+    assert rec(needs_consensus=True, has_code_surface=False)["recommended"] == "inline"
 
     # Overlap still lists ultracode: docs breadth + consensus -> team recommended,
     # ultracode an alternative.
@@ -2466,7 +2467,7 @@ def test_recommend_execution_backend_docs_no_code_surface() -> None:
         needs_consensus=True,
         has_code_surface=False,
     )
-    assert overlap["recommended"] == "team-execution"
+    assert overlap["recommended"] == "inline"
     assert "cc-workflows-ultracode" in overlap["alternatives"]
 
 
@@ -2488,7 +2489,7 @@ def test_recommend_backend_cli_new_flags(capsys: pytest.CaptureFixture[str]) -> 
     # --no-code-surface keeps cross_repo live (the ownership-boundary signal).
     assert lifecycle.main(["recommend-backend", "--cross-repo", "--no-code-surface"]) == 0
     cross = json.loads(capsys.readouterr().out)
-    assert cross["recommended"] == "team-execution"
+    assert cross["recommended"] == "inline"
 
 
 def test_recommend_backend_release_surface_subtraction() -> None:
@@ -2505,11 +2506,11 @@ def test_recommend_backend_release_surface_subtraction() -> None:
     # #526-shape regression: 9 touched files, 6 of them release bookkeeping -> 3 functional -> inline.
     assert rec(file_count=9, release_surface_file_count=6)["recommended"] == "inline"
     # Without the subtraction the SAME raw count still trips team-execution (boundary preserved).
-    assert rec(file_count=9, release_surface_file_count=0)["recommended"] == "team-execution"
+    assert rec(file_count=9, release_surface_file_count=0)["recommended"] == "inline"
     # 8 genuinely-functional files still trips even with bookkeeping on top.
-    assert rec(file_count=14, release_surface_file_count=6)["recommended"] == "team-execution"
+    assert rec(file_count=14, release_surface_file_count=6)["recommended"] == "inline"
     # Exactly-at-boundary functional count (8) trips; one below (7) does not.
-    assert rec(file_count=10, release_surface_file_count=2)["recommended"] == "team-execution"
+    assert rec(file_count=10, release_surface_file_count=2)["recommended"] == "inline"
     assert rec(file_count=9, release_surface_file_count=2)["recommended"] == "inline"
     # should_offer_team_execution carries the same subtraction directly.
     assert (
@@ -2565,8 +2566,8 @@ def test_recommend_backend_workflow_shapes() -> None:
         rec(workflow_shapes=["research", "bogus"])
 
     # RISK PRECEDENCE: an elevated-risk code surface routes a shape job to team-execution.
-    assert rec(workflow_shapes=["migrate"], has_infra=True)["recommended"] == "team-execution"
-    assert rec(workflow_shapes=["review"], has_security=True)["recommended"] == "team-execution"
+    assert rec(workflow_shapes=["migrate"], has_infra=True)["recommended"] == "inline"
+    assert rec(workflow_shapes=["review"], has_security=True)["recommended"] == "inline"
 
     # Capability gate: absent the Workflow tool a shape job degrades to inline with ultracode unavailable.
     gated = rec(workflow_shapes=["design"], workflow_available=False)
@@ -2618,11 +2619,14 @@ def test_recommend_backend_workflow_availability_provenance() -> None:
 
 
 def test_recommend_backend_full_enumeration() -> None:
-    """KTD4 (R4): backends always enumerates all three; omit_ultracode is deleted.
+    """KTD4 (R4): backends always enumerates every backend; omit_ultracode is deleted.
 
-    Every offer carries a fixed-order {backend, status, note} list for inline / team-execution /
-    cc-workflows-ultracode. Exactly one is recommended; reachable non-winners are alternative; an
-    unreachable ultracode is unavailable. Under C5, ultracode is never recommended.
+    Every offer carries a fixed-order {backend, status, note} list. It was three entries -- inline
+    / team-execution / cc-workflows-ultracode -- until issue #1030 archived the middle one, and is
+    two now. Exactly one is recommended; reachable non-winners are alternative; an unreachable
+    ultracode is unavailable. Under C5, ultracode is never recommended, so with team-execution gone
+    `inline` is the only value that is ever recommended -- and the enumeration property is the one
+    still worth pinning: nothing is dropped silently, whatever its status.
     """
     lifecycle = _load_module("lifecycle_state.py")
     rec = lifecycle.recommend_execution_backend
@@ -2634,19 +2638,18 @@ def test_recommend_backend_full_enumeration() -> None:
     inline = rec()
     assert [b["backend"] for b in inline["backends"]] == [
         "inline",
-        "team-execution",
         "cc-workflows-ultracode",
     ]
     assert "omit_ultracode" not in inline
     assert _statuses(inline) == {
         "inline": "recommended",
-        "team-execution": "alternative",
         "cc-workflows-ultracode": "alternative",
     }
 
-    # team-execution recommendation.
+    # An escalating signal: the rationale changes, the enumeration does not.
     team = rec(has_security=True)
-    assert _statuses(team)["team-execution"] == "recommended"
+    assert team["recommended"] == "inline"
+    assert _statuses(team)["inline"] == "recommended"
     assert _statuses(team)["cc-workflows-ultracode"] == "alternative"
 
     # Under C5: broad_independent_fanout recommends inline, ultracode is alternative.
@@ -2654,12 +2657,11 @@ def test_recommend_backend_full_enumeration() -> None:
     assert _statuses(ultra)["inline"] == "recommended"
     assert _statuses(ultra)["cc-workflows-ultracode"] == "alternative"
 
-    # workflow_available=False -> exactly-3 entries, ultracode unavailable, others reachable.
+    # workflow_available=False -> every backend still enumerated, ultracode unavailable.
     absent = rec(broad_independent_fanout=True, workflow_available=False)
-    assert len(absent["backends"]) == 3
+    assert len(absent["backends"]) == 2
     assert _statuses(absent) == {
         "inline": "recommended",
-        "team-execution": "alternative",
         "cc-workflows-ultracode": "unavailable",
     }
     # alternatives stays reachable-only (ultracode not listed) even though it is enumerated.
@@ -2708,9 +2710,9 @@ def test_narrow_backend_offer_policy_and_operator_choice_citations() -> None:
         )
         # Complete 3-backend wire enumeration check (F-07)
         backends = res["backends"]
-        assert len(backends) == 3
+        assert len(backends) == 2
         backend_names = [b["backend"] for b in backends]
-        assert backend_names == ["inline", "team-execution", "cc-workflows-ultracode"]
+        assert backend_names == ["inline", "cc-workflows-ultracode"]
         ultra_status = next(
             b["status"] for b in backends if b["backend"] == "cc-workflows-ultracode"
         )

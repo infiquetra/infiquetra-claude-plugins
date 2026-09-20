@@ -126,7 +126,7 @@ def test_empty_corpus_missing_sagas_dir(orr: ModuleType, tmp_path: Path) -> None
 
 def test_saga_with_only_recommended_excluded(orr: ModuleType, tmp_path: Path) -> None:
     """A saga with recommended but no operator_choice is not counted in decisions_with_data."""
-    _write_envelope(tmp_path, "issue-1", recommended="team-execution", operator_choice="")
+    _write_envelope(tmp_path, "issue-1", recommended="cc-workflows-ultracode", operator_choice="")
     summary, records = orr.read_override_rate(tmp_path)
     assert summary.total_sagas == 1
     assert summary.decisions_with_data == 0
@@ -152,9 +152,9 @@ def test_no_override_when_choice_matches_recommendation(orr: ModuleType, tmp_pat
     _write_envelope(
         tmp_path,
         "issue-1",
-        recommended="team-execution",
-        operator_choice="team-execution",
-        mode="team-execution",
+        recommended="cc-workflows-ultracode",
+        operator_choice="cc-workflows-ultracode",
+        mode="cc-workflows-ultracode",
     )
     summary, _ = orr.read_override_rate(tmp_path)
     assert summary.decisions_with_data == 1
@@ -172,12 +172,14 @@ def test_no_override_when_choice_matches_recommendation(orr: ModuleType, tmp_pat
 def test_override_rate_computed_correctly(orr: ModuleType, tmp_path: Path) -> None:
     """3 sagas: 1 follows recommendation, 2 override → rate = 2/3."""
     _write_envelope(tmp_path, "issue-1", recommended="inline", operator_choice="inline")
-    _write_envelope(tmp_path, "issue-2", recommended="inline", operator_choice="team-execution")
+    _write_envelope(
+        tmp_path, "issue-2", recommended="inline", operator_choice="cc-workflows-ultracode"
+    )
     _write_envelope(
         tmp_path,
         "issue-3",
-        recommended="team-execution",
-        operator_choice="cc-workflows-ultracode",
+        recommended="cc-workflows-ultracode",
+        operator_choice="inline",
     )
     summary, _ = orr.read_override_rate(tmp_path)
     assert summary.total_sagas == 3
@@ -189,14 +191,6 @@ def test_override_rate_computed_correctly(orr: ModuleType, tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 # Over-tier tests
 # ---------------------------------------------------------------------------
-
-
-def test_over_tier_inline_to_team_execution(orr: ModuleType, tmp_path: Path) -> None:
-    """inline → team-execution is an over-tier escalation."""
-    _write_envelope(tmp_path, "issue-1", recommended="inline", operator_choice="team-execution")
-    summary, _ = orr.read_override_rate(tmp_path)
-    assert summary.over_tier_count == 1
-    assert summary.under_tier_count == 0
 
 
 def test_over_tier_inline_to_ultracode(orr: ModuleType, tmp_path: Path) -> None:
@@ -212,32 +206,6 @@ def test_over_tier_inline_to_ultracode(orr: ModuleType, tmp_path: Path) -> None:
     assert summary.under_tier_count == 0
 
 
-def test_over_tier_team_execution_to_ultracode(orr: ModuleType, tmp_path: Path) -> None:
-    """team-execution → cc-workflows-ultracode is an over-tier escalation."""
-    _write_envelope(
-        tmp_path,
-        "issue-1",
-        recommended="team-execution",
-        operator_choice="cc-workflows-ultracode",
-    )
-    summary, _ = orr.read_override_rate(tmp_path)
-    assert summary.over_tier_count == 1
-    assert summary.under_tier_count == 0
-
-
-# ---------------------------------------------------------------------------
-# Under-tier tests
-# ---------------------------------------------------------------------------
-
-
-def test_under_tier_team_execution_to_inline(orr: ModuleType, tmp_path: Path) -> None:
-    """team-execution → inline is an under-tier de-escalation."""
-    _write_envelope(tmp_path, "issue-1", recommended="team-execution", operator_choice="inline")
-    summary, _ = orr.read_override_rate(tmp_path)
-    assert summary.under_tier_count == 1
-    assert summary.over_tier_count == 0
-
-
 def test_under_tier_ultracode_to_inline(orr: ModuleType, tmp_path: Path) -> None:
     """cc-workflows-ultracode → inline is an under-tier de-escalation."""
     _write_envelope(
@@ -249,24 +217,6 @@ def test_under_tier_ultracode_to_inline(orr: ModuleType, tmp_path: Path) -> None
     summary, _ = orr.read_override_rate(tmp_path)
     assert summary.under_tier_count == 1
     assert summary.over_tier_count == 0
-
-
-def test_under_tier_ultracode_to_team_execution(orr: ModuleType, tmp_path: Path) -> None:
-    """cc-workflows-ultracode → team-execution is an under-tier de-escalation."""
-    _write_envelope(
-        tmp_path,
-        "issue-1",
-        recommended="cc-workflows-ultracode",
-        operator_choice="team-execution",
-    )
-    summary, _ = orr.read_override_rate(tmp_path)
-    assert summary.under_tier_count == 1
-    assert summary.over_tier_count == 0
-
-
-# ---------------------------------------------------------------------------
-# Budget-exhaustion / downgrade tests
-# ---------------------------------------------------------------------------
 
 
 def test_no_downgrade_no_budget_exhaustion(orr: ModuleType, tmp_path: Path) -> None:
@@ -290,7 +240,7 @@ def test_downgrade_note_counted(orr: ModuleType, tmp_path: Path) -> None:
 def test_multiple_downgrades_all_counted(orr: ModuleType, tmp_path: Path) -> None:
     """Multiple sagas with downgrade notes → all counted."""
     _write_envelope(tmp_path, "issue-1", downgrade="downgraded to inline")
-    _write_envelope(tmp_path, "issue-2", downgrade="downgraded to team-execution")
+    _write_envelope(tmp_path, "issue-2", downgrade="downgraded to inline")
     _write_envelope(tmp_path, "issue-3", downgrade="")
     summary, _ = orr.read_override_rate(tmp_path)
     assert summary.budget_exhaustion_count == 2
@@ -306,8 +256,10 @@ def test_full_corpus(orr: ModuleType, tmp_path: Path) -> None:
     """Full corpus: 5 sagas with mixed conditions."""
     # Saga 1: follows recommendation (inline → inline)
     _write_envelope(tmp_path, "issue-1", recommended="inline", operator_choice="inline")
-    # Saga 2: over-tier (inline → team-execution)
-    _write_envelope(tmp_path, "issue-2", recommended="inline", operator_choice="team-execution")
+    # Saga 2: over-tier (inline → cc-workflows-ultracode)
+    _write_envelope(
+        tmp_path, "issue-2", recommended="inline", operator_choice="cc-workflows-ultracode"
+    )
     # Saga 3: under-tier (cc-workflows-ultracode → inline) + downgrade
     _write_envelope(
         tmp_path,
@@ -319,7 +271,7 @@ def test_full_corpus(orr: ModuleType, tmp_path: Path) -> None:
     # Saga 4: no recommendation data (partial — excluded from denominator)
     _write_envelope(tmp_path, "issue-4", recommended="", operator_choice="")
     # Saga 5: downgrade only, no recommendation data
-    _write_envelope(tmp_path, "issue-5", downgrade="downgraded to team-execution")
+    _write_envelope(tmp_path, "issue-5", downgrade="downgraded to inline")
 
     summary, records = orr.read_override_rate(tmp_path)
     assert summary.total_sagas == 5
@@ -352,7 +304,9 @@ def test_format_report_no_data_says_no_data_yet(orr: ModuleType, tmp_path: Path)
 
 def test_format_report_with_data_shows_percentages(orr: ModuleType, tmp_path: Path) -> None:
     """When data is present, the report shows percentages."""
-    _write_envelope(tmp_path, "issue-1", recommended="inline", operator_choice="team-execution")
+    _write_envelope(
+        tmp_path, "issue-1", recommended="inline", operator_choice="cc-workflows-ultracode"
+    )
     _write_envelope(tmp_path, "issue-2", recommended="inline", operator_choice="inline")
     summary, records = orr.read_override_rate(tmp_path)
     report = orr.format_report(summary, records)
@@ -381,7 +335,9 @@ def test_format_report_shows_downgrade_notes(orr: ModuleType, tmp_path: Path) ->
 
 def test_cli_json_output(orr: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:  # type: ignore[type-arg]
     """``--json`` flag emits valid JSON with the expected keys."""
-    _write_envelope(tmp_path, "issue-1", recommended="inline", operator_choice="team-execution")
+    _write_envelope(
+        tmp_path, "issue-1", recommended="inline", operator_choice="cc-workflows-ultracode"
+    )
     orr.main(["--root", str(tmp_path), "--json"])
     captured = capsys.readouterr()
     data = json.loads(captured.out)
@@ -430,7 +386,9 @@ def test_cli_no_filesystem_side_effects(orr: ModuleType, tmp_path: Path) -> None
 
 def test_summary_as_dict_round_trips(orr: ModuleType, tmp_path: Path) -> None:
     """``summary.as_dict()`` contains all expected keys and correct values."""
-    _write_envelope(tmp_path, "issue-1", recommended="team-execution", operator_choice="inline")
+    _write_envelope(
+        tmp_path, "issue-1", recommended="cc-workflows-ultracode", operator_choice="inline"
+    )
     summary, _ = orr.read_override_rate(tmp_path)
     d = summary.as_dict()
     assert d["total_sagas"] == 1
@@ -488,7 +446,7 @@ def test_real_saga_save_feeds_override_rate_reader(
     _stub_saga_git(saga, monkeypatch)
 
     # Decision 1: an OVERRIDE — operator chose cc-workflows-ultracode over the
-    # recommended team-execution. operator_choice auto-derives from --orchestration-mode.
+    # recommended inline. operator_choice auto-derives from --orchestration-mode.
     assert (
         saga.main(
             [
@@ -502,7 +460,7 @@ def test_real_saga_save_feeds_override_rate_reader(
                 "--orchestration-mode",
                 "cc-workflows-ultracode",
                 "--orchestration-recommended",
-                "team-execution",
+                "inline",
             ]
         )
         == 0
@@ -535,7 +493,7 @@ def test_real_saga_save_feeds_override_rate_reader(
     assert summary.total_sagas == 2
     assert summary.decisions_with_data == 2
     assert summary.override_count == 1  # only decision 1 overrode
-    assert summary.over_tier_count == 1  # team-execution → cc-workflows-ultracode is over-tier
+    assert summary.over_tier_count == 1  # inline → cc-workflows-ultracode is over-tier
     assert summary.under_tier_count == 0
     assert summary.override_rate == pytest.approx(0.5)
 
@@ -545,6 +503,6 @@ def test_real_saga_save_feeds_override_rate_reader(
     assert "50.0%" in report
 
     # The override decision's operator_choice auto-derived from --orchestration-mode.
-    override_rec = next(r for r in records if r.recommended == "team-execution")
+    override_rec = next(r for r in records if r.recommended == "inline")
     assert override_rec.operator_choice == "cc-workflows-ultracode"
     assert override_rec.actual_mode == "cc-workflows-ultracode"

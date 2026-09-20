@@ -33,14 +33,8 @@ VENDORED_SHIMS = (
     ROOT / "plugins" / "unifi" / "skills" / "unifi-protect" / "scripts" / "fleet_commons_shim.py",
     ROOT / "plugins" / "agy" / "scripts" / "fleet_commons_shim.py",
     ROOT / "plugins" / "codex" / "scripts" / "fleet_commons_shim.py",
-    # #380: team-execution's Step B1 posture check loads intent_envelope through the shim.
-    ROOT
-    / "plugins"
-    / "team-execution"
-    / "skills"
-    / "team-execution"
-    / "scripts"
-    / "fleet_commons_shim.py",
+    # team-execution vendored the shim too, for its Step B1 posture check; issue #1030 archived
+    # the plugin and the copy went with it.
 )
 
 _LOAD_COUNTER = 0

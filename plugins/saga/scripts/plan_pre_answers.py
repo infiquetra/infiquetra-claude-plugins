@@ -65,7 +65,7 @@ SCHEMA_FAMILY = "plan_pre_answers"
 # The two admitted decision fields and their declared enums (R15). The backend enum is
 # the one Phase 5.2 records (the plan-doc contract, saga-spec §14); the destination
 # enum is the one Phase 5.1 asks (DESTINATIONS, saga-spec §4).
-BACKEND_ENUM = ("inline", "team-execution", "cc-workflows-ultracode")
+BACKEND_ENUM = ("inline", "cc-workflows-ultracode")
 DESTINATION_ENUM = ("plan-only", "pr", "merge", "nonprod-deploy")
 DECISION_ENUMS: dict[str, tuple[str, ...]] = {
     "backend": BACKEND_ENUM,

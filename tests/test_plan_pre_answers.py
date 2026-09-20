@@ -255,7 +255,8 @@ def test_caller_is_metadata_outside_the_admission_limit(pre_answers: ModuleType)
 # --- operator ruling (review F03): only inline applies automatically -----------------
 
 
-@pytest.mark.parametrize("backend", ["team-execution", "cc-workflows-ultracode"])
+# "team-execution" was the other never-auto-applied value until issue #1030 archived it.
+@pytest.mark.parametrize("backend", ["cc-workflows-ultracode"])
 def test_invocation_only_backends_stop_and_are_never_applied(
     pre_answers: ModuleType, backend: str
 ) -> None:
@@ -320,7 +321,7 @@ def test_duplicate_json_keys_stop_rather_than_last_winning(pre_answers: ModuleTy
     text = (
         "/plan work issue #924\n\n"
         '```json\n{"schema": "plan_pre_answers.v1", "backend": "inline", '
-        '"backend": "team-execution"}\n```\n'
+        '"backend": "cc-workflows-ultracode"}\n```\n'
     )
 
     outcome = pre_answers.evaluate(text)
@@ -541,7 +542,7 @@ def test_decision_enums_match_their_canonical_sources(pre_answers: ModuleType) -
     shipped = (ROOT / "plugins" / "saga" / "scripts" / "plan_artifact_conformance.py").read_text(
         encoding="utf-8"
     )
-    assert 'BACKEND_ENUM = ("inline", "team-execution", "cc-workflows-ultracode")' in shipped
+    assert 'BACKEND_ENUM = ("inline", "cc-workflows-ultracode")' in shipped
 
 
 # --- contract pin: the intake subsection adds no rigidity (R8, R29) -------------------

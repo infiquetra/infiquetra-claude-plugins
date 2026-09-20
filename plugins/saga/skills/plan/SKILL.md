@@ -426,7 +426,7 @@ not ask again.
 
 The recorded enum has two values — `inline` ("inline") |
 `cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
-`ORCHESTRATION_MODES`. **`inline` is the only backend the recommender returns**, since issue #1030
+`ORCHESTRATION_MODES`. **The default Saga offer is `inline` only**, since issue #1030
 archived team-execution and ruling C5 forbids recommending a Workflow; there is no longer an offer
 to render or a choice to put to the operator. Still call `lifecycle_state.py recommend-backend` and
 still record both `--orchestration-recommended` and `--orchestration-mode` (R12 telemetry), so a

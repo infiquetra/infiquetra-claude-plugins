@@ -293,5 +293,17 @@
       "replace": "    return 0"
     },
     "mutation_description": "Return the success code from a direct invocation, which is the reported defect: the file answered every invocation with exit 0, so a mistyped one was indistinguishable from a passing run. The unconditional-entrypoint mutation was tried first and rejected: it fires while pytest imports this module, so the run dies with an INTERNALERROR and the canary reports 'error' rather than the clean guard failure 'caught' requires."
+  },
+  {
+    "id": "archived-orchestration-mode",
+    "guard": "tests/test_saga_spec_consumer_row.py::test_an_archived_orchestration_mode_is_refused_at_write_and_read_back_at_rest",
+    "invariant": "`team-execution` stays out of ORCHESTRATION_MODES after issue #1030 archived the plugin, so no new run can select a backend that is not installed, while a stored tick carrying the string still loads and still renders its label.",
+    "mutation": {
+      "kind": "replace_text",
+      "file": "plugins/saga/scripts/saga.py",
+      "find": "ORCHESTRATION_MODES = (\"inline\", \"cc-workflows-ultracode\")",
+      "replace": "ORCHESTRATION_MODES = (\"inline\", \"team-execution\", \"cc-workflows-ultracode\")"
+    },
+    "mutation_description": "Re-add the archived `team-execution` value to the orchestration enum, which is exactly the regression the guard exists to catch."
   }
 ]

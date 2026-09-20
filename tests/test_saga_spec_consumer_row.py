@@ -232,31 +232,33 @@ def save_tick(
 def test_operator_choice_rule_matches_engine(tmp_path: Path) -> None:
     tick, _ = save_tick(tmp_path, {"id": "fresh"})
     assert tick["orchestration_mode"] == "inline" and tick["orchestration_operator_choice"] == ""
-    tick, _ = save_tick(tmp_path, {"id": "resume", "orchestration_mode": "team-execution"})
-    assert tick["orchestration_operator_choice"] == "team-execution"
+    tick, _ = save_tick(tmp_path, {"id": "resume", "orchestration_mode": "cc-workflows-ultracode"})
+    assert tick["orchestration_operator_choice"] == "cc-workflows-ultracode"
     tick, _ = save_tick(tmp_path, {"id": "resume"})
-    assert tick["orchestration_operator_choice"] == "team-execution"
+    assert tick["orchestration_operator_choice"] == "cc-workflows-ultracode"
     save_tick(
-        tmp_path, {"id": "choice-only", "orchestration_operator_choice": "team-execution"}, ok=False
+        tmp_path,
+        {"id": "choice-only", "orchestration_operator_choice": "cc-workflows-ultracode"},
+        ok=False,
     )
     flags = {
         "id": "override",
         "orchestration_mode": "inline",
-        "orchestration_operator_choice": "team-execution",
+        "orchestration_operator_choice": "cc-workflows-ultracode",
     }
     save_tick(tmp_path, flags, ok=False)
     tick, _ = save_tick(
         tmp_path, {**flags, "orchestration_downgrade": "explicit operator exception"}
     )
     assert (
-        tick["orchestration_operator_choice"] == "team-execution"
+        tick["orchestration_operator_choice"] == "cc-workflows-ultracode"
         and tick["orchestration_mode"] == "inline"
     )
     # A carried divergence needs no fresh rationale; a new upgrade is refused even
     # with a rationale. Nonempty text alone is not an authorization to change modes.
     tick, _ = save_tick(tmp_path, {"id": "override"})
     assert (
-        tick["orchestration_operator_choice"] == "team-execution"
+        tick["orchestration_operator_choice"] == "cc-workflows-ultracode"
         and tick["orchestration_mode"] == "inline"
     )
     save_tick(tmp_path, {**flags, "id": "blank", "orchestration_downgrade": "   "}, ok=False)
@@ -264,7 +266,7 @@ def test_operator_choice_rule_matches_engine(tmp_path: Path) -> None:
         tmp_path,
         {
             "id": "upgrade",
-            "orchestration_mode": "team-execution",
+            "orchestration_mode": "cc-workflows-ultracode",
             "orchestration_operator_choice": "inline",
             "orchestration_downgrade": "does not authorize an upgrade",
         },
@@ -452,7 +454,8 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
 
 
 @pytest.mark.parametrize("destination", ["plan-only", "pr", "merge", "nonprod-deploy"])
-@pytest.mark.parametrize("backend", ["inline", "team-execution", "cc-workflows-ultracode"])
+# "team-execution" was the third backend until issue #1030 archived that plugin.
+@pytest.mark.parametrize("backend", ["inline", "cc-workflows-ultracode"])
 def test_plan_examples_save_the_intended_tick(
     contract_api: ModuleType, tmp_path: Path, destination: str, backend: str
 ) -> None:
@@ -477,7 +480,7 @@ def test_plan_renderer_edit_workflow(contract_api: ModuleType, tmp_path: Path) -
             {"id": "merge", "fixed": {"destination": "merge"}},
             {
                 "id": "recommendation_example",
-                "fixed": {"orchestration_recommended": "team-execution"},
+                "fixed": {"orchestration_recommended": "cc-workflows-ultracode"},
             },
             {
                 "id": "autonomy",
@@ -639,3 +642,20 @@ def test_plan_renderer_refusals_and_rollback(
     # The callable CLI uses the same result envelope as the subprocess interface.
     assert api.main(["--root", str(tmp_path), "render", "--check"]) == 0
     assert json.loads(capsys.readouterr().out)["outcome"] == "clean"
+
+
+def test_an_archived_orchestration_mode_is_refused_at_write_and_read_back_at_rest() -> None:
+    """Issue #1030 archived `team-execution`. Both halves of that are load-bearing.
+
+    Refused at the command line, because a new run must not select a backend that is not there.
+    Read back at rest, because the enum strings are a durable wire contract and a saga written
+    before the archive must not become unreadable -- `_orchestration_rank` returns None for an
+    unrecognized value and the provenance guard is lenient, which is exactly that property.
+    """
+    engine = runpy.run_path(str(ROOT / "plugins/saga/scripts/saga.py"))
+    assert "team-execution" not in engine["ORCHESTRATION_MODES"]
+    assert engine["_orchestration_rank"]("team-execution") is None
+    assert engine["_orchestration_rank"]("inline") == 0
+    # The label map deliberately keeps the archived key, so a historical tick renders the label it
+    # was written with rather than falling back to the raw enum string.
+    assert engine["display_orchestration_mode"]("team-execution") == "team execution"

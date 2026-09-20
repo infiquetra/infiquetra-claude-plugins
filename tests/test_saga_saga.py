@@ -1827,13 +1827,25 @@ def test_guard_passes_when_only_preexisting_legacy_checkpoint(
 
 
 def test_orchestration_modes_enum_is_frozen(saga: ModuleType) -> None:
-    """ORCHESTRATION_MODES must be byte-for-byte unchanged — it is the wire contract.
+    """The surviving values keep their spelling and their relative order — the wire contract.
 
-    Persisted sagas carry the raw enum string; changing value or order would silently
-    corrupt any saga that was saved before the change.  This test is the assertion
-    KTD5 mandates: no value-addition, no reorder, no rename.
+    Persisted sagas carry the raw enum string, so a rename or a reorder would silently corrupt a
+    saga saved before the change. That is the KTD5 assertion and it is unchanged.
+
+    What this case did not anticipate is a **removal**. Issue #1030 archived the team-execution
+    plugin and `team-execution` left the tuple, which is safe for exactly the reason the original
+    rationale gives: nothing on the read path validates against this enum. The value is refused at
+    the command line, where a new choice is made, and a stored tick carrying it still loads and
+    still renders its label. `tests/test_saga_spec_consumer_row.py` pins both halves.
+
+    So the frozen property is restated rather than dropped: a surviving value is never renamed and
+    never reordered, and a removed value is never reused to mean something else.
     """
-    assert saga.ORCHESTRATION_MODES == ("inline", "team-execution", "cc-workflows-ultracode")
+    assert saga.ORCHESTRATION_MODES == ("inline", "cc-workflows-ultracode")
+    assert saga.ORCHESTRATION_MODES.index("inline") < saga.ORCHESTRATION_MODES.index(
+        "cc-workflows-ultracode"
+    )
+    assert "team-execution" not in saga.ORCHESTRATION_MODES
 
 
 def test_display_orchestration_mode_renders_labels(saga: ModuleType) -> None:

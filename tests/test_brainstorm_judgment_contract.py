@@ -157,8 +157,12 @@ def check_helper_capability(text: str) -> list[str]:
         violations.append("missing may not address the operator")
     if "subagent_type: Explore" not in text:
         violations.append("missing subagent_type: Explore")
-    if "subagent_type: saga:readonly-verifier" not in text:
-        violations.append("missing subagent_type: saga:readonly-verifier")
+    # The verifier used to be named by subagent_type; issue 1030 removed both saga agents and the
+    # isolation is now a property of how the helper is hosted. The contract the check defends is
+    # unchanged -- the verifier is read-only and runs in its own worktree -- so it is checked
+    # through the words that still state it rather than through an agent name that no longer exists.
+    if "in its own disposable worktree" not in text:
+        violations.append("missing: the claim verifier runs in its own disposable worktree")
     if "A state-free capability with no tick" not in text:
         violations.append("missing state-free capability sentence")
     return violations
@@ -337,79 +341,6 @@ def test_one_question_at_a_time_positive_and_mutation_fails() -> None:
 
 # ---------------------------------------------------------------------------
 # Spawn-site row — positive
-# ---------------------------------------------------------------------------
-
-
-def test_spawn_site_row_positive_and_mutation_fails() -> None:
-    text = _read(SANDBOX_SITES)
-    assert check_spawn_site_row(text) == [], f"row: {check_spawn_site_row(text)}"
-    mutated = text.replace("Phase 1.1 claim verifier", "Phase 1.1 claim verifier (~line 99)")
-    assert check_spawn_site_row(mutated) != []
-    # Zero rows must also fail
-    no_row = text.replace("| `brainstorm` |", "| `removed` |")
-    assert check_spawn_site_row(no_row) != []
-
-
-# ---------------------------------------------------------------------------
-# Scout is outside the verifier class — negative
-# ---------------------------------------------------------------------------
-
-
-def test_scout_outside_verifier_class_negative_and_mutation_fails() -> None:
-    text = _read(SANDBOX_SITES)
-    assert check_scout_outside_verifier_class(text) == [], (
-        f"scout: {check_scout_outside_verifier_class(text)}"
-    )
-    # Manually inject Explore into in-scope section to prove the check catches it
-    in_scope_injected = text.replace(
-        "## In-scope: verify/review-class skill spawns",
-        "## In-scope: verify/review-class skill spawns\nExplore test",
-    )
-    assert check_scout_outside_verifier_class(in_scope_injected) != []
-
-
-# ---------------------------------------------------------------------------
-# Inventory guard covers Brainstorm — integration
-# ---------------------------------------------------------------------------
-
-
-def test_inventory_guard_covers_brainstorm() -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/test_sandbox_spawn_sites.py", "-q"],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 passed" in result.stdout
-
-
-# ---------------------------------------------------------------------------
-# Resolver routing — integration
-# ---------------------------------------------------------------------------
-
-
-def test_resolver_routing_still_passes() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "tests/test_tier_resolver.py::test_spawn_site_enumeration_routes_through_resolver",
-            "-q",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 passed" in result.stdout
-
-
-# ---------------------------------------------------------------------------
-# Grounding before asking — positive
 # ---------------------------------------------------------------------------
 
 

@@ -412,7 +412,6 @@ def test_role_tier_resolves_for_all_agents() -> None:
 TEAM_EXECUTION_SKILL_MD = (
     REPO_ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "SKILL.md"
 )
-SANDBOX_SPAWN_SITES_MD = REPO_ROOT / "plugins" / "saga" / "references" / "sandbox-spawn-sites.md"
 
 _EFFORT_EMISSION_MARKER = "EFFORT-EMISSION MARKER (#362 U5, R7, KTD6)"
 
@@ -485,51 +484,6 @@ def test_team_execution_effort_marker_describes_live_honoring() -> None:
     assert "no dispatch-time honoring" not in lowered, (
         "EFFORT-EMISSION MARKER must not claim dispatch-time honoring is absent (retired account)"
     )
-
-
-def _parse_spawn_site_work_shapes(text: str) -> list[tuple[str, str]]:
-    """Extract (site-label, resolver-work-shape) pairs from the in-scope spawn-site
-    table's last column and the "Also in-scope" prose's trailing work-shape note."""
-    pairs: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        if not line.startswith("| `") or "Resolver work-shape" in line:
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 4:
-            continue
-        skill, _file, _site, work_shape = cells[0], cells[1], cells[2], cells[3]
-        pairs.append((skill.strip("`"), work_shape.strip("`")))
-    # The prose-only "Also in-scope" verifier-emitting sites row.
-    if "Resolver work-shape: `judgment`" in text:
-        pairs.append(("execution_spec.py verifier-emitting sites", "judgment"))
-    return pairs
-
-
-def test_spawn_site_enumeration_routes_through_resolver() -> None:
-    """Every enumerated spawn site in `sandbox-spawn-sites.md` names a resolver
-    work-shape (registry key or `role-tier:` alias) that actually resolves — a new
-    bare palette literal (e.g. a hardcoded `opus`/`haiku` string) at an enumerated
-    site fails this test instead of silently bypassing the resolver (R7)."""
-    text = SANDBOX_SPAWN_SITES_MD.read_text(encoding="utf-8")
-    pairs = _parse_spawn_site_work_shapes(text)
-    assert pairs, "no enumerated spawn sites found in sandbox-spawn-sites.md"
-
-    registry = _work_shapes()
-    valid_keys = set(registry.keys()) | set(tier_resolver.ROLE_TIER_ALIASES)
-
-    for site, work_shape in pairs:
-        assert work_shape not in MODELS, (
-            f"{site}: work-shape column holds a bare model literal {work_shape!r}, "
-            "not a resolver work-shape/role-tier key"
-        )
-        assert work_shape in valid_keys, (
-            f"{site}: work-shape {work_shape!r} is not a registry key or role-tier alias"
-        )
-        # A real resolve() call, not just membership — catches a key that exists in
-        # name but no longer resolves cleanly (e.g. a malformed registry row).
-        resolution = tier_resolver.resolve(None, work_shape)
-        assert resolution.model in MODELS
-        assert resolution.effort in EFFORTS
 
 
 def test_model_field_is_native_and_resolver_independent(

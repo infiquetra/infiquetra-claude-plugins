@@ -2,6 +2,28 @@
 
 ## 2026-09-20
 
+### Sandbox isolation belongs to how a role is hosted, not to a flag every caller must remember  {#isolation-is-hosting-not-a-flag-1030}
+
+**Decision.** The project instruction that every review-class Agent-tool spawn must name saga's
+read-only verifier agent and pass `isolation: "worktree"` is replaced by "review roles run as roster
+sessions in their own worktrees". `plugins/saga/references/sandbox-spawn-sites.md`, the inventory of
+every site that had to remember the flag, is deleted with it, as are both saga agents.
+
+**Rationale.** The old rule was correct about the hazard — a reviewer that shares the tree it is
+reviewing can clobber it with a `git checkout` — and wrong about where to fix it. A rule enforced at
+every call site needs an inventory of call sites, a fallback ladder for when the named agent is
+missing, a lint over the inventory, and a test that the lint covers each skill; that is four
+mechanisms guarding one property. The roster helper gives each role its own worktree when it creates
+the session, so the property holds by construction and a caller cannot forget it.
+
+**Rejected alternative.** Keep the rule and retarget it at a surviving agent. Rejected because there
+is no surviving agent: the card removes both, and inventing a replacement to satisfy a rule is how
+the four mechanisms appeared in the first place.
+
+**Revisit when** a review role has to run as a subagent rather than a pane — the surviving skills say
+read-only and disposable-worktree in prose for that case, and if that case becomes common the
+property deserves a mechanism again rather than a sentence.
+
 ### A plugin's version moves when its files move, not when a card names it  {#version-moves-with-files-1030}
 
 **Decision.** Issue 1030's card asks for a bump on orchestrate and agent-launcher as part of the

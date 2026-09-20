@@ -195,7 +195,7 @@ sequential. The helper policy below is the single statement of these ceilings.
 
 Helper policy:
 
-- At most one read-only repository-grounding scout (`subagent_type: Explore`) and at most one independent claim verifier (`subagent_type: saga:readonly-verifier` with `isolation: "worktree"`), each only when it has a distinct evidence question — two helpers on the same question is one too many. Lightweight work, and work whose repository context is already available, launches zero helpers. These are ceilings, not required launches.
+- At most one read-only repository-grounding scout (`subagent_type: Explore`) and at most one independent claim verifier (read-only, in its own disposable worktree), each only when it has a distinct evidence question — two helpers on the same question is one too many. Lightweight work, and work whose repository context is already available, launches zero helpers. These are ceilings, not required launches.
 - Helpers may not choose requirements and may not address the operator.
 - The claim verifier is worktree-isolated and read-only by omission of `Edit`/`Write`/`NotebookEdit` with `Bash` retained — the worktree fence is the sole protection and `Bash` can still write through it, deliberately.
 - The grounding scout is read-only by omission of `Edit`/`Write`/`NotebookEdit` but retains `Bash` and is not worktree-isolated — a deliberate, recorded acceptance.

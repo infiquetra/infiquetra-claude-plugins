@@ -37,6 +37,18 @@ personal account while the coordinator ran on the company one. Found by preparin
 not by reading the code. Fixed with an `--account` flag on `up`, overridable per role by a staffing
 row that carries its own `account`, and three mutation-tested guards.
 
+## The second thing the live run found
+
+Reading the roster rows the live run had written showed `workspace_id: null` on every one. The
+launcher's receipt (`launch_receipt_shape`) carries `tab_id` and `pane` and **no** `workspace_id`,
+so reading one off the receipt records null forever; the fake receipt in the test suite had invented
+the key, which is exactly why no test caught it. Both halves are fixed: the row now derives the
+workspace from herdr's `<workspace>:<object>` identifier the way the launcher itself does, and the
+fake receipt is pinned by a test that reads the launcher's own shape and fails when the two drift.
+
+A fake that is more generous than the real thing makes every test above it a guess. That is the
+lesson worth carrying out of this card.
+
 ## change_kinds
 
 `behavior` — a new executable that creates and closes terminal sessions on the operator's server.

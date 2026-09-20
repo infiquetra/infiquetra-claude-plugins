@@ -26,6 +26,18 @@
 
 **Generalizable rule.** Store a capability — anything whose only job is to authorise a later action — at the lifetime of the action it authorises, not at the lifetime of the code that obtained it.
 
+### A fake that is more generous than the real thing makes every test above it a guess  {#1024-generous-fake-hides-a-null}
+
+**Context.** `tests/test_roster.py` drives the roster helper through a fake command runner that returns canned launch receipts. Thirty-three tests passed, including ones asserting on the roster rows the helper writes. The live acceptance run then produced rows reading `workspace_id: null`.
+
+**Evidence.** The launcher's receipt shape at `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py:159` has ten keys and `workspace_id` is not among them — `tab_id` and `pane` are. The helper read `receipt.get("workspace_id")`, which is `None` for every real launch. The test fixture had written `"workspace_id": "w99"` into its canned receipt, so the assertion path never saw the absence.
+
+**Mechanism.** The fake was not wrong about anything the tests asserted; it was wrong about what the real producer *omits*. Absence is the one thing a hand-written fixture is least likely to reproduce, because writing a fixture is an act of filling in fields, and nobody writes down the fields that are not there. Every test that reads through such a fixture inherits its optimism silently — the suite is green precisely because the fake supplied what production does not.
+
+**Fix.** The helper derives the workspace from herdr's `<workspace>:<object>` identifier, the way the launcher itself recovers one when a close fails. The fixture is now pinned by a test that parses `launch_receipt_shape` out of the launcher's source and asserts the fake's key set equals the real one, so the two cannot drift again. Reverting either half fails a test.
+
+**Generalizable rule.** When a fake stands in for another component's output, assert its key set against that component's own definition — not only its values. Otherwise the fixture quietly becomes a second, friendlier specification, and the live run is the first thing that disagrees.
+
 ### Adding a section to a saga skill has two contracts attached to it, and neither is visible from the section  {#1023-skill-section-hidden-contracts}
 
 **Context.** Issue #1023 added one section to `plugins/saga/skills/plan/SKILL.md` and wrote one plan document under `docs/plans/`. Both looked finished. The full test suite failed six tests across three files.

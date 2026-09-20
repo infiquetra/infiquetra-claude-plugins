@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -120,19 +121,51 @@ def _ok(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[st
 
 
 def _receipt(task: str, *, delivered: bool = True, owned: bool = True) -> dict[str, Any]:
-    """A launch receipt in the shape ``launcher.launch_receipt_shape`` produces."""
+    """A launch receipt with exactly the keys ``launcher.launch_receipt_shape`` produces.
+
+    In particular there is **no** ``workspace_id``: the launcher does not record one, and a fake
+    that invented the key would have hidden the bug where every roster row stored a null workspace.
+    That is what the live run found and this fixture now prevents.
+    """
     return {
         "unit_name": task,
         "vendor": "claude",
         "tab_id": f"w99:t-{task}",
         "pane": f"w99:p-{task}",
         "agent_name": task,
-        "workspace_id": "w99",
         "reused": True,
         "owned": owned,
+        "permission": "auto",
         "verified": True,
         "prompt_delivered": delivered,
     }
+
+
+def test_the_fake_receipt_carries_exactly_the_launchers_own_keys() -> None:
+    """The fake must not be more generous than the launcher, or every test above it is a guess."""
+    source = (
+        REPO_ROOT
+        / "plugins"
+        / "agent-launcher"
+        / "skills"
+        / "agent-launcher"
+        / "scripts"
+        / "launcher.py"
+    ).read_text(encoding="utf-8")
+    body = source.split("def launch_receipt_shape(", 1)[1].split("\ndef ", 1)[0]
+    real_keys = set(re.findall(r'^\s+"([a-z_]+)":', body, re.MULTILINE))
+    assert set(_receipt("x")) == real_keys, (
+        "the fake launch receipt has drifted from launcher.launch_receipt_shape"
+    )
+
+
+def test_the_roster_row_names_the_workspace_even_though_the_receipt_does_not(
+    roster: ModuleType,
+) -> None:
+    """herdr identifiers are ``<workspace>:<object>``; the receipt carries no workspace of its own."""
+    assert roster.workspace_of(_receipt("planner")) == "w99"
+    assert roster.workspace_of({"pane": "w7C:p2Z"}) == "w7C"
+    assert roster.workspace_of({}) is None
 
 
 def _agent_get(status: str) -> subprocess.CompletedProcess[str]:
@@ -417,6 +450,9 @@ def test_up_records_each_pane_before_it_launches_the_next_one(
     }
     assert all(row["created_by"] == "roster.py" for row in rows)
     assert all(row["state"] == "prompted" for row in rows)
+    # The row has to name the workspace an operator would look in, even though the launcher's
+    # receipt carries no workspace field of its own.
+    assert {row["workspace_id"] for row in rows} == {"w99"}
 
 
 def test_up_writes_only_the_roster_block(roster: ModuleType, rr: ModuleType, store: Path) -> None:

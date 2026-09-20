@@ -477,6 +477,25 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def workspace_of(receipt: Mapping[str, Any]) -> str | None:
+    """The workspace a launch landed in, taken from its identifiers.
+
+    The launcher's receipt (``launch_receipt_shape``) carries ``tab_id`` and ``pane`` but **no**
+    ``workspace_id`` field, so reading one off the receipt records ``null`` forever. herdr's
+    identifiers are ``<workspace>:<object>``, which is how the launcher itself recovers a workspace
+    when a close fails (``launcher.py``: ``str(unit.tab_id).partition(":")[0]``). Same rule here,
+    so the roster row names the workspace an operator would have to look in.
+    """
+    for key in ("workspace_id", "tab_id", "pane"):
+        value = receipt.get(key)
+        if not value:
+            continue
+        head = str(value).partition(":")[0]
+        if head:
+            return head
+    return None
+
+
 def new_row(
     seat: Seat, receipt: Mapping[str, Any], receipt_path: Path, state: str
 ) -> dict[str, Any]:
@@ -494,7 +513,7 @@ def new_row(
         "pane_name": seat.pane_name,
         "pane_id": receipt.get("pane"),
         "tab_id": receipt.get("tab_id"),
-        "workspace_id": receipt.get("workspace_id"),
+        "workspace_id": workspace_of(receipt),
         "receipt_path": str(receipt_path),
         "created_by": CREATED_BY,
         "created_at": _now(),

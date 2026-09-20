@@ -2,6 +2,26 @@
 
 ## 2026-09-19
 
+### A merge turn runs in its own detached worktree, created and removed inside the turn  {#1025-detached-worktree-per-merge-turn}
+
+**Decision.** `merge` creates one detached worktree on the parent branch's tip, merges the unit's branch there, advances the parent branch reference, and removes that worktree in a `finally`. A conflicting merge aborts in that worktree, removes it, leaves the unit at `ready` with the conflict named, and leaves the parent branch untouched.
+
+**Rationale.** The card removes "landing reservations", and it is worth being exact about what that names, because the worktree and the bookkeeping around it are different things. The bookkeeping is what goes: a `conflict_worktree` pointer persisted into the run file so it outlived the invocation, a numbered-sibling fallback with its preserved-path reporting, and a retained-merge recovery that inspected an earlier run's worktree and decided whether to publish what it found. That machinery is 470 lines and it exists to hand a half-finished merge from one invocation to the next. The worktree itself stays because the alternative is merging in whatever the operator has checked out, which is what `collect` did and what card 875 is about. Recovery is now the ordinary one the software-development-lifecycle repository's parent-branch chapter assigns: the merging worker resolves its own conflict on its own branch and takes the turn again.
+
+**Alternatives rejected.** Keeping the retained-conflict pointer "just for conflicts", rejected because a pointer that survives an invocation is precisely the record the card removes, and every defect in that family (issues 960, 979) is in the code that reads it. Merging in the coordinator's own checkout, rejected: it makes a conflict a dirty operator tree.
+
+**Revisit when.** A merge turn needs to survive the process that started it — at which point the thing to add is a record field git can confirm, not a pointer to a directory.
+
+### The `main` regression guard fetches before it compares, and refuses when the fetch fails  {#1025-guard-fetches-before-comparing}
+
+**Decision.** Before evaluating whether a merge would take a file backwards, the turn runs `git fetch <remote> <branch>` and refuses the turn when it fails, saying the guard could not be evaluated against a current reference.
+
+**Rationale.** The guard compares the merge result against `origin/main`. A remote-tracking reference is only as current as the last fetch, so a guard that reads it without refreshing passes silently on a stale copy — which is the same shape as the failure card 875 reported one level up: `collect` merged with no currency check and could revert work on `main` while reporting success. Refusing on a failed fetch is the safe direction: a merge turn not taken costs a retry, and a merge turn taken against a stale comparison costs the work the comparison existed to protect. Comparing against a local `main` was rejected for the same reason — it is whatever the operator last pulled.
+
+**Alternatives rejected.** Warning and comparing anyway, rejected as above. Fetching once per invocation rather than per turn, rejected because turns are serialised and a long run can outlive the freshness of one fetch; the cost is one network call per merge.
+
+**Revisit when.** A repository has no remote at all — today that refuses every turn, which is correct for this repository and would be wrong for a purely local one.
+
 ### Orchestrate's state moves into the per-issue run record, and the issue number replaces the run identifier  {#1025-record-replaces-run-file}
 
 **Decision.** The orchestrate driver stops writing `.orchestrate/run.json` and reads and writes issue 1023's `run_record.v1` document for one issue, resolved through `run_record.resolve_store_root()`. Every mutating subcommand takes `--issue <N>`. Two issues driven in one repository have two record files and never contend for one path. The task-spill mechanism goes with the run file.

@@ -46,7 +46,11 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.164.0"  # 0.164.0: /work and /code-review stand role and
+    assert plugin_json["version"] == "0.165.0"  # 0.165.0: the run record reference documents the
+    # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
+    # unit row (issue #1025). Bumped from 0.164.0, the saga version on origin/parent/1018 at
+    # 4e951f0e.
+    # Predecessor 0.164.0: /work and /code-review stand role and
     # lens-reviewer sessions up through agent-launcher's roster helper, which closes only the panes
     # the run record says it created (issue #1024). Bumped from 0.163.0, the saga version on
     # origin/parent/1018 at 0fa2ea32.

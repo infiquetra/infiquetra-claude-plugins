@@ -2,6 +2,30 @@
 
 ## 2026-09-19
 
+### A card that cites a defect by line number can be citing a defect that has since been fixed  {#1025-issue-879-assert-review-transport-is-stale}
+
+**Evidence.** Issue 879 states that `assert_review_transport` "is **not** among" the assertions `start` runs, and warns that a validator aiming to match `start` "must not silently add it" — verified there against `origin/main` on 2026-08-28. At this card's base commit `4e951f0e` it is no longer true: `orchestrate.py:1103` calls `assert_review_transport(units)` inside `plan_units`, and `cmd_start` calls `plan_units(plan)` at `orchestrate.py:3441`. So `start` runs it today, by way of the plan parser.
+
+**Mechanism.** The card's author read the call list inside `cmd_start` and did not follow `plan_units` into its own body, and in the three weeks between that reading and this one the call moved into the parser. A line-numbered citation is a claim about a revision, and the card named the revision honestly; what it could not do is stay true. An implementer following the card's warning literally would have gone looking for a call to *remove* from the validation path, found none where the card said it was, and either added a deliberate exclusion (making the validator disagree with `start`, which is the exact failure issue 879 exists to prevent) or spent the time discovering this.
+
+**Generalizable rule.** Re-verify a card's code claims against the revision you are working on before you act on them, especially a claim of ABSENCE — an absent thing has no line number to check, so nothing about it looks stale.
+
+### Two of three names in an acceptance criterion had never existed in the file  {#1025-grep-criterion-named-absent-symbols}
+
+**Evidence.** Issue 1025's second acceptance criterion asks that `grep -c -E "reserved_landing_paths|launch_reservation|record_writeback_outcome"` over the driver print 0. Checked against base commit `4e951f0e`: `reserved_landing_paths` and `launch_reservation` appear nowhere in the 6,450-line file. Only `record_writeback_outcome` is present, at line 3389 with two call sites.
+
+**Mechanism.** The criterion was written from the card's prose — "launch reservations, landing reservations" — rather than from the symbols the code actually carries. The nearest real things are a local named `preserved_landing_paths` inside `cmd_land` and the "already has tab" skip in `cmd_go`, neither of which the grep names. The criterion therefore passed on two of its three terms before any work was done, and a reader checking it afterwards would conclude three subsystems had been removed when the evidence covers one.
+
+**Generalizable rule.** A grep-based acceptance criterion must name symbols that exist at the base revision; run it before you start, and say in the plan which terms it already satisfies. A criterion that is green before the work begins proves nothing about the work.
+
+### One concurrency number, two consumers, and no arithmetic between them  {#1025-width-must-count-role-panes-too}
+
+**Evidence.** `roster.py` refuses to stand up more role panes than the run record's `concurrency_allocation` allows (`plugins/agent-launcher/skills/agent-launcher/scripts/roster.py`, the allocation check in `up`). Orchestrate's own launch bound, written for card 901, initially counted only units with status `running`.
+
+**Mechanism.** Both readings are locally correct and together they are wrong: with an allocation of ten, six role panes and ten units are sixteen agent sessions on one account, against a number that exists for that account's rate limit. Neither consumer could see the error from inside itself, because each one's count was true. The repair is that orchestrate's `live` count is units plus the record's open `roster` rows — the record is where both consumers already meet, so the shared budget needs no new mechanism, only one of the two to stop counting half of it.
+
+**Generalizable rule.** When a limit is shared by two consumers, the one that adds its count second is the one that must add the other's; a limit each consumer reads independently is not a limit.
+
 ### There is no `herdr agent close`, so "close the agent" is always a tab operation with an ownership question attached  {#1024-no-herdr-agent-close}
 
 **Context.** Issue #1024's card and the live-evidence note both describe a helper that creates agent sessions and later "closes" them, and herdr's agent surface reads as a complete lifecycle: `start`, `prompt`, `wait`, `read`, `rename`, `focus`, `attach`, `explain`, `send-keys`.

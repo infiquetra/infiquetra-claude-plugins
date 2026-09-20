@@ -20,6 +20,33 @@ from typing import Any
 
 import pytest
 
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+def test_store() -> Path:
+    """This test's record store, derived from the repository it has chdir'd into.
+
+    Never the resolved store: that is the developer's own ``.claude/saga/runs``.
+    """
+    store = Path.cwd().parent / "orch-test-store"
+    store.mkdir(parents=True, exist_ok=True)
+    return store
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
+
 SCRIPT = (
     Path(__file__).resolve().parents[1]
     / "plugins"
@@ -310,7 +337,7 @@ class TestStatusCommandShowsNamedDeliveryFailureState:
         monkeypatch.setattr(orchestrate.Run, "load", lambda: run_record)
         monkeypatch.setattr(orchestrate, "unit_commit_statuses", lambda _units, _r: [("-", "-")])
 
-        rc = orchestrate.cmd_status(argparse.Namespace())
+        rc = orchestrate.cmd_status(NS())
         assert rc == 0
         captured = capsys.readouterr().out
         assert "prompt_undelivered" in captured
@@ -359,9 +386,10 @@ class TestSettleNeverSweepsAnUndeliveredUnit:
         monkeypatch.setattr(
             orchestrate, "live_agents", lambda *_args, **_kwargs: [_idle_agent("alpha")]
         )
+
         monkeypatch.setattr(orchestrate.time, "sleep", lambda _seconds: None)
 
-        rc = orchestrate.cmd_settle(argparse.Namespace(once=False, interval=0))
+        rc = orchestrate.cmd_settle(NS(once=False, interval=0))
 
         assert rc == 0
         assert unit.status == orchestrate.PROMPT_UNDELIVERED

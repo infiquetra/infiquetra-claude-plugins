@@ -24,7 +24,35 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+def test_store() -> Path:
+    """This test's record store, derived from the repository it has chdir'd into.
+
+    Never the resolved store: that is the developer's own ``.claude/saga/runs``.
+    """
+    store = Path.cwd().parent / "orch-test-store"
+    store.mkdir(parents=True, exist_ok=True)
+    return store
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -191,7 +219,7 @@ def test_scoped_state_round_trips_through_save_and_load(
     run.write_review_slot(run.review_controllers()[0], review_outcome="accepted")
     run.save()
 
-    reloaded = orchestrate.Run.load()
+    reloaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert reloaded.review_controller_ceiling == 2
     assert reloaded.review_states["cr-c2"]["review_outcome"] == "accepted"
     assert reloaded.review_states.get("cr-c4", {}).get("review_outcome") is None
@@ -406,7 +434,7 @@ def test_status_shows_each_scoped_controller_outcome(
     run.write_review_slot(c4, review_outcome="repairs_requested", review_resubmit_pending=True)
     run.save()
 
-    orchestrate.cmd_status(argparse.Namespace())
+    orchestrate.cmd_status(NS())
     out = capsys.readouterr().out
     assert "cr-c2 (lifecycle c2)" in out and "accepted" in out
     assert "cr-c4 (lifecycle c4)" in out and "repairs_requested" in out
@@ -536,8 +564,8 @@ def test_cmd_start_carries_and_validates_the_ceiling(
     # Worktree creation may still refuse in a bare fixture; the record is written before that,
     # and the record is what this test is about.
     with contextlib.suppress(SystemExit):
-        orchestrate.cmd_start(argparse.Namespace(plan=str(plan_path), base=None))
-    assert orchestrate.Run.load().review_controller_ceiling == 2
+        orchestrate.cmd_start(NS(plan=str(plan_path), base=None))
+    assert orchestrate.Run.load(_support.TEST_ISSUE, test_store()).review_controller_ceiling == 2
 
 
 def test_late_lifecycle_assignment_migrates_run_global_review_state(
@@ -768,7 +796,7 @@ def test_another_lifecycles_worker_is_not_reachable(orchestrate: ModuleType) -> 
     assert foreign not in orchestrate._lifecycle_units(run, controller)
 
 
-def test_cmd_land_resubmits_a_scoped_pending_controller(
+def test_cmd_merge_resubmits_a_scoped_pending_controller(
     orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Land exited 0 without ever telling a scoped controller to resubmit.
@@ -800,7 +828,7 @@ def test_cmd_land_resubmits_a_scoped_pending_controller(
     run.write_review_slot(run.review_controllers()[0], review_resubmit_pending=True)
     run.save()
 
-    reloaded = orchestrate.Run.load()
+    reloaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert reloaded.review_slot(reloaded.review_controllers()[0])["review_resubmit_pending"] is True
 
     sent: list[str] = []
@@ -815,9 +843,9 @@ def test_cmd_land_resubmits_a_scoped_pending_controller(
         return real_run(cmd, *a, **k)
 
     monkeypatch.setattr(orchestrate, "run", prompt_door)
-    orchestrate.cmd_land(argparse.Namespace(clean=False))
+    orchestrate.cmd_merge(NS(clean=False))
 
-    after = orchestrate.Run.load()
+    after = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     controller = after.review_controllers()[0]
     assert sent == [controller.agent_name or controller.name], (
         "land must tell the scoped controller to resubmit"
@@ -838,7 +866,7 @@ def test_run_load_validates_the_ceiling_from_a_hand_edited_record(
         record["review_controller_ceiling"] = bad
         Path(".orchestrate/run.json").write_text(json.dumps(record))
         with pytest.raises(SystemExit):
-            orchestrate.Run.load()
+            orchestrate.Run.load(_support.TEST_ISSUE, test_store())
 
 
 def test_lifecycle_whitespace_is_normalised_at_load(
@@ -852,7 +880,7 @@ def test_lifecycle_whitespace_is_normalised_at_load(
     record["units"][0]["lifecycle"] = "  c2  "
     Path(".orchestrate/run.json").write_text(json.dumps(record))
 
-    reloaded = orchestrate.Run.load()
+    reloaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert reloaded.review_controllers()[0].lifecycle == "c2"
     assert reloaded.review_controller_for("c2").name == "cr-c2"
 
@@ -877,7 +905,7 @@ def test_status_binds_work_by_identity_not_name_prefix(
     run.write_review_slot(longer, review_outcome="repairs_requested", review_resubmit_pending=True)
     run.save()
 
-    orchestrate.cmd_status(argparse.Namespace())
+    orchestrate.cmd_status(NS())
     out = capsys.readouterr().out
     # The short-named controller has no outstanding Work of its own; only cr-extra does.
     assert "cr (lifecycle c2)" in out and "(recorded)" in out
@@ -897,7 +925,7 @@ def test_unscoped_review_state_round_trips_through_the_slot(
     assert run.review_slot(controller)["review_outcome"] == "accepted"
     run.save()
 
-    reloaded = orchestrate.Run.load()
+    reloaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     only = reloaded.review_controllers()[0]
     assert reloaded.review_outcome == "accepted"
     assert reloaded.review_slot(only)["review_outcome"] == "accepted"

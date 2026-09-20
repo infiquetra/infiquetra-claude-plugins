@@ -167,6 +167,28 @@ Each value is an object:
 `source` is one of `operator`, `profile`, `staffing`, `lifecycle-default` or `unset`, so a later
 reader can tell an answer the operator gave from one a default filled.
 
+## `units` — the keys a unit row carries
+
+The row's content is named above as "unit id, worktree, branch, merge-turn state, last
+mechanical-check result". The key set is deliberately **not** fixed: a consumer may add a key
+inside a row without a version bump, because a row is one consumer's working state rather than a
+cross-consumer contract. What is fixed is that a key another consumer does not know is left alone.
+
+The orchestrate plugin is the first such consumer, and issue 1025 added three keys, documented here
+so the two do not drift:
+
+| Key | Holds |
+|---|---|
+| `merge_state` | where the unit stands in the merge-turn sequence: `ready`, `merging` or `merged`. Ordinary execution state, with no owner token and no expiry — a row left at `merging` by a turn that died is checked against git and released, never trusted |
+| `launch_started_at` | when the driver persisted this unit's launch, written **before** the launcher is called. This is what makes a repeated launch call launch the unit once; there is no reservation |
+| `shared_blockers` | blockers this unit meets, each naming the one unit that owns the repair, so two units never both repair the same thing. The driver only reads these; the producer is whoever notices the blocker |
+
+Orchestrate also keeps its own run-level state under a top-level key named `orchestrate` — the run
+branch, the base commit, the issue mapping and its review state. That key is unknown to this module
+and is preserved unchanged across a read and a write, which is exactly the extension point the
+"Unknown top-level fields" rule above describes. Orchestrate never writes `admission`,
+`approval_scope`, `run_configuration`, `review_cycles` or `roster`.
+
 ## `approval_scope`
 
 The seven categories, verbatim from the lifecycle repository's escalations chapter and from

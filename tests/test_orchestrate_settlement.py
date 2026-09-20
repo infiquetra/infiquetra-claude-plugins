@@ -23,7 +23,35 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+def test_store() -> Path:
+    """This test's record store, derived from the repository it has chdir'd into.
+
+    Never the resolved store: that is the developer's own ``.claude/saga/runs``.
+    """
+    store = Path.cwd().parent / "orch-test-store"
+    store.mkdir(parents=True, exist_ok=True)
+    return store
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -80,25 +108,28 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(repo: Path, units: list[dict[str, Any]], **over: Any) -> None:
-    base = subprocess.run(
-        ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
     ).stdout.strip()
-    payload = {
-        "run_id": "r1",
-        "source": "settlement-test",
-        "base": base,
-        "branch": "orch/r1",
-        "units": units,
-        **over,
-    }
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        repo.parent / "orch-test-store",
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _read_units(repo: Path) -> dict[str, dict[str, Any]]:
-    raw = json.loads((repo / ".orchestrate" / "run.json").read_text())
+    raw = _support.read_record(repo.parent / "orch-test-store", _support.TEST_ISSUE)
     units: list[dict[str, Any]] = raw["units"]
     return {u["name"]: u for u in units}
 
@@ -159,7 +190,7 @@ class TestIncidentShape1StaleDoneWithoutCommits:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         saved = _read_units(repo)["empty-stale"]
         assert saved["status"] == "running"
         out = capsys.readouterr().out
@@ -181,7 +212,7 @@ class TestIncidentShape1StaleDoneWithoutCommits:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         saved = _read_units(repo)["empty-stale"]
         assert saved["status"] == "running"
         out = capsys.readouterr().out
@@ -207,7 +238,7 @@ class TestIncidentShape2IdleStuckWithoutCommits:
                 monkeypatch,
                 [[_agent("empty-stuck", "done")], [_agent("empty-stuck", "done")]],
             )
-            assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+            assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
             saved = _read_units(repo)["empty-stuck"]
             assert saved["status"] == "running"
 
@@ -227,7 +258,7 @@ class TestIncidentShape3SessionGoneOutcomes:
         _patch_settle(orchestrate, monkeypatch, [[], []])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         saved = _read_units(repo)["committed-alpha"]
         assert saved["status"] == "done"
         out = capsys.readouterr().out
@@ -245,7 +276,7 @@ class TestIncidentShape3SessionGoneOutcomes:
         _patch_settle(orchestrate, monkeypatch, [[], []])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         saved = _read_units(repo)["empty-gone"]
         assert saved["status"] == "orphaned"
         assert saved["status"] == orchestrate.ORPHANED
@@ -269,7 +300,7 @@ class TestSettlementUnderOnceFlag:
         _patch_settle(orchestrate, monkeypatch, [[_agent("committed-alpha", "idle")]])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=True)) == 0
         saved = _read_units(repo)["committed-alpha"]
         assert saved["status"] == "done"
 
@@ -283,7 +314,7 @@ class TestSettlementUnderOnceFlag:
         _patch_settle(orchestrate, monkeypatch, [[_agent("empty-stale", "idle")]])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=True)) == 0
         saved = _read_units(repo)["empty-stale"]
         assert saved["status"] == "running"
 
@@ -297,7 +328,7 @@ class TestSettlementUnderOnceFlag:
         _patch_settle(orchestrate, monkeypatch, [[]])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=True)) == 0
         saved = _read_units(repo)["committed-alpha"]
         assert saved["status"] == "done"
 
@@ -311,7 +342,7 @@ class TestSettlementUnderOnceFlag:
         _patch_settle(orchestrate, monkeypatch, [[]])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=True)) == 0
         saved = _read_units(repo)["empty-gone"]
         assert saved["status"] == "orphaned"
 
@@ -334,7 +365,7 @@ class TestLandedWorkSettlement:
         _patch_settle(orchestrate, monkeypatch, [[], []])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         saved = _read_units(repo)["committed-beta"]
         assert saved["status"] == "done"
 
@@ -375,7 +406,7 @@ class TestUnitsWithNoBranchOfTheirOwn:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         saved = _read_units(repo)["code-review-controller"]
         assert saved["status"] == "done"
         assert "no branch of its own to check" in capsys.readouterr().out
@@ -399,7 +430,7 @@ class TestUnitsWithNoBranchOfTheirOwn:
         _patch_settle(orchestrate, monkeypatch, [[], []])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         saved = _read_units(repo)["code-review-controller"]
         assert saved["status"] == orchestrate.ORPHANED
         assert saved["status"] != orchestrate.FAILED
@@ -429,7 +460,7 @@ class TestUnresolvableRunBranchIsUnknownNotZero:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         assert _read_units(repo)["committed-alpha"]["status"] == "running"
         out = capsys.readouterr().out
         assert "run branch does not resolve" in out
@@ -446,7 +477,7 @@ class TestUnresolvableRunBranchIsUnknownNotZero:
         _patch_settle(orchestrate, monkeypatch, [[], []])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         saved = _read_units(repo)["committed-alpha"]
         assert saved["status"] == orchestrate.ORPHANED
         assert saved["note"] == "session disappeared; commits could not be checked"
@@ -504,7 +535,7 @@ class TestIncidentShape4ParkedPushSucceededPRBlocked:
             text=True,
         ).stdout.strip()
 
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             evidence="GraphQL error: PR creation rate limit",
             remote="origin",
@@ -539,7 +570,7 @@ class TestIncidentShape4ParkedPushSucceededPRBlocked:
         monkeypatch.chdir(repo)
 
         # Base is omitted -- should default to run branch "orch/r1", not commit SHA r.base
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             evidence="PR creation rate limit",
             remote="origin",
@@ -553,7 +584,7 @@ class TestIncidentShape4ParkedPushSucceededPRBlocked:
 
         # When run branch is empty, should default to "main", not commit SHA r.base
         _write_run(repo, [_unit("pushed-unit")], branch="")
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             evidence="PR creation rate limit",
             remote="origin",
@@ -573,7 +604,7 @@ class TestIncidentShape4ParkedPushSucceededPRBlocked:
         _write_run(repo, [_unit("unpushed-unit")])
         monkeypatch.chdir(repo)
 
-        args = argparse.Namespace(
+        args = NS(
             unit="unpushed-unit",
             evidence="GraphQL error: failed to open PR",
             remote="origin",
@@ -602,7 +633,7 @@ class TestIncidentShape4ParkedPushSucceededPRBlocked:
         _write_run(repo, [_unit("pushed-unit")])
         monkeypatch.chdir(repo)
 
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             evidence="blocked PR creation",
             remote="origin",
@@ -626,7 +657,7 @@ class TestIncidentShape4ParkedPushSucceededPRBlocked:
         )
         monkeypatch.chdir(repo)
 
-        args = argparse.Namespace(
+        args = NS(
             unit="branchless",
             evidence="some error",
             remote="origin",
@@ -712,7 +743,7 @@ class TestIncidentShape4ParkedResume:
 
         monkeypatch.setattr(orchestrate, "run", mock_run)
 
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             title=None,
             body=None,
@@ -779,7 +810,7 @@ class TestIncidentShape4ParkedResume:
         monkeypatch.setattr(orchestrate, "run", mock_run)
 
         # Omit --remote (args.remote is None) -- must use recorded remote "upstream"
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             title=None,
             body=None,
@@ -826,7 +857,7 @@ class TestIncidentShape4ParkedResume:
 
         monkeypatch.setattr(orchestrate, "run", mock_run)
 
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             title=None,
             body=None,
@@ -894,7 +925,7 @@ class TestIncidentShape4ParkedResume:
 
         monkeypatch.setattr(orchestrate, "run", mock_run)
 
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             title=None,
             body=None,
@@ -931,7 +962,7 @@ class TestIncidentShape4ParkedResume:
             capture_output=True,
         )
 
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             title=None,
             body=None,
@@ -965,7 +996,7 @@ class TestIncidentShape4ParkedResume:
         _commit(tmp_clone, "diverged.txt")
         _git(tmp_clone, "push", "origin", "orch/r1-pushed-unit")
 
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             title=None,
             body=None,
@@ -992,12 +1023,13 @@ class TestIncidentShape4ParkedResume:
         _write_run(repo, [_unit("pushed-unit", status="running")])
         monkeypatch.chdir(repo)
 
-        args = argparse.Namespace(
+        args = NS(
             unit="pushed-unit",
             title=None,
             body=None,
             base=None,
             remote=None,
         )
+
         with pytest.raises(SystemExit, match="is not in parked state"):
             orchestrate.cmd_resume(args)

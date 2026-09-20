@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.165.0] - 2026-09-19
+
+### Changed
+
+- **The run record's `units` rows are documented as an extension point** (issue #1025).
+  `plugins/saga/references/run-record.md` gains a section naming the three keys the orchestrate
+  plugin adds to a unit row -- `merge_state`, `launch_started_at` and `shared_blockers` -- and
+  states the rule they are added under: a row's key set is deliberately not fixed, because a row is
+  one consumer's working state rather than a cross-consumer contract, and a key another consumer
+  does not know is left alone. The same section records that orchestrate keeps its own run-level
+  state under a top-level `orchestrate` key, which the module already preserves unchanged across a
+  read and a write, and that it never writes `admission`, `approval_scope`, `run_configuration`,
+  `review_cycles` or `roster`. No code changes; `run_record.v1` is unchanged.
+
 ## [0.164.0] - 2026-09-19
 
 **Bumped from 0.163.0**, the saga version on `origin/parent/1018` at commit `0fa2ea32` when this

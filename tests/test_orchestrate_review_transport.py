@@ -17,7 +17,35 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+def test_store() -> Path:
+    """This test's record store, derived from the repository it has chdir'd into.
+
+    Never the resolved store: that is the developer's own ``.claude/saga/runs``.
+    """
+    store = Path.cwd().parent / "orch-test-store"
+    store.mkdir(parents=True, exist_ok=True)
+    return store
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "plugins" / "orchestrate" / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
@@ -67,20 +95,24 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(cwd: Path, units: list[dict[str, Any]]) -> None:
-    base = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=cwd, check=True, capture_output=True, text=True
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
     ).stdout.strip()
-    payload = {
-        "run_id": "r1",
-        "source": "review-transport",
-        "base": base,
-        "branch": "orch/r1",
-        "units": units,
-    }
-    path = cwd / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        repo.parent / "orch-test-store",
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _controller_row() -> dict[str, Any]:
@@ -154,13 +186,13 @@ def test_review_transport_go_launches_both_via_orchestrate_not_the_retired_runne
         unit.tab_id = f"tab-{unit.name}"
 
     monkeypatch.setattr(orchestrate, "launch", fake_launch)
-    assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+    assert orchestrate.cmd_go(NS(limit=0)) == 0
 
     assert launched == [
         ("code-review-controller", "claude"),
         ("grok-reviewer", "grok"),
     ]
-    run = orchestrate.Run.load()
+    run = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert {u.name: u.worktree for u in run.units}
     assert all(u.worktree and Path(u.worktree).exists() for u in run.units)
     assert not (SCRIPT.parent / "engine_session_runner.py").exists()
@@ -178,8 +210,8 @@ def test_review_transport_records_one_typed_result_and_no_duplicate_review(
     result_path = tmp_path / "result.json"
     result_path.write_text(_accepted_result())
 
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
-    restored = orchestrate.Run.load()
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
+    restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert restored.review_outcome == "accepted"
     assert json.loads(restored.review_result)["schema"] == "review_result.v1"
     with pytest.raises(SystemExit, match="exactly one top-level Code Review controller"):
@@ -215,7 +247,7 @@ def test_review_transport_mutation_refuses_plain_review_prompt_before_session(
     )
 
     with pytest.raises(SystemExit, match="plain review prompt"):
-        orchestrate.cmd_go(argparse.Namespace(limit=0))
+        orchestrate.cmd_go(NS(limit=0))
     assert launched == []
 
 
@@ -240,7 +272,7 @@ def test_review_transport_mutation_refuses_direct_reviewer_launch_before_session
     )
 
     with pytest.raises(SystemExit, match="plain review prompt"):
-        orchestrate.cmd_go(argparse.Namespace(limit=0))
+        orchestrate.cmd_go(NS(limit=0))
     assert launched == []
 
 
@@ -350,7 +382,7 @@ def test_review_transport_loads_legacy_run_files_without_engine_prefs(
         )
     )
     monkeypatch.chdir(tmp_path)
-    loaded = orchestrate.Run.load()
+    loaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert not hasattr(loaded, "engine_prefs")
     loaded.save()
     saved = json.loads(path.read_text())
@@ -449,7 +481,7 @@ def test_review_transport_voice_run_regression_preserves_loadability_and_rejects
     monkeypatch.chdir(repo)
 
     # Run loads cleanly
-    run = orchestrate.Run.load()
+    run = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert len(run.units) == 3
     orchestrate.assert_review_transport(run.units)
 
@@ -460,14 +492,14 @@ def test_review_transport_voice_run_regression_preserves_loadability_and_rejects
         "launch",
         lambda unit, backend="inline", **_: launched.append(unit.name),
     )
-    assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+    assert orchestrate.cmd_go(NS(limit=0)) == 0
     assert launched == ["code-review-controller"]
 
     # If a genuine untyped review prompt is added, it is still rejected before launch
     untyped = _grok_seat_row(task="review this PR for bugs", role=None)
     _write_run(repo, [plan_unit, docreview_unit, _controller_row(), untyped])
     with pytest.raises(SystemExit, match="plain review prompt"):
-        orchestrate.cmd_go(argparse.Namespace(limit=0))
+        orchestrate.cmd_go(NS(limit=0))
 
 
 @pytest.mark.parametrize(

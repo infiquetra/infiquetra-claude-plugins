@@ -80,6 +80,25 @@ Use repo-relative paths in every generated document. Absolute paths break portab
 and worktrees. (The one exception is the saga `--review-paths` value passed through to `/code-review`,
 which mirrors that skill's convention.)
 
+## Role sessions: the roster helper
+
+When a phase needs a role running as its own herdr session rather than as a subagent, stand it up
+with agent-launcher's roster helper, never by assembling launcher calls by hand:
+
+```bash
+R=$(ls -d ~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/roster.py \
+    | sort -V | tail -1)
+python3 "$R" up   --issue <N>            # one named pane per role in the run record's staffing plan
+python3 "$R" wait --issue <N> --timeout 600000
+python3 "$R" down --issue <N>            # closes only what that record says it created
+```
+
+It reads the run record's staffing plan, records every pane it creates in the record's `roster`
+array, and closes nothing that array does not name. `down` is the only teardown; never close a role
+pane by hand. A blocked role is reported, not answered. Every subcommand refuses outside a herdr
+pane (exit 4), so run it from the coordinator's own pane. Its full contract is in the
+agent-launcher skill under "A whole roster from a run record".
+
 ## Reviewer-session transport
 
 Orchestrate owns reviewer-session transport. Do not run `engine_offer.py`, do not

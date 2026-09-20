@@ -132,7 +132,11 @@ def test_agent_launcher_metadata_is_marketplace_registered() -> None:
     )
 
     assert plugin_json["name"] == "agent-launcher"
-    assert plugin_json["version"] == "1.6.0"
+    assert plugin_json["version"] == "1.7.0"  # 1.7.0: roster.py stands up one named herdr
+    # session per staffed role from the run record and closes only what it recorded creating
+    # (issue #1024). Bumped from 1.6.0, the agent-launcher version on origin/parent/1018 at
+    # 0fa2ea32.
+    # Predecessor 1.6.0: the roles library, one prompt per lifecycle role (issue #1022).
     assert "Herdr" in plugin_json["description"]
     assert {"agent-launcher", "agents", "herdr", "launch", "sessions"} <= set(
         plugin_json["keywords"]
@@ -239,6 +243,7 @@ def test_agent_launcher_packaged_files() -> None:
         "skills/agent-launcher/SKILL.md",
         "skills/agent-launcher/scripts/composer.py",
         "skills/agent-launcher/scripts/launcher.py",
+        "skills/agent-launcher/scripts/roster.py",
         "tests/test_launcher_contract.py",
     )
     for relative_path in expected:

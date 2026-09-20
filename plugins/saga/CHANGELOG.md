@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.164.0] - 2026-09-19
+
+**Bumped from 0.163.0**, the saga version on `origin/parent/1018` at commit `0fa2ea32` when this
+card branched.
+
+### Changed
+
+- `/work` and `/code-review` now name agent-launcher's roster helper as the one path from a run
+  record's staffing plan to a set of live role sessions (issue #1024). `/work` gains "Role sessions:
+  the roster helper"; `/code-review` gains "Lens reviewers as role sessions: the roster helper",
+  where one pane per applicable lens is briefed from the Lens Reviewer prompt sliced to that lens.
+  Both say the same two things: the run record's `roster` array is the only authority on what may be
+  closed, and a blocked role is reported rather than answered. Neither skill closes a role pane by
+  hand.
+
 ## [0.163.0] - 2026-09-19
 
 **Bumped from 0.161.0, the saga version on `origin/parent/1018` at commit `550ae6ce` when this card

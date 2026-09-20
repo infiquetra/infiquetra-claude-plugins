@@ -48,7 +48,8 @@ RETIRED_HOOKS: frozenset[str] = frozenset(
 
 
 def _events() -> dict[str, Any]:
-    return json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
+    events: dict[str, Any] = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
+    return events
 
 
 def _commands(entries: list[dict[str, Any]], matcher: str | None = None) -> list[str]:

@@ -7,8 +7,6 @@ module-level ``check_*(text)`` predicate (KTD3) so U3 can mutate it.
 from __future__ import annotations
 
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent

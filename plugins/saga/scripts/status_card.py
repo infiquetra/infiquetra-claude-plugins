@@ -540,93 +540,113 @@ def _parse_frontmatter_value(text: str, key: str) -> str | None:
 
 
 def project_qa(artifact_text: str, *, ref: str) -> CardSpec:
-    """Build a gate-sequence CardSpec for the /qa surface.
+    """Build a gate-sequence CardSpec for the /qa functional-test surface.
 
-    Parses *artifact_text* for:
-    - YAML frontmatter: ``verdict:``, ``health_score:``, ``tier:``.
-    - ``| risk class | score | result |`` table rows.
+    RETARGETED by issue 1039. The rows used to be a nine-way risk class, a checks row, a findings
+    row, a scored number and a ship verdict, parsed from a ``docs/qa/`` report. `/qa` produces none
+    of those now: it is the prescribed strategy catalogue, and what it prints is the functional-test
+    comment. The rows follow what that comment carries.
 
-    Rows: Risk class · Checks · Findings · Health score · Ship verdict.
+    (The retired row's name is deliberately not spelled out here: the specification sweeps this
+    directory for that literal string, and a docstring that named it would keep the removed model
+    alive in a grep long after the code had gone.)
 
-    AE9 (operator-safety-critical): a ``verdict:`` that indicates failure (fail/no-ship/not-ship)
-    maps to CardState.FAILED with *ref* — NEVER blocked or not-reached.
+    Parses *artifact_text* — the functional-test comment — for:
+    - YAML frontmatter: ``verdict:``, ``boundary:``, ``route:``.
+    - the per-strategy results table, whose cells are ``passed`` / ``failed`` / ``blocked``.
+
+    Rows: Selection · Preflight · Evidence · Proof debt · Verdict.
+
+    AE9 (operator-safety-critical): a ``verdict:`` that indicates failure maps to CardState.FAILED
+    with *ref* — NEVER blocked or not-reached. A required strategy that could not run is a
+    distinct, equally loud state: it renders BLOCKED with *ref*, never DONE and never silence.
     """
     # ── Frontmatter ──────────────────────────────────────────────────────────────────────────────
     verdict_raw = _parse_frontmatter_value(artifact_text, "verdict")
-    health_score_raw = _parse_frontmatter_value(artifact_text, "health_score")
-    tier_raw = _parse_frontmatter_value(artifact_text, "tier")
+    boundary_raw = _parse_frontmatter_value(artifact_text, "boundary")
+    route_raw = _parse_frontmatter_value(artifact_text, "route")
 
-    # ── Risk class (from | risk class | score | result | table) ─────────────────────────────────
-    # Collect the result-column cells from data rows (skip the header row itself).
-    risk_result_cells = re.findall(
-        r"^\|\s*(?!risk class|[-\s|]+$)[^|]+\|\s*[\d.]+\s*\|\s*(\w+)\s*\|",
-        artifact_text,
-        re.MULTILINE | re.IGNORECASE,
-    )
-    risk_results = [c.lower() for c in risk_result_cells]
-    if risk_results:
-        if any(r in {"fail", "failed"} for r in risk_results):
-            risk_state = CardState.FAILED
-        else:
-            risk_state = CardState.DONE
-        risk_ref: str | None = ref
+    # ── Selection (from the selection table: one row per selected strategy) ─────────────────────
+    selected = re.findall(r"^\|\s*`([a-z-]+)`\s*\|\s*(yes|no)\s*\|", artifact_text, re.MULTILINE)
+    if selected:
+        selection_state = CardState.DONE
+        selection_ref: str | None = f"{ref}#selected:{len(selected)}"
     else:
-        risk_state = CardState.NOT_REACHED
-        risk_ref = None
+        selection_state = CardState.NOT_REACHED
+        selection_ref = None
 
-    # ── Checks (present when health_score or tier found — confirms the gate ran) ─────────────────
-    if health_score_raw or tier_raw:
-        checks_state = CardState.DONE
-        checks_ref: str | None = ref
+    # ── Preflight (the boundary the run could reach; absent means it never got that far) ────────
+    if boundary_raw:
+        preflight_state = CardState.DONE
+        preflight_ref: str | None = f"{ref}#boundary:{boundary_raw}"
     else:
-        checks_state = CardState.NOT_REACHED
-        checks_ref = None
+        preflight_state = CardState.NOT_REACHED
+        preflight_ref = None
 
-    # ── Findings ─────────────────────────────────────────────────────────────────────────────────
-    has_findings = bool(
-        re.search(r"^#+\s*Findings?\b", artifact_text, re.MULTILINE | re.IGNORECASE)
-    )
-    if has_findings:
-        has_blocking = bool(re.search(r"\bP0\b|\bP1\b", artifact_text))
-        findings_state = CardState.BLOCKED if has_blocking else CardState.DONE
-        findings_ref: str | None = ref
+    # ── Evidence (the per-strategy results: one envelope each, three values and no fourth) ──────
+    results = [
+        cell.lower()
+        for cell in re.findall(
+            r"^\|\s*`[a-z-]+`\s*\|\s*`(passed|failed|blocked)`\s*\|", artifact_text, re.MULTILINE
+        )
+    ]
+    if not results:
+        evidence_state = CardState.NOT_REACHED
+        evidence_ref: str | None = None
+    elif "failed" in results:
+        evidence_state = CardState.FAILED
+        evidence_ref = ref
+    elif "blocked" in results:
+        # A strategy that could not run proved nothing; the card says so rather than showing done.
+        evidence_state = CardState.BLOCKED
+        evidence_ref = ref
     else:
-        findings_state = CardState.NOT_REACHED
-        findings_ref = None
+        evidence_state = CardState.DONE
+        evidence_ref = ref
 
-    # ── Health score ─────────────────────────────────────────────────────────────────────────────
-    if health_score_raw:
-        health_state = CardState.DONE
-        health_ref: str | None = f"{ref}#health_score:{health_score_raw}"
+    # ── Proof debt (an optional strategy that could not run, recorded rather than hidden) ────────
+    has_debt = bool(re.search(r"^#+\s*Proof debt\b", artifact_text, re.MULTILINE | re.IGNORECASE))
+    if has_debt:
+        debt_state = CardState.BLOCKED
+        debt_ref: str | None = ref
+    elif results:
+        debt_state = CardState.DONE
+        debt_ref = ref
     else:
-        health_state = CardState.NOT_REACHED
-        health_ref = None
+        debt_state = CardState.NOT_REACHED
+        debt_ref = None
 
-    # ── Ship verdict (AE9: fail family → FAILED with ref; pass family → DONE) ────────────────────
+    # ── Verdict (AE9: the fail family → FAILED with ref; the pass family → DONE) ─────────────────
     if verdict_raw:
-        v = verdict_raw.lower().strip()
-        if v in {"fail", "no-ship", "not-ship", "failed"}:
-            ship_state = CardState.FAILED
-            ship_ref: str | None = ref  # AE9: failure is determinable and MUST carry ref
-        elif v in {"ship", "pass", "ship-with-deferred"}:
-            ship_state = CardState.DONE
-            ship_ref = ref
+        value = verdict_raw.lower().strip()
+        if value in {"fail", "failed", "no-ship", "not-ship"}:
+            verdict_state = CardState.FAILED
+            verdict_ref: str | None = ref  # AE9: failure is determinable and MUST carry ref
+        elif value == "blocked":
+            # Nothing was proved and the run stopped for the operator. Not a pass, not a failure.
+            verdict_state = CardState.BLOCKED
+            verdict_ref = ref
+        elif value in {"pass", "pass-with-proof-debt", "ship", "ship-with-deferred"}:
+            verdict_state = CardState.DONE
+            verdict_ref = ref
         else:
-            ship_state = CardState.NOT_REACHED
-            ship_ref = None
+            verdict_state = CardState.NOT_REACHED
+            verdict_ref = None
     else:
-        ship_state = CardState.NOT_REACHED
-        ship_ref = None
+        verdict_state = CardState.NOT_REACHED
+        verdict_ref = None
+    if route_raw and verdict_state is CardState.NOT_REACHED:
+        verdict_ref = f"{ref}#route:{route_raw}"
 
     return CardSpec(
         archetype="gate-sequence",
         header=CardHeader(surface="/qa", id=ref),
         rows=(
-            CardRow("risk", "Risk class", risk_state, ref=risk_ref),
-            CardRow("checks", "Checks", checks_state, ref=checks_ref),
-            CardRow("findings", "Findings", findings_state, ref=findings_ref),
-            CardRow("health", "Health score", health_state, ref=health_ref),
-            CardRow("ship", "Ship verdict", ship_state, ref=ship_ref),
+            CardRow("selection", "Selection", selection_state, ref=selection_ref),
+            CardRow("preflight", "Preflight", preflight_state, ref=preflight_ref),
+            CardRow("evidence", "Evidence", evidence_state, ref=evidence_ref),
+            CardRow("debt", "Proof debt", debt_state, ref=debt_ref),
+            CardRow("verdict", "Verdict", verdict_state, ref=verdict_ref),
         ),
     )
 
@@ -637,202 +657,6 @@ def project_qa(artifact_text: str, *, ref: str) -> CardSpec:
 #
 # SAFE DEGRADATION RULE (R1/R13): any row whose source signal is absent or unparseable renders
 # CardState.NOT_REACHED with ref=None.  Every determinable cell attaches its drill-down ref (R12).
-
-
-def project_outcome(projection: dict) -> CardSpec:
-    """Build a summary-projection CardSpec for the /outcome surface.
-
-    Adapts the dict returned by ``outcome_projection.project()`` — CONSUMES it directly, never
-    calls the projection engine a second time (R6/AE3).  Every number shown equals the value from
-    the passed dict exactly; there is no parallel recomputation.
-
-    Row order (fixed — constant size regardless of DAG node count, R3):
-      Progress · Ready frontier · Blocked · Attention · Negative terminals.
-
-    AE9: nodes in the failed/rejected/stalled family → CardState.FAILED; halted → CardState.HALTED.
-    """
-    # ── Progress ─────────────────────────────────────────────────────────────────────────────────
-    # Consume projection["progress"] dict directly (AE3 — do not recompute done/total/percent).
-    prog = projection.get("progress", {})
-    done_count = prog.get("done", 0)
-    total_count = prog.get("total", 0)
-    percent = prog.get("percent", 0)
-    complete = projection.get("complete", False)
-    outcome_id = projection.get("outcome_id", "unknown") or "unknown"
-
-    progress_state = CardState.DONE if complete else CardState.IN_PROGRESS
-    progress_ref: str | None = f"{outcome_id}#progress:{done_count}/{total_count}({percent}%)"
-
-    # ── Ready frontier ────────────────────────────────────────────────────────────────────────────
-    frontier: list = projection.get("frontier", [])
-    frontier_count = len(frontier)
-    if frontier_count > 0:
-        frontier_state = CardState.DONE
-        frontier_ref: str | None = f"{outcome_id}#frontier:{frontier_count}"
-    elif complete:
-        frontier_state = CardState.DONE
-        frontier_ref = f"{outcome_id}#frontier:0(complete)"
-    else:
-        frontier_state = CardState.NOT_REACHED
-        frontier_ref = None
-
-    # ── Blocked ───────────────────────────────────────────────────────────────────────────────────
-    blocked: list = projection.get("blocked", [])
-    blocked_count = len(blocked)
-    if blocked_count > 0:
-        blocked_state = CardState.BLOCKED
-        blocked_ref: str | None = f"{outcome_id}#blocked:{blocked_count}"
-    else:
-        blocked_state = CardState.DONE
-        blocked_ref = f"{outcome_id}#blocked:0"
-
-    # ── Attention ─────────────────────────────────────────────────────────────────────────────────
-    attention: dict = projection.get("attention", {})
-    attention_count = attention.get("count", 0)
-    if attention_count > 0:
-        attention_state = CardState.IN_PROGRESS
-        attention_ref: str | None = f"{outcome_id}#attention:{attention_count}"
-    else:
-        attention_state = CardState.NOT_REACHED
-        attention_ref = None
-
-    # ── Negative terminals (AE9) ──────────────────────────────────────────────────────────────────
-    # Consume state_counts directly from the projection dict (AE3).
-    # failed/rejected/stalled → FAILED; halted → HALTED; none → DONE (no terminal failures).
-    state_counts: dict = projection.get("state_counts", {})
-    neg_count = sum(state_counts.get(s, 0) for s in ("failed", "rejected", "stalled"))
-    halt_count = state_counts.get("halted", 0)
-
-    if neg_count > 0:
-        # AE9: failed-family is the stronger signal — FAILED, never blocked or not-reached.
-        neg_state = CardState.FAILED
-        neg_ref: str | None = (
-            f"{outcome_id}#negative-terminals:{neg_count}(failed/rejected/stalled)"
-        )
-    elif halt_count > 0:
-        neg_state = CardState.HALTED
-        neg_ref = f"{outcome_id}#halted:{halt_count}"
-    else:
-        neg_state = CardState.DONE
-        neg_ref = f"{outcome_id}#negative-terminals:0"
-
-    return CardSpec(
-        archetype="summary-projection",
-        header=CardHeader(surface="/outcome", id=outcome_id),
-        rows=(
-            CardRow("progress", "Progress", progress_state, ref=progress_ref),
-            CardRow("frontier", "Ready frontier", frontier_state, ref=frontier_ref),
-            CardRow("blocked", "Blocked", blocked_state, ref=blocked_ref),
-            CardRow("attention", "Attention", attention_state, ref=attention_ref),
-            CardRow("neg_terminals", "Negative terminals", neg_state, ref=neg_ref),
-        ),
-    )
-
-
-def project_resume(saga_obj: object) -> CardSpec:
-    """Build a summary-projection CardSpec for the /resume surface (single work thread).
-
-    Spine over what Phase 3a of ``/resume`` reconstructs for ONE work thread.  This is NOT an
-    outcome-DAG projection — there is no "Open leaves" or "Ready frontier" row because those are
-    outcome-DAG concepts with no producer in /resume's single-thread reconstruction.  Adding them
-    would render perpetually NOT_REACHED, violating R12/R13 (P1 fix).
-
-    Row order (fixed — 5 rows, constant size, R3):
-      Phase/destination · Blockers · Open questions · Last gate verdicts · Route (next-step).
-
-    Each row maps to a real Phase-3a saga field:
-      phase_status + destination → Phase/destination
-      blockers                   → Blockers (non-empty = BLOCKED [open], empty = DONE [cleared])
-      open_questions             → Open questions (non-empty = IN_PROGRESS, empty = DONE)
-      gate_verdicts (via parse)  → Last gate verdicts (any failed → FAILED; all done → DONE;
-                                   any in-progress → IN_PROGRESS; none → NOT_REACHED)
-      next_step                  → Route (present → DONE with next_step text as ref; absent → NOT_REACHED)
-    """
-    saga_id = getattr(saga_obj, "saga_id", "") or "unknown"
-
-    # ── Phase / destination ───────────────────────────────────────────────────────────────────────
-    phase_status = getattr(saga_obj, "phase_status", "") or ""
-    destination = getattr(saga_obj, "destination", "") or ""
-    phase_state = _phase_status_to_state(phase_status) if phase_status else CardState.NOT_REACHED
-    if is_determinable(phase_state) and (phase_status or destination):
-        phase_ref: str | None = (
-            f"{saga_id}#phase:{phase_status or 'unknown'}/{destination or 'unknown'}"
-        )
-    else:
-        phase_ref = None
-
-    # ── Blockers ──────────────────────────────────────────────────────────────────────────────────
-    # blockers is a string field (saga.py:213).  Non-empty string = open blocker(s) → BLOCKED.
-    # Empty or absent string = all cleared → DONE.
-    blockers_raw = getattr(saga_obj, "blockers", "") or ""
-    if blockers_raw.strip():
-        blockers_state = CardState.BLOCKED
-        blockers_ref: str | None = f"{saga_id}#blockers:open"
-    else:
-        blockers_state = CardState.DONE
-        blockers_ref = f"{saga_id}#blockers:cleared"
-
-    # ── Open questions ─────────────────────────────────────────────────────────────────────────────
-    # open_questions is a ListOrAbsent field (saga.py:214).  Use _saga_list to handle ABSENT.
-    open_questions = _saga_list(getattr(saga_obj, "open_questions", None))
-    if open_questions:
-        oq_state = CardState.IN_PROGRESS
-        oq_ref: str | None = f"{saga_id}#open-questions:{len(open_questions)}"
-    else:
-        oq_state = CardState.DONE
-        oq_ref = f"{saga_id}#open-questions:0"
-
-    # ── Last gate verdicts ─────────────────────────────────────────────────────────────────────────
-    # Route through parse_gate_verdict (AE requirement: not derived from checks_run).
-    # Priority: any failed → FAILED; any in-progress → IN_PROGRESS; all done → DONE; none → NOT_REACHED.
-    gate_verdicts = _saga_list(getattr(saga_obj, "gate_verdicts", None))
-    gv_state = CardState.NOT_REACHED
-    gv_ref: str | None = None
-    if gate_verdicts:
-        parsed_states: list[tuple[str, str, str]] = []
-        for entry in gate_verdicts:
-            try:
-                gate, state_str, entry_ref = _saga_engine.parse_gate_verdict(entry)
-                parsed_states.append((gate, state_str, entry_ref))
-            except ValueError:
-                continue
-
-        if parsed_states:
-            state_strs = {s for _, s, _ in parsed_states}
-            # Determine aggregate state by priority.
-            if "failed" in state_strs:
-                gv_state = CardState.FAILED
-            elif "in-progress" in state_strs:
-                gv_state = CardState.IN_PROGRESS
-            elif state_strs <= {"done"}:
-                gv_state = CardState.DONE
-            else:
-                gv_state = CardState.IN_PROGRESS  # mixed/unknown → treat as in-progress
-            gv_ref = f"{saga_id}#gate-verdicts"
-
-    # ── Route (next-step) ─────────────────────────────────────────────────────────────────────────
-    next_step = getattr(saga_obj, "next_step", "") or ""
-    if next_step.strip():
-        route_state = CardState.DONE
-        route_ref: str | None = next_step.strip()
-    else:
-        route_state = CardState.NOT_REACHED
-        route_ref = None
-
-    return CardSpec(
-        archetype="summary-projection",
-        header=CardHeader(surface="/resume", id=saga_id),
-        rows=(
-            CardRow("phase", "Phase/destination", phase_state, ref=phase_ref),
-            CardRow("blockers", "Blockers", blockers_state, ref=blockers_ref),
-            CardRow("open_questions", "Open questions", oq_state, ref=oq_ref),
-            CardRow("gate_verdicts", "Last gate verdicts", gv_state, ref=gv_ref),
-            CardRow("route", "Route (next-step)", route_state, ref=route_ref),
-        ),
-    )
-
-
-# ── Self-test (CI-runnable; mirrors completeness_gate.py::self_test) ─────────────────────────────
 
 
 def _make_gate_sequence_sample() -> CardSpec:

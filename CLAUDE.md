@@ -6,7 +6,7 @@ Living journal at [`docs/engineering-journal/`](docs/engineering-journal/) (`LEA
 
 Repo-specific signals worth a `LEARNINGS.md` entry: marketplace registry drift, hook timing races, skill-activation gotchas, MCP env propagation, build-tool surprises. Plugin-pattern choices (skills-based vs CLI-based, version-bump strategy, hook event choice) belong in `DECISIONS.md`.
 
-Any verify/review-class Agent-tool spawn made outside a saga skill must pass `subagent_type: saga:readonly-verifier` + `isolation: "worktree"` — see `plugins/saga/references/sandbox-spawn-sites.md` for the full spawn-site inventory and rationale. If `saga:readonly-verifier` is unavailable in the session, use the fallback ladder documented in that file's "Fallback when `saga:readonly-verifier` is unavailable" section — never fail the spawn outright or revert to unsandboxed.
+Review roles run as roster sessions in their own worktrees. The roles live in `plugins/agent-launcher/roles/` and the roster helper stands one session up per role, each in its own worktree, so a reviewer's `git checkout` can never reach the tree it is reviewing. This replaces the rule that every review-class Agent-tool spawn had to name saga's read-only verifier agent and pass `isolation: "worktree"`: both saga agents and the spawn-site inventory behind that rule were removed with the eleven commands, and the isolation they provided is now a property of how a role is hosted rather than a flag each caller has to remember.
 
 ## Repository Information
 
@@ -35,9 +35,7 @@ plugin-name/
 └── CHANGELOG.md
 ```
 
-**Examples**: `saga`, `home-lab-ops`. Note: `team-execution` is primarily skills-based but is now
-**hybrid** — it also carries a CLI script (`skills/team-execution/scripts/artifact_pointer.py`) beside
-its skills/agents; see DECISIONS `{#artifact-pointer-ktds-291}`.
+**Examples**: `saga`, `home-lab-ops`.
 
 ### CLI-based Plugins
 Python CLI scripts wrapped as Claude skills/commands for interacting with external services.

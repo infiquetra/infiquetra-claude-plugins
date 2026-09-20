@@ -1,5 +1,54 @@
 # Changelog
 
+## [1.7.0] - 2026-09-19
+
+**Bumped from 1.6.0**, the agent-launcher version on the integration branch `origin/parent/1018`
+when this card branched; saga's 0.164.0 entry names that same head by commit. The roles library this
+helper briefs its sessions from is unchanged and still written against `infiquetra-sdlc` revision
+`5efc869f`.
+
+### Added
+
+- `skills/agent-launcher/scripts/roster.py`: the roster helper (issue #1024). `up` reads an issue's
+  run record, resolves every role its staffing plan names to a vendor, model, effort and prompt from
+  the roles library, and creates one named herdr pane per role **through `launcher.py`**, so every
+  pane carries an ownership receipt. `wait` waits for those panes under a caller timeout. `down`
+  closes exactly the panes the run record says this helper created, and nothing else.
+- A `roster_entry.v1` row per created pane in the run record's `roster` array, carrying the role,
+  the pane, tab and workspace identifiers, and the absolute path of the launch receipt that proves
+  ownership. The receipts live beside the run record, outside every worktree, so removing a unit's
+  worktree cannot strand a pane no one can prove the right to close.
+- `--account company|personal` on `up`, because the staffing plan carries tiers and an account is
+  not one: without it the helper appends no account flag and the wrapper's own default applies,
+  which is the personal account. A staffing row carrying its own `account` overrides the flag for
+  that role. Found by running the helper against the live herdr server rather than by reading it.
+- `A whole roster from a run record` in `SKILL.md`: the helper's contract, its refusals, and the
+  rule that `down` is the only teardown.
+
+### Guards
+
+- `up` is idempotent per role, so re-running it after an interruption repairs the roster rather than
+  doubling it; `down` never reads `herdr agent list` to decide what to close, skips any row whose
+  ownership receipt is gone or whose `created_by` is not this helper, and refuses the pane it is
+  itself running in; a blocked role is reported with its output tail, never answered; every wait
+  carries a timeout and takes herdr's own settled-state default; every subcommand refuses outside a
+  herdr pane with exit 4; and a staffing role the roles library has no prompt for — `merging-worker`
+  is the one that exists today — is a named refusal rather than an invented briefing.
+
+## [1.6.0] - 2026-09-19
+
+### Added
+
+- **A roles library at `roles/`, one reusable prompt per lifecycle role (#1022).** Fourteen prompts plus a README stating the contract each follows: the role and its authority boundary, the inputs it reads from the run record, the handoff contract it posts, and its stop rule. Written in the vocabulary of `infiquetra-sdlc` at revision `5efc869f`, read at that pin with `git show` so a checkout on a moving default branch still serves the pinned documents.
+- **Fourteen is the lifecycle's fifteen roles minus the Human Operator**, who is a person rather than a session. The two historical role identifiers are carried in frontmatter rather than in filenames: the Architect's identifier is `orchestrator` and the Delivery Manager's is `controller`.
+- **`roles/lens-reviewer.md` carries a shared reviewer half plus one section per lens**, keyed to the fifteen identifiers in the lifecycle's lens catalogue. It states no threshold of its own; the catalogue owns the strictness ladder.
+- **`tests/test_roles_library.py`**, which reads the expected role set from the README's map and the lens, contract and role identifiers from the sibling lifecycle checkout when one resolves.
+
+### Notes
+
+- Nothing here spawns, orders, gates or aggregates a role; the roster helper and the run chain consume these prompts later.
+- The `team-execution` plugin's 25 agent prompts and two criteria documents were the source material and are unchanged by this release. The README accounts for where each one's substance went.
+
 ## [1.5.2] - 2026-09-16
 
 ### Changed

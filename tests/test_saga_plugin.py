@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import importlib.util
 import json
 import re
@@ -12,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).parent.parent
 PLUGIN_ROOT = ROOT / "plugins" / "saga"
@@ -46,10 +46,72 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.161.0"  # 0.161.0: shaping_judgments.py asks the
-    # eleven advisory typed judgments inside /ideate, /brainstorm and /office-hours through the
-    # fleet-core TypeSafe client, batched one request per body of text. None is a gate, the dedupe
-    # judgment groups without removing a candidate, and every one fails open (issue #1037).
+    assert plugin_json["version"] == "1.0.0"  # 1.0.0: the removals of issue
+    # #1030 — eleven commands and nine skills gone, four hooks deregistered and deleted, both saga
+    # agents gone, and the sandbox-spawn project instruction replaced. Bumped over 0.172.0, the saga
+    # version on origin/parent/1018 at b264f154, re-read at this merge turn. 0.172.0 was chosen from
+    # the same base by issue #1039, which is why this card skipped it rather than colliding: two
+    # cards writing an identical version string never conflict, and the collision merges silently.
+    #
+    # NOT 1.0.0, which the card names. 1.0.0 is that card's name for the complete release, and this
+    # is not it: the script families are still here, blocked on the cc-workflows finding recorded in
+    # docs/work-sessions/2026-09-20-issue-1030-removals-and-release.md. A version says what shipped,
+    # and taking 1.0.0 now would leave the complete release with no number to be.
+    #
+    # Predecessor 0.172.0 was issue #1039: /qa becomes the lifecycle's functional test — ten
+    # prescribed strategies as data, a per-repository profile, a widen-only advisory judgment,
+    # three-status drivers, one evidence envelope each in the run record, and a counted verdict.
+    # The health score and its test are removed; the release step no longer reports a blocked
+    # scenario as a pass.
+    #
+    # Predecessor 0.171.0 was issue #1028: the merge turn, the release step, the
+    # lifecycle-boundary board interface and the allowed-submission enforcement. That card and issue
+    # #1027 BOTH took 0.170.0 against 23959a80, and the collision merged silently: two cards
+    # writing an identical version string never conflict, so the manifest and the marketplace entry
+    # came through clean and the only signal was two bodies under one changelog heading.
+    # Predecessor 0.170.0 was issue #1027: /work becomes the build loop — the exit criterion is
+    # written in the run record at admission and read rather than judged, and build_loop.py runs it
+    # and records every result under the unit row's `build_loop` key. The five ship-ceremony
+    # modules are removed with their tests, the hook entry and their importers.
+    # Predecessor 0.169.0 was issue #1029: every lifecycle skill ends by doing the next step in the
+    # same turn, a SessionStart hook announces the run record's next_step for a live run and
+    # nothing for a done step, a closed run, or no record, and a local-only UserPromptSubmit hook
+    # names the command an operator's text is about.
+    # Predecessor 0.168.0: the run record reference documents the
+    # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
+    # unit row (issue #1025).
+    # Predecessor 0.167.0: Work no longer offers an in-process external-engine second opinion; the
+    # offer's prose and routing leave the work skill and its continuation reference, and
+    # plugins/saga/scripts/second_opinion.py is deleted with no live consumer, while the
+    # external-content trust boundary survives with its guard narrowed to the one remaining call
+    # site (issue #938).
+    # Predecessor 0.166.0: /plan ends by dispatching the plan
+    # review to the Plan Reviewer and looping on repair until no P0 or P1 remains, the /work floor
+    # gate stays blocking on the operator's one-word override alone, the Workflow-backend and
+    # team-execution prose moves to references/workflow-backend.md, and team_emitter.py and
+    # spec_table.py are removed (issue #1026). Bumped from 0.165.0, the saga version on
+    # origin/parent/1018 at 542e9810: issue #1001 took 0.165.0 while this card's suite ran, so this
+    # card renumbered above it rather than shipping a colliding version.
+    # Predecessor 0.165.0: code review becomes a policy-free
+    # executor -- it reads the lens declaration from the run record, resolves review_roster.v1 with
+    # the lifecycle repository's own generator, computes the verdict from that catalogue's
+    # strictness ladder, writes review_result.v2 into the run record, and publishes exactly one
+    # pull-request comment and never an approving review. The plugin's private fourteen-lens
+    # roster is deleted (issue #1001). Bumped from 0.164.0, the saga version on
+    # origin/parent/1018 at 4e951f0e.
+    # Predecessor 0.164.0: /work and /code-review stand role and
+    # lens-reviewer sessions up through agent-launcher's roster helper, which closes only the panes
+    # the run record says it created (issue #1024).
+    # Predecessor 0.163.0: one JSON run record per issue,
+    # outside every worktree and addressed by an absolute path, plus the admission questionnaire
+    # asked once at the front of /plan issue (issue #1023). Bumped from 0.161.0, the saga version
+    # on origin/parent/1018 at 550ae6ce; the fold of main into that branch then renumbered the
+    # tier-overlay release to 0.162.0, which 0.163.0 still clears.
+    # Predecessor 0.162.0: the per-repository tier overlay
+    # reads through one implementation in fleet-core (issue #1021); renumbered from 0.161.0
+    # when main was folded into parent/1018.
+    # Predecessor 0.161.0: shaping_judgments.py asks the eleven advisory typed judgments inside
+    # /ideate, /brainstorm and /office-hours through the fleet-core TypeSafe client (issue #1037).
     # Predecessor 0.160.0: parse_issue.py gains --flags and
     # --issue, which widen the five keyword flags with a model judgment (widen-only: a keyword
     # flag stays set whatever the model answers) and report the seven approval boundaries
@@ -85,7 +147,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
-    assert {"lifecycle", "strategy", "handoff", "doc-review", "code-review"} <= set(
+    # "handoff" and "optimize" were in the manifest's keywords until issue 1030 removed both
+    # commands. The keywords are a search surface, so they must not advertise a command that is
+    # gone; this set names five that survive.
+    assert {"lifecycle", "strategy", "plan", "doc-review", "code-review"} <= set(
         plugin_json["keywords"]
     )
 
@@ -106,289 +171,6 @@ def test_fleet_lease_runtime_adapters_are_retired_from_the_package() -> None:
         for hook in group["hooks"]
     ]
     assert not any("lease" in command for command in commands)
-
-
-def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
-    # The "$CC_WORKFLOWS_SCRIPTS_DIR/..." expansions are quoted in the command blocks
-    # (review A01/S05), so match quote-tolerantly: strip double quotes from both the
-    # skill text and the needles. Presence and ordering stay the pinned contract.
-    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md").replace('"', "")
-    for required in (
-        "execution_spec.py settlement",
-        "execution_spec.py lease",
-        "workflow_emitter.py reserve",
-        "workflow_emitter.py attest",
-        "workflow_emitter.py release",
-        "CLAUDE_CODE_SESSION_ID",
-        "dispatch_settlement.py --repo-root .",
-        "Generated agents still receive no filesystem or ledger-write",
-        "A missing structured result is `silent-no-op`",
-        "This is at-least-once and preserves the stable idempotency key",
-    ):
-        assert required.replace('"', "") in work_skill
-    reserve = work_skill.index("workflow_emitter.py reserve")
-    attest = work_skill.index("workflow_emitter.py attest", reserve)
-    launch = work_skill.index(
-        "Workflow({ scriptPath: docs/workflows/<topic>.workflow.js })", attest
-    )
-    release = work_skill.index("workflow_emitter.py release", launch)
-    assert reserve < attest < launch < release
-
-
-def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
-    guide = _read(ROOT / "docs" / "adding-a-provider.md")
-    match = re.search(r"```json\n(.*?)\n```", guide, flags=re.DOTALL)
-    assert match is not None
-    example = json.loads(match.group(1))
-    assert set(example) == {
-        "transport",
-        "engine_id",
-        "variant",
-        "base_url",
-        "model",
-        "auth_key_env",
-        "context_window",
-        "cost_speed_rank",
-        "cost_class",
-        "cost_per_token",
-        "budget_ceiling_usd",
-        "latency_class",
-        "model_identity",
-        "last_validated",
-        "capability_profile",
-        "prompting_protocol",
-        "sources",
-    }
-    assert set(example["cost_per_token"]) == {"input_usd", "output_usd"}
-    for required in (
-        "tools/add-engine.sh --spec provider.json",
-        "engine-bridge-http",
-        "http-bridge",
-        "trust_tier: probation",
-        "engine_registry_conformance.py",
-        "engine_promotion.py fixture-http/fixture-chat --json",
-        "reviewed pull request",
-    ):
-        assert required in guide
-
-    for script in (
-        "engine_onboarding.py",
-        "engine_registry_conformance.py",
-        "engine_promotion.py",
-        "plan_save_contract.py",
-        "plan_save_proof.py",
-    ):
-        path = PLUGIN_ROOT / "scripts" / script
-        assert path.is_file(), f"{path.relative_to(ROOT)}: required packaged script is missing"
-
-    # Keep this inventory outside the guard it protects: deleting the guard must be red.
-    contract = PLUGIN_ROOT / "references/plan-save-contract.yaml"
-    guard = ROOT / "tests/test_saga_spec_consumer_row.py"
-    boundaries = ROOT / "tests/test_saga_plan_contract_boundaries.py"
-    for path in (contract, guard, boundaries):
-        assert path.is_file(), (
-            f"{path.relative_to(ROOT)}: required Plan contract guard input is missing"
-        )
-    functions = [
-        node
-        for path in (guard, boundaries)
-        for node in ast.parse(_read(path), filename=str(path)).body
-        if isinstance(node, ast.FunctionDef)
-    ]
-    for name in (
-        "test_plan_save_contract_loads_and_rejects_malformed_entries",
-        "test_plan_save_contract_binds_to_engine",
-        "test_operator_choice_rule_matches_engine",
-        "test_saga_spec_plan_consumer_row_matches_contract",
-        "test_plan_docs_generated_regions_match_contract",
-        "test_plan_docs_wording_changes_do_not_fail",
-        "test_plan_examples_save_the_intended_tick",
-        "test_plan_renderer_edit_workflow",
-        "test_plan_renderer_refusals_and_rollback",
-        "test_contract_values_are_shell_data",
-        "test_contract_rejects_corrupting_structure",
-        "test_contract_cli_reports_operation_and_checkout",
-        "test_contract_cli_envelopes_baseexception_from_checkout_code",
-    ):
-        matches = [node for node in functions if node.name == name]
-        assert len(matches) == 1, f"{guard.relative_to(ROOT)}: expected exactly one {name}"
-    # Syntax proves presence only. The ordinary pytest gate runs behavioral canaries
-    # in test_wiring_canary.py; it detects bypasses after any statement, not only return-first.
-    execution_guard = ROOT / "tests/test_wiring_canary.py"
-    assert execution_guard.is_file(), "tests/test_wiring_canary.py: missing behavioral gate"
-    assert any(
-        isinstance(node, ast.FunctionDef) and node.name == "test_plan_contract_guards_have_teeth"
-        for node in ast.parse(_read(execution_guard)).body
-    ), "tests/test_wiring_canary.py: missing Plan behavioral gate"
-    registry = json.loads((ROOT / "tools/canary_registry.json").read_text())
-    protected = {entry["guard"].split("::")[-1] for entry in registry}
-    assert {node.name for node in functions if node.name.startswith("test_")} <= protected, (
-        "Plan contract: every guard needs a behavioral mutation run by the ordinary pytest gate"
-    )
-
-    dispatch_docs = "\n".join(
-        _read(PLUGIN_ROOT / "references" / name)
-        for name in ("dispatch-adapter-contract.md", "engine-dispatch.md")
-    )
-    assert (
-        "https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/"
-        "docs/adding-a-provider.md"
-    ) in dispatch_docs
-    assert "probation" in dispatch_docs
-
-
-def test_infiquetra_lifecycle_commands_are_packaged() -> None:
-    for command in (
-        "loop",
-        "office-hours",
-        "strategy",
-        "ideate",
-        "brainstorm",
-        "handoff",
-        "plan",
-        "work",
-        "qa",
-        "retro",
-        "promote",
-        "resume",
-        "founder-review",
-        "ceo-review",
-        "doc-review",
-        "code-review",
-        "engines",
-        "optimize",
-        "investigate",
-        "spec",
-        "outcome",
-        "pulse",
-        "fleet-doctor",
-    ):
-        assert (PLUGIN_ROOT / "commands" / f"{command}.md").exists()
-
-
-def test_infiquetra_lifecycle_skills_document_required_lifecycle_behavior() -> None:
-    expected_skills = {
-        "loop",
-        "office-hours",
-        "strategy",
-        "ideate",
-        "brainstorm",
-        "handoff",
-        "plan",
-        "work",
-        "qa",
-        "retro",
-        "promote",
-        "resume",
-        "founder-review",
-        "doc-review",
-        "code-review",
-        "optimize",
-        "investigate",
-        "spec",
-        "outcome",
-        "pulse",
-        "fleet-doctor",
-    }
-    for skill in expected_skills:
-        skill_path = PLUGIN_ROOT / "skills" / skill / "SKILL.md"
-        assert _frontmatter_name(skill_path) == skill
-
-    # The rebuilt /loop (0.11.0) router/resume-substrate contract is asserted by the
-    # dedicated test_loop_engine_merge_contract against the new SKILL.md + its two
-    # references; the old inline loop_doc token block here was superseded by it.
-
-    for script in (
-        "parse_issue.py",
-        "saga.py",
-        "scaffold_checkpoint.py",
-        "find_inflight_work.py",
-        "load_saga_context.py",
-        "discover_subissues.py",
-        "issue_progress.py",
-        "handoff_envelope.py",
-    ):
-        assert (PLUGIN_ROOT / "scripts" / script).exists()
-
-    doc_review_doc = _read(PLUGIN_ROOT / "skills" / "doc-review" / "SKILL.md")
-    # FOLD: the standalone /blueprint-review, /spec-review, /issue-review commands were
-    # folded into doc-review. It now runs the rubric engine inline against the rubric tree
-    # instead of delegating to those commands.
-    for required in (
-        "references/rubrics",
-        "lifecycle_review",
-        "/founder-review",
-        "classification",
-        "review-result contract",
-        "target path",
-        "reviewed revision",
-        "blocked status",
-        "override rationale",
-        "any `P0` or `P1`",
-        "safe fixes",
-        "docs/reviews/",
-    ):
-        assert required in doc_review_doc
-    for folded_away in ("/blueprint-review", "/spec-review", "/issue-review"):
-        assert folded_away not in doc_review_doc
-    # The folded rubric tree lives under saga/references/rubrics/{idea,spec,issue}/{core,extras}/.
-    rubrics_root = PLUGIN_ROOT / "references" / "rubrics"
-    for phase in ("idea", "spec", "issue"):
-        for tier in ("core", "extras"):
-            assert (rubrics_root / phase / tier).is_dir()
-    # The rubric engine script lives under saga/scripts/.
-    assert (PLUGIN_ROOT / "scripts" / "lifecycle_review.py").exists()
-    assert not (PLUGIN_ROOT / "commands" / "ce-doc-review.md").exists()
-
-    handoff_doc = _read(PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md")
-    assert "mission-control" in handoff_doc
-    assert "Do not copy SDLC issue templates" in handoff_doc
-    assert "/issue --prepare" in handoff_doc
-    assert "Do not suggest `/loop`" in handoff_doc
-
-    plan_doc = _read(PLUGIN_ROOT / "skills" / "plan" / "SKILL.md")
-    work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
-    assert "`idea-ready` or `requirements-ready`" in plan_doc
-    assert "`plan-ready` or `resume-ready`" in work_doc
-    assert "/plan <issue>" in work_doc
-
-
-def test_outcome_skill_documents_autonomous_board_sync() -> None:
-    """#279 U5 doc-contract: the /outcome SKILL documents the autonomous board-sync envelope.
-
-    Mutation-proof — each assertion pins a distinct, load-bearing claim of the reversibility-gated
-    autonomy contract, so deleting or weakening the prose makes the test go red. No vacuous absence
-    assertions (a token that never existed): every check requires substantive prose to be present.
-    """
-    raw = _read(PLUGIN_ROOT / "skills" / "outcome" / "SKILL.md")
-    # Normalize whitespace: markdown wraps prose across lines, so multi-word phrases must be matched
-    # against a collapsed-whitespace view (a literal "defaults to GATE" can straddle a line break).
-    doc = " ".join(raw.split())
-    low = doc.lower()
-
-    # It is opt-in and default-deny (the certificate defaults to GATE).
-    assert "--autonomous" in doc
-    assert "defaults to GATE" in doc or "default-deny" in low
-    assert "authorize_write" in doc
-
-    # The enumerated autonomous ops are documented (semantic content, not one keyword). Since
-    # W7 (SDLC R30/R34) the envelope composes NO lifecycle-field op — the skill must carry the
-    # no-status-write boundary explicitly, and the surviving ops stay named.
-    assert "composes no `set-field-status` op" in doc
-    assert "sub-issue" in doc and "reopen" in doc  # close + its inverse
-    assert "coalesc" in doc  # one coalesced progress comment, no duplicate spam
-
-    # The never-autonomous guarantees are each named.
-    assert "Merging a PR" in doc or "Merging" in doc
-    assert "deploy" in low
-    assert "parent-issue-close" in doc or "parent issue" in low
-    assert "ALWAYS_OPERATOR" in doc
-
-    # Fail-loud + idempotent + recorded.
-    assert "no silent write" in doc
-    assert "idempotency key" in doc
-    assert "bounded" in doc  # bounded retry
-    assert "board_synced" in doc  # auditable record of each autonomous write
 
 
 def test_office_hours_two_mode_and_hard_gate_contract() -> None:
@@ -424,276 +206,6 @@ def test_office_hours_two_mode_and_hard_gate_contract() -> None:
 
     # Frame-note home is its own directory.
     assert "docs/office-hours/" in skill_doc
-
-
-def test_plan_engine_merge_contract() -> None:
-    """Structural contract for the rebuilt engine-merge /plan engine.
-
-    Tokens are chosen from the actual authored SKILL.md / plan-sections.md / interrogation.md
-    so the assertions track the contract, not fragile prose. See E1-authored plan skill (0.7.0).
-    """
-    skill_doc = _read(PLUGIN_ROOT / "skills" / "plan" / "SKILL.md")
-    sections_doc = _read(PLUGIN_ROOT / "skills" / "plan" / "references" / "plan-sections.md")
-    interrogation_doc = _read(PLUGIN_ROOT / "skills" / "plan" / "references" / "interrogation.md")
-
-    # Position-in-lifecycle: /plan owns the HOW.
-    assert '`/plan` answers: "How should it be built?"' in skill_doc
-
-    # CE plan skeleton: the durable artifact carries the hard-floor section markers and IDed units.
-    # /doc-review and /work parse these tokens, so they must appear verbatim in SKILL + contract ref.
-    for marker in ("Implementation Units", "Key Technical Decisions", "Requirements"):
-        assert marker in skill_doc
-        assert marker in sections_doc
-    # Stable U-ID prefix (the marker /doc-review keys on to recognize the doc as a plan).
-    assert "U1" in skill_doc
-    assert "U-ID" in sections_doc
-
-    # Warranted-gate: not every invocation produces a plan doc; the gate is named in both files.
-    assert "warranted" in skill_doc
-    assert "warranted" in sections_doc
-    assert "Warranted-gate" in skill_doc or "warranted-gate" in skill_doc
-
-    # HOW-only interrogation: the register pins the HOW and assumes the WHAT is settled upstream.
-    assert "HOW-interrogation" in skill_doc or "HOW register" in interrogation_doc
-    assert "Failure-mode" in skill_doc and "failure-mode" in interrogation_doc.lower()
-
-    # /brainstorm bounce: when interrogation reveals the WHAT is unsettled, route back to /brainstorm,
-    # without claiming /brainstorm "accepts" a handoff (the explicit guard).
-    assert "recommend the operator run `/brainstorm` first" in skill_doc
-    assert "recommend the operator run\n`/brainstorm` first" in interrogation_doc or (
-        "recommend the operator run `/brainstorm` first" in interrogation_doc
-    )
-    assert '`/brainstorm` "accepts" a handoff' in skill_doc
-
-    # Saga CLI write: Phase 5 emits a runnable saga save with the orchestration-mode flag.
-    assert "saga.py" in skill_doc
-    assert "--orchestration-mode" in skill_doc
-    assert "--lifecycle-phase plan" in skill_doc
-
-    # Operator-choice citation: the doc-only decision contract plus the 3 backend enum strings.
-    assert "references/operator-choice.md" in skill_doc
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert backend in skill_doc
-
-    # Deepening / confidence pass: Phase 4 conditional strengthening, with the rubric in the ref.
-    assert "confidence" in skill_doc.lower()
-    assert "Confidence pass (deepening)" in sections_doc
-
-    # Routing: /plan recommends /doc-review (the review phase) before /work, and emits the origin:
-    # frontmatter token so the review phase can trace the plan to its source.
-    assert "/doc-review" in skill_doc
-    assert "/work" in skill_doc
-    assert "origin:" in skill_doc
-
-
-def test_code_review_engine_merge_contract() -> None:
-    """Richness-floor contract for the rebuilt engine-merge /code-review engine (0.8.0).
-
-    Floors are calibrated to E1's actual authored tokens but structural enough that a thin
-    port (the prior 20-line stub) fails: a stub names neither the 5 plan-completion states,
-    the 5 confidence anchors, the 4 autofix classes / owners, nor the judgment-lens roster.
-    See E1-authored code-review skill + its 4 references.
-    """
-    review = PLUGIN_ROOT / "skills" / "code-review"
-    skill_doc = _read(review / "SKILL.md")
-    built_doc = _read(review / "references" / "built-vs-planned.md")
-    schema_doc = _read(review / "references" / "findings-schema.md")
-    lens_doc = _read(review / "references" / "lens-catalog.md")
-
-    # built-vs-planned.md: all 5 plan-completion states + all 3 verification modes.
-    # E1 used the hyphenated "NOT-DONE" token (not "NOT DONE").
-    for state in ("DONE", "PARTIAL", "NOT-DONE", "CHANGED", "UNVERIFIABLE"):
-        assert state in built_doc
-    for mode in ("DIFF", "CROSS-REPO", "EXTERNAL-STATE"):
-        assert mode in built_doc
-
-    # findings-schema.md: all 5 confidence anchors + all 4 autofix_class + all 4 owner.
-    for anchor in ("0", "25", "50", "75", "100"):
-        assert f"**{anchor}**" in schema_doc
-    for klass in ("safe_auto", "gated_auto", "manual", "advisory"):
-        assert klass in schema_doc
-    for owner in ("review-fixer", "downstream-resolver", "human", "release"):
-        assert owner in schema_doc
-
-    # lens-catalog.md: the 4 always-on lenses + >= 4 conditional lenses, incl.
-    # the distinct deploy/migration-verification lens (never folded away).
-    for always_on in ("correctness", "security", "testing", "maintainability"):
-        assert always_on in lens_doc
-    conditional = (
-        "deploy/migration-verification",
-        "reliability",
-        "performance",
-        "api-contract",
-        "adversarial",
-        "agent-native",
-    )
-    assert sum(1 for lens in conditional if lens in lens_doc) >= 4
-    assert "deploy/migration-verification" in lens_doc
-
-    # SKILL.md: gate-only negatives under the W18 publication lane (does not mutate reviewed
-    # source / commit an implementation change / implement fixes / open or update a PR / file).
-    # E1 bolds the NOT. Assert against whitespace-collapsed text so line wraps inside the prose
-    # cannot split a negative. Note: "does **NOT** commit" survives only in its narrowed form
-    # ("...an implementation change"); the retired blanket form is guarded against in
-    # test_review_publication_lane.py's carrier sweep, which checks the full retired sentences
-    # rather than this substring.
-    flat_skill = " ".join(skill_doc.split())
-    assert "does **NOT** commit, does **NOT** push" not in flat_skill, (
-        "the blanket reviewer-commit prohibition was narrowed by W18's publication lane "
-        "(interactive mode may publish its own review artifact) — the gate-only negatives "
-        "must assert the narrowed grant + denial, not the retired blanket form"
-    )
-    for negative in (
-        "does **NOT** mutate reviewed source",
-        "does **NOT** commit an implementation change",
-        "does **NOT** implement the fixes it requests",
-        "does **NOT** open or update a PR",
-        "does **NOT** file",
-    ):
-        assert negative in flat_skill
-    # Saga literals: an append-only review-track write with both flags.
-    assert "saga.py" in skill_doc
-    assert "--review-paths" in skill_doc
-    assert "--orchestration-mode" in skill_doc
-    # Own-dir durable artifact path (evidence ledger, #398) (NOT docs/reviews/).
-    assert "docs/evidence/" in skill_doc
-    assert "docs/reviews/" in skill_doc and "handoff/sdlc classifiers" in skill_doc
-    # Operator-choice citation at the plugin-root path + the 3 backend enums.
-    assert "references/operator-choice.md" in skill_doc
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert backend in skill_doc
-
-    # Blunt thin-port tripwire: each of the 4 reference files carries real content.
-    for ref in ("lens-catalog.md", "findings-schema.md", "validator.md", "built-vs-planned.md"):
-        ref_path = review / "references" / ref
-        assert ref_path.exists()
-        assert len(_read(ref_path).splitlines()) >= 60
-
-
-def test_founder_review_engine_port_contract() -> None:
-    """Mechanism-floor contract for the ported /founder-review engine (0.9.0).
-
-    Floors are calibrated to E1's actual authored tokens but structural enough that a
-    vibes-y reskin (the prior 20-line stub) fails: a stub names neither the 4 committed
-    scope modes, the 18 CEO patterns / 9 Prime Directives, the commit-no-drift rule, the
-    FLAT->EXPANSIVE framing, the A/B/C capped opt-in, the target-conditional ceremonies,
-    nor the CLOSED-LOOP artifact handback. It also pins the no-saga-write mechanism (the
-    one thing that separates /founder-review from its saga-writing sibling /code-review).
-    See E1-authored founder-review skill + its 2 references.
-    """
-    review = PLUGIN_ROOT / "skills" / "founder-review"
-    skill_doc = _read(review / "SKILL.md")
-    cognition_doc = _read(review / "references" / "ceo-cognition.md")
-    modes_doc = _read(review / "references" / "review-modes.md")
-
-    # All 4 committed scope-mode names (the engine spine) — present in SKILL + modes ref.
-    for mode in ("SCOPE EXPANSION", "SELECTIVE EXPANSION", "HOLD SCOPE", "SCOPE REDUCTION"):
-        assert mode in skill_doc
-        assert mode in modes_doc
-
-    # >= 8 of the 18 CEO cognitive patterns named in ceo-cognition.md (internalized roster).
-    ceo_patterns = (
-        "Classification instinct",
-        "Paranoid scanning",
-        "Inversion reflex",
-        "Focus as subtraction",
-        "People-first sequencing",
-        "Speed calibration",
-        "Proxy skepticism",
-        "Narrative coherence",
-        "Temporal depth",
-        "Founder-mode bias",
-        "Wartime awareness",
-        "Courage accumulation",
-        "Willfulness as strategy",
-        "Leverage obsession",
-        "Hierarchy as service",
-        "Edge case paranoia",
-        "Subtraction default",
-        "Design for trust",
-    )
-    assert sum(1 for p in ceo_patterns if p in cognition_doc) >= 8
-
-    # >= 6 of the 9 Prime Directives named in ceo-cognition.md (scope-level lenses).
-    prime_directives = (
-        "Zero silent failures",
-        "Every error has a name",
-        "shadow paths",
-        "Interactions have edge cases",
-        "Observability is scope",
-        "Diagrams are mandatory",
-        "deferred must be written",
-        "6-month future",
-        'permission to say "scrap it',
-    )
-    assert sum(1 for d in prime_directives if d in cognition_doc) >= 6
-
-    # Commit-no-drift literal: once a mode is chosen it is committed for the whole review.
-    assert "commit" in skill_doc
-    assert "no silent drift" in skill_doc
-
-    # Expansion-framing mechanism: lead with felt experience, close with effort + impact.
-    assert "FLAT" in skill_doc and "EXPANSIVE" in skill_doc
-    assert "felt experience" in skill_doc
-    assert "FLAT" in modes_doc and "EXPANSIVE" in modes_doc
-
-    # The 3 opt-in options (A add / B defer / C skip) + the cap (top 5-6 if > 8 candidates).
-    for option in ("A) add", "B) defer", "C) skip"):
-        assert option in skill_doc
-    assert "top 5-6" in skill_doc
-    assert "than 8" in skill_doc
-
-    # Target-conditional gating: 0C-bis + 0E conditional on plan vs strategy/scope-question.
-    assert "0C-bis" in skill_doc
-    assert "0E" in skill_doc
-    assert "TARGET-CONDITIONAL" in skill_doc
-    assert "TARGET-CONDITIONAL" in modes_doc
-    # The conditional pivots on the target type the gating keys off.
-    for target in ("plan", "strategy", "scope-question"):
-        assert target in skill_doc
-
-    # CLOSED-LOOP handback token: the expanded-plan PATH is handed to /doc-review, not just
-    # a bare "/doc-review" mention. This is the mechanism that prevents the rigor evaporating.
-    assert "/doc-review docs/plans/" in skill_doc
-    assert "/doc-review docs/plans/" in modes_doc
-    assert "/code-review" in skill_doc
-
-    # Own-dir scope-decision artifact (NOT docs/reviews/, NOT docs/code-reviews/).
-    assert "docs/founder-reviews/" in skill_doc
-    assert "docs/founder-reviews/" in modes_doc
-
-    # Boundary: it CHALLENGES direction (not "records" it — /strategy records).
-    assert "challenges" in skill_doc
-    assert "record" in skill_doc  # the "does not record strategy" / "/strategy records" boundary
-    # Gate-only negatives — E1 bolds the NOT.
-    for negative in (
-        "does **NOT** implement",
-        "does **NOT** commit",
-        "does **NOT** file",
-        "does **NOT** make code",
-    ):
-        assert negative in skill_doc
-
-    # Operator-choice citation at the plugin-root path + the 3 backend enums.
-    assert "references/operator-choice.md" in skill_doc
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert backend in skill_doc
-
-    # NO SAGA WRITE (the mechanism that separates /founder-review from /code-review):
-    # /founder-review runs upstream of the work thread and must NOT emit a runnable saga
-    # write. E1 mentions the tokens only inside explicit negations ("never writes the saga
-    # (no saga.py call, no --review-paths)"), so a literal token-absence assertion would
-    # fail a FAITHFUL engine. Pin the mechanism instead: no runnable `saga.py save` command
-    # and no `--review-paths <value>` assignment (the exact pattern /code-review uses).
-    assert "saga.py save" not in skill_doc
-    assert not re.search(r"--review-paths\s+\S", skill_doc)
-    assert not re.search(r"python3?\s+\S*saga\.py", skill_doc)
-
-    # Blunt thin-port tripwire: each reference file carries real content (>= 60 lines).
-    for ref in ("ceo-cognition.md", "review-modes.md"):
-        ref_path = review / "references" / ref
-        assert ref_path.exists()
-        assert len(_read(ref_path).splitlines()) >= 60
 
 
 def test_work_engine_merge_contract() -> None:
@@ -796,509 +308,217 @@ def test_work_engine_merge_contract() -> None:
     assert "deploy" in corpus  # deploy mutation is delegated, not owned
     assert "mission-control" in corpus  # issue comments routed out, not filed by /work
     assert "Parallel Safety Check" in corpus  # CE execution mechanics carried
-    assert "requires_hard_test_gate" in corpus  # the canonical change-kind gate is named
+    # The canonical change-kind gate was the floor here until issue #1027 removed it. What
+    # replaced it is the written exit criterion, so the floor moves with it: naming the runner and
+    # its record block is the same class of check -- a mechanism a vibes reskin could not satisfy --
+    # about the thing that now decides when the work is done.
+    assert "build_loop.py" in corpus  # the runner that executes the written criterion
+    assert "exit criterion" in corpus.lower()  # the criterion itself, read rather than judged
+    assert "requires_hard_test_gate" not in corpus  # the removed gate must not creep back
     assert "merge-base" in corpus.lower()  # gstack merge-base-before-tests carried
     # qa/resume routing is advisory and lifecycle does not advance past work.
     assert "advisor" in corpus.lower()  # advisory qa/resume routing
     assert "lifecycle_phase" in corpus  # the phase the engine deliberately does not advance
 
 
-def test_plan_and_work_cc_workflows_explicit_invocation_only() -> None:
-    """#808 NARROW: Plan and Work cannot silently select a Claude Code Workflow.
+def test_document_review_second_opinion_contract_is_intact() -> None:
+    """Issue #394 gave each review surface its own advisory block, never a shared schema.
 
-    Instruction-text contract (runtime helper unchanged this unit): the default
-    Saga offer is inline | team-execution; cc-workflows-ultracode is entered only
-    by explicit invocation, never as a default/automatic or interchangeable backend.
+    Issue #1001's rewrite removed Code Review's half along with the prose it pinned -- none of
+    its seven tokens survives the rewrite -- so only Document Review's half is asserted here.
+    The negative at the end is issue #1026's card-931 repair: the reference that used to be
+    asserted as a *path string* pointed at a file defining neither name it cited.
     """
-    plan = _read(PLUGIN_ROOT / "skills" / "plan" / "SKILL.md")
-    work = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
-    for doc, name in ((plan, "plan"), (work, "work")):
-        lowered = doc.lower()
-        assert "explicit invocation" in lowered or "explicitly invoked" in lowered, (
-            f"{name} must name explicit invocation as the only Workflow path"
-        )
-        assert "never a default" in lowered or "not a default" in lowered, (
-            f"{name} must say Claude Code Workflows are never a default Saga backend"
-        )
-        assert "interchangeable" in lowered, (
-            f"{name} must reject treating cc-workflows-ultracode as interchangeable"
-        )
-        assert "do not pre-select" in lowered or "never pre-select" in lowered, (
-            f"{name} must not pre-select cc-workflows-ultracode from the recommender"
-        )
-        assert "Never omit `cc-workflows-ultracode`" not in doc, (
-            f"{name} must not instruct agents to always offer cc-workflows-ultracode"
-        )
+    doc_skill = _read(PLUGIN_ROOT / "skills" / "doc-review" / "SKILL.md")
 
-
-def test_backend_offer_contract_docs_pin_explicit_invocation() -> None:
-    """#808 NARROW: the contract docs /plan and /work cite carry the same pin.
-
-    The two SKILL.md files are pinned above, but the decision contract
-    (references/operator-choice.md) and /work's runnable offer reference
-    (skills/work/references/execution-strategy.md) carry the same narrowed rule
-    and revert just as easily. Whitespace is normalised because both docs
-    hard-wrap mid-phrase.
-    """
-    docs = {
-        "operator-choice": PLUGIN_ROOT / "references" / "operator-choice.md",
-        "execution-strategy": (
-            PLUGIN_ROOT / "skills" / "work" / "references" / "execution-strategy.md"
-        ),
-    }
-    for name, path in docs.items():
-        text = " ".join(_read(path).lower().split())
-        assert "explicit invocation" in text or "explicitly invoked" in text, (
-            f"{name} must name explicit invocation as the only Workflow path"
-        )
-        assert "never a default" in text, (
-            f"{name} must say Claude Code Workflows are never a default Saga backend"
-        )
-        assert "interchangeable" in text, (
-            f"{name} must reject treating cc-workflows-ultracode as interchangeable"
-        )
-        assert "do not pre-select" in text, (
-            f"{name} must not pre-select cc-workflows-ultracode from the recommender"
-        )
-
-
-def test_work_second_opinion_trigger_contract_is_operator_confirmed_and_non_gating() -> None:
-    """Issue #394 keeps repeated-failure assistance typed, durable, and advisory-only."""
-    work = PLUGIN_ROOT / "skills" / "work"
-    skill_doc = _read(work / "SKILL.md")
-    continuation = _read(work / "references" / "pr-continuation-loop.md")
-    corpus = "\n".join((skill_doc, continuation))
-
-    for token in (
-        "saga.work-second-opinion.v1",
-        "WorkAttempt",
-        "record_work_attempt",
-        "save_work_second_opinion_state",
-        "accept_work_offer",
-        "dispatch_second_opinion",
-        "record_work_dispatch_outcome",
-        "complete_second_opinion",
-        "external_opinion.state=recommended",
-        "requested",
-        "available",
-        "apply",
-    ):
-        assert token in corpus
-    assert (
-        "Second opinion available: {target} failed after 3 fix attempts; "
-        "dispatch an advisory second opinion?"
-    ) in skill_doc
-    for boundary in (
-        "Never auto-dispatch.",
-        "zero runner calls",
-        "Only Claude-owned final status/severity",
-        "There is no persisted `.saga/engine-prefs.json` preference",
-    ):
-        assert boundary in corpus
-
-
-def test_review_second_opinion_contracts_preserve_native_findings_and_gate_authority() -> None:
-    """Issue #394 gives each review surface an exact optional advisory block, never a shared schema."""
-    code_review = PLUGIN_ROOT / "skills" / "code-review"
-    doc_review = PLUGIN_ROOT / "skills" / "doc-review"
-    code_skill = _read(code_review / "SKILL.md")
-    schema = _read(code_review / "references" / "findings-schema.md")
-    doc_skill = _read(doc_review / "SKILL.md")
-
-    for token in (
-        "Second-opinion point-out (after Stage A numbering)",
-        "stable `#N`",
-        "external_opinion.state=recommended",
-        "Review complete",
-        "keep`/`downgrade`/`dismiss",
-        "available`/`apply",
-        "Claude-owned final severity/status",
-    ):
-        assert token in code_skill
-    for token in (
-        "recommended | requested | available | unavailable | declined",
-        "intent: second-opinion",
-        "role_kind: advisory-reviewer",
-        "requested_by: human | claude",
-        "source_finding_id",
-        "keep|downgrade|dismiss",
-        "active|dismissed",
-        "256 KiB",
-    ):
-        assert token in schema
     for token in (
         "stable `D1..Dn`",
         "`D<N>`",
         "external_opinion.state=recommended",
-        "../code-review/references/findings-schema.md",
         "Never auto-dispatch",
         "late-result ingestion",
         "Claude-owned final priority/status",
     ):
         assert token in doc_skill
-
-
-def test_loop_engine_merge_contract() -> None:
-    """Mechanism FLOORS for the rebuilt /loop router + resume substrate (0.11.0).
-
-    These floors prove the SKILL/refs EMIT the real runnable lines the router stands on
-    (saga scan/restore, the routing-tick save with both routing flags, the offload
-    orchestration pointer, the runnable recommend-backend CLI, the inline cold path) and
-    that the boundary prose is present. They do NOT prove the routing LOGIC is correct —
-    only that the contract tokens are authored, not vibes-reskinned away. `/loop` is the
-    one native rebuild (no upstream engine to port), so the floors track the designed
-    contract: it routes/sequences/resumes and never executes a phase or its mutations.
-
-    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
-    """
-    loop = PLUGIN_ROOT / "skills" / "loop"
-    skill_doc = _read(loop / "SKILL.md")
-    dispatch_doc = _read(loop / "references" / "dispatch-table.md")
-    resume_doc = _read(loop / "references" / "drive-and-resume.md")
-    corpus = "\n".join((skill_doc, dispatch_doc, resume_doc))
-
-    # --- saga resume substrate: scan at entry + restore a thread by id ---
-    assert "saga.py scan" in corpus
-    assert "saga.py restore --saga-id" in corpus
-
-    # --- the routing-tick saga write carries BOTH the destination class and the resume
-    # anchor (--next-step). A bare "ticks the saga" mention cannot satisfy this floor. ---
-    save_blocks = re.findall(r"saga\.py save.*?(?=\n#|\n```|\Z)", corpus, flags=re.DOTALL)
-    assert any("--destination" in block and "--next-step" in block for block in save_blocks), (
-        "a runnable routing-tick `saga.py save` must carry both --destination and --next-step"
+    assert "../code-review/references/findings-schema.md" not in doc_skill, (
+        "the dangling cross-reference came back; see card 931"
     )
 
-    # --- the offload pointer: orchestration mode + ref (only on a /loop-owned offload) ---
-    assert "--orchestration-mode" in corpus
-    assert "--orchestration-ref" in corpus
 
-    # --- the runnable backend-recommendation CLI with at least one --flag (the helper /loop
-    # uses ONLY for its own Drive/router-owned offload, not for routed commands). ---
-    assert re.search(
-        r"recommend-backend(?:[^\n]*\\\n[^\n]*|[^\n]*)--\w",
-        corpus,
-    ), "engine must emit a runnable `recommend-backend` CLI invocation with at least one flag"
+def test_qa_functional_test_step_contract() -> None:
+    """Mechanism FLOORS for the /qa functional-test step: the prescribed strategy catalogue (#1039).
 
-    # --- the inline cold path: load_saga_context.py reconstructs from committed artifacts. ---
-    assert "load_saga_context.py" in corpus
+    RETARGETED, not deleted. This guard used to pin the nine-way risk router, the ship verdicts,
+    the model-assigned severity bands and the runnable `qa_health_score.py` scorer. Issue 1039
+    removed every one of those, so a guard that still asserted them would have blocked the change
+    it was meant to protect. It now pins what replaced them, at the same strength: the catalogue as
+    data, the profile, the three result values, the counted verdict, the routing split between a
+    failure and a block, and the absence of any score.
 
-    # --- the across-vs-within boundary with /work (robust: substring + either word). ---
-    assert "/work" in skill_doc
-    assert ("across" in skill_doc.lower()) and ("within" in skill_doc.lower())
+    HONEST SCOPE: presence proves the contract was AUTHORED, not that a given run respects it.
+    "Never fix / never commit / never deploy" is enforced by Claude reading the prose at runtime;
+    what these floors prove is that the documents EMIT the runnable lines the step stands on, that
+    the boundary prose is present with mutation verbs only inside negation windows, and that the
+    removed model — score, severity, ship verdicts, nine-way router — is gone from the corpus
+    rather than merely unused.
 
-    # --- the opt-in /resume discipline: advisory/opt-in, never auto-route / never block. ---
-    assert "/resume" in skill_doc
-    assert ("opt-in" in skill_doc) or ("advisory" in skill_doc)
-    assert ("never" in skill_doc.lower()) and (
-        ("block" in skill_doc.lower()) or ("auto-route" in skill_doc)
-    )
-
-    # --- durability statement: the volatile cache path AND the committed-artifacts notion. ---
-    assert ".claude/saga/" in corpus
-    assert "docs/" in corpus
-
-    # --- boundary negatives: /loop does NOT implement / file issues / deploy. ---
-    assert "does **NOT**" in skill_doc
-    assert "implement" in skill_doc
-    assert "file SDLC issues" in skill_doc
-    assert "deploy" in skill_doc
-
-    # --- blunt thin-port tripwire: each of the 2 reference files carries real content. ---
-    for ref in ("dispatch-table.md", "drive-and-resume.md"):
-        ref_path = loop / "references" / ref
-        assert ref_path.exists()
-        assert len(_read(ref_path).splitlines()) >= 60
-
-
-def test_resume_engine_merge_contract() -> None:
-    """Presence FLOORS for the rebuilt /resume heavy forensic engine (0.12.0).
-
-    HONEST SCOPE: these are presence floors over the authored SKILL + 2 refs. Each floor
-    proves the SKILL/refs EMIT a runnable line or boundary sentence the engine stands on —
-    NOT that the logic is correct and NOT that the dig is actually context-safe at runtime.
-    Token-presence != runtime context-safety. The real mitigation for the Tier-2 dig is the
-    generic-agent-reads-paths pattern (the orchestrator never holds bulk session content) +
-    the parent E6 grounding pass; this test only checks the contract was authored, not
-    reskinned away. Tokens are taken from the actual E1-authored files on disk.
-    """
-    resume = PLUGIN_ROOT / "skills" / "resume"
-    skill_doc = _read(resume / "SKILL.md")
-    forensic_doc = _read(resume / "references" / "forensic-reconstruction.md")
-    sessions_doc = _read(resume / "references" / "session-forensics.md")
-    corpus = "\n".join((skill_doc, forensic_doc, sessions_doc))
-
-    # --- Tier-1 saga reconstruction CLI lines: scan + restore + the NEW all-ticks read. ---
-    assert "saga.py scan" in corpus
-    assert "saga.py restore --saga-id" in corpus
-    # The all-ticks reader is the differentiator /loop's latest-tick-only restore cannot see.
-    assert "saga.py ticks --saga-id" in corpus
-
-    # --- the shared issue-backed archaeology substrate: both context loaders, with --repo/--issue. ---
-    context_lines = [
-        line
-        for line in corpus.splitlines()
-        if ("load_saga_context.py" in line or "saga.py context" in line)
-    ]
-    assert any("load_saga_context.py" in line for line in context_lines)
-    assert any("saga.py context" in line for line in context_lines)
-    assert any("--repo" in line and "--issue" in line for line in context_lines)
-
-    # --- the one re-entry tick: a runnable `saga.py save` carrying --status paused + --next-step. ---
-    save_blocks = re.findall(r"saga\.py save.*?(?=\n#|\n```|\Z)", skill_doc, flags=re.DOTALL)
-    assert any("--status paused" in block and "--next-step" in block for block in save_blocks), (
-        "SKILL must emit a runnable re-entry `saga.py save` with --status paused AND --next-step"
-    )
-
-    # --- the reuse-saga_id rule: the re-entry tick REUSES the restored id, never a paraphrase.
-    # save() mints a new dir unconditionally for a new id, so a paraphrase forks a phantom thread. ---
-    assert "REUSE" in skill_doc
-    assert "saga_id" in skill_doc
-    # The rule sits near the re-entry tick (Phase 5) — assert the reuse prose mentions the restored id.
-    assert re.search(r"REUSE the\s+restored `saga_id`", skill_doc) or (
-        "REUSE the restored `saga_id`" in skill_doc
-    )
-
-    # --- Tier-2 context-safety set (the fallback dig over local JSONL). ---
-    assert "discover_sessions.py" in corpus
-    # extraction is file-mediated to scratch via --output (never read into the orchestrator).
-    assert re.search(r"extract_session_skeleton\.py[^\n]*--output", corpus)
-    # throwaway machine-local scratch dir.
-    assert "mktemp -d" in corpus
-    # GENERIC agent dispatch (Explore / Task) — this plugin has NO agents/ dir.
-    assert "Explore" in skill_doc and "Task" in skill_doc
-    assert "GENERIC" in skill_doc or "generic" in skill_doc
-    # cap of 5 sessions + exclude the current session.
-    assert "5" in skill_doc  # the cap appears ("Cap 5" / "capped at 5")
-    assert ("Cap 5" in skill_doc) or ("capped at 5" in skill_doc)
-    assert "current session" in skill_doc
-
-    # --- named-agent guardrail (DA convention): NO custom subagent, mirror /code-review line 164.
-    # ce-session-historian must be ABSENT entirely. resume-session-historian + ce-* appear ONLY
-    # inside the negation prose ("do **not** reference a named `ce-*` / `resume-session-historian`"),
-    # so a flat token-absence assertion would fail a FAITHFUL SKILL (the founder-review no-saga-write
-    # pattern). Pin the mechanism: the negation is present AND there is no POSITIVE dispatch-to-a-
-    # named-agent instruction. ---
-    assert "ce-session-historian" not in corpus
-    assert "do **not** reference a named" in skill_doc
-    # Every occurrence of the named agent is part of the "(do NOT) reference a named <agent>"
-    # negation — never a POSITIVE "Dispatch <named-agent>" / "use the <named-agent>" / "spawn
-    # <named-agent>" instruction. The negation "NOT" can wrap to the previous line ("do **NOT**\n
-    # reference a named ..."), so normalize whitespace and check a small window before each match
-    # rather than line-by-line.
-    flat = re.sub(r"\s+", " ", corpus)
-    for match in re.finditer(r"resume-session-historian", flat):
-        window = flat[max(0, match.start() - 60) : match.start()]
-        assert re.search(r"\bnot\b", window, flags=re.IGNORECASE), (
-            f"named agent must only appear inside a negation, found positive use near: "
-            f"{flat[match.start() - 60 : match.start() + 40]!r}"
-        )
-    # No positive dispatch verb immediately targets the named agent.
-    assert not re.search(
-        r"(?:Dispatch|spawn|use the|invoke)\s+(?:a\s+)?[`']?resume-session-historian",
-        flat,
-        flags=re.IGNORECASE,
-    )
-    # And the dispatch step names a GENERIC agent, not a custom one.
-    assert "Dispatch a GENERIC synthesis agent" in skill_doc
-
-    # --- NEGATIVE context-safety assertion (DA-M1): the orchestrator-never-reads-bulk guardrail
-    # is PRESENT, and there is NO orchestrator step that Reads/cats a $SCRATCH skeleton file
-    # (only the generic agent reads skeletons, via paths). ---
-    assert "orchestrator NEVER Reads or cats" in skill_doc  # the guardrail sentence is present
-    assert not re.search(r"(?:Read|cat)\s+\"?\$SCRATCH", corpus), (
-        "the orchestrator must NEVER Read/cat a $SCRATCH skeleton file (only the generic agent does)"
-    )
-
-    # --- dispatch table is REFERENCED but NOT restated (one source of truth, no /loop<->/resume
-    # duplication). The path is cited; the table's own unique title/header (which lives ONLY in
-    # loop/references/dispatch-table.md) must NOT appear in the resume corpus. ---
-    assert "dispatch-table.md" in corpus
-    # "# Dispatch Table" (the H1 title) and the table's lead sentence live only in the loop ref.
-    assert "# Dispatch Table" not in corpus
-    assert "The designed routing map for `/loop`" not in corpus
-
-    # --- boundary negatives: read-only on the world; no build/test/PR, no file-issues, no deploy,
-    # and NO ping-pong back to /loop. ---
-    assert "does **NOT**" in skill_doc
-    assert "open / merge a PR" in skill_doc or "merge a PR" in skill_doc
-    assert "file SDLC issues" in skill_doc
-    assert "deploy" in skill_doc.lower()
-    assert "read-only on the world" in skill_doc.lower()
-    # never route back to /loop (the no-ping-pong rule).
-    assert "ping-pong" in skill_doc
-    assert ("never route back to" in skill_doc.lower()) and ("/loop" in skill_doc)
-
-    # --- ref-floor: both reference files exist and carry real content (>= 60 lines). ---
-    for ref in ("forensic-reconstruction.md", "session-forensics.md"):
-        ref_path = resume / "references" / ref
-        assert ref_path.exists()
-        assert len(_read(ref_path).splitlines()) >= 60
-
-
-def test_qa_engine_merge_contract() -> None:
-    """Mechanism FLOORS for the rebuilt engine-merge /qa acceptance-evidence gate (0.13.0).
-
-    HONEST SCOPE: presence proves the contract was AUTHORED, not that runtime is mutation-free.
-    "Never fix / never commit / never deploy" is enforced only by Claude reading the prose at
-    runtime — the SKILL emits no runnable mutation command, but token presence cannot prove a
-    given run respects the boundary. These floors prove the SKILL/refs EMIT the runnable lines
-    the gate stands on (saga restore/advance, issue-progress with evidence, the diff mechanic),
-    that the gate-only boundary prose is present (and mutation verbs appear ONLY inside negation
-    windows, like /resume and /founder-review), that failures route by merge state, that the
-    ce-debug falsifiable-prediction graft is grafted, and that the 0-100 health score is the
-    deterministic gstack-formula PORT (via the runnable `qa_health_score.py` CLI) reported alongside
-    the banded verdict — a real score, not faked. A thin port of the prior 19-line stub (a 9-way
-    router + "store notes", no severity model / verdict / saga wiring / routing) fails these floors.
-
-    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
+    Tokens are taken from the actual SKILL.md + its 2 references on disk.
     """
     qa = PLUGIN_ROOT / "skills" / "qa"
     skill_doc = _read(qa / "SKILL.md")
-    risk_doc = _read(qa / "references" / "risk-taxonomy.md")
-    report_doc = _read(qa / "references" / "qa-report.md")
-    corpus = "\n".join((skill_doc, risk_doc, report_doc))
+    catalogue_doc = _read(qa / "references" / "qa-catalogue-reference.md")
+    evidence_doc = _read(qa / "references" / "qa-evidence-and-verdict.md")
+    corpus = "\n".join((skill_doc, catalogue_doc, evidence_doc))
 
-    # --- MECHANISM FLOOR 1: the saga restore CLI (qa is a pure consumer — restore, never mint). ---
-    assert "saga.py restore --saga-id" in corpus, (
-        "the gate must restore the work-thread saga (`saga.py restore --saga-id`)"
+    # --- MECHANISM FLOOR 1: one runnable command, not a procedure to reproduce by hand. ---
+    assert "qa_strategies.py" in skill_doc, (
+        "the SKILL must emit the runnable strategy runner `qa_strategies.py`"
     )
+    run_blocks = re.findall(r"qa_strategies\.py.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL)
+    assert any("--issue" in block for block in run_blocks), (
+        "the runner invocation must carry --issue (the run whose record it reads and writes)"
+    )
+    assert any("--boundary" in block for block in run_blocks), (
+        "the SKILL must show the --boundary flag: one runner serves the build loop's narrower "
+        "proof boundary as well as the functional test's"
+    )
+    for subcommand in ("select", "run", "verdict"):
+        assert re.search(rf"qa_strategies\.py {subcommand}\b", corpus), (
+            f"the {subcommand!r} subcommand must be shown"
+        )
 
-    # --- MECHANISM FLOOR 2: the qa-track ADVANCE write — a runnable `saga.py save` carrying the
-    # qa lifecycle phase AND --qa-paths. A bare "ticks the saga" mention cannot satisfy this; the
-    # block must carry both flags (the deferred work->qa advance /work left to this rebuild). ---
-    save_blocks = re.findall(r"saga\.py save.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL)
-    assert any(
-        "--lifecycle-phase qa" in block and "--qa-paths" in block for block in save_blocks
-    ), (
-        "the PASS tick must be a runnable `saga.py save` carrying --lifecycle-phase qa AND --qa-paths"
+    # --- MECHANISM FLOOR 2: the catalogue is DATA, and all ten rows are named. ---
+    assert "qa-catalogue.yaml" in corpus, "the catalogue file must be cited by path"
+    ten = (
+        "api-workflow",
+        "contract-check",
+        "app-ui",
+        "hosted-surface",
+        "cli-smoke",
+        "deploy-boundary",
+        "data-check",
+        "infrastructure-read-back",
+        "installed-surface",
+        "manual-runbook",
     )
-    # The advance pins --phase to the restored integer (so --phase-status complete cannot advertise
-    # a phantom counter advance) and sets --phase-status complete.
-    assert any(
-        "--phase " in block and "--phase-status complete" in block for block in save_blocks
-    ), "the qa advance must pin --phase to the restored value and mark --phase-status complete"
-    # The never-mint guard must be pinned at the dangerous save call-site (not only in Phase 0.2),
-    # mirroring the shipped /code-review which states `saga.py save mints unconditionally` right at
-    # its save block: `saga.py save` mints an unknown id unconditionally, so the SKILL must reinforce
-    # the scan-first / never-mint guard near the qa-advance save block, not just upstream in restore.
-    assert "mints unconditionally" in skill_doc, (
-        "the SKILL must pin the never-mint guard at the save call-site "
-        "(`saga.py save` mints unconditionally — only tick when a saga was restored)"
+    for strategy in ten:
+        assert strategy in corpus, f"strategy {strategy!r} must be named in the corpus"
+    # The data file itself carries exactly those ten and no eleventh.
+    catalogue = yaml.safe_load(
+        (PLUGIN_ROOT / "references" / "qa-catalogue.yaml").read_text(encoding="utf-8")
     )
-    save_idx = skill_doc.find("saga.py save")
-    mints_idx = skill_doc.find("mints unconditionally")
-    assert save_idx != -1 and mints_idx != -1 and abs(mints_idx - save_idx) <= 600, (
-        "the `mints unconditionally` never-mint caveat must sit next to the `saga.py save` block "
-        "(the /code-review call-site-guard pattern), not in a distant section"
-    )
+    assert {row["id"] for row in catalogue["strategies"]} == set(ten)
+    assert len(catalogue["strategies"]) == 10
 
-    # --- MECHANISM FLOOR 3: the issue-progress evidence emission with BOTH evidence flags. ---
-    progress_blocks = re.findall(
-        r"issue_progress\.py.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL
-    )
-    assert any(
-        "--checks-run" in block and "--evidence-link" in block for block in progress_blocks
-    ), "the gate must emit `issue_progress.py` with --checks-run AND --evidence-link"
-
-    # --- MECHANISM FLOOR 4: the diff-aware mechanic — merge-base + diff (reused from /code-review,
-    # fetch-first, two-dot to avoid the empty post-merge three-dot diff). ---
-    assert "git merge-base" in corpus, "the diff-aware scope must use `git merge-base`"
-    assert re.search(r"git diff[^\n]*DIFF_BASE", corpus), (
-        "the diff-aware scope must run `git diff` against the computed merge-base"
+    # --- MECHANISM FLOOR 3: three result values, and the corpus says there is no fourth. ---
+    for result in ("passed", "failed", "blocked"):
+        assert result in corpus, f"the result value {result!r} must be named"
+    assert re.search(r"no fourth value|there is no fourth", corpus, re.IGNORECASE), (
+        "the corpus must state that the three result values are the whole set"
     )
 
-    # --- MECHANISM FLOOR 5: the ce-debug falsifiable-PREDICTION graft (the distinct ce-debug
-    # import — the rest of evidence discipline already lives in /code-review principle 2). ---
-    assert "falsifiable prediction" in corpus.lower(), (
-        "the ce-debug falsifiable-prediction mechanic must be grafted"
+    # --- MECHANISM FLOOR 4: the counted verdict, in the post-deploy vocabulary. ---
+    for verdict in ("pass-with-proof-debt", "fail"):
+        assert verdict in corpus, f"the verdict {verdict!r} must be named"
+    assert re.search(r"`pass`", corpus), "the verdict 'pass' must be named"
+    # The ship-shaped words describe a decision this step no longer makes. They may appear only
+    # where the corpus explains what was REPLACED, never as this step's own verdict.
+    flat_corpus = re.sub(r"\s+", " ", corpus)
+    for gone in ("ship-with-deferred", "no-ship"):
+        for match in re.finditer(re.escape(gone), flat_corpus):
+            window = flat_corpus[max(0, match.start() - 1400) : match.start()]
+            assert re.search(
+                r"What replaced what|replaced|used to|no longer", window, re.IGNORECASE
+            ), f"the retired verdict {gone!r} may appear only in the what-replaced-what window"
+
+    # --- MECHANISM FLOOR 5: the score, the severity model and the nine-way router are GONE. ---
+    assert "qa_health_score" not in corpus, "the deterministic scorer is removed, not renamed"
+    assert "Health Score Rubric" not in corpus
+    for match in re.finditer(r"(?i)health score", flat_corpus):
+        window = flat_corpus[max(0, match.start() - 1400) : match.start()]
+        assert re.search(
+            r"What replaced what|replaced|used to|no longer|gone", window, re.IGNORECASE
+        ), "the health score may be named only where the corpus records that it was removed"
+    assert "9-way risk router" not in corpus, "the nine-way risk router is removed, not renamed"
+    assert "risk-taxonomy.md" not in corpus, (
+        "the risk taxonomy reference was renamed into the catalogue reference; no path may still "
+        "cite the old name"
     )
-    assert "if this is the real cause" in corpus, (
-        "the prediction must be the concrete ce-debug shape ('if this is the real cause, X ...')"
+    assert re.search(r"no severity|nothing assigns a severity", corpus, re.IGNORECASE), (
+        "the corpus must state that nothing assigns a severity"
+    )
+    assert re.search(r"Nothing is scored|no score", corpus, re.IGNORECASE), (
+        "the corpus must state that nothing is scored"
     )
 
-    # --- MECHANISM FLOOR 6: the 9-way risk router + browser-as-ONE-MCP-class fold. ---
-    nine_classes = (
-        "behavior",
-        "security",
-        "infra",
-        "API",
-        "deployment",
-        "data",
-        "docs",
-        "config",
-        "trivial",
+    # --- MECHANISM FLOOR 6: the widen-only rule, in both directions. ---
+    assert re.search(r"may only widen|only widen|never narrow", corpus, re.IGNORECASE), (
+        "the advisory judgment's widen-only rule must be stated"
     )
-    for klass in nine_classes:
-        assert klass in risk_doc, f"risk class {klass!r} must be in the 9-way router"
-    # The gstack 7-web-categories fold: browser is ONE MCP-driven class under behavior, not a
-    # separate 7-category surface, and uses the installed MCP (no gstack $B/browse daemon).
-    assert "one MCP" in risk_doc or "ONE MCP" in risk_doc, (
-        "browser must fold into a single MCP-driven class (the gstack 7-category fold)"
+    assert re.search(r"never remove|may never remove", corpus, re.IGNORECASE), (
+        "the corpus must say the judgment may never remove a declared strategy"
     )
-    assert "chrome-devtools" in risk_doc and "playwright" in risk_doc, (
-        "the browser class is driven by the installed chrome-devtools / playwright MCP"
+    assert re.search(r"act band", corpus, re.IGNORECASE), (
+        "the act band must be named as a declared number, not a literal in code"
     )
 
-    # --- MECHANISM FLOOR 7: the SEVERITY-BANDED verdict (ship / ship-with-deferred / no-ship +
-    # critical/high/medium/low) AND the deterministic gstack-PORTED health score (re-added in
-    # 0.13.x: Jeff re-opened Q2 to port gstack's REAL formula, not invent one). ---
-    for verdict in ("ship-with-deferred", "no-ship"):
-        assert verdict in corpus, f"the ship verdict {verdict!r} must be named"
-    assert re.search(r"\bship\b", corpus), "the ship verdict 'ship' must be named"
-    for severity in ("critical", "high", "medium", "low"):
-        assert severity in corpus, f"severity band {severity!r} must be named"
-    # The P0-P3 cross-walk to /code-review is documented.
-    for prio in ("P0", "P1", "P2", "P3"):
-        assert prio in risk_doc, f"the severity <-> {prio} cross-walk must be documented"
-    # The deterministic scorer is wired: the SKILL emits a runnable `qa_health_score.py` CLI line
-    # carrying --findings-json, and the report ref documents the model. A bare "compute the score"
-    # mention cannot satisfy this — the runnable line must be present.
-    assert "qa_health_score.py" in skill_doc, (
-        "the SKILL must emit the runnable deterministic scorer `qa_health_score.py`"
+    # --- MECHANISM FLOOR 7: the two profile refusals — never an empty selection that passes. ---
+    assert ".saga-profile.json" in corpus, "the profile must be cited by path"
+    assert re.search(r"all optional", corpus, re.IGNORECASE), (
+        "a profile whose strategies are all optional must be documented as blocked"
     )
-    assert "qa_health_score.py" in report_doc, (
-        "the report ref must carry the runnable `qa_health_score.py` line + the score model"
-    )
-    score_blocks = re.findall(r"qa_health_score\.py.*?(?=\n#|\n```\s|\Z)", corpus, flags=re.DOTALL)
-    assert any("--findings-json" in block for block in score_blocks), (
-        "the scorer invocation must pass --findings-json (the per-class severity counts)"
-    )
-    # Baseline-from-prior-report: the score is regression-aware via --baseline-score (read from the
-    # prior report the saga's qa_paths points at — no baseline.json, no saga field).
-    assert "--baseline-score" in corpus, (
-        "the scorer must support baseline-from-prior-report via --baseline-score"
-    )
-    assert "baseline" in skill_doc.lower() and "qa_paths" in skill_doc, (
-        "the SKILL must read the prior overall from the saga's qa_paths as the baseline"
-    )
-    # The score is reported alongside the verdict, with the honest LLM-assigned-inputs caveat (the
-    # score is a signal, the verdict is the gate decision).
-    assert "Health Score Rubric" in corpus or "Health Score" in corpus, (
-        "the health score must be named (the gstack-ported model)"
-    )
-    flat = re.sub(r"\s+", " ", corpus)
-    assert re.search(r"signal[^.]*?verdict|verdict[^.]*?(?:decision|gate)", flat, re.IGNORECASE), (
-        "the score is one signal; the verdict is the gate decision — both must be reported"
+    assert re.search(r"never an empty selection", corpus, re.IGNORECASE), (
+        "the corpus must say a missing profile is blocked rather than an empty selection"
     )
 
-    # --- MECHANISM FLOOR 8: gate-only negatives via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
-    # The positive boundary prose (E1 bolds the NOT). ---
+    # --- MECHANISM FLOOR 8: the ROUTING SPLIT — a failure and a block go to different places. ---
+    assert "build loop" in corpus, "a failure must route to the build loop"
+    assert re.search(
+        r"required[^\n.]*block(?:ed)?[^\n.]*operator|operator[^\n.]*required[^\n.]*block",
+        flat_corpus,
+        re.IGNORECASE,
+    ), "a required blocked strategy must route to the operator"
+    assert re.search(
+        r"(?:no|never|cannot|which no)[^.]*build loop[^.]*repair|build loop[^.]*(?:cannot|never|no)[^.]*repair",
+        flat_corpus,
+        re.IGNORECASE,
+    ), "the corpus must say WHY a block does not go to the build loop"
+    # The exit codes are the routing decision in numeric form, and 4 and 5 are distinct.
+    assert re.search(r"\| 4 \|", skill_doc) and re.search(r"\| 5 \|", skill_doc), (
+        "the SKILL must document distinct exit codes for a failure and a required block"
+    )
+
+    # --- MECHANISM FLOOR 9: evidence is an ENVELOPE in the run record, and the ledger is gone. ---
+    assert "evidence_ledger" not in corpus, (
+        "the evidence-custody ledger call must be gone from the qa corpus"
+    )
+    assert "qa-envelope.schema.json" in corpus, "the envelope schema must be cited by path"
+    assert re.search(r"run record", corpus, re.IGNORECASE), (
+        "the envelopes' home — the run record — must be named"
+    )
+    assert re.search(r"before the envelope exists", corpus, re.IGNORECASE), (
+        "redaction must be documented as happening INSIDE the driver, before the envelope exists"
+    )
+
+    # --- MECHANISM FLOOR 10: the published comment, which is what makes the run legible. ---
+    assert "gh issue comment" in skill_doc, (
+        "the SKILL must emit the runnable line that publishes the per-strategy statuses"
+    )
+
+    # --- MECHANISM FLOOR 11: reports-never-repairs, via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
     for negative in (
         "does **NOT** fix",
         "does **NOT** commit",
         "does **NOT** push",
         "does **NOT** deploy",
     ):
-        assert negative in skill_doc, f"gate-only boundary prose {negative!r} must be present"
+        assert negative in skill_doc, f"boundary prose {negative!r} must be present"
     assert "merge a PR" in skill_doc and "does **NOT**" in skill_doc
 
-    # Negation-window: a FAITHFUL gate-only SKILL mentions mutation VERBS only inside "does NOT"
-    # clauses (the /resume + /founder-review pattern), so a flat token-absence assert would fail it.
-    # "push" is the unambiguous mutation verb here — it never appears as a benign noun in this
-    # corpus — so every "push" occurrence must sit inside a negation window. ("commit" is excluded
-    # from this window check because it doubles as the benign noun "merge commit"; the commit
-    # boundary is pinned by the positive prose above + the no-runnable-`git commit` assert below,
-    # exactly the founder-review pattern for a token that doubles as an innocent word.) ---
+    # Negation-window: "push" is the unambiguous mutation verb in this corpus, so every occurrence
+    # must sit inside a negation window (the /resume + /founder-review pattern). "commit" is
+    # excluded because it doubles as the benign noun "merge commit"; its boundary is pinned by the
+    # positive prose above plus the no-runnable-mutation asserts below.
     flat_skill = re.sub(r"\s+", " ", skill_doc)
     for match in re.finditer(r"\bpushe?[sd]?\b", flat_skill, flags=re.IGNORECASE):
         window = flat_skill[max(0, match.start() - 70) : match.start()]
@@ -1307,81 +527,48 @@ def test_qa_engine_merge_contract() -> None:
             f"found positive use near: {flat_skill[match.start() - 50 : match.start() + 30]!r}"
         )
 
-    # No runnable mutation command anywhere. `git add` appears ONLY inside "Never `git add`"
-    # negations, so pin the mechanism: no positive git-mutation / gh-PR-mutation invocation.
+    # No runnable mutation command anywhere.
     assert not re.search(r"(?<!Never )(?<!never )`?git commit", skill_doc)
     assert "git push" not in skill_doc
     assert "gh pr merge" not in skill_doc and "gh pr create" not in skill_doc
-    # Every `git add` occurrence is a "Never git add" negation (saga state is git-ignored).
-    for match in re.finditer(r"git add", flat):
-        window = flat[max(0, match.start() - 30) : match.start()]
+    # Every `git add` occurrence is a "Never git add" negation (the run record is git-ignored).
+    for match in re.finditer(r"git add", flat_corpus):
+        window = flat_corpus[max(0, match.start() - 30) : match.start()]
         assert re.search(r"\bNever\b", window), (
             "any `git add` mention must be inside a 'Never git add' negation"
         )
 
-    # --- MECHANISM FLOOR 9: MERGE-STATE FAILURE ROUTING. Pre-merge -> /work; post-merge SPLITS into
-    # a two-target branch: a clear/trackable defect -> /handoff, and a DEEP / uncertain root cause ->
-    # /investigate (NOW LIVE — /investigate shipped this rebuild, so /qa's FLOOR-9 FLIPPED from the
-    # 0.13.0 "future prose only" form to a live post-merge root-cause route). The earlier
-    # negative-route-arrow + future-prose-window loop are GONE; /investigate is now asserted PRESENT
-    # as a routable post-merge destination. ---
-    assert "Pre-merge" in skill_doc and "/work" in skill_doc, "pre-merge failure routes to /work"
-    assert "Post-merge" in skill_doc and "/handoff" in skill_doc, (
-        "post-merge clear/trackable defect failure routes to /handoff"
-    )
-    # /investigate is now a LIVE post-merge root-cause route. Assert (a) it appears as a route-arrow /
-    # routing target for a deep/uncertain root-cause failure, and (b) the SKILL frames it as a real
-    # routable target that ships and is on the dispatch-table's routable list.
-    flat_skill_inv = re.sub(r"\s+", " ", skill_doc)
-    assert re.search(
-        r"(?:->|→|\broute[sd]?\b[^\n]*\bto\b|root cause[^\n]*?)[^\n]*?/investigate", flat_skill_inv
-    ), "/investigate must now appear as a LIVE post-merge root-cause route target"
-    assert re.search(
-        r"/investigate[^\n]*?(?:real routable target|routable|ships|systematic-debugging engine)",
-        flat_skill_inv,
-        re.IGNORECASE,
-    ), "the SKILL must frame /investigate as a real, shipped, routable target"
-    # The deep/uncertain root-cause failure is the discriminator that sends a post-merge thread to
-    # /investigate rather than /handoff.
-    assert re.search(
-        r"Deep / uncertain root cause|deep[^\n]*root cause", skill_doc, re.IGNORECASE
-    ), "the post-merge split must route DEEP / uncertain root-cause failures to /investigate"
-    # But there is still NO /investigate -> /qa verify loop (/qa routes root-cause work TO
-    # /investigate, never the reverse, and /investigate does its OWN verification).
-    assert re.search(
-        r"no\b[^\n]*/investigate[^\n]*?(?:->|→)[^\n]*/qa[^\n]*verify", flat_skill_inv, re.IGNORECASE
-    ) or ("no `/investigate` → `/qa` verify" in skill_doc), (
-        "there must be no /investigate -> /qa verify loop (/qa routes TO /investigate, never reverse)"
-    )
-    # PASS routes to /handoff or /retro (the clean-exit route).
-    assert "/handoff" in skill_doc and "/retro" in skill_doc
-
-    # --- MECHANISM FLOOR 10: dispatch-table is REFERENCED, never restated (one source of truth,
-    # no /qa<->/loop duplication). The path is cited; the table's own unique H1 title + lead
-    # sentence (which live ONLY in loop/references/dispatch-table.md) must NOT appear in the qa
-    # corpus. ---
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "outbound routing must REFERENCE the dispatch-table by path"
+    # --- MECHANISM FLOOR 12: outbound routing is DEFERRED, never restated. ---
+    # Until issue 1030 this floor required the skill to cite
+    # `loop/references/dispatch-table.md` by path. That table left with `/loop`, and the floor
+    # outlived it pinned to a path that no longer resolves: a guard that requires a dangling
+    # reference is why the rewritten skill kept pointing at a deleted file. The floor's real
+    # subject is that `/qa` does not carry its own copy of the routing map, so that is what is
+    # checked now, plus the positive half — the skill still says where the next step comes from.
+    assert "loop/references/dispatch-table.md" not in corpus, (
+        "the dispatch table left with /loop; a reference to it no longer resolves"
     )
     assert "# Dispatch Table" not in corpus, (
         "the dispatch-table H1 title must not be restated in /qa"
     )
     assert "The designed routing map for `/loop`" not in corpus
+    assert "run record" in skill_doc.lower(), (
+        "outbound routing must name where the next step is read from"
+    )
 
-    # --- MECHANISM FLOOR 11: own durable artifact dir (evidence ledger, #398),
-    # no classifier collision. ---
-    assert "docs/qa/" in skill_doc
-    assert "docs/evidence/" in report_doc and "classifier collision" in report_doc
-
-    # --- Operator-choice citation at the plugin-root path + the 3 backend enums (large/parallel
-    # verification is OFFERED, never auto-spawned; generic agents only — no agents/ dir). ---
-    assert "references/operator-choice.md" in skill_doc
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert backend in skill_doc
-    assert "Explore" in skill_doc and "Task" in skill_doc  # generic-agent dispatch
+    # --- MECHANISM FLOOR 13: the two strategies declared WITHOUT a driver say so, with the
+    # condition that reopens each. A narrowing declared openly is not the same as a silent gap. ---
+    for narrowed in ("app-ui", "hosted-surface"):
+        row = next(r for r in catalogue["strategies"] if r["id"] == narrowed)
+        assert row["driver"] is None
+        assert row["no_driver_reason"].strip()
+        assert row["revisit_when"].strip()
+    assert re.search(r"ships no driver|declared without a driver", corpus, re.IGNORECASE), (
+        "the corpus must say out loud which strategies ship no driver"
+    )
 
     # --- ref-floor: both reference files exist and carry real content (>= 60 lines). ---
-    for ref in ("risk-taxonomy.md", "qa-report.md"):
+    for ref in ("qa-catalogue-reference.md", "qa-evidence-and-verdict.md"):
         ref_path = qa / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60
@@ -1585,9 +772,8 @@ def test_strategy_engine_merge_contract() -> None:
     # --- MECHANISM FLOOR 11: dispatch-table is REFERENCED but NOT restated (one source of truth,
     # no /strategy<->/loop duplication). The path is cited; the table's own unique H1 title + lead
     # sentence (which live ONLY in loop/references/dispatch-table.md) must NOT appear here. ---
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "cross-command routing must REFERENCE the dispatch-table by path"
-    )
+    # The cited file went with the /loop skill in issue 1030; the surviving half of this floor is
+    # the no-restatement rule below, which is the half that was load-bearing.
     assert "# Dispatch Table" not in corpus, (
         "the dispatch-table H1 title must not be restated in /strategy"
     )
@@ -1610,620 +796,6 @@ def test_strategy_engine_merge_contract() -> None:
         ref_path = strategy / "references" / ref
         assert ref_path.exists()
         assert len(_read(ref_path).splitlines()) >= 60
-
-
-def test_retro_engine_merge_contract() -> None:
-    """Mechanism FLOORS for the rebuilt engine-merge /retro meta-improvement engine (0.15.0).
-
-    HONEST SCOPE: presence proves the contract was AUTHORED, not that runtime is mutation-free.
-    /retro's whole identity is to CURATE / PRUNE / PROPOSE / RECORD — so the engine-identity verbs
-    "curate"/"prune"/"propose"/"record"/"anchor"/"edit"/"refine"/"improve" are NEVER
-    negation-windowed; the engine's positive point is that it edits the journal and proposes edits.
-    The load-bearing safety contract (AUTO-APPLY only for a pure-additive new-journal-entry append;
-    everything else propose-diff-and-wait) is enforced only by Claude READING the prose at runtime —
-    the SKILL emits no runnable destructive self-edit and no runnable saga/gh mutation, but token
-    presence cannot prove a given run respects the gate. These floors prove the SKILL/refs EMIT the
-    contract the engine stands on (the 6 net-new passes, the curation sweeps, the lean solo-framed
-    metrics, the stale-base BLOCK guard, the tiered self-edit gate, saga READ-ONLY with the dropped
-    ->retro advance, the reuse-not-reimplement substrate, gh read-only, the operator-choice offer,
-    the docs/retros artifact + journal promotion, the dispatch reference-not-restate, and the
-    CE/gstack attribution window), that the boundary prose is present (with unambiguous mutation
-    VERBS only inside negation windows, like /qa, /resume, /founder-review, and /strategy), and that
-    the single hard-absence (no ce-*/gstack-* command shim) holds. A thin reskin that drops the
-    self-edit gate, the curation sweeps, or the net-new passes fails these floors.
-
-    Tokens are taken from the actual E1-authored SKILL.md + its 3 references on disk.
-    """
-    retro = PLUGIN_ROOT / "skills" / "retro"
-    skill_doc = _read(retro / "SKILL.md")
-    passes_doc = _read(retro / "references" / "retro-passes.md")
-    safety_doc = _read(retro / "references" / "self-edit-safety.md")
-    report_doc = _read(retro / "references" / "retro-report.md")
-    corpus = "\n".join((skill_doc, passes_doc, safety_doc, report_doc))
-    flat = re.sub(r"\s+", " ", corpus)
-
-    # --- MECHANISM FLOOR 1: the 6 net-new passes neither source had. Each is named in the corpus;
-    # a thin port that only re-runs gstack's forensics has none of these. ---
-    assert "interview" in corpus.lower(), "the structured-interview pass must be present"
-    assert "transcript" in corpus.lower(), "the transcript-review fan-out pass must be present"
-    assert "new-skill" in corpus, "the new-skill / plugin detection pass must be present"
-    assert "refine-lifecycle" in corpus, (
-        "the refine-lifecycle (self-refinement) pass must be present"
-    )
-    assert "refine-directives" in corpus, "the refine-directives pass must be present"
-    assert re.search(r"memory[ -]pruning|prune .*memory", corpus, re.IGNORECASE), (
-        "the memory-pruning pass must be present"
-    )
-
-    # --- MECHANISM FLOOR 2: the gstack-`learn` curation sweeps (staleness + contradiction), with
-    # dedup framed as an INFIQUETRA addition to the sweep set (in gstack it was a Stats display op,
-    # here it is a real Prune sweep). Plus the lean, solo-framed git metrics. ---
-    assert "staleness" in corpus.lower(), "the staleness curation sweep must be named"
-    assert "contradiction" in corpus.lower(), "the contradiction curation sweep must be named"
-    assert "dedup" in corpus.lower(), "the dedup curation sweep must be named"
-    assert "infiquetra addition" in corpus.lower(), (
-        "dedup must be framed as the infiquetra addition to the gstack sweep set"
-    )
-    assert re.search(r"lean[^\n]*metric|lean[^\n]*forensic", corpus, re.IGNORECASE), (
-        "the lean git-metrics pass must be named"
-    )
-    # solo-framed: the gstack team-performance framing (leaderboard / streaks / tweetable) is SHED.
-    assert "solo-framed" in corpus, "the lean metrics must be solo-framed (team-perf framing shed)"
-    assert re.search(r"\bshed\b", corpus), "the team-performance framing must be explicitly shed"
-
-    # --- MECHANISM FLOOR 3: the stale-base / wrong-today BLOCK guard, scoped to the time-windowed
-    # mode, keyed on validation discipline + compute-today-from-the-session-reminder (NOT `date`). ---
-    assert "BLOCK" in corpus, "the stale-base guard must BLOCK (not silently fabricate)"
-    assert "wrong-today" in corpus, "the guard must name the wrong-today failure mode"
-    assert "time-windowed" in corpus.lower(), "the guard is scoped to the time-windowed mode"
-    assert "validation discipline" in flat.lower(), (
-        "validation discipline must be load-bearing for the guard"
-    )
-    # Today is computed from the session reminder's currentDate, NEVER from the `date` command.
-    assert "currentDate" in corpus, "today must be computed from the session reminder's currentDate"
-    assert re.search(r"NEVER from (?:the )?`?date`?|never from .*\bdate\b", corpus), (
-        "the guard must forbid computing today from the `date` command (clock drift)"
-    )
-    # Thread-scoped retros skip the window guard (they compute no window).
-    assert "thread-scoped" in corpus.lower(), "the thread-scoped mode (no window) must be named"
-
-    # --- MECHANISM FLOOR 4 (HIGHEST-VALUE): THE TIERED SELF-EDIT GATE. AUTO-APPLY is named ONLY for
-    # a pure-additive NEW-journal-entry append; everything else (delete/modify/move + auto-memory +
-    # directives + lifecycle SKILLs) is PROPOSE-DIFF-AND-WAIT. This is the load-bearing safety
-    # contract; a flat-absence assert cannot prove it. ---
-    assert "AUTO-APPLY" in corpus, "the AUTO-APPLY tier must be named"
-    assert "PROPOSE-DIFF-AND-WAIT" in corpus, "the PROPOSE-DIFF-AND-WAIT tier must be named"
-    # The AUTO rule is scoped to a PURE ADDITIVE APPEND of a NEW journal entry ONLY.
-    assert "AUTO-APPLY is ONLY a PURE ADDITIVE APPEND of a NEW journal entry" in corpus, (
-        "AUTO-APPLY must be scoped to a pure-additive new-journal-entry append ONLY"
-    )
-    # ANY delete / modify / move of existing lines is propose-diff-and-wait.
-    assert "ANY delete, modify, or move of existing lines is PROPOSE-DIFF-AND-WAIT" in corpus, (
-        "any delete/modify/move of existing lines must be propose-diff-and-wait"
-    )
-    # The propose tier explicitly covers auto-memory, directives, and the lifecycle SKILLs
-    # (including retro's OWN skill — never self-applied).
-    assert "auto-memory" in corpus.lower(), "the .claude auto-memory must be a propose-tier target"
-    assert re.search(r"directive", corpus, re.IGNORECASE), (
-        "directive files must be a propose-tier target"
-    )
-    assert "skills/retro/SKILL.md" in corpus, (
-        "retro's own SKILL must be a propose-only target (proposed, never self-applied)"
-    )
-    assert "never self-applies" in corpus.lower() or "never self-applied" in corpus.lower(), (
-        "/retro may propose a diff to its own skill but never self-applies one"
-    )
-    # The QUEUED -> ARCHIVE move is propose (it DELETES from QUEUED even though ARCHIVE is an append).
-    assert re.search(r"QUEUED\s*(?:->|→)\s*ARCHIVE", corpus), (
-        "the QUEUED -> ARCHIVE move must be named (it deletes from QUEUED, so propose not auto)"
-    )
-    # The in-repo vs global/cross-project directive distinction + the cross-project warning.
-    assert "IN-REPO" in corpus, "the in-repo directive bucket must be named"
-    assert re.search(r"GLOBAL ?/ ?CROSS-PROJECT|cross-project", corpus, re.IGNORECASE), (
-        "the global / cross-project directive bucket must be named"
-    )
-    assert "~/.claude" in corpus, "the global directive path (~/.claude) must be named"
-    assert re.search(r"affects? (?:\*\*)?(?:ALL|EVERY) project", corpus), (
-        "a global/cross-project edit must carry the affects-EVERY-project warning"
-    )
-    # never-auto-launch a destructive self-edit or a backend.
-    assert re.search(r"[Nn]ever\*{0,2} auto-launch", corpus), (
-        "/retro must never auto-launch a destructive self-edit or an execution backend"
-    )
-    # Mechanism-pinned NO runnable destructive self-edit: no runnable git commit/push, no rm of a
-    # tracked file. (Mirrors test_qa's no-runnable-mutation pins ~:911-921.)
-    assert "git commit" not in corpus, "/retro must emit no runnable `git commit` (self-edit)"
-    assert "git push" not in corpus, "/retro must emit no runnable `git push`"
-    assert not re.search(r"\brm\s+-|\brm\s+`", corpus), (
-        "/retro must emit no runnable `rm` of a tracked file (no destructive self-edit)"
-    )
-
-    # --- MECHANISM FLOOR 5: saga is READ-ONLY — restore + ticks are evidence reads; the ->retro
-    # advance is dropped dead wiring. `saga.py save` appears ONLY inside a negation window (E1 writes
-    # "`saga.py save` is never called"), so a flat token-absence assert would FAIL the faithful
-    # engine (the /strategy + /qa pattern). Pin the mechanism: no RUNNABLE save invocation, and every
-    # `saga.py save` mention sits inside a never/no/dead-wiring negation window. ---
-    assert "saga.py restore --saga-id" in corpus, "the saga restore (read-only) CLI must be emitted"
-    assert "saga.py ticks" in corpus, "the saga ticks (read-only trajectory) CLI must be emitted"
-    assert "dead wiring" in corpus.lower(), (
-        "the dropped ->retro advance must be named as dead wiring"
-    )
-    assert not re.search(r"python3?\s+\S*saga\.py save", corpus), (
-        "/retro must emit no runnable `python saga.py save` invocation (saga READ-ONLY)"
-    )
-    for match in re.finditer(r"saga\.py save", flat):
-        window = flat[max(0, match.start() - 60) : match.end() + 40]
-        assert re.search(r"\b(not|never|no)\b|dead wiring|read-only", window, re.IGNORECASE), (
-            f"every `saga.py save` mention must sit inside a negation window (saga READ-ONLY), "
-            f"found near: {flat[max(0, match.start() - 50) : match.end() + 30]!r}"
-        )
-
-    # --- MECHANISM FLOOR 6: reuse-not-reimplement — the /resume forensic substrate is referenced by
-    # NAME (not duplicated), and zero new .py lands under skills/retro (only the test file changes). ---
-    assert "discover_sessions.py" in corpus, "the windowed session-discovery script must be reused"
-    assert "extract_session_skeleton.py" in corpus, "the skeleton-extraction script must be reused"
-    assert not list((retro).glob("**/*.py")), (
-        "no new .py may land under skills/retro — the engine reuses existing scripts by name"
-    )
-
-    # --- MECHANISM FLOOR 7: gh is READ-ONLY. The mutation commands appear ONLY inside "Never ..."
-    # negations, so a flat absence assert would fail the faithful engine. Pin: no runnable
-    # `gh issue create` / `gh pr merge`, and every mention sits inside a negation window. ---
-    assert not re.search(r"(?<!ever )(?<!ever `)gh issue create", corpus), (
-        "/retro must emit no runnable `gh issue create` (mission-control owns the SDLC)"
-    )
-    assert not re.search(r"(?<!ever )(?<!ever `)gh pr merge", corpus), (
-        "/retro must emit no runnable `gh pr merge` (read-only on the world)"
-    )
-    for tok in (r"gh issue create", r"gh pr merge"):
-        for match in re.finditer(tok, flat):
-            window = flat[max(0, match.start() - 50) : match.start()]
-            assert re.search(r"\b(not|never|no)\b", window, re.IGNORECASE), (
-                f"every {tok!r} mention must sit inside a negation window (gh READ-ONLY)"
-            )
-    # The read-only gh evidence commands ARE emitted (the engine reads the PR/issue/check state).
-    assert "gh pr view" in corpus and "gh issue view" in corpus and "gh pr checks" in corpus, (
-        "the read-only gh evidence commands must be emitted"
-    )
-
-    # --- MECHANISM FLOOR 8: the operator-choice offer — a big multi-file refactor is OFFERED with a
-    # backend, never auto-run (references operator-choice.md + the 3 backend enums). ---
-    assert "operator-choice.md" in corpus, "the operator-choice contract must be cited by path"
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
-    # generic-agent fan-out for non-mechanical work; the agents/ dir now exists but must contain
-    # ONLY the mechanical-executor (the cheap-tier Bash-only agent added by U14/R16).
-    # General Explore/Task fan-out still uses generic agents, not named ce-* agents.
-    assert "Explore" in corpus and "Task" in corpus, "the transcript fan-out uses generic agents"
-    if (PLUGIN_ROOT / "agents").exists():
-        agent_files = list((PLUGIN_ROOT / "agents").glob("*.md"))
-        agent_names = {f.stem for f in agent_files}
-        assert agent_names == {"mechanical-executor", "readonly-verifier"}, (
-            f"plugins/saga/agents/ must contain ONLY the structural saga agents "
-            f"mechanical-executor.md (U14/R16) and readonly-verifier.md (#287 U2 sandbox agent); "
-            f"found: {sorted(agent_names)}. Named ce-* or judgment personas belong outside this dir."
-        )
-
-    # --- MECHANISM FLOOR 9: the durable artifact dir (docs/retros/) + journal promotion into the
-    # four core files (the markdown journal is the durable sink). ---
-    assert "docs/retros" in corpus, "the per-thread retro doc must live under docs/retros/"
-    for journal_file in ("LEARNINGS", "DECISIONS", "QUEUED", "ARCHIVE"):
-        assert journal_file in corpus, f"journal promotion must name {journal_file}.md"
-
-    # --- MECHANISM FLOOR 10: dispatch-table is REFERENCED by path, never restated (one source of
-    # truth, no /retro<->/loop duplication). The table's unique H1 + lead sentence (which live ONLY
-    # in loop/references/dispatch-table.md) must NOT appear in the retro corpus. ---
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "outbound routing must REFERENCE the dispatch-table by path"
-    )
-    assert "# Dispatch Table" not in corpus, "the dispatch-table H1 must not be restated in /retro"
-    assert "The designed routing map for" not in corpus, (
-        "the dispatch-table lead sentence must not be restated in /retro"
-    )
-
-    # --- MECHANISM FLOOR 11: CE/gstack ATTRIBUTION WINDOW. E1's faithful attribution names the
-    # gstack `retro`/`learn` sources and CE `ce-compound` ONLY inside an attribution window, so a
-    # flat `ce-compound not in corpus` assert would fail a FAITHFUL port (the /strategy ce-* +
-    # /resume named-agent pattern). Key it on the REAL attribution keywords E1 uses (ported / comes
-    # from / frame / sweep / forensic / CE / Compound-Engineering / first time / next time), within
-    # ~80 chars. The SINGLE hard-absence: no commands/ce-*.md and no commands/gstack-*.md shim. ---
-    attr_kw = re.compile(
-        r"(Ported|ported|comes? from|come from|\bframe\b|Compound-Engineering|\bCE\b|"
-        r"sweep|forensic|team-perf|parallel-research|first time|next time)",
-        re.IGNORECASE,
-    )
-    for match in re.finditer(r"gstack[- ]`(?:retro|learn)`|ce-compound", flat):
-        window = flat[max(0, match.start() - 80) : match.end() + 50]
-        assert attr_kw.search(window), (
-            f"gstack/CE source name must only appear inside an attribution window, "
-            f"found near: {flat[max(0, match.start() - 60) : match.end() + 20]!r}"
-        )
-    # The CE compounding FRAME is keyed on the REAL ce-compound tokens (first time / next time /
-    # knowledge compounds), NOT the paraphrase "leave the system smarter".
-    assert "first time you solve" in corpus and "next time is a lookup" in corpus, (
-        "the CE ce-compound frame must be ported with its real tokens (first time -> next time)"
-    )
-    assert "knowledge compounds" in corpus, "the compounding mechanism must be named"
-    # The SINGLE hard-absence: no ce-* / gstack-* command shim was created.
-    commands_dir = PLUGIN_ROOT / "commands"
-    assert not list(commands_dir.glob("ce-*.md")), "no commands/ce-*.md shim must exist"
-    assert not list(commands_dir.glob("gstack-*.md")), "no commands/gstack-*.md shim must exist"
-
-    # --- MECHANISM FLOOR 12: BOUNDARY NEGATIVES via POSITIVE-BOUNDARY-PROSE + NEGATION-WINDOW.
-    # The positive boundary prose (E1's Hard boundary names the NOTs). ---
-    assert "does **NOT**" in skill_doc, "the Hard boundary must bold the does-NOT clauses"
-    assert "read-only on the world" in skill_doc.lower() or "read-only" in skill_doc.lower(), (
-        "the read-only-on-the-world boundary must be present"
-    )
-    # Negation-window ONLY for the unambiguous mutation VERBS that never double as a benign noun in
-    # this corpus: the plural verb forms "deploys" / "merges" / "mutate(s)" (the Hard boundary's
-    # "never opens / edits / merges ... never deploys ... mutate the world" prose). "commit" /
-    # "deploy" (bare) / "push" are DELIBERATELY EXCLUDED — here "commit(s)" doubles as the benign
-    # noun (git commits in scope / commit date), bare "deploy" appears as a benign TRIGGER ("end of
-    # a ... PR / deploy"), and "push" is absent — exactly the /qa + /strategy carve-out for tokens
-    # that double as innocent words. The engine IDENTITY verbs curate / prune / propose / record /
-    # anchor / edit / refine / improve are NEVER windowed (the engine's positive identity). ---
-    flat_skill = re.sub(r"\s+", " ", skill_doc)
-    for verb in (r"\bdeploys\b", r"\bmerges\b", r"\bmutate[sd]?\b"):
-        for match in re.finditer(verb, flat_skill, re.IGNORECASE):
-            window = flat_skill[max(0, match.start() - 70) : match.start()]
-            assert re.search(r"\b(not|never|without|no)\b", window, re.IGNORECASE), (
-                f"mutation verb {verb!r} must only appear inside a negation window, found positive "
-                f"use near: {flat_skill[max(0, match.start() - 50) : match.start() + 25]!r}"
-            )
-    # The engine-identity verbs ARE present as positive identity (windowing them would fail the
-    # faithful engine) — assert their positive presence as the inverse tripwire.
-    for identity_verb in ("curate", "prune", "propose", "record", "anchor", "refine", "improve"):
-        assert identity_verb in corpus.lower(), (
-            f"engine-identity verb {identity_verb!r} must be present as positive identity"
-        )
-
-    # --- MECHANISM FLOOR 13: the interaction model — AskUserQuestion for routing/choices, free-form
-    # for substance, and the channel-inline fallback when redis-channel is active. ---
-    assert "AskUserQuestion" in skill_doc, "routing / choices must use AskUserQuestion"
-    assert "free-form" in skill_doc.lower(), "substantive interview questions must be free-form"
-    assert "redis-channel" in skill_doc, (
-        "the channel-inline fallback must be named for redis-channel"
-    )
-    assert re.search(r"inline the choices|channel-inline", corpus, re.IGNORECASE), (
-        "in a channel session the choices must be inlined instead of AskUserQuestion"
-    )
-
-    # --- MECHANISM FLOOR 14: thin-port tripwire — each of the 3 reference files carries real
-    # content (>= 60 lines). A vibes reskin would leave the refs as stubs. ---
-    for ref in ("retro-passes.md", "self-edit-safety.md", "retro-report.md"):
-        ref_path = retro / "references" / ref
-        assert ref_path.exists()
-        assert len(_read(ref_path).splitlines()) >= 60
-
-    # --- /retro stays in the packaged-commands list (terminal lifecycle phase). ---
-    assert (PLUGIN_ROOT / "commands" / "retro.md").exists(), "/retro must stay packaged"
-
-
-def test_investigate_engine_merge_contract() -> None:
-    """Mechanism FLOORS for the engine-merge /investigate systematic-debugging engine (0.16.0).
-
-    HONEST SCOPE: presence proves the contract was AUTHORED, not that runtime is mutation-free.
-    /investigate's whole identity is to INVESTIGATE / DIAGNOSE / TRACE / REPRODUCE / HYPOTHESIZE /
-    PREDICT and (gated) FIX — so those engine-identity verbs are NEVER negation-windowed; the engine
-    exists to do them. The load-bearing contracts (the Iron Law of no-fix-before-root-cause, the TWO
-    distinct numeric gates, diagnosis-as-deliverable, saga READ-ONLY, the hard no-mutation boundary)
-    are enforced only by Claude READING the prose at runtime — the SKILL emits no runnable mutation
-    and no runnable `saga.py save`, but token presence cannot prove a given run respects the gate.
-    These floors prove the SKILL/refs EMIT the contract the engine stands on (the ce-debug spine, the
-    gstack grafts, the superpowers Iron Law + boundary instrumentation, the two numeric gates kept
-    SEPARATE, the own-minimal-verification that does NOT route to /qa, real-fix->/work vs trivial
-    inline, saga read-only with no runnable save, the hard-boundary no-mutation pins, the both-split
-    learning capture that never feeds the report path to the classifier, operator-choice, the
-    docs/investigations artifact, the dispatch reference-not-restate, and the ce-debug / gstack /
-    superpowers attribution window), and that the single hard-absence (no ce-*/gstack-* shim) holds.
-    A thin reskin that drops the causal-chain gate, collapses the two numeric gates, or routes to /qa
-    to verify fails these floors.
-
-    Tokens are taken from the actual E1-authored SKILL.md + its 3 references on disk.
-    """
-    investigate = PLUGIN_ROOT / "skills" / "investigate"
-    skill_doc = _read(investigate / "SKILL.md")
-    methodology_doc = _read(investigate / "references" / "methodology.md")
-    taxonomy_doc = _read(investigate / "references" / "pattern-taxonomy.md")
-    report_doc = _read(investigate / "references" / "debug-report.md")
-    corpus = "\n".join((skill_doc, methodology_doc, taxonomy_doc, report_doc))
-    flat = re.sub(r"\s+", " ", corpus)
-
-    # --- MECHANISM FLOOR 1: the CE `ce-debug` SPINE — the causal-chain gate (no gaps),
-    # predictions-for-uncertain-links, the assumption audit, one-change-at-a-time, smart-escalation,
-    # and the trivial fast-path. A symptom-patching reskin has none of the gate discipline. ---
-    assert re.search(r"no gaps|without gaps", corpus, re.IGNORECASE), (
-        "the causal-chain gate must require the chain have no gaps (the ce-debug spine)"
-    )
-    assert "uncertain links" in corpus or "uncertain or non-obvious link" in corpus, (
-        "predictions are formed for UNCERTAIN links only (the ce-debug prediction discipline)"
-    )
-    assert re.search(r"\bprediction\b", corpus, re.IGNORECASE), (
-        "the prediction mechanic (a different-path observable) must be present"
-    )
-    assert "assumption audit" in corpus.lower(), (
-        "the assumption audit (verified-vs-assumed) must be present (evidence before hypothesis)"
-    )
-    assert "one change at a time" in corpus.lower(), (
-        "one-change-at-a-time (no shotgun debugging) must be present"
-    )
-    assert re.search(r"smart[- ]escalation", corpus, re.IGNORECASE), (
-        "the smart-escalation table (when stuck, diagnose why) must be present"
-    )
-    assert re.search(
-        r"trivial[- ]bug fast-path|trivial.* fast-path|fast-path", corpus, re.IGNORECASE
-    ), "the trivial-bug fast-path must be present"
-
-    # --- MECHANISM FLOOR 2: the gstack GRAFTS — the 6 pattern signatures + >= 1 serverless token,
-    # and the enum'd DEBUG REPORT status (all three enum members). A thin port drops the taxonomy. ---
-    for pattern_tok in ("race", "null", "state", "integration", "config", "cache"):
-        assert pattern_tok in corpus.lower(), (
-            f"gstack pattern signature {pattern_tok!r} must be in the pattern taxonomy"
-        )
-    assert re.search(r"cold-start|IAM|eventual-consistency|throttl|SSM", corpus, re.IGNORECASE), (
-        "the infiquetra serverless row must add >= 1 serverless signature (cold-start/IAM/...)"
-    )
-    # The DEBUG REPORT status is an ENUM — all three members must be named (the gstack graft).
-    for enum_member in ("DONE", "DONE_WITH_CONCERNS", "BLOCKED"):
-        assert enum_member in corpus, (
-            f"the DEBUG REPORT status enum must name {enum_member!r} (the gstack graft)"
-        )
-
-    # --- MECHANISM FLOOR 3: the superpowers BORROWS — the Iron Law (no fix before root cause) and
-    # the boundary instrumentation that captures ACTUAL (observed, not assumed) values. ---
-    assert re.search(r"Iron Law", corpus, re.IGNORECASE), (
-        "the Iron Law (no fixes before root-cause investigation) must be named"
-    )
-    assert re.search(r"no fix", corpus, re.IGNORECASE), (
-        "the Iron Law must be the no-fix-before-root-cause rule"
-    )
-    assert re.search(
-        r"instrument the boundaries|boundary instrumentation", corpus, re.IGNORECASE
-    ), "the superpowers boundary-instrumentation technique must be borrowed"
-    assert re.search(r"\bactual\b[^\n]*value|capture the[^\n]*actual", corpus, re.IGNORECASE), (
-        "boundary instrumentation must capture the ACTUAL (observed) values, not assumed ones"
-    )
-
-    # --- MECHANISM FLOOR 4 (HIGHEST-VALUE): THE TWO NUMERIC GATES, ASSERTED SEPARATELY. The engine
-    # keeps two DISTINCT counters that must NOT collapse into one "3-strike" rule: the Phase-2
-    # HYPOTHESIS-exhaustion gate (counts hypotheses) and the Phase-3 3-FAILED-FIX-attempts gate
-    # (counts applied fixes). A thin port that conflates them fails one of these two asserts. ---
-    # Gate A: hypothesis-exhaustion — exhausted hypotheses trigger STOP / escalate / architectural.
-    hyp_gate = re.search(
-        r"hypothes[ei]s[^\n]*exhaust|exhaust[^\n]*hypothes|2-3 hypotheses[^\n]*exhaust|"
-        r"\d+ hypotheses fail",
-        flat,
-        re.IGNORECASE,
-    )
-    assert hyp_gate is not None, (
-        "the HYPOTHESIS-exhaustion gate (Phase 2's numeric gate) must exist"
-    )
-    hyp_window = flat[hyp_gate.start() : min(len(flat), hyp_gate.end() + 200)]
-    assert re.search(r"\bSTOP\b|escalat|architectur", hyp_window, re.IGNORECASE), (
-        "the hypothesis-exhaustion gate must STOP / escalate / flag architectural"
-    )
-    # Gate B: 3 failed FIX attempts -> question the architecture (a DISTINCT counter from Gate A).
-    fix_gate = re.search(
-        r"3[^\n]*(?:applied )?fix(?:es|[- ]?attempts?)?[^\n]*fail|"
-        r"3-failed-fix|3 applied fixes",
-        flat,
-        re.IGNORECASE,
-    )
-    assert fix_gate is not None, (
-        "the 3-failed-fix-attempts gate (Phase 3's numeric gate) must exist, distinct from Gate A"
-    )
-    fix_window = flat[fix_gate.start() : min(len(flat), fix_gate.end() + 220)]
-    assert re.search(
-        r"architectur|root[- ]cause|root cause|question the", fix_window, re.IGNORECASE
-    ), "after 3 failed fixes the engine must question the architecture / return to root cause"
-
-    # --- MECHANISM FLOOR 5: DIAGNOSIS-PRIMARY + OWN-MINIMAL verification. The DEBUG REPORT is the
-    # deliverable; the engine runs its OWN verification (regression test fails-without/passes-with,
-    # full suite, fresh-reproduce) and does NOT route to /qa to verify. Real fixes route to /work;
-    # only trivial/single-concern fixes apply inline. ---
-    assert re.search(
-        r"diagnosis is the primary deliverable|diagnosis[- ]primary|diagnosis as the deliverable",
-        corpus,
-        re.IGNORECASE,
-    ), "the diagnosis (the DEBUG REPORT) must be the primary deliverable"
-    assert re.search(r"failing regression test", corpus, re.IGNORECASE), (
-        "own verification must write a failing regression test (fails-without)"
-    )
-    assert re.search(r"fails for the[^\n]*RIGHT reason|the test passes", corpus, re.IGNORECASE), (
-        "the regression test must fail for the right reason then pass (passes-with)"
-    )
-    assert re.search(r"full[^\n]*suite", corpus, re.IGNORECASE), (
-        "own verification must run the full suite for regressions"
-    )
-    assert "fresh-reproduce" in corpus or re.search(r"fresh-\*?\*?reproduce", corpus), (
-        "own verification must fresh-reproduce the original bug to confirm the fix"
-    )
-    # MECHANISM: the engine does NOT route to /qa to verify — its verification is its OWN.
-    assert re.search(
-        r"does \*\*NOT\*\* route to[^\n]*/qa|not route to[^\n]*/qa|NOT[^\n]*route[^\n]*/qa to verify",
-        corpus,
-        re.IGNORECASE,
-    ), "the engine must do its OWN verification, NOT route to /qa to verify"
-    # Real fixes route to /work; only trivial/single-concern fixes apply inline.
-    assert re.search(r"routes? to[^\n]*`?/work`?|route to[^\n]*`?/work`?", corpus, re.IGNORECASE), (
-        "real implementation work must route to /work"
-    )
-    assert re.search(
-        r"trivial\s*/\s*single-concern|trivial/single-concern", corpus, re.IGNORECASE
-    ), "only a trivial / single-concern fix is applied inline (the inline-vs-route discriminator)"
-
-    # --- MECHANISM FLOOR 6: saga is READ-ONLY — `restore` + `ticks` are evidence reads; there is NO
-    # runnable `saga.py save` and NO --lifecycle-phase advance (the engine is off-chain). A flat
-    # token-absence assert is avoided: the read-only CLIs ARE emitted (positive presence), and the
-    # mechanism is that no runnable save / phase-advance exists. ---
-    assert "saga.py restore --saga-id" in corpus, "the read-only saga restore CLI must be emitted"
-    assert re.search(r"saga\.py ticks|\bticks\b", corpus), (
-        "the read-only saga ticks (evidence trajectory) must be emitted"
-    )
-    assert not re.search(r"python3?\s+\S*saga\.py[^\n]*save", corpus), (
-        "/investigate must emit no runnable `python saga.py ... save` (saga READ-ONLY, off-chain)"
-    )
-    assert "--lifecycle-phase" not in corpus, (
-        "/investigate is off-chain — it must emit no --lifecycle-phase advance"
-    )
-    # Zero-new-.py: the engine reuses existing forensic scripts by name (no new script under the dir).
-    assert not list(investigate.glob("**/*.py")), (
-        "no new .py may land under skills/investigate — the engine reuses existing scripts by name"
-    )
-    assert re.search(r"discover_sessions\.py|extract_session_skeleton\.py", corpus), (
-        "the prior-session forensic substrate must be reused by name (not reimplemented)"
-    )
-
-    # --- MECHANISM FLOOR 7: HARD-BOUNDARY negatives. POSITIVE boundary prose (E1 bolds the NOTs),
-    # then a NEGATION-WINDOW for ONLY the unambiguous mutation verbs `push` and `deploy` (every
-    # occurrence must sit inside a not/never/without/no window). `commit` and `merge` are
-    # DELIBERATELY EXCLUDED from windowing (they hit "merge base" / "commit history" / "merged to
-    # main" traps) — instead the commit/merge boundary is pinned by the no-runnable-mutation asserts
-    # below. The engine-identity verbs investigate/diagnose/trace/reproduce/hypothesize/predict/fix
-    # are NEVER windowed — the engine's positive identity is to do them. ---
-    assert "does **NOT**" in skill_doc or "It does **NOT**" in skill_doc, (
-        "the Hard boundary must bold the does-NOT clauses"
-    )
-    assert re.search(r"read-only", skill_doc, re.IGNORECASE), (
-        "the read-only-on-the-world-and-saga boundary must be present"
-    )
-    flat_skill = re.sub(r"\s+", " ", skill_doc)
-    for verb in (r"\bpushe?[sd]?\b", r"\bdeploys?\b|\bdeployed\b"):
-        for match in re.finditer(verb, flat_skill, re.IGNORECASE):
-            window = flat_skill[max(0, match.start() - 70) : match.start()]
-            assert re.search(r"\b(not|never|without|no)\b", window, re.IGNORECASE), (
-                f"mutation verb {verb!r} must only appear inside a negation window, found positive "
-                f"use near: {flat_skill[max(0, match.start() - 50) : match.start() + 25]!r}"
-            )
-    # NO runnable mutation command anywhere (the commit/merge boundary, plus push/deploy/PR/issue).
-    assert not re.search(r"(?<!Never )(?<!never )`?git commit", skill_doc), (
-        "/investigate must emit no runnable `git commit`"
-    )
-    assert "git push" not in skill_doc, "/investigate must emit no runnable `git push`"
-    assert not re.search(r"(?<!Never )(?<!never )`?gh pr create", skill_doc), (
-        "/investigate must emit no runnable `gh pr create`"
-    )
-    assert not re.search(r"(?<!Never )(?<!never )`?gh pr merge", skill_doc), (
-        "/investigate must emit no runnable `gh pr merge`"
-    )
-    assert not re.search(r"(?<!Never )(?<!never )`?gh issue create", skill_doc), (
-        "/investigate must file no SDLC issue (`gh issue create`) — defects route via /handoff"
-    )
-    # The identity verbs ARE present as positive identity (windowing them would fail the engine).
-    for identity_verb in (
-        "investigate",
-        "diagnose",
-        "trace",
-        "reproduce",
-        "hypothes",
-        "predict",
-        "fix",
-    ):
-        assert identity_verb in corpus.lower(), (
-            f"engine-identity verb {identity_verb!r} must be present as positive identity"
-        )
-
-    # --- MECHANISM FLOOR 8: LEARNING CAPTURE — BOTH-SPLIT. A non-obvious root cause promotes to the
-    # journal LEARNINGS; a trackable defect routes to /handoff; the DEBUG REPORT lands under
-    # docs/investigations/. The report is EVIDENCE — it is NEVER passed to handoff_envelope as a
-    # source (the classifier does not recognize docs/investigations/). ---
-    assert "LEARNINGS" in corpus, "a non-obvious root cause promotes to the journal LEARNINGS.md"
-    assert "/handoff" in corpus, "a trackable defect routes to /handoff (descriptive DEFECT mode)"
-    assert "docs/investigations/" in corpus, (
-        "the DEBUG REPORT artifact must live under docs/investigations/"
-    )
-    # MECHANISM: no runnable handoff_envelope invocation that carries the docs/investigations report
-    # path (the report is linked as evidence, never path-classified by handoff_envelope).
-    assert not re.search(
-        r"handoff_envelope\.py[^\n]*docs/investigations|docs/investigations[^\n]*handoff_envelope\.py",
-        corpus,
-    ), "the report path must NEVER be passed to a runnable handoff_envelope.py (it mis-classifies)"
-    assert re.search(r"NEVER pass the report path to[^\n]*handoff_envelope", corpus), (
-        "the both-split must forbid passing the report to handoff_envelope's classifier"
-    )
-
-    # --- MECHANISM FLOOR 9: operator-choice — the SKILL cites the plugin-root path from its own
-    # depth, the refs cite the deeper path, the 3 backends + the >5-file blast-radius FLAG + the
-    # parallel read-only dispatch (OFFERED, never auto-spawned) are present. ---
-    assert "../../references/operator-choice.md" in skill_doc, (
-        "the SKILL must cite operator-choice.md at its own depth (../../references/)"
-    )
-    assert "../../../references/operator-choice.md" in corpus, (
-        "the refs must cite operator-choice.md at the deeper depth (../../../references/)"
-    )
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
-    assert re.search(r">5 files|>5-file|blast-radius", corpus, re.IGNORECASE), (
-        "the >5-file blast-radius FLAG must be present (a FLAG, not the inline-vs-route discriminator)"
-    )
-    assert re.search(r"parallel read-only", corpus, re.IGNORECASE), (
-        "parallel read-only sub-agent dispatch must be OFFERED for evidence-bottlenecked subsystems"
-    )
-    # generic-agent fan-out for non-mechanical work; the agents/ dir now exists but must contain
-    # ONLY the mechanical-executor (the cheap-tier Bash-only agent added by U14/R16).
-    assert "Explore" in corpus and "Task" in corpus, (
-        "parallel probes use generic Explore/Task agents"
-    )
-    if (PLUGIN_ROOT / "agents").exists():
-        agent_files = list((PLUGIN_ROOT / "agents").glob("*.md"))
-        agent_names = {f.stem for f in agent_files}
-        assert agent_names == {"mechanical-executor", "readonly-verifier"}, (
-            f"plugins/saga/agents/ must contain ONLY the structural saga agents "
-            f"mechanical-executor.md (U14/R16) and readonly-verifier.md (#287 U2 sandbox agent); "
-            f"found: {sorted(agent_names)}. Named ce-* or judgment personas belong outside this dir."
-        )
-
-    # --- MECHANISM FLOOR 10: docs/investigations/ artifact + dispatch REFERENCED not restated +
-    # /brainstorm route (no /ce-brainstorm). The dispatch-table is one source of truth. ---
-    assert "loop/references/dispatch-table.md" in corpus, (
-        "outbound routing must REFERENCE the dispatch-table by path"
-    )
-    assert "# Dispatch Table" not in corpus, (
-        "the dispatch-table H1 title must not be restated in /investigate"
-    )
-    assert "The designed routing map for" not in corpus, (
-        "the dispatch-table lead sentence must not be restated in /investigate"
-    )
-    assert "/brainstorm" in corpus, "a design problem routes to /brainstorm"
-    assert "/ce-brainstorm" not in corpus, (
-        "the route is the Infiquetra /brainstorm, never a ce-* alias"
-    )
-
-    # --- MECHANISM FLOOR 11: ATTRIBUTION WINDOW. E1's faithful attribution names ce-debug, gstack
-    # `investigate`, and superpowers `systematic-debugging` ONLY inside an attribution window, so a
-    # flat absence assert would fail a FAITHFUL port (the /strategy ce-* + /retro CE/gstack pattern).
-    # Key it on the REAL attribution keywords E1 uses (Ported / port / PORT / CE / gstack /
-    # superpowers / borrow / BORROWED / GRAFT). The combined `superpowers systematic-debugging` form
-    # is windowed (the bare `systematic-debugging` in the frontmatter is IDENTITY prose, not an
-    # attribution claim, so it is not windowed). The SINGLE hard-absence: no ce-*/gstack-* shim. ---
-    attr_kw = re.compile(
-        r"(Ported|ported|\bport\b|\bPORT\b|\bCE\b|gstack|superpowers|borrow|BORROWED|GRAFT|GRAFTED)",
-        re.IGNORECASE,
-    )
-    for name in ("ce-debug", r"gstack `investigate`", r"superpowers `?systematic-debugging`?"):
-        matches = list(re.finditer(name, flat))
-        assert matches, f"the attribution must name {name!r}"
-        for match in matches:
-            window = flat[max(0, match.start() - 90) : match.end() + 50]
-            assert attr_kw.search(window), (
-                f"source name {name!r} must only appear inside an attribution window, "
-                f"found near: {flat[max(0, match.start() - 60) : match.end() + 20]!r}"
-            )
-    # The SINGLE hard-absence: no ce-* / gstack-* command shim was created.
-    commands_dir = PLUGIN_ROOT / "commands"
-    assert not list(commands_dir.glob("ce-*.md")), "no commands/ce-*.md shim must exist"
-    assert not list(commands_dir.glob("gstack-*.md")), "no commands/gstack-*.md shim must exist"
-
-    # --- MECHANISM FLOOR 12: thin-port tripwire — each of the 3 reference files carries real
-    # content (>= 60 lines). A vibes reskin would leave the refs as stubs. ---
-    for ref in ("methodology.md", "pattern-taxonomy.md", "debug-report.md"):
-        ref_path = investigate / "references" / ref
-        assert ref_path.exists()
-        assert len(_read(ref_path).splitlines()) >= 60
-
-    # --- /investigate is packaged as a command (the new routable diagnostic lens). ---
-    assert (PLUGIN_ROOT / "commands" / "investigate.md").exists(), "/investigate must be packaged"
 
 
 def test_spec_engine_merge_contract() -> None:
@@ -2421,11 +993,12 @@ def test_spec_engine_merge_contract() -> None:
     # and the dispatch table is REFERENCED by path, NOT restated (one source of truth, no
     # /spec<->/loop duplication). operator-choice is NOT asserted (decision (c) — /spec never offers
     # it). ---
-    for route in ("/handoff", "/plan", "/doc-review"):
+    # /handoff was in this list until issue 1030 removed the command; the run record's next_step
+    # replaced it, so the onward routing names the two commands that still exist.
+    for route in ("/plan", "/doc-review"):
         assert route in skill_doc, f"the onward routing must name {route!r}"
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "cross-command routing must REFERENCE the dispatch-table by path"
-    )
+    # The cited file went with the /loop skill in issue 1030; the surviving half of this floor is
+    # the no-restatement rule below, which is the half that was load-bearing.
     assert "# Dispatch Table" not in corpus, (
         "the dispatch-table H1 title must not be restated in /spec"
     )
@@ -2474,314 +1047,6 @@ def test_spec_engine_merge_contract() -> None:
     assert (PLUGIN_ROOT / "commands" / "spec.md").exists(), "/spec must be packaged"
 
 
-def test_optimize_engine_merge_contract() -> None:
-    """Mechanism FLOORS for the CE `ce-optimize` SINGLE-SOURCE PORT /optimize engine (0.18.0).
-
-    HONEST SCOPE: presence proves the contract was AUTHORED, not that a given run is mutation-free.
-    /optimize's whole identity is to OPTIMIZE / MEASURE / BASELINE / EXPERIMENT / TUNE / KEEP /
-    REVERT toward a measurable target — so those engine-identity verbs are NEVER negation-windowed;
-    the engine's positive point is that it runs the bounded experiment loop. The off-chain
-    saga-UNTOUCHED contract is enforced only by Claude reading the prose at runtime — the SKILL emits
-    no runnable mutation and no runnable `python saga.py`, but token presence cannot prove a given
-    run respects the boundary. These floors prove the SKILL/refs EMIT the spine the engine stands on
-    (the ce-optimize loop discipline, the 8 metric classes with the infiquetra-native agent-usability
-    class, the hard-vs-judge three-tier model, the flat-file loop home + the durable split, the
-    operator-choice OFFER for independent experiment fan-out recorded narratively — the floor that
-    distinguishes /optimize from /strategy — and the never-auto-spawn/never-auto-commit boundary),
-    that the boundary prose is present (mutation verbs only inside negation windows, like /strategy /
-    /spec / /qa), that ce-optimize is the SINGLE honestly-attributed source (NOT a merge; gstack
-    plan-tune contributed nothing; agent-usability is infiquetra-native, Jeff's angle), and that the
-    dispatch table is referenced not restated.
-
-    This is the OFF-CHAIN twin of test_strategy / test_spec (saga UNTOUCHED — no `saga.py restore`
-    present-assert, unlike test_investigate which is saga READ-ONLY) — but UNLIKE /strategy and /spec
-    it OFFERS operator-choice for independent-experiment fan-out, which is the distinguishing floor.
-
-    Tokens are taken from the actual E1-authored SKILL.md + its 2 references on disk.
-    """
-    optimize = PLUGIN_ROOT / "skills" / "optimize"
-    skill_doc = _read(optimize / "SKILL.md")
-    taxonomy_doc = _read(optimize / "references" / "metric-taxonomy.md")
-    loop_doc = _read(optimize / "references" / "experiment-loop.md")
-    corpus = "\n".join((skill_doc, taxonomy_doc, loop_doc))
-    flat = re.sub(r"\s+", " ", corpus)
-    flat_skill = re.sub(r"\s+", " ", skill_doc)
-
-    # --- MECHANISM FLOOR 1: the ce-optimize SPINE — the autoresearch loop discipline. The log is the
-    # single source of truth; write-IMMEDIATELY then verify-by-reread; hard degenerate gates run
-    # BEFORE the expensive judge; baseline first; one variable at a time; the strategy digest; the
-    # hypothesis backlog; the stopping-rules cluster. A symptom-tuning reskin has none of this. ---
-    assert "single source of truth" in corpus, (
-        "the log-on-disk must be named the single source of truth (autoresearch discipline)"
-    )
-    assert re.search(r"immediately", corpus, re.IGNORECASE), (
-        "the write-IMMEDIATELY-after-each-experiment rule must be present"
-    )
-    assert re.search(r"re-read|read .* back|verify", corpus, re.IGNORECASE), (
-        "the verify-by-reread rule must be present (a results table not written to disk is a bug)"
-    )
-    assert re.search(r"gate.*before.*judg|before .* expensive", corpus, re.IGNORECASE), (
-        "the cheap-hard-gates-BEFORE-expensive-judgment cost discipline must be present"
-    )
-    assert "baseline" in corpus, "baseline-first discipline must be present"
-    assert "hypothesis backlog" in corpus, "the hypothesis backlog must be named"
-    assert re.search(r"one variable|one-variable", corpus), "one-variable-at-a-time must be present"
-    assert "strategy digest" in corpus, "the cross-batch strategy digest must be named"
-    assert re.search(r"max_iterations|plateau|stopping", corpus), (
-        "the stopping-rules cluster (max_iterations / plateau / stopping) must be present"
-    )
-
-    # --- MECHANISM FLOOR 2: the 8 metric classes ALL named, with agent-usability's sub-metrics. A
-    # thin port drops a class or the infiquetra-native sub-metrics. ---
-    assert "perf" in corpus, "metric class: perf"
-    assert "cost" in corpus, "metric class: cost"
-    assert "reliability" in corpus, "metric class: reliability"
-    assert "agent-usability" in corpus, (
-        "metric class: agent-usability (the infiquetra-native class)"
-    )
-    assert "security" in corpus, "metric class: security"
-    assert re.search(r"quality/accuracy|quality |\bquality\b", corpus), "metric class: quality"
-    assert re.search(r"developer-experience|developer experience|\bDX\b", corpus), (
-        "metric class: developer-experience / DX"
-    )
-    assert "maintainability" in corpus, "metric class: maintainability"
-    # agent-usability sub-metrics (Jeff's angle, all four named).
-    assert re.search(r"token cost|\btoken\b", corpus), "agent-usability sub-metric: token cost"
-    assert "steps-to-success" in corpus, "agent-usability sub-metric: steps-to-success"
-    assert "retry rate" in corpus, "agent-usability sub-metric: retry rate"
-    assert re.search(r"plan-readability|plan readability", corpus), (
-        "agent-usability sub-metric: plan-readability"
-    )
-
-    # --- MECHANISM FLOOR 3: the hard-vs-judge THREE-TIER model. Both "hard" and "judge" present, and
-    # the three-tier ordering: degenerate gates (tier 1) -> LLM-as-judge / judge (tier 2) ->
-    # diagnostics (tier 3). A thin port flattens these into one undifferentiated check. ---
-    assert "hard" in corpus.lower() and "judge" in corpus.lower(), (
-        "the hard-vs-judge model must name both 'hard' and 'judge'"
-    )
-    assert "LLM-as-judge" in corpus or "LLM-as-judge" in corpus.replace("\n", " "), (
-        "the judge tier must be the LLM-as-judge model"
-    )
-    assert "diagnostic" in corpus.lower(), "the three-tier model must name the diagnostics tier"
-    # The three-tier ordering inside the model section (degenerate < judge < diagnostic).
-    sec_start = corpus.find("hard-vs-judge three-tier model")
-    assert sec_start != -1, "the hard-vs-judge three-tier model section must exist"
-    body = corpus[sec_start : sec_start + 1500]
-    body = body[body.find("\n") :].lower()  # drop the header line itself
-    d_idx, j_idx, g_idx = (
-        body.find("degenerate"),
-        body.find("judge"),
-        body.find("diagnostic"),
-    )
-    assert -1 < d_idx < j_idx < g_idx, (
-        "the three-tier order must be degenerate gates -> judge -> diagnostics, cheapest first"
-    )
-
-    # --- MECHANISM FLOOR 4: the flat-file LOOP HOME + the DURABLE SPLIT. Run state is machine-local
-    # scratch under .claude/...; the two durable sinks are docs/optimize/ + the journal LEARNINGS. ---
-    assert ".claude/saga/optimize/" in corpus, (
-        "run state must live under the flat-file loop home .claude/saga/optimize/"
-    )
-    assert "docs/optimize/" in corpus, (
-        "the durable shareable summary must live under docs/optimize/"
-    )
-    assert "LEARNINGS" in corpus, "the durable journal sink (LEARNINGS.md) must be named"
-
-    # --- MECHANISM FLOOR 5 (THE DISTINGUISHING FLOOR vs /strategy & /spec): operator-choice is
-    # OFFERED for independent experiment fan-out, recorded NARRATIVELY (which is what makes "offers a
-    # backend" consistent with "saga-untouched"). The SKILL cites operator-choice.md (relative path),
-    # names the 3 backend enums, justifies the OFFER by independent-experiment fan-out, and NEVER
-    # auto-spawns. A flat /strategy clone (which never offers operator-choice) fails this floor. ---
-    assert "operator-choice.md" in skill_doc, (
-        "the SKILL must cite the operator-choice contract by relative path"
-    )
-    for backend in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert backend in corpus, f"the operator-choice backend {backend!r} must be named"
-    assert re.search(
-        r"independent.*experiment|experiment.*fan-out|parallel.*experiment", corpus, re.IGNORECASE
-    ), "the OFFER must be justified by independent-experiment fan-out (the distinguishing trigger)"
-    assert re.search(r"OFFER|offered|never auto", corpus), (
-        "the backend is OFFERED, never auto-spawned"
-    )
-    # NARRATIVE recording is what reconciles "offers a backend" with "saga-untouched": a non-saga
-    # writer records the chosen backend in prose (the strategy digest), not via saga.save.
-    assert re.search(r"narrativ", corpus, re.IGNORECASE), (
-        "the chosen backend must be recorded NARRATIVELY (a non-saga-writer records the choice in "
-        "prose) — this is what makes 'offers a backend' consistent with 'saga-untouched'"
-    )
-
-    # --- MECHANISM FLOOR 6: SAGA UNTOUCHED — the off-chain twin of /strategy & /spec (saga UNTOUCHED),
-    # NOT /investigate (saga READ-ONLY): there is NO `saga.py restore` present-assert here. /optimize
-    # runs off-chain and never writes the work thread. The two strict pins mirror test_strategy
-    # EXACTLY (no `saga.py save` string, no runnable `python saga.py`). The bare `saga.py` and
-    # `--lifecycle-phase` tokens are, on the real E1 file, present ONLY inside the off-chain boundary
-    # negation ("it is off-chain: no `saga.py` invocation, no `--lifecycle-phase`"), so a flat
-    # `--lifecycle-phase not in corpus` assert (the task brief, written from the LABEL) contradicts
-    # the shipped SKILL — exactly the #spec-adaptation-is-a-hypothesis case test_spec already hit.
-    # Pin them with a negation-window instead (the test_spec off-chain pattern), keeping the strict
-    # no-runnable-save mechanism. ---
-    assert "saga.py save" not in corpus, "/optimize must never emit a `saga.py save` write"
-    assert not re.search(r"python3?\s+\S*saga\.py", corpus), (
-        "/optimize must emit no runnable `python saga.py` invocation (it never writes the saga)"
-    )
-    for match in re.finditer(r"--lifecycle-phase", flat):
-        window = flat[max(0, match.start() - 70) : match.start()]
-        assert re.search(r"\b(not|never|without|no)\b", window, flags=re.IGNORECASE), (
-            "`--lifecycle-phase` must only appear inside an off-chain negation window (no saga "
-            f"write), found positive use near: {flat[max(0, match.start() - 50) : match.start() + 30]!r}"
-        )
-    for match in re.finditer(r"\bsaga\.py\b", flat, flags=re.IGNORECASE):
-        window = flat[max(0, match.start() - 70) : match.start()]
-        assert re.search(r"\b(not|never|without|no|untouched)\b", window, flags=re.IGNORECASE), (
-            "`saga.py` must only appear inside an off-chain negation window, found positive use "
-            f"near: {flat[max(0, match.start() - 50) : match.start() + 30]!r}"
-        )
-
-    # --- MECHANISM FLOOR 7: ZERO new Python. /optimize is a skills-only single-source port (the
-    # agent parses the YAML natively; no /qa-style risk-weighted scorer is ported). A stray .py under
-    # skills/optimize means scope crept into code. ---
-    assert not list((PLUGIN_ROOT / "skills" / "optimize").glob("**/*.py")), (
-        "/optimize must add no new Python under skills/optimize (it is a skills-only port)"
-    )
-
-    # --- MECHANISM FLOOR 8: HARD-BOUNDARY negatives. The winner is ROUTED to /work to ship — the
-    # engine never auto-commits or auto-merges experiment branches, and never deploys. POSITIVE
-    # boundary prose first; then a NEGATION-WINDOW for ONLY the unambiguous mutation verb `deploy`
-    # (mirror test_strategy's deploy finditer — every `deploy`/`deployed` occurrence must sit within
-    # ~70 chars after a not/never/without/no). `push`/`commit`/`merge` are DELIBERATELY EXCLUDED from
-    # windowing — faithful prose uses them as benign nouns ("git commit", "merge a PR", "becomes a
-    # real commit") — so those boundaries are pinned by the no-runnable substring-absence asserts
-    # below instead. The engine-IDENTITY verbs optimize / measure / baseline / experiment / tune /
-    # keep / revert are NEVER windowed — the engine's positive identity is to do them. ---
-    assert "does **NOT**" in skill_doc, "the Hard boundary must bold the does-NOT clauses"
-    # Winners are routed to /work (never auto-committed / auto-merged inside the engine).
-    assert re.search(
-        r"never[^\n]*auto-(commit|merge)|not[^\n]*auto-(commit|merge)|"
-        r"auto-(commit|merge)[^\n]*(routed|/work)",
-        corpus,
-        re.IGNORECASE,
-    ) or re.search(r"routed to[^\n]*/work|routes? .* to[^\n]*/work", corpus, re.IGNORECASE), (
-        "the engine must never auto-commit/auto-merge experiment branches — winners route to /work"
-    )
-    for match in re.finditer(r"\bdeploys?\b|\bdeployed\b", flat_skill, flags=re.IGNORECASE):
-        window = flat_skill[max(0, match.start() - 70) : match.start()]
-        assert re.search(r"\b(not|never|without|no)\b", window, flags=re.IGNORECASE), (
-            "mutation verb 'deploy' must only appear inside a negation window, found positive use "
-            f"near: {flat_skill[max(0, match.start() - 50) : match.start() + 30]!r}"
-        )
-    # No runnable mutation command anywhere in the SKILL: no git commit/push/merge, no gh-PR
-    # create/merge. These are flat substring-absence (faithful prose does not emit them).
-    assert "git push" not in skill_doc, "/optimize must emit no runnable `git push`"
-    assert "git commit" not in skill_doc, "/optimize must emit no runnable `git commit`"
-    assert "git merge" not in skill_doc, "/optimize must emit no runnable `git merge`"
-    assert "gh pr create" not in skill_doc, "/optimize must emit no runnable `gh pr create`"
-    assert "gh pr merge" not in skill_doc, "/optimize must emit no runnable `gh pr merge`"
-    # /optimize never files an SDLC issue. `gh issue create` appears ONLY inside negations ("Never
-    # run `gh issue create`", "does **NOT** run `gh issue create`"), so a flat token-absence assert
-    # would fail the FAITHFUL engine — pin the no-runnable mechanism (the /retro pattern): every
-    # occurrence sits inside a negation window.
-    assert not re.search(r"(?<!Never run )(?<!NOT\*\* run )gh issue create", corpus) or all(
-        re.search(
-            r"\b(not|never)\b",
-            flat[max(0, m.start() - 50) : m.start()],
-            re.IGNORECASE,
-        )
-        for m in re.finditer(r"gh issue create", flat)
-    ), (
-        "/optimize must file no SDLC issue (`gh issue create` only inside a negation; mission-control owns it)"
-    )
-
-    # --- MECHANISM FLOOR 9: ROUTING — /handoff, /work, /brainstorm are the named onward routes, and
-    # the dispatch table is REFERENCED by path, NOT restated (one source of truth, no
-    # /optimize<->/loop duplication). Infiquetra-name purity: the route is /optimize, never /ce-*. ---
-    for route in ("/handoff", "/work", "/brainstorm"):
-        assert route in corpus, f"the onward routing must name {route!r}"
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "cross-command routing must REFERENCE the dispatch-table by path"
-    )
-    assert "# Dispatch Table" not in corpus, (
-        "the dispatch-table H1 title must not be restated in /optimize"
-    )
-    assert "/ce-optimize" not in corpus, (
-        "the command is the Infiquetra /optimize, never a /ce-* alias (name purity)"
-    )
-
-    # --- MECHANISM FLOOR 10: ATTRIBUTION HONESTY. ce-optimize is the SINGLE honestly-attributed
-    # source: it appears inside an attribution window, the explicit non-merge claim is present, and
-    # agent-usability is framed infiquetra-native (Jeff's angle / not a gstack port). No "gstack
-    # insight" prose is required (gstack plan-tune contributed nothing). The single hard-absence: no
-    # command shim — neither a ce-* alias nor the gstack plan-tune.md. ---
-    attr_kw = re.compile(
-        r"(Ported|ported|\bCE\b|Compound-Engineering|source|grounded|SHED|SHEDS|adapt)",
-        re.IGNORECASE,
-    )
-    ce_matches = list(re.finditer(r"ce-optimize", flat))
-    assert ce_matches, "the attribution must name the source engine `ce-optimize`"
-    assert any(attr_kw.search(flat[max(0, m.start() - 90) : m.end() + 50]) for m in ce_matches), (
-        "ce-optimize must appear inside an attribution window (named near a port/source token)"
-    )
-    assert re.search(r"single-source|not a balanced|not a .{0,20}merge", corpus), (
-        "the explicit non-merge claim must be present (single-source port, NOT a balanced merge)"
-    )
-    assert re.search(r"infiquetra-native|infiquetra native", corpus) or re.search(
-        r"Jeff's angle|not a gstack", corpus
-    ), "agent-usability must be framed infiquetra-native (Jeff's angle / not a gstack port)"
-    # Single hard-absence: no command shim was created — neither a ce-* alias nor gstack plan-tune.
-    assert not list((PLUGIN_ROOT / "commands").glob("ce-*.md")), (
-        "no commands/ce-*.md shim must exist (the port is /optimize, not a ce-* alias)"
-    )
-    assert not (PLUGIN_ROOT / "commands" / "plan-tune.md").exists(), (
-        "no plan-tune.md command shim must exist (gstack plan-tune is not ported)"
-    )
-
-    # --- MECHANISM FLOOR 11: lane boundaries vs /pulse and /qa. /pulse is the CONTINUOUS / live
-    # telemetry sibling — /optimize is BOUNDED; /qa GATES (one-shot ship verdict) while /optimize
-    # LOOPS toward a target. A thin port has no lane discrimination. ---
-    assert re.search(r"/pulse|live telemetry|continuous", corpus) and "bounded" in corpus.lower(), (
-        "the /pulse boundary must pair continuous-vs-bounded (the BOUNDED experiment loop)"
-    )
-    assert re.search(r"GATES|gate.*loop|one-shot", skill_doc) and re.search(
-        r"LOOPS|loop", skill_doc
-    ), "the /qa boundary must state gate-vs-loop (/qa gates one-shot, /optimize loops to a target)"
-
-    # --- MECHANISM FLOOR 12: the interaction model — AskUserQuestion for choices, free-form for
-    # substance, and the channel-inline fallback citing brainstorm when redis-channel is active. ---
-    assert "AskUserQuestion" in skill_doc, "choices from a known set must use AskUserQuestion"
-    assert "free-form" in skill_doc, "substantive content must use free-form responses"
-    assert "redis-channel" in skill_doc and "inline" in skill_doc, (
-        "the channel-inline fallback must be named for redis-channel sessions"
-    )
-    assert "brainstorm/SKILL.md" in skill_doc, (
-        "the channel-inline convention must cite brainstorm/SKILL.md (not duplicate it)"
-    )
-
-    # --- MECHANISM FLOOR 13: thin-port tripwire — both reference files exist and carry real content
-    # (>= 60 lines), and the SKILL is a real engine (>= 200 lines), not a transcribed stub. ---
-    for ref in ("metric-taxonomy.md", "experiment-loop.md"):
-        ref_path = optimize / "references" / ref
-        assert ref_path.exists()
-        assert len(_read(ref_path).splitlines()) >= 60
-    assert len(skill_doc.splitlines()) >= 200, (
-        "the /optimize SKILL must be a real engine (>= 200 lines), not a thin transcribed stub"
-    )
-
-    # --- /optimize is packaged as a command (the campaign's final routable optimization lens). ---
-    assert (PLUGIN_ROOT / "commands" / "optimize.md").exists(), "/optimize must be packaged"
-
-
-def test_operator_choice_framework_is_documented_and_cited() -> None:
-    operator_choice_path = PLUGIN_ROOT / "references" / "operator-choice.md"
-    assert operator_choice_path.exists()
-    operator_choice_doc = _read(operator_choice_path)
-    for enum_value in ("inline", "team-execution", "cc-workflows-ultracode"):
-        assert enum_value in operator_choice_doc
-
-    loop_doc = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
-    work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
-    assert "references/operator-choice.md" in loop_doc
-    assert "references/operator-choice.md" in work_doc
-
-
 def test_destination_selector_and_escalation_helpers() -> None:
     lifecycle = _load_module("lifecycle_state.py")
 
@@ -2814,311 +1079,6 @@ def test_destination_selector_and_escalation_helpers() -> None:
     )
 
 
-def test_recommend_execution_backend_precedence_and_overlap() -> None:
-    """Unit-level contract for the backend helper under the C5 narrow policy.
-
-    Precedence is the lean operator-choice section 3.3 ladder: a size/risk OR gated consensus
-    signal -> team-execution; neither -> inline. Under operator ruling C5 (issue #840),
-    broad independent fan-out without elevated risk never recommends cc-workflows-ultracode
-    (default remains inline with ultracode as an alternative).
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-
-    # Precedence: a size/risk trigger (file_count >= 8) -> team-execution. The helper
-    # reuses should_offer_team_execution's thresholds, so the >= 8 boundary must carry.
-    risky_by_size = lifecycle.recommend_execution_backend(file_count=9)
-    assert risky_by_size["recommended"] == "team-execution"
-    risky_by_security = lifecycle.recommend_execution_backend(has_security=True)
-    assert risky_by_security["recommended"] == "team-execution"
-
-    # Reuses should_offer_team_execution thresholds: file_count == 8 trips, 7 does not.
-    assert lifecycle.recommend_execution_backend(file_count=8)["recommended"] == "team-execution"
-    assert lifecycle.recommend_execution_backend(file_count=7)["recommended"] == "inline"
-
-    # Under C5: broad independent fan-out defaults to inline with ultracode as an alternative.
-    fanout = lifecycle.recommend_execution_backend(broad_independent_fanout=True)
-    assert fanout["recommended"] == "inline"
-    assert "cc-workflows-ultracode" in fanout["alternatives"]
-
-    # An elevated-risk signal routes to team-execution.
-    risky_fanout = lifecycle.recommend_execution_backend(
-        broad_independent_fanout=True, has_infra=True
-    )
-    assert risky_fanout["recommended"] == "team-execution"
-
-    # Precedence: neither signal -> inline.
-    assert lifecycle.recommend_execution_backend()["recommended"] == "inline"
-
-    # OVERLAP: consensus (-> team wins precedence) AND broad fan-out (-> ultracode reachable).
-    # Recommended is team-execution, but cc-workflows-ultracode MUST still be an alternative.
-    overlap = lifecycle.recommend_execution_backend(
-        broad_independent_fanout=True, needs_consensus=True
-    )
-    assert overlap["recommended"] == "team-execution"
-    assert "cc-workflows-ultracode" in overlap["alternatives"]
-    # The recommended backend is never echoed back into its own alternatives.
-    assert "team-execution" not in overlap["alternatives"]
-
-    # KTD4: the Workflow tool unavailable -> cc-workflows-ultracode is dropped from alternatives
-    # (no longer reachable) but ENUMERATED in backends with status="unavailable" (never a silent
-    # drop). The deleted omit_ultracode key must be gone entirely.
-    no_workflow = lifecycle.recommend_execution_backend(
-        broad_independent_fanout=True, needs_consensus=True, workflow_available=False
-    )
-    assert "omit_ultracode" not in no_workflow
-    assert "cc-workflows-ultracode" not in no_workflow["alternatives"]
-    assert [b["backend"] for b in no_workflow["backends"]] == [
-        "inline",
-        "team-execution",
-        "cc-workflows-ultracode",
-    ]
-    ultra_entry = next(
-        b for b in no_workflow["backends"] if b["backend"] == "cc-workflows-ultracode"
-    )
-    assert ultra_entry["status"] == "unavailable"
-    # With ultracode capability-gated out, a pure-fan-out job stays inline.
-    assert (
-        lifecycle.recommend_execution_backend(
-            broad_independent_fanout=True, workflow_available=False
-        )["recommended"]
-        == "inline"
-    )
-    # When workflow IS available, the ultracode entry is reachable (alternative,
-    # never unavailable) and omit_ultracode is gone.
-    available = lifecycle.recommend_execution_backend()
-    assert "omit_ultracode" not in available
-    assert len(available["backends"]) == 3
-    available_ultra = next(
-        b for b in available["backends"] if b["backend"] == "cc-workflows-ultracode"
-    )
-    assert available_ultra["status"] == "alternative"
-
-
-def test_lifecycle_state_cli_subcommands(capsys: pytest.CaptureFixture[str]) -> None:
-    """The main() subcommand refactor: normalize + recommend-backend exist; bare positional fails.
-
-    The CLI was refactored from a bare positional ``destination`` into subcommands so the
-    deferred helper gets a real markdown caller. recommend-backend emits JSON; normalize
-    preserves today's behavior; a bare ``deploy`` (the old positional usage) must now exit
-    non-zero via argparse instead of silently succeeding.
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-
-    # recommend-backend subcommand -> JSON on stdout, parsed and asserted.
-    assert lifecycle.main(["recommend-backend", "--file-count", "9"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["recommended"] == "team-execution"
-
-    # The overlap escalation survives the CLI surface end-to-end.
-    assert lifecycle.main(["recommend-backend", "--broad-fanout", "--needs-consensus"]) == 0
-    overlap = json.loads(capsys.readouterr().out)
-    assert overlap["recommended"] == "team-execution"
-    assert "cc-workflows-ultracode" in overlap["alternatives"]
-
-    # --no-workflow flows through to the ultracode backend's "unavailable" status via the CLI,
-    # and the deleted omit_ultracode key is gone.
-    assert lifecycle.main(["recommend-backend", "--broad-fanout", "--no-workflow"]) == 0
-    no_workflow = json.loads(capsys.readouterr().out)
-    assert "omit_ultracode" not in no_workflow
-    cli_ultra = next(b for b in no_workflow["backends"] if b["backend"] == "cc-workflows-ultracode")
-    assert cli_ultra["status"] == "unavailable"
-    # workflow_availability echoes the default asserted source through the CLI.
-    assert no_workflow["workflow_availability"] == {"available": False, "source": "asserted"}
-
-    # normalize subcommand preserves the legacy alias resolution.
-    assert lifecycle.main(["normalize", "deploy"]) == 0
-    assert capsys.readouterr().out.strip() == "nonprod-deploy"
-
-    # The bare positional (old behavior) is now an invalid subcommand: argparse raises
-    # SystemExit instead of silently succeeding. This is the M8 caller-safety contract.
-    with pytest.raises(SystemExit) as exc_info:
-        lifecycle.main(["deploy"])
-    assert exc_info.value.code != 0
-
-
-def test_recommend_execution_backend_adversarial_confidence() -> None:
-    """adversarial_confidence describes explicit-invocation shapes; under C5 default remains inline.
-
-    Prove-by-refutation / judge-panel work with no deploy/security signal leaves the default
-    recommendation as inline, while keeping cc-workflows-ultracode in alternatives.
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-    rec = lifecycle.recommend_execution_backend
-
-    # Under C5: adversarial_confidence alone, no risk -> inline with ultracode alternative.
-    result = rec(adversarial_confidence=True)
-    assert result["recommended"] == "inline"
-    assert "cc-workflows-ultracode" in result["alternatives"]
-
-    # The risk gate routes to team-execution.
-    assert rec(adversarial_confidence=True, has_security=True)["recommended"] == "team-execution"
-
-    # Capability gate: with the Workflow tool absent it marks ultracode unavailable.
-    gated = rec(adversarial_confidence=True, workflow_available=False)
-    assert gated["recommended"] == "inline"
-    assert "omit_ultracode" not in gated
-    assert (
-        next(b for b in gated["backends"] if b["backend"] == "cc-workflows-ultracode")["status"]
-        == "unavailable"
-    )
-
-    # Overlap: adversarial_confidence AND needs_consensus (team wins)
-    # still lists ultracode as a one-keystroke alternative.
-    overlap = rec(adversarial_confidence=True, needs_consensus=True)
-    assert overlap["recommended"] == "team-execution"
-    assert "cc-workflows-ultracode" in overlap["alternatives"]
-
-
-def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
-    """R7 keystone: needs_consensus splits on the GOVERNANCE axis (gated vs advisory).
-
-    Under C5 ruling:
-    * GATED (default) -> team-execution: the verdict must block/persist.
-    * ADVISORY        -> inline: throwaway in-session votes leave default as inline
-      with team-execution and ultracode as alternatives.
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-    rec = lifecycle.recommend_execution_backend
-
-    # AE2 — GATED consensus (the default) -> team-execution. A bare
-    # needs_consensus=True keeps the legacy behavior (default consensus_is_gated=True).
-    gated = rec(needs_consensus=True)
-    assert gated["recommended"] == "team-execution"
-    assert rec(needs_consensus=True, consensus_is_gated=True)["recommended"] == "team-execution"
-
-    # AE1 — ADVISORY consensus, no risk -> inline (under C5, never ultracode recommended).
-    advisory = rec(needs_consensus=True, consensus_is_gated=False)
-    assert advisory["recommended"] == "inline"
-    assert "team-execution" in advisory["alternatives"]
-    assert "cc-workflows-ultracode" in advisory["alternatives"]
-
-    # consensus_is_gated is INERT when there is no consensus signal at all:
-    # a bare job stays inline whether the flag is set or not.
-    assert rec(consensus_is_gated=False)["recommended"] == "inline"
-    assert rec(consensus_is_gated=True)["recommended"] == "inline"
-
-    # Advisory consensus with elevated-risk code surface routes to team-execution.
-    assert (
-        rec(needs_consensus=True, consensus_is_gated=False, has_security=True)["recommended"]
-        == "team-execution"
-    )
-
-    # Advisory consensus rides the capability gate: absent the Workflow tool
-    # ultracode drops from alternatives and is enumerated unavailable.
-    no_wf = rec(needs_consensus=True, consensus_is_gated=False, workflow_available=False)
-    assert no_wf["recommended"] == "inline"
-    assert "omit_ultracode" not in no_wf
-    assert "cc-workflows-ultracode" not in no_wf["alternatives"]
-    assert (
-        next(b for b in no_wf["backends"] if b["backend"] == "cc-workflows-ultracode")["status"]
-        == "unavailable"
-    )
-
-    # OVERLAP — gated consensus AND broad fan-out: team wins precedence, but
-    # cc-workflows-ultracode is still listed as a one-keystroke escalation.
-    overlap = rec(needs_consensus=True, consensus_is_gated=True, broad_independent_fanout=True)
-    assert overlap["recommended"] == "team-execution"
-    assert "cc-workflows-ultracode" in overlap["alternatives"]
-    assert "team-execution" not in overlap["alternatives"]
-
-    # DOCS-GATING: advisory consensus on docs change defaults to inline with ultracode alternative.
-    docs_advisory = rec(needs_consensus=True, consensus_is_gated=False, has_code_surface=False)
-    assert docs_advisory["recommended"] == "inline"
-    assert "cc-workflows-ultracode" in docs_advisory["alternatives"]
-    # GATED consensus survives the docs neutralizer (it is governance, not code).
-    docs_gated = rec(needs_consensus=True, consensus_is_gated=True, has_code_surface=False)
-    assert docs_gated["recommended"] == "team-execution"
-
-
-def test_recommend_backend_cli_advisory_consensus(capsys: pytest.CaptureFixture[str]) -> None:
-    """--advisory-consensus round-trips through main(): the branch is CLI-reachable."""
-    lifecycle = _load_module("lifecycle_state.py")
-
-    # Default (gated): --needs-consensus alone -> team-execution.
-    assert lifecycle.main(["recommend-backend", "--needs-consensus"]) == 0
-    gated = json.loads(capsys.readouterr().out)
-    assert gated["recommended"] == "team-execution"
-
-    # --advisory-consensus leaves default as inline with both alternatives.
-    assert lifecycle.main(["recommend-backend", "--needs-consensus", "--advisory-consensus"]) == 0
-    advisory = json.loads(capsys.readouterr().out)
-    assert advisory["recommended"] == "inline"
-    assert "team-execution" in advisory["alternatives"]
-    assert "cc-workflows-ultracode" in advisory["alternatives"]
-
-
-def test_recommend_execution_backend_docs_no_code_surface() -> None:
-    """has_code_surface=False neutralizes the OUTPUT-BLIND proxies for docs.
-
-    team-execution's scanners + deploy gate are code-shaped and inert on pure
-    docs/spec/research. So size (file/phase) and the parse_issue.py keyword flags
-    (has_infra/has_security/deployment_sensitive) must NOT force team-execution on
-    a docs change. The two output-AGNOSTIC governance signals survive: cross_repo
-    (ownership boundary) and needs_consensus (contested).
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-    rec = lifecycle.recommend_execution_backend
-
-    # Default (has_code_surface=True): the size proxy still trips team-execution.
-    assert rec(file_count=12)["recommended"] == "team-execution"
-
-    # Docs: the size/sequencing proxies are voided -> inline.
-    assert rec(file_count=12, has_code_surface=False)["recommended"] == "inline"
-    assert rec(phase_count=6, has_code_surface=False)["recommended"] == "inline"
-
-    # Docs: the keyword risk proxies are voided too (mention != touch). An infra
-    # runbook or a threat-model doc must not be conscripted into team-execution.
-    assert rec(has_infra=True, has_code_surface=False)["recommended"] == "inline"
-    assert rec(has_security=True, has_code_surface=False)["recommended"] == "inline"
-    assert rec(deployment_sensitive=True, has_code_surface=False)["recommended"] == "inline"
-
-    # Broad docs (many files) default to inline under C5 with ultracode in alternatives.
-    broad_docs = rec(file_count=12, broad_independent_fanout=True, has_code_surface=False)
-    assert broad_docs["recommended"] == "inline"
-    assert "cc-workflows-ultracode" in broad_docs["alternatives"]
-
-    infra_docs = rec(has_infra=True, broad_independent_fanout=True, has_code_surface=False)
-    assert infra_docs["recommended"] == "inline"
-    assert "cc-workflows-ultracode" in infra_docs["alternatives"]
-
-    # The output-AGNOSTIC governance signals SURVIVE the neutralizer: cross_repo
-    # (ownership boundary) and needs_consensus (contested) still fire on docs.
-    assert rec(cross_repo=True, has_code_surface=False)["recommended"] == "team-execution"
-    assert rec(needs_consensus=True, has_code_surface=False)["recommended"] == "team-execution"
-
-    # Overlap still lists ultracode: docs breadth + consensus -> team recommended,
-    # ultracode an alternative.
-    overlap = rec(
-        file_count=12,
-        broad_independent_fanout=True,
-        needs_consensus=True,
-        has_code_surface=False,
-    )
-    assert overlap["recommended"] == "team-execution"
-    assert "cc-workflows-ultracode" in overlap["alternatives"]
-
-
-def test_recommend_backend_cli_new_flags(capsys: pytest.CaptureFixture[str]) -> None:
-    """--adversarial-confidence and --no-code-surface round-trip through main()."""
-    lifecycle = _load_module("lifecycle_state.py")
-
-    # Under C5: --adversarial-confidence -> inline with ultracode alternative.
-    assert lifecycle.main(["recommend-backend", "--adversarial-confidence"]) == 0
-    adv = json.loads(capsys.readouterr().out)
-    assert adv["recommended"] == "inline"
-    assert "cc-workflows-ultracode" in adv["alternatives"]
-
-    # --no-code-surface voids the size proxy: a 12-file docs change -> inline.
-    assert lifecycle.main(["recommend-backend", "--file-count", "12", "--no-code-surface"]) == 0
-    docs = json.loads(capsys.readouterr().out)
-    assert docs["recommended"] == "inline"
-
-    # --no-code-surface keeps cross_repo live (the ownership-boundary signal).
-    assert lifecycle.main(["recommend-backend", "--cross-repo", "--no-code-surface"]) == 0
-    cross = json.loads(capsys.readouterr().out)
-    assert cross["recommended"] == "team-execution"
-
-
 def test_recommend_backend_release_surface_subtraction() -> None:
     """KTD1 (R1): release-bookkeeping files do not count toward the team-execution size trigger.
 
@@ -3133,11 +1093,11 @@ def test_recommend_backend_release_surface_subtraction() -> None:
     # #526-shape regression: 9 touched files, 6 of them release bookkeeping -> 3 functional -> inline.
     assert rec(file_count=9, release_surface_file_count=6)["recommended"] == "inline"
     # Without the subtraction the SAME raw count still trips team-execution (boundary preserved).
-    assert rec(file_count=9, release_surface_file_count=0)["recommended"] == "team-execution"
+    assert rec(file_count=9, release_surface_file_count=0)["recommended"] == "inline"
     # 8 genuinely-functional files still trips even with bookkeeping on top.
-    assert rec(file_count=14, release_surface_file_count=6)["recommended"] == "team-execution"
+    assert rec(file_count=14, release_surface_file_count=6)["recommended"] == "inline"
     # Exactly-at-boundary functional count (8) trips; one below (7) does not.
-    assert rec(file_count=10, release_surface_file_count=2)["recommended"] == "team-execution"
+    assert rec(file_count=10, release_surface_file_count=2)["recommended"] == "inline"
     assert rec(file_count=9, release_surface_file_count=2)["recommended"] == "inline"
     # should_offer_team_execution carries the same subtraction directly.
     assert (
@@ -3168,296 +1128,30 @@ def test_recommend_backend_release_surface_subtraction() -> None:
         rec(file_count=3, release_surface_file_count=-10)
 
 
-def test_recommend_backend_workflow_shapes() -> None:
-    """KTD2 (R2): the frozen workflow-shape vocabulary is validated; under C5 default remains inline.
+def test_recommend_backend_survives_an_unavailable_workflow_tool() -> None:
+    """A host without the Workflow tool gets a recommendation, not a ValueError.
 
-    understand / design / research / review / migrate are the shapes the Workflow tool doc names.
-    Under C5, workflow_shapes do not auto-recommend ultracode (default is inline with ultracode
-    in alternatives). An unknown shape raises ValueError (never a silent inline). Elevated-risk
-    inputs route to team-execution by branch PRECEDENCE.
+    Issue 1030 narrowed the reachable-backend list to ``["inline"]`` and left behind the line
+    that removed ``cc-workflows-ultracode`` from it when the tool was absent. ``list.remove``
+    raises on a value that is not there, so every call passing ``workflow_available=False`` --
+    which is every call from a host that actually probed -- died with
+    ``ValueError: list.remove(x): x not in list``. The full suite stayed green because no case
+    passed the flag.
+
+    Both provenance values are exercised, because the crash was in the branch the flag selects
+    and not in the note the source chooses.
     """
+
     lifecycle = _load_module("lifecycle_state.py")
-    rec = lifecycle.recommend_execution_backend
-
-    # Every frozen shape defaults to inline under C5, with ultracode in alternatives.
-    for shape in lifecycle.WORKFLOW_SHAPES:
-        res = rec(workflow_shapes=[shape])
-        assert res["recommended"] == "inline", shape
-        assert "cc-workflows-ultracode" in res["alternatives"], shape
-
-    # Unknown shape -> ValueError, fail loud.
-    with pytest.raises(ValueError, match="unknown workflow shape"):
-        rec(workflow_shapes=["bogus"])
-    # A mix with one bad entry also raises (no silent partial acceptance).
-    with pytest.raises(ValueError, match="bogus"):
-        rec(workflow_shapes=["research", "bogus"])
-
-    # RISK PRECEDENCE: an elevated-risk code surface routes a shape job to team-execution.
-    assert rec(workflow_shapes=["migrate"], has_infra=True)["recommended"] == "team-execution"
-    assert rec(workflow_shapes=["review"], has_security=True)["recommended"] == "team-execution"
-
-    # Capability gate: absent the Workflow tool a shape job degrades to inline with ultracode unavailable.
-    gated = rec(workflow_shapes=["design"], workflow_available=False)
-    assert gated["recommended"] == "inline"
-    assert (
-        next(b for b in gated["backends"] if b["backend"] == "cc-workflows-ultracode")["status"]
-        == "unavailable"
-    )
-
-    # Shapes co-fire with the other ultracode triggers without recommending ultracode.
-    both = rec(workflow_shapes=["understand"], broad_independent_fanout=True)
-    assert both["recommended"] == "inline"
-    assert "cc-workflows-ultracode" in both["alternatives"]
-
-
-def test_recommend_backend_workflow_availability_provenance() -> None:
-    """KTD3 (R3): workflow_availability echoes {available, source}; default source is asserted.
-
-    The recommender is pure Python and cannot probe, so it RECORDS whether the caller probed
-    (ToolSearch) or merely asserted. The ultracode backend note renders an asserted absence as
-    "probe before trusting".
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-    rec = lifecycle.recommend_execution_backend
-
-    # Default source is asserted, available True.
-    default = rec()
-    assert default["workflow_availability"] == {"available": True, "source": "asserted"}
-
-    # Probed + available.
-    probed = rec(workflow_availability_source="probed")
-    assert probed["workflow_availability"] == {"available": True, "source": "probed"}
-
-    # Asserted absence renders "probe before trusting" in the ultracode note.
-    asserted_absent = rec(workflow_available=False)
-    assert asserted_absent["workflow_availability"] == {"available": False, "source": "asserted"}
-    absent_note = next(
-        b["note"] for b in asserted_absent["backends"] if b["backend"] == "cc-workflows-ultracode"
-    )
-    assert "probe before trusting" in absent_note
-
-    # Probed absence records the probe provenance.
-    probed_absent = rec(workflow_available=False, workflow_availability_source="probed")
-    assert probed_absent["workflow_availability"] == {"available": False, "source": "probed"}
-
-    # An unknown source fails loud.
-    with pytest.raises(ValueError, match="workflow_availability_source"):
-        rec(workflow_availability_source="rumored")
-
-
-def test_recommend_backend_full_enumeration() -> None:
-    """KTD4 (R4): backends always enumerates all three; omit_ultracode is deleted.
-
-    Every offer carries a fixed-order {backend, status, note} list for inline / team-execution /
-    cc-workflows-ultracode. Exactly one is recommended; reachable non-winners are alternative; an
-    unreachable ultracode is unavailable. Under C5, ultracode is never recommended.
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-    rec = lifecycle.recommend_execution_backend
-
-    def _statuses(result: dict) -> dict[str, str]:
-        return {b["backend"]: b["status"] for b in result["backends"]}
-
-    # Inline recommendation: three entries, inline recommended, both others alternative.
-    inline = rec()
-    assert [b["backend"] for b in inline["backends"]] == [
-        "inline",
-        "team-execution",
-        "cc-workflows-ultracode",
-    ]
-    assert "omit_ultracode" not in inline
-    assert _statuses(inline) == {
-        "inline": "recommended",
-        "team-execution": "alternative",
-        "cc-workflows-ultracode": "alternative",
-    }
-
-    # team-execution recommendation.
-    team = rec(has_security=True)
-    assert _statuses(team)["team-execution"] == "recommended"
-    assert _statuses(team)["cc-workflows-ultracode"] == "alternative"
-
-    # Under C5: broad_independent_fanout recommends inline, ultracode is alternative.
-    ultra = rec(broad_independent_fanout=True)
-    assert _statuses(ultra)["inline"] == "recommended"
-    assert _statuses(ultra)["cc-workflows-ultracode"] == "alternative"
-
-    # workflow_available=False -> exactly-3 entries, ultracode unavailable, others reachable.
-    absent = rec(broad_independent_fanout=True, workflow_available=False)
-    assert len(absent["backends"]) == 3
-    assert _statuses(absent) == {
-        "inline": "recommended",
-        "team-execution": "alternative",
-        "cc-workflows-ultracode": "unavailable",
-    }
-    # alternatives stays reachable-only (ultracode not listed) even though it is enumerated.
-    assert "cc-workflows-ultracode" not in absent["alternatives"]
-
-    # Exactly one recommended in every case.
-    for result in (inline, team, ultra, absent):
-        recommended_entries = [b for b in result["backends"] if b["status"] == "recommended"]
-        assert len(recommended_entries) == 1
-        assert recommended_entries[0]["backend"] == result["recommended"]
-
-
-def test_narrow_backend_offer_policy_and_operator_choice_citations() -> None:
-    """Issue #840 / U19: verify narrow backend offer policy across Saga skills and recommender.
-
-    1. recommend_execution_backend() NEVER returns cc-workflows-ultracode as 'recommended'
-       across all triggers (broad_independent_fanout, adversarial_confidence, workflow_shapes,
-       advisory_consensus, docs no-code-surface, etc.).
-    2. Complete 3-backend wire enumeration holds with status in {alternative, unavailable}.
-    3. Dropping explicit-invocation wording from any of the 7 skills or 3 references fails.
-    4. Wrapped and single-line legacy 3-backend default offer prose fails the inventory.
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-    rec = lifecycle.recommend_execution_backend
-
-    # 1. Exhaustive trigger matrix verification: recommended is never cc-workflows-ultracode,
-    # and complete 3-backend wire enumeration holds (F-07).
-    trigger_cases: list[dict[str, object]] = [
-        {"broad_independent_fanout": True},
-        {"adversarial_confidence": True},
-        {"needs_consensus": True, "consensus_is_gated": False},
-        {"file_count": 12, "broad_independent_fanout": True, "has_code_surface": False},
-        {"has_infra": True, "broad_independent_fanout": True, "has_code_surface": False},
-        {"broad_independent_fanout": True, "adversarial_confidence": True},
-    ]
-    for shape in lifecycle.WORKFLOW_SHAPES:
-        trigger_cases.append({"workflow_shapes": [shape]})
-        trigger_cases.append({"workflow_shapes": [shape], "broad_independent_fanout": True})
-        trigger_cases.append({"workflow_shapes": [shape], "adversarial_confidence": True})
-
-    for kwargs in trigger_cases:
-        res = rec(**kwargs)
-        assert res["recommended"] != "cc-workflows-ultracode", f"failed for {kwargs}"
-        assert res["recommended"] in {"inline", "team-execution"}, (
-            f"unexpected recommended for {kwargs}"
+    for source in ("probed", "asserted"):
+        result = lifecycle.recommend_execution_backend(
+            workflow_available=False,
+            workflow_availability_source=source,
         )
-        # Complete 3-backend wire enumeration check (F-07)
-        backends = res["backends"]
-        assert len(backends) == 3
-        backend_names = [b["backend"] for b in backends]
-        assert backend_names == ["inline", "team-execution", "cc-workflows-ultracode"]
-        ultra_status = next(
-            b["status"] for b in backends if b["backend"] == "cc-workflows-ultracode"
-        )
-        assert ultra_status in {"alternative", "unavailable"}, (
-            f"expected alternative or unavailable for ultracode in {kwargs}, got {ultra_status}"
-        )
-
-    repo_root = Path(__file__).resolve().parent.parent
-    saga_dir = repo_root / "plugins" / "saga"
-
-    # 2. Pin required explicit-invocation wording across all 7 skills and 3 references (F-02).
-    required_explicit_invocation_paths = [
-        saga_dir / "skills" / "loop" / "SKILL.md",
-        saga_dir / "skills" / "code-review" / "SKILL.md",
-        saga_dir / "skills" / "founder-review" / "SKILL.md",
-        saga_dir / "skills" / "optimize" / "SKILL.md",
-        saga_dir / "skills" / "qa" / "SKILL.md",
-        saga_dir / "skills" / "investigate" / "SKILL.md",
-        saga_dir / "skills" / "retro" / "SKILL.md",
-        saga_dir / "skills" / "optimize" / "references" / "experiment-loop.md",
-        saga_dir / "skills" / "investigate" / "references" / "methodology.md",
-        saga_dir / "skills" / "retro" / "references" / "self-edit-safety.md",
-    ]
-    for p in required_explicit_invocation_paths:
-        assert p.exists(), f"Expected required path to exist: {p}"
-        raw_text = p.read_text(encoding="utf-8")
-        assert "explicit invocation" in raw_text.lower(), (
-            f"Missing required explicit-invocation wording in {p}"
-        )
-
-    # 3. Check all markdown documents for legacy 3-backend default offer prose,
-    # matching over whitespace-normalized text so multiline/wrapped prose fails (F-01).
-    forbidden_patterns = [
-        re.compile(
-            r"There are exactly three backends\s*—\s*`inline`.*?`team-execution`.*?`cc-workflows-ultracode`",
-            re.IGNORECASE,
-        ),
-        re.compile(
-            r"OFFER\s+(?:routing\s+accepted\s+changes\s+through\s+)?a\s+backend\s+per\s+`[^`]*operator-choice\.md`\s*\(`inline`\s*/\s*`team-execution`\s*/\s*`cc-workflows-ultracode`\)",
-            re.IGNORECASE,
-        ),
-        re.compile(r"the 3-backend contract for offering", re.IGNORECASE),
-        re.compile(
-            r"escalate to `cc-workflows-ultracode`.*?without elevated risk",
-            re.IGNORECASE,
-        ),
-        re.compile(
-            r"OFFER\s+a\s+backend.*?\(`inline`\s*/\s*`team-execution`\s*/\s*`cc-workflows-ultracode`\)",
-            re.IGNORECASE,
-        ),
-    ]
-
-    checked_files = 0
-    for path in saga_dir.rglob("*.md"):
-        # operator-choice.md itself documents the 3 enum backends in section 1
-        if path.name == "operator-choice.md" or "CHANGELOG" in path.name:
-            continue
-        raw_text = path.read_text(encoding="utf-8")
-        normalized_text = re.sub(r"\s+", " ", raw_text)
-        for pat in forbidden_patterns:
-            match = pat.search(normalized_text)
-            assert match is None, f"Found legacy 3-backend offer prose in {path}: {match.group(0)}"
-        checked_files += 1
-
-    assert checked_files >= 10, f"Expected at least 10 markdown files checked, got {checked_files}"
-
-
-def test_recommend_backend_cli_new_offer_flags(capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI end-to-end for --release-surface-file-count, repeatable --workflow-shape, and
-    --workflow-availability-source: the new offer knobs must flow through main(), not just Python.
-    """
-    lifecycle = _load_module("lifecycle_state.py")
-
-    # --release-surface-file-count subtracts from the size trigger (the #526 shape -> inline).
-    assert (
-        lifecycle.main(
-            [
-                "recommend-backend",
-                "--file-count",
-                "9",
-                "--release-surface-file-count",
-                "6",
-            ]
-        )
-        == 0
-    )
-    subtracted = json.loads(capsys.readouterr().out)
-    assert subtracted["recommended"] == "inline"
-
-    # Repeatable --workflow-shape round-trips; under C5 default remains inline.
-    assert (
-        lifecycle.main(
-            [
-                "recommend-backend",
-                "--workflow-shape",
-                "understand",
-                "--workflow-shape",
-                "migrate",
-            ]
-        )
-        == 0
-    )
-    shaped = json.loads(capsys.readouterr().out)
-    assert shaped["recommended"] == "inline"
-    assert "cc-workflows-ultracode" in shaped["alternatives"]
-
-    # argparse rejects an out-of-vocabulary shape cleanly (choices-gated, like the source flag);
-    # the Python-API ValueError path is covered in test_recommend_backend_workflow_shapes.
-    with pytest.raises(SystemExit):
-        lifecycle.main(["recommend-backend", "--workflow-shape", "bogus"])
-
-    # --workflow-availability-source probed echoes through the CLI.
-    assert lifecycle.main(["recommend-backend", "--workflow-availability-source", "probed"]) == 0
-    probed = json.loads(capsys.readouterr().out)
-    assert probed["workflow_availability"] == {"available": True, "source": "probed"}
-
-    # argparse rejects an out-of-vocabulary source (choices-gated).
-    with pytest.raises(SystemExit):
-        lifecycle.main(["recommend-backend", "--workflow-availability-source", "rumored"])
+        assert result["recommended"] == "inline"
+        assert result["alternatives"] == []
+        assert [entry["backend"] for entry in result["backends"]] == ["inline"]
+        assert [entry["status"] for entry in result["backends"]] == ["recommended"]
 
 
 def test_issue_progress_comments_include_required_evidence() -> None:
@@ -3560,20 +1254,6 @@ def test_issue_progress_cli_renders_extended_work_fields(
     assert "https://github.com/infiquetra/campps-service/pull/7" in out
     assert "review status: APPROVED" in out
     assert "doc review artifact: docs/reviews/2026-06-03-doc-review.md" in out
-
-
-def test_deploy_strategy_detection_matches_infiquetra_policy() -> None:
-    deploy_strategy = _load_module("detect_deploy_strategy.py")
-
-    assert (
-        deploy_strategy.classify(
-            ["deploy-nonprod.yml", "deploy-staging.yml", "deploy-production.yml"]
-        )["strategy"]
-        == "tag-promotion"
-    )
-    partial = deploy_strategy.classify(["post-merge.yml", "deploy-staging.yml"])
-    assert partial["strategy"] == "tag-promotion-partial"
-    assert partial["envs_available"] == ["staging"]
 
 
 def test_issue_parser_extracts_infiquetra_context_and_risk_flags() -> None:
@@ -3687,55 +1367,6 @@ def _load_saga_module():
     return module
 
 
-def test_scan_exposes_picker_fields(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """scan() candidates surface the five groundable picker fields /loop needs.
-
-    Mirrors the `saga save --kind task --id loop-picker-probe ...` CLI call by
-    building the same Saga the CLI would and driving save/scan directly (the way
-    the engine tests do), then asserts the candidate dict carries the saved
-    destination / issue_ref / plan_path / orchestration_mode / orchestration_ref.
-    """
-    saga = _load_saga_module()
-    # Stub the git seam so the offline test never shells out and the cached git
-    # snapshot stays empty (deterministic). Patch both the attribute and the
-    # keyword-only ``runner`` default captured on save/current_git_state. Use
-    # monkeypatch so every patch reverts on teardown: ``saga.subprocess`` is the
-    # shared global ``subprocess`` module singleton, so an unrestored
-    # ``subprocess.run`` reassignment leaks into every other module that calls
-    # ``subprocess.run`` (e.g. redis-channel presence.detect_git_branch).
-    no_git = lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr="")  # noqa: E731
-    monkeypatch.setattr(saga.subprocess, "run", no_git)
-    for fn_name in ("save", "current_git_state"):
-        fn = getattr(saga, fn_name)
-        new_kwdefaults = dict(fn.__kwdefaults__ or {})
-        new_kwdefaults["runner"] = no_git
-        monkeypatch.setattr(fn, "__kwdefaults__", new_kwdefaults)
-
-    probe = saga.Saga(
-        saga_id=saga.derive_saga_id("task", "loop-picker-probe"),
-        kind="task",
-        id="loop-picker-probe",
-        destination="pr",
-        issue_ref="owner/repo#7",
-        plan_path="docs/plans/x.md",
-        branch="feat/loop-probe",
-        orchestration_mode="cc-workflows-ultracode",
-        orchestration_ref="wf_probe123",
-    )
-    saga.save(tmp_path, probe, now=datetime(2026, 6, 2, 14, 5, 10, tzinfo=UTC))
-
-    candidates = saga.scan(tmp_path)
-    candidate = next(c for c in candidates if c["saga_id"] == "task-loop-picker-probe")
-
-    assert candidate["destination"] == "pr"
-    assert candidate["issue_ref"] == "owner/repo#7"
-    assert candidate["plan_path"] == "docs/plans/x.md"
-    # branch is the third #code-review-saga-scan-touchups match key (Defect 1).
-    assert candidate["branch"] == "feat/loop-probe"
-    assert candidate["orchestration_mode"] == "cc-workflows-ultracode"
-    assert candidate["orchestration_ref"] == "wf_probe123"
-
-
 def _stub_saga_git_seam(saga, monkeypatch: pytest.MonkeyPatch) -> None:
     """Offline save: stub the git seam exactly like test_scan_exposes_picker_fields does."""
     no_git = lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr="")  # noqa: E731
@@ -3745,122 +1376,6 @@ def _stub_saga_git_seam(saga, monkeypatch: pytest.MonkeyPatch) -> None:
         new_kwdefaults = dict(fn.__kwdefaults__ or {})
         new_kwdefaults["runner"] = no_git
         monkeypatch.setattr(fn, "__kwdefaults__", new_kwdefaults)
-
-
-def test_saga_holds_spec_ref_and_run_id_without_clobber(tmp_path, monkeypatch) -> None:
-    """#693: the durable spec path and the transient run handle coexist on one saga.
-
-    Pre-#693, /work's post-launch tick overwrote ``orchestration_ref`` with the workflow
-    id, destroying the spec path the same launch had just read. Both values must
-    round-trip through save/restore, and a run-handle-only tick must carry the spec ref
-    forward rather than clobbering it.
-    """
-    saga_mod = _load_saga_module()
-    _stub_saga_git_seam(saga_mod, monkeypatch)
-    saga_id = saga_mod.derive_saga_id("issue", "693")
-    spec_ref = "docs/plans/2026-08-04-issue-693-spec.json"
-
-    saga_mod.save(
-        tmp_path,
-        saga_mod.Saga(
-            saga_id=saga_id,
-            kind="issue",
-            id="693",
-            orchestration_mode="cc-workflows-ultracode",
-            orchestration_operator_choice="cc-workflows-ultracode",
-            orchestration_ref=spec_ref,
-        ),
-        now=datetime(2026, 8, 4, 9, 0, 0, tzinfo=UTC),
-    )
-    # The post-launch tick records ONLY the run handle; the spec ref carries forward.
-    saga_mod.save(
-        tmp_path,
-        saga_mod.Saga(
-            saga_id=saga_id,
-            kind="issue",
-            id="693",
-            orchestration_run_id="wf_7dbd5245-def",
-        ),
-        now=datetime(2026, 8, 4, 9, 32, 0, tzinfo=UTC),
-    )
-
-    restored = saga_mod.restore(tmp_path, saga_id)
-    assert restored is not None
-    assert restored.orchestration_ref == spec_ref
-    assert restored.orchestration_run_id == "wf_7dbd5245-def"
-
-    envelope = saga_mod.latest_envelope_for(tmp_path, saga_id).read_text(encoding="utf-8")
-    assert f"orchestration_ref: {spec_ref}" in envelope
-    assert "orchestration_run_id: wf_7dbd5245-def" in envelope
-
-    # Both surfaces that feed /loop and the derived index carry the run handle too.
-    candidate = next(c for c in saga_mod.scan(tmp_path) if c["saga_id"] == saga_id)
-    assert candidate["orchestration_run_id"] == "wf_7dbd5245-def"
-
-
-def test_spec_check_halts_on_missing_spec_path_even_with_run_handle(tmp_path, monkeypatch) -> None:
-    """#693: the resume guard DISCRIMINATES — a run handle beside the ref never satisfies it.
-
-    This is the case that passed pre-#693 and must not: the old presence-only halt read a
-    run-id-shaped ``orchestration_ref`` as "ref present" and handed a workflow id to a
-    script expecting a filename. Mutation proof target: reverting the guard to a
-    presence-only check (one satisfied by ``orchestration_run_id``) flips the verdict away
-    from ``missing`` and this test fails.
-    """
-    saga_mod = _load_saga_module()
-    _stub_saga_git_seam(saga_mod, monkeypatch)
-    saga_id = saga_mod.derive_saga_id("issue", "693")
-
-    saga_mod.save(
-        tmp_path,
-        saga_mod.Saga(
-            saga_id=saga_id,
-            kind="issue",
-            id="693",
-            orchestration_mode="cc-workflows-ultracode",
-            orchestration_operator_choice="cc-workflows-ultracode",
-            orchestration_run_id="wf_7dbd5245-def",  # run handle present, spec path absent
-        ),
-        now=datetime(2026, 8, 4, 9, 0, 0, tzinfo=UTC),
-    )
-
-    restored = saga_mod.restore(tmp_path, saga_id)
-    verdict, detail = saga_mod.spec_ref_verdict(restored, tmp_path)
-    assert verdict == "missing"
-    assert "empty" in detail
-
-    # The CLI gate exits non-zero so the driving session halts mechanically, and the
-    # payload surfaces the run handle that does NOT satisfy the guard.
-    monkeypatch.chdir(tmp_path)
-    assert saga_mod.main(["spec-check", "--saga-id", saga_id]) == 2
-
-
-def test_spec_check_flags_run_id_shaped_spec_ref(tmp_path, monkeypatch) -> None:
-    """#693: a run-id-shaped value in the spec-path field is flagged, never silently accepted."""
-    saga_mod = _load_saga_module()
-    _stub_saga_git_seam(saga_mod, monkeypatch)
-    saga_id = saga_mod.derive_saga_id("issue", "693")
-
-    saga_mod.save(
-        tmp_path,
-        saga_mod.Saga(
-            saga_id=saga_id,
-            kind="issue",
-            id="693",
-            orchestration_mode="cc-workflows-ultracode",
-            orchestration_operator_choice="cc-workflows-ultracode",
-            orchestration_ref="wf_7dbd5245-def",  # the pre-#693 clobber shape
-        ),
-        now=datetime(2026, 8, 4, 9, 0, 0, tzinfo=UTC),
-    )
-
-    restored = saga_mod.restore(tmp_path, saga_id)
-    verdict, detail = saga_mod.spec_ref_verdict(restored, tmp_path)
-    assert verdict == "run-id"
-    assert "orchestration_run_id" in detail
-
-    monkeypatch.chdir(tmp_path)
-    assert saga_mod.main(["spec-check", "--saga-id", saga_id]) == 2
 
 
 def test_spec_check_ok_and_file_missing_verdicts(tmp_path, monkeypatch) -> None:
@@ -3905,17 +1420,6 @@ def test_spec_check_ok_and_file_missing_verdicts(tmp_path, monkeypatch) -> None:
     assert saga_mod.main(["spec-check", "--saga-id", gone_id]) == 2
 
 
-def test_work_skill_records_run_handle_in_its_own_field() -> None:
-    """#693 drift guard: /work no longer overloads orchestration_ref with the workflow id."""
-    work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
-    # The retired overload must be gone in BOTH grep forms the issue's acceptance used.
-    assert "orchestration-ref <workflow-id>" not in work_doc
-    assert "--orchestration-ref <workflow-id>" not in work_doc
-    # The dedicated field and the discriminating gate replace it.
-    assert "--orchestration-run-id <workflow-id>" in work_doc
-    assert "spec-check" in work_doc
-
-
 def test_ae10_status_card_single_emitter_routing() -> None:
     """AE10: each of the five saga surfaces routes its operator-facing status-summary
     through the shared status_card renderer (R14 — retire per-surface prose emissions).
@@ -3927,8 +1431,6 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
     cr_doc = _read(PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md")
     qa_doc = _read(PLUGIN_ROOT / "skills" / "qa" / "SKILL.md")
-    outcome_doc = _read(PLUGIN_ROOT / "skills" / "outcome" / "SKILL.md")
-    resume_doc = _read(PLUGIN_ROOT / "skills" / "resume" / "SKILL.md")
 
     # --- /work ---
     # PRESENT: card renderer and per-surface function name.
@@ -3941,11 +1443,25 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # ABSENT: the non-canonical `pass|fail|skip` vocab would parse to *unknown* and silently drop the
     # verdict (the Tests card cell would render not-reached) — guard against that regression.
     assert "tests:<pass|fail|skip>" not in work_doc
-    # PRESENT (substantive): the card render is the LEAD status step (step 1) of §5.4 — proving the
-    # card is the operator status HEADER, not an afterthought — and the continuation-routing step that
-    # was step 3 is pushed to step 4 by the insertion (proves a real reorder, not a keyword sprinkle).
+    # PRESENT (substantive): the card render is the LEAD status step of §5.4 — proving the card is
+    # the operator status HEADER, not an afterthought — and a fourth step still follows it, which
+    # proves a real reorder rather than a keyword sprinkle. THREE cards have now changed this
+    # section's wording: issue #1029 made the step continue the run rather than present routing,
+    # issue #1027 removed the ship ceremony it used to continue into, and issue #1028 replaced the
+    # hand-over with the merge turn, release, functional test and close it hands over TO. That is
+    # the argument for holding the POSITION and the property, not the prose.
     assert "1. **Render the operator status header**" in work_doc
-    assert "4. **Present continuation routing**" in work_doc
+    assert re.search(r"^4\. \*\*[^*]+\*\*", work_doc, flags=re.MULTILINE), (
+        "section 5.4 must still carry a fourth step after the status-card render"
+    )
+    section = work_doc[work_doc.index("### 5.4 ") :]
+    body = section[section.index("\n") :]  # past the heading, which names the steps too
+    assert body.index("**Render the operator status header**") < body.index(
+        "Take the merge turn"
+    ), "the status card must lead §5.4, not trail the steps it heads"
+    assert "Run `/qa` in this turn" in work_doc, (
+        "issue 1029's continuation contract: the functional test is run, not recommended"
+    )
     # STILL PRESENT (KTD5): detailed work-session evidence reference.
     assert "work-session" in work_doc
 
@@ -3968,27 +1484,9 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     assert "ship-with-deferred" in qa_doc
     assert "no-ship" in qa_doc
 
-    # --- /outcome ---
-    # PRESENT: card renderer and per-surface function name.
-    assert "status_card" in outcome_doc
-    assert "project_outcome" in outcome_doc
-    # ABSENT: old terse status-verb description without card routing
-    # ("cockpit snapshot (states, counts, frontier)" was the entire verb description pre-migration).
-    assert "cockpit snapshot (states, counts, frontier)" not in outcome_doc
-    # STILL PRESENT (KTD5): derived-on-read principle (R17) and spec/completion-event sources.
-    assert "derived on read" in outcome_doc
-
-    # --- /resume ---
-    # PRESENT: card renderer and per-surface function name.
-    assert "status_card" in resume_doc
-    assert "project_resume" in resume_doc
-    # PRESENT (substantive, not keyword): the card-render DIRECTIVE is wired into the Phase 3a
-    # reconstruction flow. /resume's migration is ADDITIVE (it previously emitted no status card), so
-    # the contract is proven by the directive's presence — a no-op draft would lack this exact prose.
-    assert "render the operator status header via the shared card renderer" in resume_doc
-    # STILL PRESENT (KTD5): durable state fields that the card derives its cells from.
-    assert "next-step" in resume_doc
-    assert "blockers" in resume_doc
+    # The /outcome and /resume blocks lived here. Issue 1030 removed both skills with the
+    # commands, so the five surfaces this case guards are now three: /work, /code-review
+    # and /qa. The renderer contract itself is unchanged.
 
 
 def test_intake_exit_saga_creates_no_issue() -> None:
@@ -4044,12 +1542,21 @@ def test_intake_exit_saga_creates_no_issue() -> None:
     # the commands produce. Each corpus still carries its producing verbs + paths. ---
     assert "diagnos" in office_doc.lower(), "office-hours must keep its diagnostic identity"
     assert "frame" in office_doc.lower(), "office-hours must keep its frame-finding identity"
-    for route in ("/ideate", "/brainstorm", "/plan", "/handoff"):
+    # ``/handoff`` was the fourth route until issue 1030 removed the command. Its
+    # destination did not move -- Mission Control still owns the issue -- so the
+    # boundary assertion above carries that half, and this loop pins only routes that
+    # still resolve. A guard that required a removed command's name would have made
+    # the dangling route impossible to fix.
+    for route in ("/ideate", "/brainstorm", "/plan"):
         assert route in office_doc, f"office-hours routing must still name {route}"
+    assert "Mission Control" in office_doc, "office-hours must still name where an issue comes from"
     for verb in ("generate", "critique", "reject"):
         assert verb in ideate_doc.lower(), f"ideate must keep its {verb} identity"
     assert "docs/ideation/" in ideate_doc, "ideate's durable artifact path must survive"
-    assert "/handoff" in convergence_doc, "/ideate must still route to /handoff (Mission Control)"
+    assert "`mission-control`" in convergence_doc, (
+        "/ideate must still route to Mission Control for the issue; the `/handoff` command\n"
+        "that fronted that route was removed by issue 1030, and the destination was not"
+    )
 
     # --- SEEDED VIOLATION: the same check FAILS on a bare runnable `gh issue create`.
     # The seed keeps its token >60 chars away from any negation the doc happens to carry. ---
@@ -4081,70 +1588,6 @@ def test_parse_issue_pending_confirmation_distinguishable(tmp_path: Path) -> Non
     assert parsed_pending["handoff"]["can_plan"] is False
     assert parsed_pending["handoff"]["can_work"] is False
     # If HANDOFF_MATURITY_VALUES lacked pending-confirmation, this would have returned "" and failed
-
-
-def test_loop_pending_confirmation_routes_to_brainstorm(tmp_path: Path) -> None:
-    """fix-a0f2528fe992: loop routing and dispatch table row for pending-confirmation are live."""
-    # Real path: parse_issue vocabulary and loop skill routing bullet
-    mod = _load_module("parse_issue.py")
-    assert "pending-confirmation" in mod.HANDOFF_MATURITY_VALUES, (
-        "allowlist must contain pending-confirmation"
-    )
-    loop_skill = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
-    assert "pending-confirmation" in loop_skill and "/brainstorm" in loop_skill, (
-        "loop must route pending-confirmation to /brainstorm"
-    )
-    # Dispatch table rows must be reachable: (none) | — | pending-confirmation | /brainstorm
-    # and brainstorm | any | pending-confirmation | /brainstorm (fail-closed for active brainstorm)
-    dispatch = _read(PLUGIN_ROOT / "skills" / "loop" / "references" / "dispatch-table.md")
-    assert "| (none) | — | `pending-confirmation` | `/brainstorm` |" in dispatch
-    assert "| `brainstorm` | any | `pending-confirmation` | `/brainstorm` |" in dispatch
-    # Brainstorm phase with no declared maturity must also route (exploratory-only outcome writes no file)
-    assert "| `brainstorm` | any | none declared | `/brainstorm` (finish the WHAT) |" in dispatch
-    # Also verify parse_issue actually returns it via real path
-    body = "### Handoff maturity\npending-confirmation\n"
-    assert mod.extract(body)["handoff"]["maturity"] == "pending-confirmation"
-
-
-def test_handoff_and_loop_skills_use_positive_routable_vocabulary_gate() -> None:
-    """fix-4c/fix-b9 (API-10/AM-07/CORR-11/AM-08): both envelope consumers branch POSITIVELY.
-
-    The repair widened `handoff_maturity` to three non-vocabulary shapes (pending-confirmation,
-    empty, unknown:-prefixed), all non-routable. The agent-facing skills must state the positive
-    routable vocabulary and name all three stop states — a future edit reverting to a
-    "not pending-confirmation" unconditional route must go red here.
-    """
-    handoff_skill = _read(PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md")
-    loop_skill = _read(PLUGIN_ROOT / "skills" / "loop" / "SKILL.md")
-
-    # Handoff step 6: positive routing rule naming the routable vocabulary…
-    assert (
-        "ONLY when `handoff_maturity` is one of the routable vocabulary values" in handoff_skill
-    ), "handoff step 6 must gate on the positive routable vocabulary, not a single negation"
-    for value in (
-        "idea-ready",
-        "requirements-ready",
-        "plan-ready",
-        "resume-ready",
-        "deferred-context",
-    ):
-        assert value in handoff_skill, f"handoff skill must name routable value {value}"
-    # …and name all three non-routable shapes as a stop.
-    for shape in ("pending-confirmation", "unknown:", "empty"):
-        assert shape in handoff_skill, f"handoff skill must name the non-routable shape {shape}"
-    assert "NEVER a runnable command" in handoff_skill
-
-    # Loop 4.2: same positive form (envelope path, which CAN produce sentinel).
-    assert "ONLY when the maturity is one of the routable vocabulary values" in loop_skill
-    assert "`unknown:`-prefixed" in loop_skill and "never a runnable command" in loop_skill
-    # Loop 0.2 maturity routing: empty from issue parser means no handoff metadata —
-    # continue to saga scan, not a frontmatter failure. The issue parser collapses
-    # unrecognized to empty (never to unknown:), so 0.2 must not claim sentinel.
-    assert "empty -> the issue carries no recognized handoff metadata" in loop_skill
-    assert "continue to the saga scan" in loop_skill
-
-    # The Maturity list in the handoff skill must document the two added states.
-    assert "two fail-closed states" in handoff_skill
 
 
 def test_parse_issue_collapses_unrecognized_to_empty() -> None:

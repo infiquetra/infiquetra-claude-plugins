@@ -79,8 +79,8 @@ cross-project edit that looks like a repo edit is the failure mode this tier exi
 `/retro` **never** auto-launches:
 
 - a **destructive self-edit** — no Tier-2 change applies without the operator's explicit **apply**;
-- an **execution backend** — a big multi-file refactor surfaced by a pass is **OFFERED** per
-  `../../../references/operator-choice.md` (default offer presents inline / team-execution;
-  cc-workflows-ultracode only on explicit invocation) and started only on the operator's pick.
+- **starting a big multi-file refactor** — one surfaced by a pass is **OFFERED** and started only on
+  the operator's pick. The backend is not part of the offer: `../../../references/operator-choice.md`
+  §1 has one value, `inline`, since issue #1030 archived the others.
 
 The engine proposes; the operator disposes. The only thing it does on its own is grow the journal.

@@ -2,9 +2,7 @@
 
 Saga is the Infiquetra lifecycle spine for turning vague work into reviewed plans, PRs, merges, handoffs, QA evidence, and durable learning.
 
-It is an operating model, not just a command bundle. Saga owns lifecycle choice, local saga state, routing, and handoff envelopes. Adjacent plugins own their own mutation surfaces: `mission-control` owns SDLC issues and board state, `deploy` owns deployment mutation, and `team-execution` owns reviewer/validator orchestration.
-
-![Saga Lifecycle Atlas](docs/assets/lifecycle-atlas.svg)
+It is an operating model, not just a command bundle. Saga owns lifecycle choice, local saga state, routing, and handoff envelopes. Adjacent plugins own their own mutation surfaces: `mission-control` owns SDLC issues and board state, and `deploy` owns deployment mutation. Review and testing roles are herdr sessions launched from the roles library in `plugins/agent-launcher/roles/`.
 
 ## Start Here
 
@@ -21,18 +19,12 @@ Use the situation, not the command list, as the entry point.
 | A reviewed plan should be built | `/work` | `docs/work-sessions/`, PR |
 | A built branch needs pre-PR review | `/code-review` | `docs/code-reviews/` |
 | Merged or merge-bound work needs evidence | `/qa` | `docs/qa/` |
-| Work should move to an SDLC issue | `/handoff` | mission-control issue preparation |
-| The thread is cold or confusing | `/resume` | re-entry route |
-| You want the fleet's live state (boards, runs, ledger, spend) | `/pulse` | terminal telemetry snapshot |
-| You suspect leaked worktrees, unledgered spawns, or receiptless delegations | `/fleet-doctor` | strict read-only audit report, exits 0/1/2 |
+| A defect or failure needs a root cause | `/investigate` | debug report |
 | Finished work should teach the lifecycle | `/retro` | journal or retro artifact |
 
-The repository contains 25 command files and 24 routable commands. `/ceo-review` is an alias for `/founder-review`, not a separate lifecycle node.
+The repository contains 14 command files and 13 routable commands, pinned by `tests/test_command_surface.py`. `/ceo-review` is an alias for `/founder-review`, not a separate lifecycle node.
 
-**Above a single work-thread:** `/outcome` is the **OutcomeOrchestrator** — a coordinator that drives a whole *outcome* as a durable DAG of leaf sagas. It runs a level-triggered reconcile loop that dispatches the ready frontier across the full backend menu (inline / fork / subagent / team-execution / cc-workflows-ultracode / `/goal` / manual), auto-merges clean leaves, and pages the operator only at gates, ambiguities, and failures — status is derived on read, completion is canonical on GitHub, and the realized cost rollup proves whether the DAG beat one long thread. Each fan-out is also balanced on the append-only run-fact ledger: the parent records expected units, pre-call spawns, and evidence-derived settlement, while dead-letter and leak reconciliation remain derived, read-only views. The native leaf verbs (`/work`, `/code-review`, `/qa`, `/resume`) are reused on a leaf, never shadowed.
-
-Delegated runtime paths were lease-armed through fleet-core until #677/U7 deleted the fleet lease broker whole — 10,203 lines, accepted losses: dispatch not idempotent, reclamation operator-path. Direct Agent/Task calls, generated Workflow waves, engine and outcome dispatch adapters, and advisory panels now carry no lease; outcome-owned worktrees are registry-owned. See
-[`concurrency-spawn-sites.md`](references/concurrency-spawn-sites.md) for the retired-lease record (now `retired:broker-free-(#677/U7)` throughout) and operator recovery commands.
+**What issue 1030 removed.** Eleven commands and their families left the plugin in the 1.0.0 release: `/outcome`, `/loop`, `/resume`, `/handoff`, `/optimize`, `/pulse`, `/delegation-audit`, `/promote`, `/engines`, `/tier` and `/fleet-doctor`. SDLC issue preparation, which `/handoff` used to front, is reached through the `mission-control` plugin directly. Run coordination across several sessions, which `/outcome` used to own, is the `orchestrate` plugin's.
 
 ## Manual
 
@@ -46,17 +38,16 @@ The manual pages are the maintained user-facing reference.
 | [State and readiness](docs/state-readiness.md) | Stored saga state vs derived handoff maturity |
 | [Scenarios](docs/scenarios.md) | User-situation journeys and example routes |
 | [Boundaries](docs/boundaries.md) | Saga vs adjacent plugin ownership, Claude vs Codex adapter notes |
-| [Visuals](docs/visuals.md) | Source model, generated assets, and regeneration workflow |
 
 ## Lifecycle In One Pass
 
 The main chain is:
 
 ```text
-idea/requirements-ready -> /plan -> /doc-review -> /work -> /code-review -> /qa -> /handoff or /retro
+idea/requirements-ready -> /plan -> /doc-review -> /work -> /code-review -> /qa -> /retro
 ```
 
-Off-chain commands are still first-class, but they do not become linear saga phases. `/spec` sharpens WHAT, `/investigate` diagnoses root cause, `/optimize` runs metric experiments, `/strategy` records direction, and `/retro` captures learning after work is complete.
+Off-chain commands are still first-class, but they do not become linear saga phases. `/spec` sharpens WHAT, `/investigate` diagnoses root cause, `/strategy` records direction, and `/retro` captures learning after work is complete.
 
 Destination sets the routing horizon:
 
@@ -84,24 +75,17 @@ See [state and readiness](docs/state-readiness.md) for the full passport.
 
 ## Maintainer Workflow
 
-The visual and coverage source lives at [docs/model/saga-docs-model.yaml](docs/model/saga-docs-model.yaml). Update it when command routes, readiness mappings, ownership boundaries, scenarios, or visual coverage change.
-
-Regenerate visuals:
-
-```bash
-uv run python plugins/saga/scripts/render_docs_visuals.py
-```
+Update the pages under [docs/](docs/) directly when command routes, readiness mappings, ownership boundaries or scenarios change. The generated atlas and its source model were retired with the eleven removed commands.
 
 Check drift:
 
 ```bash
-uv run pytest tests/test_saga_docs_coverage.py tests/test_saga_doc_formatting.py
+uv run pytest tests/test_command_surface.py tests/test_saga_doc_formatting.py
 ```
 
 Core implementation contracts still live in canonical references:
 
 - [Saga spec](references/saga-spec.md)
-- [Dispatch table](skills/loop/references/dispatch-table.md)
 - [Operator choice](references/operator-choice.md)
-- [Concurrency and lease spawn sites](references/concurrency-spawn-sites.md)
+- [Run record](references/run-record.md)
 - [Formatting style](references/formatting-style.md)

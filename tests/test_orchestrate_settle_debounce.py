@@ -13,14 +13,56 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -72,24 +114,28 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(repo: Path, units: list[dict[str, Any]]) -> None:
-    base = subprocess.run(
-        ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
     ).stdout.strip()
-    payload = {
-        "run_id": "r1",
-        "source": "a test",
-        "base": base,
-        "branch": "orch/r1",
-        "units": units,
-    }
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _read_units(repo: Path) -> dict[str, dict[str, Any]]:
-    raw = json.loads((repo / ".orchestrate" / "run.json").read_text())
+    raw = _support.read_record(test_store(), _support.TEST_ISSUE)
     units: list[dict[str, Any]] = raw["units"]
     return {u["name"]: u for u in units}
 
@@ -158,7 +204,7 @@ class TestIdleMustPersistAcrossTwoReadings:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         assert _read_units(repo)["alpha"]["status"] == "done"
         assert slept == [20], "the two readings must be spaced by the interval"
         assert fake.calls == 2
@@ -180,7 +226,7 @@ class TestIdleMustPersistAcrossTwoReadings:
         )
         monkeypatch.chdir(repo)
 
-        orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False))
+        orchestrate.cmd_settle(NS(interval=20, once=False))
         assert _read_units(repo)["alpha"]["status"] == "done"
 
     def test_idle_then_working_stays_running(
@@ -199,7 +245,7 @@ class TestIdleMustPersistAcrossTwoReadings:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         assert _read_units(repo)["alpha"]["status"] == "running"
         out = capsys.readouterr().out
         assert "alpha" in out
@@ -217,7 +263,7 @@ class TestIdleMustPersistAcrossTwoReadings:
         _patch_settle(orchestrate, monkeypatch, [[], []])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         unit = _read_units(repo)["delta"]
         assert unit["status"] == "orphaned"
         assert unit["note"] == "session disappeared without commits"
@@ -236,7 +282,7 @@ class TestIdleMustPersistAcrossTwoReadings:
         _patch_settle(orchestrate, monkeypatch, [[], []])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         unit = _read_units(repo)["alpha"]
         assert unit["status"] == "done"
         out = capsys.readouterr().out
@@ -254,7 +300,7 @@ class TestIdleMustPersistAcrossTwoReadings:
         _patch_settle(orchestrate, monkeypatch, [[_agent("delta", "idle")], []])
         monkeypatch.chdir(repo)
 
-        orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False))
+        orchestrate.cmd_settle(NS(interval=20, once=False))
         assert _read_units(repo)["delta"]["status"] == "running"
 
     def test_a_mixed_run_gets_one_fate_per_unit(
@@ -276,7 +322,7 @@ class TestIdleMustPersistAcrossTwoReadings:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         units = _read_units(repo)
         assert units["alpha"]["status"] == "done"
         assert units["beta"]["status"] == "running"
@@ -297,7 +343,7 @@ class TestOnceKeepsTheSingleSample:
         fake, slept = _patch_settle(orchestrate, monkeypatch, [[_agent("alpha", "idle")]])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=True)) == 0
         assert _read_units(repo)["alpha"]["status"] == "done"
         assert fake.calls == 1
         assert slept == [], "--once must not wait between readings"
@@ -313,7 +359,7 @@ class TestOnceKeepsTheSingleSample:
         fake, slept = _patch_settle(orchestrate, monkeypatch, [[]])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=True)) == 0
         assert _read_units(repo)["delta"]["status"] == "orphaned"
         assert fake.calls == 1
         assert slept == []
@@ -334,7 +380,7 @@ class TestOneHerdrCallPerReading:
         fake, _ = _patch_settle(orchestrate, monkeypatch, [agents, agents])
         monkeypatch.chdir(repo)
 
-        orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False))
+        orchestrate.cmd_settle(NS(interval=20, once=False))
         assert fake.calls == 2, "two readings, two herdr calls -- never one per unit"
         units = _read_units(repo)
         assert all(units[name]["status"] == "done" for name in ("alpha", "beta", "gamma"))
@@ -350,7 +396,7 @@ class TestOneHerdrCallPerReading:
         fake, slept = _patch_settle(orchestrate, monkeypatch, [])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
         assert fake.calls == 0
         assert slept == []
 
@@ -373,7 +419,18 @@ class TestTheCommandLine:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.main(["settle"]) == 0
+        assert (
+            orchestrate.main(
+                [
+                    "settle",
+                    "--issue",
+                    str(_support.TEST_ISSUE),
+                    "--store-root",
+                    str(test_store()),
+                ]
+            )
+            == 0
+        )
         assert slept == [20]
 
     def test_the_interval_flag_sets_the_gap(
@@ -391,7 +448,20 @@ class TestTheCommandLine:
         )
         monkeypatch.chdir(repo)
 
-        assert orchestrate.main(["settle", "--interval", "5"]) == 0
+        assert (
+            orchestrate.main(
+                [
+                    "settle",
+                    "--issue",
+                    str(_support.TEST_ISSUE),
+                    "--store-root",
+                    str(test_store()),
+                    "--interval",
+                    "5",
+                ]
+            )
+            == 0
+        )
         assert slept == [5]
 
     def test_the_once_flag_reaches_the_command(
@@ -401,11 +471,24 @@ class TestTheCommandLine:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
+
         _write_run(repo, [_unit("alpha")])
         fake, slept = _patch_settle(orchestrate, monkeypatch, [[_agent("alpha", "idle")]])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.main(["settle", "--once"]) == 0
+        assert (
+            orchestrate.main(
+                [
+                    "settle",
+                    "--issue",
+                    str(_support.TEST_ISSUE),
+                    "--store-root",
+                    str(test_store()),
+                    "--once",
+                ]
+            )
+            == 0
+        )
         assert _read_units(repo)["alpha"]["status"] == "done"
         assert fake.calls == 1
         assert slept == []

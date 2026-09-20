@@ -14,11 +14,54 @@ import importlib.util
 import json
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -86,31 +129,28 @@ def _unit(name: str, **overrides: Any) -> dict[str, Any]:
     return unit
 
 
-def _write_run(repo: Path, units: list[dict[str, Any]]) -> None:
-    base = subprocess.run(
-        ["git", "rev-parse", "main"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
     ).stdout.strip()
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "run_id": "r1",
-                "source": "a test",
-                "base": base,
-                "branch": "orch/r1",
-                "units": units,
-            }
-        )
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
     )
 
 
 def _read_unit(repo: Path, name: str) -> dict[str, Any]:
-    payload: dict[str, Any] = json.loads((repo / ".orchestrate" / "run.json").read_text())
+    payload: dict[str, Any] = _support.read_record(test_store(), _support.TEST_ISSUE)
     return next(unit for unit in payload["units"] if unit["name"] == name)
 
 
@@ -243,12 +283,12 @@ def test_status_shows_recorded_but_unrouted_result(
     )
     raw = json.dumps({"schema": "review_result.v1", "outcome": "accepted"}, sort_keys=True)
     run.write_review_slot(controller, review_result=raw, review_outcome=None)
-    run.save(tmp_path / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         orchestrate, "unit_commit_statuses", lambda units, r: [("-", "-")] * len(units)
     )
-    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    assert orchestrate.cmd_status(NS()) == 0
     assert "recorded-but-unrouted" in capsys.readouterr().out
 
 
@@ -279,12 +319,12 @@ def test_status_typed_outcome_outranks_a_contradictory_note(
         sort_keys=True,
     )
     run.write_review_slot(controller, review_result=raw, review_outcome="cycle_cap_best_available")
-    run.save(tmp_path / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         orchestrate, "unit_commit_statuses", lambda units, r: [("-", "-")] * len(units)
     )
-    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    assert orchestrate.cmd_status(NS()) == 0
     output = capsys.readouterr().out
     assert "cycle_cap_best_available" in output
     assert "note contradicts typed outcome" in output
@@ -309,7 +349,7 @@ def test_settle_clears_only_the_delivery_warning_after_the_first_commit(
     monkeypatch.chdir(repo)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: _agents(("alpha", "working")))
 
-    assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+    assert orchestrate.cmd_settle(NS(interval=20, once=True)) == 0
 
     saved = _read_unit(repo, "alpha")
     assert saved["status"] == "running"
@@ -327,7 +367,7 @@ def test_check_reports_a_delivery_warning_with_no_commits(
     monkeypatch.chdir(repo)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: _agents(("alpha", "working")))
 
-    assert orchestrate.cmd_check(argparse.Namespace()) == 1
+    assert orchestrate.cmd_check(NS()) == 1
     output = capsys.readouterr().out
     assert "DELIVERY WARNING alpha" in output
     assert "branch has no commits" in output
@@ -368,7 +408,7 @@ def test_status_sizes_columns_collapses_tasks_and_shows_git_and_notes(
 
     monkeypatch.setattr(orchestrate, "run", count_history_walks)
 
-    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    assert orchestrate.cmd_status(NS()) == 0
     lines = capsys.readouterr().out.splitlines()
     header = next(line for line in lines if line.startswith("unit "))
     rule = lines[lines.index(header) + 1]
@@ -409,7 +449,7 @@ def test_settle_leaves_a_warned_zero_commit_unit_running_after_two_idle_readings
     monkeypatch.setattr(orchestrate, "live_agents", lambda: next(readings))
     monkeypatch.setattr(orchestrate.time, "sleep", lambda _seconds: None)
 
-    assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+    assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
 
     saved = _read_unit(repo, "alpha")
     assert saved["status"] == "running"
@@ -421,6 +461,7 @@ def test_settle_finishes_a_warned_unit_with_commits_and_clears_warning(
     repo: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+
     _make_unit_branch(repo, "alpha", commit=True)
     _write_run(repo, [_unit("alpha", note=orchestrate.DELIVERY_WARNING)])
     readings = iter([_agents(("alpha", "idle")), _agents(("alpha", "idle"))])
@@ -428,7 +469,7 @@ def test_settle_finishes_a_warned_unit_with_commits_and_clears_warning(
     monkeypatch.setattr(orchestrate, "live_agents", lambda: next(readings))
     monkeypatch.setattr(orchestrate.time, "sleep", lambda _seconds: None)
 
-    assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+    assert orchestrate.cmd_settle(NS(interval=20, once=False)) == 0
 
     saved = _read_unit(repo, "alpha")
     assert saved["status"] == "done"

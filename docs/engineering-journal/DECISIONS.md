@@ -1,5 +1,985 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-09-20
+
+### `operator-choice.md` keeps its removed sections, marked historical, and a guard enforces the marking  {#operator-choice-historical-sections-1030}
+
+**Decision.** `plugins/saga/references/operator-choice.md` is corrected rather than deleted or
+rewritten whole. Sections 1, 2, 5, 6 and 7 are restated for the one selectable backend. Sections 3
+(escalation triggers), 4 (the Workflow capability gate) and 8 (the OutcomeOrchestrator menu) keep
+their bodies and gain a heading suffix `— historical` plus a blockquote saying what removed them.
+`tests/test_operator_choice_drift.py` — which issue 1030 had emptied to zero test functions — is
+rewritten to enforce three things: the document names every value `ORCHESTRATION_MODES` accepts,
+`team-execution` and `cc-workflows-ultracode` are each shown in §1's availability table as *never
+selectable*, and each historical section says so in its own text.
+
+**Rationale.** Two real readers pull in opposite directions. Someone opening a saga tick recorded
+before the 1.0.0 release needs to know what `orchestration_mode: team-execution` meant and why it
+still loads; that is what sections 3, 4 and 8 explain, and nothing else in the repository does.
+Someone deciding how to run work today needs to be told there is one value, immediately, before
+they read a menu. Marking rather than deleting serves both, and the guard is what stops the marking
+from rotting: a section can be edited back into the present tense by accident, and then the document
+is offering a menu again.
+
+**Rejected alternatives.** *Delete sections 3, 4 and 8.* Cheapest to read, and it destroys the only
+written explanation of two strings that are still a frozen wire contract in persisted state — the
+next reader who finds one in a tick has nothing to consult. *Rewrite the file as a short one-backend
+contract.* Attractive, but the file carries four baselined gate sites and is cited by eight surviving
+skills; a wholesale rewrite in a review cycle is a larger blast radius than the defect warrants, and
+it would have thrown away the same history. *Leave the historical sections unmarked and rely on the
+banner in §1.* Rejected because readers arrive mid-document from a search result, and the section
+they land in has to tell them itself.
+
+**Revisit when** a later card removes the ability to read a pre-1.0.0 saga tick at all, or when
+`ORCHESTRATION_MODES` grows a second value again. Either event makes the historical sections either
+pointless or wrong, and the guard will not catch the first.
+
+### One backend means no offer, not an offer with one option  {#one-backend-means-no-offer-1030}
+
+**Decision.** Every surviving saga surface that used to render an execution-backend offer now states
+the backend instead of asking for it: `/work` (SKILL.md §1.4 and
+`references/execution-strategy.md`), `/plan` (SKILL.md §5.2 and `references/plan-sections.md`),
+`/code-review`, `/founder-review`, `/retro` (SKILL.md and `references/self-edit-safety.md`) and
+`/investigate` (SKILL.md and `references/methodology.md`). `/work`'s Phase 1.5, the Claude Code
+Workflow run, is reduced to a note saying the step cannot be entered. The recommender call survives
+everywhere it was, because the run still records a rationale.
+
+**Rationale.** Issue 1030 archived the `team-execution` plugin and removed the `cc-workflows`
+plugin, leaving `ORCHESTRATION_MODES = ("inline",)`. A question whose only answer is the default is
+not a safeguard; it is a turn spent, and under `/orchestrate` it is a background tab waiting on an
+answer nobody will give. The signals that used to pick a backend are still computed and still
+worth recording, so they were repointed at the `rationale` field rather than deleted — which is also
+what `lifecycle_state.recommend_execution_backend` already does internally.
+
+**Rejected alternatives.** *Leave the offers in place and let them render a single-option question.*
+Rejected: the prose named `team-execution` as an installed plugin that is not installed, which is a
+false statement an agent acts on. *Delete the recommender and its signals.* Rejected: the work-shape
+computation is the only thing that makes a run's recorded rationale non-trivial, the cards did not
+name it, and deleting it would have widened this review's repair well past the defect.
+
+**Revisit when** a second backend is introduced — at which point the offer prose has to come back,
+and `{#operator-choice-historical-sections-1030}`'s sections 3 and 4 become current again rather
+than historical.
+
+### The closed op allowlist outlives the reversibility certificate  {#op-allowlist-survives-certificate-1030}
+
+**Decision.** `reversibility_certificate.py` (582 lines) is removed by issue 1030 and replaced by
+`plugins/saga/scripts/op_allowlist.py` (87 lines), which keeps `OpKind`, `authorize_write`,
+`authorize_correction_field`, `idempotency_key`, `CORRECTION_FIELDS`, `AUTHORIZED` and `GATE` --
+the same names, so every call site in `board_progression.py` and `reconcile_controller.py` is
+unchanged.
+
+**Rationale.** The certificate carried two things. A **reversibility tiering** -- which operations
+were reversible, what their inverse was, what aborting one cost -- which existed for the ship
+ceremony that issue #1027 removed, and which nothing computes any more. And underneath it a
+**default-deny allowlist** answering a question the lifecycle still asks on every board write: may
+saga do this one without a human? Deleting the file wholesale would have deleted a fail-closed gate
+along with the dead tiering, which the card forbids.
+
+Two ops stay enumerated and still refused, named rather than omitted so the refusal reads as a
+decision: closing a parent issue, which declares a whole tree finished, and merging, which was
+reachable only through the envelope machinery this release removes.
+
+**Rejected alternative.** Let the gate go with the module and have the controller submit whatever it
+is asked to. Rejected because the failure direction inverts: an unenumerated op would be attempted
+rather than refused.
+
+**Revisit when** mission-control adds a verb saga should submit autonomously -- the change is one
+entry in `_AUTONOMOUS`, and the default-deny means forgetting it fails safe.
+
+### A module is kept or removed by what it does, not by what it is named  {#keep-by-behaviour-not-name-1030}
+
+**Decision.** `handoff_envelope.py` survives issue 1030 even though the card removes `/handoff`,
+and `plugins/saga/references/liveness-consumer-sites.md` is deleted even though nothing in the card
+names it.
+
+**Rationale.** The first is not the command's envelope machinery; the name is historical. It owns
+the readiness vocabulary and the parser that classifies a source document's declared maturity, and
+`plugins/mission-control/scripts/sdlc_manager.py` resolves that exact path, gates it on a contract
+major, and calls `assess_source` and `assess_declared` at seven sites in its issue-prepare path.
+Deleting it would have broken a plugin this card does not otherwise touch, to remove a name.
+
+The second is the mirror. Its rows inventoried the liveness protocol's consumers, every one of which
+was in the archived team-execution plugin, so the document described an engine with no callers --
+and `fleet_commons/liveness_engine.py` went with it once the scan confirmed no importer remained.
+
+**Rejected alternative.** Work the card's list literally in both directions. Rejected because the
+card names families and intentions; matching a filename against that list is the same
+name-over-behaviour error in a different coat.
+
+**Revisit when** the readiness vocabulary moves into mission-control, which is now its only
+consumer. That is a follow-up card, not this one.
+
+### The team-execution plugin is archived; its content lives on as roles  {#team-execution-archived-1030}
+
+**Decision.** `plugins/team-execution/` is removed from the repository and from the marketplace by
+issue #1030. Its **final changelog entry is version 4.0.0, written at commit `005e7e70`**, one commit
+before the directory was deleted — that commit is where a reader finds what the plugin was, where its
+content went, and what a caller must change. This pointer exists because a changelog deleted in the
+commit that would carry its last entry says nothing to anyone, and because nobody thinks to run
+`git log` on a path that is not there.
+
+**Where the content went.** The 25 reviewer, tester and scanner agent prompts and the two criteria
+documents are the source material for `plugins/agent-launcher/roles/`, which uses the lifecycle
+repository's role vocabulary: base and optional reviewers became Lens Reviewer prompts keyed to the
+review catalogue's lenses, the scenario, smoke, contract and UI-regression testers became Functional
+Tester variants, the monitors and deploy watcher became the Release Worker's wait steps, and the
+scanners became build-loop mechanical-baseline entries. The `appsec-audit` skill is the Investigator
+role's security variant.
+
+**Rationale.** The structure was what did not survive review, not the content. Reviewer consensus and
+validator gates are now the lensed code review computing its verdict in code from the catalogue's
+strictness ladder, and roles are hosted as sessions in their own worktrees rather than as one
+plugin's private agent roster. The operating record shows the orchestration path was unused; the
+prompts were not.
+
+**Consequence for callers.** `team-execution` is no longer a saga execution backend. The
+orchestration enumeration is `inline` and `cc-workflows-ultracode`. The enum strings stay a durable
+wire contract, so a persisted saga tick recording `team-execution` still reads back and still renders
+a label — it is simply no longer selectable. `recommend_execution_backend()` now returns `inline`
+under every trigger, since ruling C5 (issue #840) forbids recommending a Workflow; the size, risk and
+gated-consensus signals are still computed and now select the recorded rationale rather than a
+different backend.
+
+**Rejected alternative.** Keep the plugin installed but unreferenced. Rejected because an installed
+plugin advertises commands and agents to every session that resolves it, and one nobody maintains is
+worse than one nobody has.
+
+**Revisit when** a reviewer role needs something the roles library cannot express, at which point the
+question is what the role prompt is missing — not whether to restore a plugin.
+
+### Sandbox isolation belongs to how a role is hosted, not to a flag every caller must remember  {#isolation-is-hosting-not-a-flag-1030}
+
+**Decision.** The project instruction that every review-class Agent-tool spawn must name saga's
+read-only verifier agent and pass `isolation: "worktree"` is replaced by "review roles run as roster
+sessions in their own worktrees". `plugins/saga/references/sandbox-spawn-sites.md`, the inventory of
+every site that had to remember the flag, is deleted with it, as are both saga agents.
+
+**Rationale.** The old rule was correct about the hazard — a reviewer that shares the tree it is
+reviewing can clobber it with a `git checkout` — and wrong about where to fix it. A rule enforced at
+every call site needs an inventory of call sites, a fallback ladder for when the named agent is
+missing, a lint over the inventory, and a test that the lint covers each skill; that is four
+mechanisms guarding one property. The roster helper gives each role its own worktree when it creates
+the session, so the property holds by construction and a caller cannot forget it.
+
+**Rejected alternative.** Keep the rule and retarget it at a surviving agent. Rejected because there
+is no surviving agent: the card removes both, and inventing a replacement to satisfy a rule is how
+the four mechanisms appeared in the first place.
+
+**Revisit when** a review role has to run as a subagent rather than a pane — the surviving skills say
+read-only and disposable-worktree in prose for that case, and if that case becomes common the
+property deserves a mechanism again rather than a sentence.
+
+### A plugin's version moves when its files move, not when a card names it  {#version-moves-with-files-1030}
+
+**Decision.** Issue 1030's card asks for a bump on orchestrate and agent-launcher as part of the
+saga 1.0.0 release. Neither is bumped, because this card changes no file in either plugin. The only
+saga script orchestrate names is `admission.py`, which survives, and agent-launcher's only mention of
+anything removed is a historical line in its own changelog.
+
+**Rationale.** A version bump is a claim that something a consumer depends on moved. Bumping an
+untouched plugin because it appeared in a card's prose makes the changelog a worse signal than
+silence, and it makes the two installed plugin trees harder to compare after a release, which is
+exactly the comparison the release's own acceptance criterion rests on.
+
+**Rejected alternative.** Bump everything the card names, so the release is one coherent set of
+version numbers. Rejected because coherence of numbers is not a property anyone reads for; the
+question a reader asks is "did this plugin change", and a bump that answers yes when the answer is no
+costs more than an uneven set of versions.
+
+**Revisit when** a release genuinely needs a coordinated floor across plugins — a shared schema
+change, say — at which point the bump carries real information and the rule bends for a stated reason.
+
+### Removing a module that another plugin imports is a move, not a deletion  {#rehome-rather-than-break-1030}
+
+**Decision.** `execution_spec.py`, `concurrency_governor.py` and `dispatch_settlement.py` leave
+`plugins/saga/scripts/` but are not deleted: they move into
+`plugins/cc-workflows/skills/cc-workflows/scripts/` as that plugin's own modules, and the
+cross-plugin shim that reached for them goes. Recorded as a recommendation with the operator's
+alternative named, because the card does not name the cc-workflows plugin at all.
+
+**Rationale.** The cc-workflows emitter loads saga's `execution_spec.py` at import time and imports
+the other two. Deleting them from saga would make that plugin unloadable. The simplification review
+says to remove the execution spec and issue 808 ruled the Workflow backend is narrowed but not
+retired; both hold only if the modules stop being saga's.
+
+**Rejected alternatives.** Delete them and let the emitter break — rejected because the card names no
+cc-workflows work and a driver does not delete what its card did not name. Archive cc-workflows
+alongside team-execution — a legitimate choice, but it is the operator's to make, so it is recorded
+as the open question rather than taken.
+
+**Revisit when** the operator answers that question, or when the Workflow backend is invoked again
+and the move's import path is exercised for real.
+### The status card follows the functional test rather than the functional test keeping a score for the card  {#1039-status-card-follows-the-verdict}
+
+**Decision.** `status_card.project_qa` was retargeted with `/qa` in the same commit. Its rows are
+now Selection · Preflight · Evidence · Proof debt · Verdict, read from the frontmatter and results
+table of the comment the runner prints, rather than Risk class · Checks · Findings · Health score ·
+Ship verdict read from a `docs/qa/` report.
+
+**Rationale.** The single-emitter rule says every operator-facing status card comes from one
+renderer. The alternative was to drop `/qa` from that rule, which would have let the step draw its
+own status output by hand — the exact thing the rule exists to prevent. Keeping `/qa` inside the
+rule cost one projection rewrite and five retargeted tests, and it kept a cross-skill invariant
+whole. The plan had deferred this as a follow-up; the routing guard forced it, and the guard was
+right.
+
+**Rejected alternative.** Removing the `/qa` block from the single-emitter routing test. Cheaper by
+about eighty lines, and it would have quietly created the first status surface outside the emitter.
+
+**Revisit when.** A second surface needs a card shape the gate-sequence archetype cannot express.
+
+### Two rows carry the weight of the card, and neither may render as done  {#1039-evidence-and-debt-rows}
+
+**Decision.** The card's **Evidence** row follows the per-strategy results rather than the verdict
+word, and renders `BLOCKED` when any strategy could not run. The **Proof debt** row renders
+`BLOCKED` on a run that passed with debt, rather than `DONE`.
+
+**Rationale.** Both are the same guard against the same failure. A run that proved nothing must not
+look finished, and a debt that renders as done is a silent skip in a new place — the failure this
+whole card exists to remove. A verdict word alone cannot carry that, because
+`pass-with-proof-debt` is a pass.
+
+**Revisit when.** The operator says the blocked glyph on a passing run is noise rather than signal.
+
+### The `/qa` catalogue reuses the widen-only union rather than reimplementing it, at the cost of one fleet-core verb  {#1039-qa-widening-reuses-jev-widen}
+
+**Decision.** The widening judgment in the new `/qa` strategy catalogue calls
+`fleet_commons.jev_widen.widen()` and registers a `qa-strategies` verb in
+`plugins/fleet-core/scripts/fleet_commons/jev_verbs.py`, which moves fleet-core's release surfaces
+in the same pull request. It does not call the TypeSafe client directly with an inline question set.
+
+**Rationale.** The whole design rests on one property: the declared strategy set is a floor and the
+model may only raise it. `jev_widen.widen()` already implements exactly that union, already logs
+every probability with its threshold, and already degrades to the floor when the client raises,
+times out, or returns a non-ok status. Writing a second union inside the `/qa` script would put the
+guarantee in two places, and the specification's own failure table names a narrowing judgment as
+the way a required proof silently disappears.
+
+**Rejected alternative.** Calling `typesafe_client.ask` directly from the `/qa` script. It avoids
+one version bump and duplicates the guarantee the design most depends on. The verb's key set is the
+only thing duplicated, and a guard test asserts it equals the catalogue's strategy identifiers in
+both directions.
+
+**Revisit when.** A second consumer needs a widening judgment whose question set is genuinely
+dynamic, which a static verb registry cannot express.
+
+### One strategy runner, two proof boundaries, shared by command name rather than by import  {#1039-qa-runner-shared-by-command-name}
+
+**Decision.** The build loop's scenario smoke reaches the `/qa` strategy runner by naming its
+command line, not by importing it. The runner takes a `--boundary` flag defaulting to
+`non-production`; the build loop's smoke entries name it at `branch-preview`. No line of
+`plugins/saga/scripts/build_loop.py` changes.
+
+**Rationale.** The build loop already reads its scenario smoke as a list of `{name, command}`
+entries and runs each through an injected runner, so a command name is all the sharing the
+operator's decision ("one catalogue, two boundaries") actually requires. An import would couple two
+cards' merge turns for behaviour neither one needs.
+
+**Revisit when.** The smoke needs a value back from the runner that an exit code and a run-record
+block cannot carry.
+
+### The `/qa` step computes its own verdict and never hands a blocked run to the release step  {#1039-qa-routes-itself}
+
+**Decision.** `/qa` computes the verdict and the route itself, and calls
+`release_step.record_functional_test` only for a `pass` or a `fail`. A required `blocked` is
+written to the run record as an operator stop and never presented as a functional-test result.
+
+**Rationale.** That function computes its status from the failed list alone, so a scenario list
+holding only `blocked` entries returns `passed` — the silent skip this card exists to remove,
+arriving through the back door. Routing around it keeps the blast radius inside this card.
+
+**Rejected alternative.** Repairing the arithmetic in the release step. It reaches into a sibling
+card's merged work for a case only `/qa` can produce; recorded as a follow-up instead.
+
+**Revisit when.** A second caller can produce a blocked scenario, at which point the repair belongs
+in the release step rather than in each caller.
+
+### Orchestrate 6.0.0: removing a subcommand is a major bump, by this plugin's own precedent  {#1028-orchestrate-subcommand-removal-is-major}
+
+**Decision.** Removing the `announce` subcommand and retiring `merge`'s exit status 2 takes
+orchestrate to **6.0.0**, not the 5.1.0 this card first wrote.
+
+**Rationale.** The plugin already ruled on this. Version 5.0.0 was a major bump *because* it removed
+the `redrive`, `collect` and `land` subcommands, under a changelog heading that reads
+"Changed -- BREAKING". Removing `announce` is the same class of change to the same surface, and the
+exit code is worse: a caller that reads exit 2 from `merge` gets a different answer than before,
+silently, because a status that used to mean "the board write did not land" is now unreachable.
+A minor bump would tell a consumer that nothing they depend on moved.
+
+**Rejected alternative.** 5.1.0, on the reasoning that the removal is small and nothing in this
+repository calls `announce`. Size is not the test; what a released interface promises is. And "no
+caller in this repository" says nothing about an operator's shell history or another machine's
+installed copy.
+
+**Revisit when** the plugin adopts a written versioning policy; until then the precedent in its own
+changelog is the policy, and this entry is part of it.
+
+### The release step is a module, because behaviour in a skill document has no test  {#1028-release-step-is-a-module}
+
+**Decision.** `plugins/saga/scripts/release_step.py` exists, although card 1028's file list names
+only one new module. It owns three things: merging the parent pull request bound to the head its
+checks ran against, recording the deployment or its declared absence, and composing the closeout
+comment.
+
+**Rationale.** Three of the card's requirements — wait for the required checks on the exact head,
+record "no destination" rather than failing, and compose a closeout that carries every required
+link — are behaviour. Left in the work skill as prose they would have shipped with no executable
+guard, and behaviour nobody can test is behaviour nobody can tell is broken.
+`tests/test_release_step.py` now covers each of them, including the case this repository actually
+has: `nonproduction_destination: none`, where the deploy handoff must not be called at all.
+
+**Rejected alternative.** Folding the three commands into `merge_turn.py` as extra subcommands.
+Taking a merge turn and releasing a parent are different jobs with different owners in the lifecycle
+repository's own role model, and one module would have had to hold both.
+
+**Revisit when** issue 1039 redesigns `/qa`: the functional-test half of this module is the seam
+that card will read, and it may belong there instead.
+
+### The release records an absent destination instead of failing  {#1028-no-destination-is-a-result}
+
+**Decision.** Where the repository profile declares `nonproduction_destination: "none"` — as
+`.saga-profile.json` does here — the release step records the absence with its reason, exits
+successfully, and never calls the deploy handoff. No deployment is recorded and no environment is
+named.
+
+**Rationale.** The lifecycle repository's closeout rule forbids fabricating an environment, a
+deployment record or an acceptance result to complete a comment; recording the absence *with a
+reason* is what it asks for instead. Treating "nowhere to deploy" as an error would block every run
+in a repository that has no lower environment, which is this one, so the run would fail for a
+reason that is a permanent property of the repository.
+
+**Rejected alternative.** Offering the handoff anyway and letting the deploy plugin decide. An
+offer with no destination is a baton handed to nobody, and `deploy_handoff` would then hold an
+unacknowledged offer for a deployment that can never happen.
+
+**Revisit when** this repository gains a non-production destination; the declared-destination path
+is already implemented and tested, and only the profile value changes.
+
+### Saga's board moves are named by lifecycle boundary, and the allowed list is the only vocabulary  {#1028-board-boundaries}
+
+**Decision.** The board-move module takes a lifecycle boundary name, not a target status. A fixed
+table maps each of the run's six boundaries onto a `(Stage, Status)` pair drawn from
+`lifecycle_field_mutation.allowed_submissions` in the vendored schema, and nothing outside that list
+can be submitted. A caller that wants a different status has no way to ask for one.
+
+**Rationale.** The lifecycle repository calls that list "the single authority" and renders it into
+two prose chapters as a generated region so the chapters cannot disagree with it. Nothing in this
+repository read it: `grep -rn "allowed_submissions" --include=*.py plugins/ tests/` returned zero
+hits at base commit `87a5329e`, while `board_progression.py` accepted any `--target-state` a caller
+typed. A free-text target is how a card ends up in a status the lifecycle never authorised, and the
+certificate gate does not catch it because the certificate authorises the *field*, not the *value*.
+
+**The map is not one-to-one, and that is the finding.** Six boundaries, six rows, and they do not
+pair off: review acceptance has no allowed row at all, and close has two, chosen by whether a retro
+trigger fired. The module therefore reports "no allowed submission at this boundary" for review
+acceptance rather than inventing a move. Two statuses the live Operations board carries —
+`Ready to merge` and `Closeout` — are not in the allowed list, so saga never submits them even
+though card 1028's own acceptance criterion names them.
+
+**Rejected alternatives.** Submitting `Ready to merge` at review acceptance because the board offers
+it: that is saga granting itself board authority the lifecycle withholds. Deriving the table from
+the board census instead of the schema: the census says what the board *can* hold, never what a
+caller *may* submit.
+
+**Revisit when** the lifecycle repository's allowed list gains an `Active` / `Ready to merge` row —
+the repair proposed to the operator on `infiquetra/infiquetra-sdlc#170` — at which point review
+acceptance gains a move and the table gains a row.
+
+### Two of saga's four ledgers are removed with their card; two wait for the removals card  {#1028-ledger-removal-split}
+
+**Decision.** Card 1028 removes `effort_ledger.py` and `evidence_ledger.py` and repairs every
+importer. It defers `run_ledger.py` and `dispatch_settlement.py` to the removals card, issue 1030.
+The rule: remove a ledger when every importer can be repaired; defer it when removal would require
+deleting modules the card does not name.
+
+**Rationale.** `effort_ledger` has one importer and it is its own test. `evidence_ledger` has two
+production importers, one of which (`review_consensus.py`) survives the removals card and is
+repaired onto the run record. `run_ledger` has sixteen, fifteen of them modules issue 1030 deletes
+outright — repairing them is work thrown away, and deleting them here is another card's scope.
+`dispatch_settlement` imports `run_ledger`, so it cannot outlive that deferral.
+
+**Rejected alternative.** Removing all four and deleting whatever broke. That turns a bounded card
+into the largest deletion in the repository's history a card early, without the command-surface and
+importability guards issue 1030 brings with it.
+
+**Revisit when** issue 1030 lands; the deferral list is discharged there, and card 1028's own test
+asserts the two deferred modules are still importable so a premature removal fails loudly.
+### The exit criterion is read from the run record, never judged at the end of the work  {#1027-exit-criterion-is-read-not-judged}
+
+**Decision.** `/work` reads what a unit must clear from the run record — the mechanical baseline,
+the plan's child-scoped functional checks, the branch preview where the repository declares one,
+and the plan's scenario smoke — runs it with `build_loop.py`, and repeats until green. It no longer
+weighs test adequacy, and `requires_hard_test_gate` no longer decides anything.
+
+**Rationale.** The old Phase 3 asked a worker to discover tests, judge scenario completeness, and
+then apply a change-kind gate to a list it had derived itself — every input to the decision produced
+by the same party at the end of its own work. A criterion written at admission is checkable by the
+worker before it starts and by a reader afterwards, and it turns "working software" from a
+conclusion into a fact.
+
+**Rejected alternatives.** *Keep the gate and add the loop beside it* — two authorities on when work
+is done, and the one that blocks would win, so the written criterion would be decoration. *Let the
+script loop internally until green* — only the worker can change the code between iterations, so the
+script would either spin on an unchanged tree or have to invoke an implementer, and a check runner
+that implements is a different program.
+
+**Revisit when** a repository needs a criterion that cannot be expressed as a list of commands — an
+interactive check, or one whose pass condition is a measurement rather than an exit code.
+
+### An absent check list is recorded with a reason, not shown as nothing  {#1027-absent-reads-empty-with-a-reason}
+
+**Decision.** No step in saga yet writes the plan's child-scoped functional checks or its scenario
+smoke onto a unit's row. The build loop reads an absent key as an empty list and records the reason
+`none-prescribed`; the dry run prints `none prescribed in the run record`. This card does not build
+the writer, which is the Planner's step.
+
+**Rationale.** Without the reason, a reader of a green iteration cannot tell "the plan prescribed no
+functional checks" from "the plan prescribed three and the loop lost them". Those are very different
+facts about the same green, and the second is the kind of silent gap that makes a whole evidence
+trail untrustworthy once anyone notices it.
+
+**Rejected alternatives.** *Refuse when the keys are absent* — the loop would refuse on every run
+until another card lands, which is a gate, and the card forbids one. *Omit the empty lists* — absence
+in the record then means both "none" and "not yet implemented".
+
+**Revisit when** the Planner's run-record write lands and the keys always exist; the reason then
+tells a reader that a plan genuinely prescribed nothing.
+
+### Bandit is not promoted into this repository's blocking baseline  {#1027-bandit-stays-advisory-here}
+
+**Decision.** The card asked for the security and dependency scanners as baseline entries. Bandit —
+the only one of the four this repository has — stays out of `.saga-profile.json`'s
+`mechanical_tool_baseline`, exactly as continuous integration runs it. `build_loop.py --dry-run`
+reports it as an uncovered catalogue check with its reason, and reports `pip-audit`, `gitleaks` or
+`detect-secrets`, and `semgrep` as not configured here. The clause is honoured by reporting, not by
+promotion.
+
+**Rationale.** Measured on the base commit, bandit reports 145 medium-or-high findings and exits 1,
+so promoting it would make the loop unable to reach green — a refusal by the back door, which the
+card's own non-goal forbids. See LEARNINGS `{#1027-measure-before-promoting-an-advisory-scanner}`.
+
+**Rejected alternatives.** *Promote it and accept a red first iteration* — a loop that can never go
+green is not a loop. *Scope it to the unit's own diff* — needs a profile field
+`repository_profile.v1` does not have, which belongs to the card that owns that document.
+
+**Revisit when** the operator picks one of the three futures the plan named: leave it advisory,
+promote it after a clean-up card, or scope it to the diff.
+
+### `merge_watcher.py` and the hard-test-gate function are deferred to issue #1030  {#1027-orphans-deferred-to-the-removals-card}
+
+**Decision.** Removing the five ship-ceremony modules orphans `merge_watcher.py` — after this card
+nothing outside it and its own test file names it — and removing the risk-gated prose orphans
+`lifecycle_state.py`'s `requires_hard_test_gate` and `saga.py`'s `ceremony_transition` /
+`ceremony_tier` fields. None is deleted here. Each is recorded as orphaned and left to issue #1030.
+
+**Rationale.** The card names five modules and this card removes five modules. `requires_hard_test_gate`
+is still referenced by `/loop`, and `/loop` is one of the eleven commands issue #1030 removes, so
+deleting the function here would mean editing another command's skill to keep the tree importable —
+a widening with no boundary. Issue #1026 met the same shape with `execution_spec.py` and resolved it
+the same way; following the precedent keeps the removals card able to retire each vocabulary
+together with its readers.
+
+**Rejected alternatives.** *Delete them here and carry the cascade* — correct in the end state, wrong
+in sequencing, and it makes this card's diff span files no card authorised it to touch.
+
+**Revisit when** issue #1030 runs its removal pass; each orphan is named in this card's changelog
+under "Deferred to issue #1030".
+
+### A run's step is done when its `next_step` is empty, and nothing is inferred  {#1029-empty-next-step-means-done}
+
+**Decision.** The run record says a step is finished by its `next_step` being the empty string. Every reader — the session-start hook, the prompt-submission suggestion, the compaction spore — applies that one rule from one module, `plugins/saga/scripts/next_step_context.py`. Nothing infers doneness from any other field.
+
+**Rationale.** The record's twelve top-level keys are frozen by name in `run_record.TOP_LEVEL_KEYS`, with a comment saying so, precisely to stop children of issue 1018 inventing keys; a `closed_at` or `run_state` field was therefore not available. The empty string is already writable through `run_record.set_next_step` and is already the value a record carries before anything sets a step.
+
+**Rejected alternatives.** A new top-level key on the record (frozen, deliberately). Inferring doneness from `review_cycles` or `units` — inference over recorded state is the class of reasoning that produced the stale injection this card exists to prevent. A sentinel string such as `done` inside the field — a second schema nobody declared, living inside a free-text value.
+
+**Revisit when** a run genuinely needs to distinguish "closed" from "between steps" — for example when a closing step wants to record *why* a run ended. That is a schema question for the record's owner, not a reader's rule, and it should reopen the frozen key set rather than overloading this field.
+
+### The prompt-submission suggestion matches locally, and stays local until the operator rules otherwise  {#1029-prompt-suggestion-is-local-only}
+
+**Decision.** `plugins/saga/hooks/prompt_suggestion_hook.py` matches the operator's prompt against local strings only: the installed plugin's own command names, and the command named in the run record's `next_step`, the latter used only when the prompt asks to get on with the run. It makes no network call, imports no client, writes no file, and logs nothing. A test asserts the module's import graph contains no networking module.
+
+**Rationale.** Issue #1038's exploration (`docs/analysis/2026-09-19-prompt-suggestion-latency.md`) measured a typed-judgment version at 93 percent accuracy on prompts warranting a command and 100 percent silence on those that do not — and still recommended **defer**, on two grounds: no shape that makes a blocking call reaches the 400 millisecond target, and whether the operator's live prompt text may be sent to a third-party vendor is an open operator decision. A prompt is not a session transcript, but it is uncontrolled text nobody vetted, which is the stated reason transcripts are excluded from the data rule.
+
+**Rejected alternatives.** Shipping the typed judgment now (the governance ruling is a precondition, not a task). Shipping nothing (the registration and a conservative matcher are useful on their own and make the later swap a one-module change). Widening the matcher to chase recall — a keyword table over a dozen commands cannot approach a typed judgment's, and a hook that guesses is a hook the operator learns to ignore.
+
+**Revisit when** the operator rules on whether live prompt text may leave the machine. The typed judgment then replaces the matcher behind the same registration.
+
+### Lifecycle skills continue in the same turn; what was confirmed stays confirmed  {#1029-continuation-preserves-confirmations}
+
+**Decision.** Each of the five lifecycle skills ends by performing the next step rather than recommending it: `/plan` into `/work` (gated on the record's `admission.destination`, so `plan-only` still stops), `/doc-review` into `/work` under three conditions, `/work` into `/qa` after a merge, `/code-review` into each verdict's own step, `/qa` into `/retro` on a pass. Separately and explicitly: every action that required an operator confirmation before this change still requires one — `/work`'s pull-request open, review request, and merge — and a continuation that would fire one of them without a confirmation is a stop.
+
+**Rationale.** A step an operator has to remember to type is a step that gets skipped on the busy days it matters most. The two halves are recorded together because they are the two halves of one risk: making a chain automatic is exactly the change that could quietly swallow a confirmation, and separating "what runs next" from "what is asked first" is what makes the change safe rather than merely convenient.
+
+**Rejected alternatives.** Leaving continuation to a driver command — `/loop`'s Drive mode was that, it had to be chosen, and issue #1030 removes it. Continuing `/plan` into `/work` unconditionally — the destination already records how far a run may go, and reading it costs nothing. Continuing `/doc-review` into `/work` from any document — a strategy or requirements document has no plan to execute, and an open `P0` or `P1` is the very finding `/work`'s gate enforces.
+
+**Revisit when** a repository wants a pause between planning and building that the destination cannot express. The answer is a value in the record, not a sentence in a skill.
+### A staged-input stop reports and stops; it no longer retries through the pane  {#1025-staged-stop-does-not-auto-redeliver}
+
+**Decision.** When the composer holds staged input, `go` returns the unit to `PENDING`, appends
+the stop message to the unit's note, and tells the operator to clear the composer and run
+`launcher.py redeliver` by hand. Orchestrate does not repeat the delivery itself.
+
+**Date:** 2026-09-20 · **Issue:** #1025 · **Supersedes in part:** `{#907-staged-input-redeliver}`
+
+**Why.** The automatic retry read the persisted launch receipt's `input_box` marker to decide
+that a `PENDING` unit was a staged stop rather than a fresh unit. This card stops persisting the
+receipt, so that marker is not in the record and the retry has nothing to key on. Reintroducing a
+field to carry it would re-add the run-file state this card exists to remove, and a retry that
+guesses wrong creates a second session in a live pane.
+
+**Rejected.** Persisting the receipt for this one field; inferring a staged stop from the note
+text; retrying unconditionally on every `PENDING` unit that records a pane.
+
+### A merge turn runs in its own detached worktree, created and removed inside the turn  {#1025-detached-worktree-per-merge-turn}
+
+**Decision.** `merge` creates one detached worktree on the parent branch's tip, merges the unit's branch there, advances the parent branch reference, and removes that worktree in a `finally`. A conflicting merge aborts in that worktree, removes it, leaves the unit at `ready` with the conflict named, and leaves the parent branch untouched.
+
+**Rationale.** The card removes "landing reservations", and it is worth being exact about what that names, because the worktree and the bookkeeping around it are different things. The bookkeeping is what goes: a `conflict_worktree` pointer persisted into the run file so it outlived the invocation, a numbered-sibling fallback with its preserved-path reporting, and a retained-merge recovery that inspected an earlier run's worktree and decided whether to publish what it found. That machinery is 470 lines and it exists to hand a half-finished merge from one invocation to the next. The worktree itself stays because the alternative is merging in whatever the operator has checked out, which is what `collect` did and what card 875 is about. Recovery is now the ordinary one the software-development-lifecycle repository's parent-branch chapter assigns: the merging worker resolves its own conflict on its own branch and takes the turn again.
+
+**Alternatives rejected.** Keeping the retained-conflict pointer "just for conflicts", rejected because a pointer that survives an invocation is precisely the record the card removes, and every defect in that family (issues 960, 979) is in the code that reads it. Merging in the coordinator's own checkout, rejected: it makes a conflict a dirty operator tree.
+
+**Revisit when.** A merge turn needs to survive the process that started it — at which point the thing to add is a record field git can confirm, not a pointer to a directory.
+
+### The `main` regression guard fetches before it compares, and refuses when the fetch fails  {#1025-guard-fetches-before-comparing}
+
+**Decision.** Before evaluating whether a merge would take a file backwards, the turn runs `git fetch <remote> <branch>` and refuses the turn when it fails, saying the guard could not be evaluated against a current reference.
+
+**Rationale.** The guard compares the merge result against `origin/main`. A remote-tracking reference is only as current as the last fetch, so a guard that reads it without refreshing passes silently on a stale copy — which is the same shape as the failure card 875 reported one level up: `collect` merged with no currency check and could revert work on `main` while reporting success. Refusing on a failed fetch is the safe direction: a merge turn not taken costs a retry, and a merge turn taken against a stale comparison costs the work the comparison existed to protect. Comparing against a local `main` was rejected for the same reason — it is whatever the operator last pulled.
+
+**Alternatives rejected.** Warning and comparing anyway, rejected as above. Fetching once per invocation rather than per turn, rejected because turns are serialised and a long run can outlive the freshness of one fetch; the cost is one network call per merge.
+
+**Revisit when.** A repository has no remote at all — today that refuses every turn, which is correct for this repository and would be wrong for a purely local one.
+
+### Orchestrate's state moves into the per-issue run record, and the issue number replaces the run identifier  {#1025-record-replaces-run-file}
+
+**Decision.** The orchestrate driver stops writing `.orchestrate/run.json` and reads and writes issue 1023's `run_record.v1` document for one issue, resolved through `run_record.resolve_store_root()`. Every mutating subcommand takes `--issue <N>`. Two issues driven in one repository have two record files and never contend for one path. The task-spill mechanism goes with the run file.
+
+**Rationale.** The fixed path was one file per repository, so a finished run blocked the next (card 878) and a unit's own worktree could not see it at all, because `.orchestrate/` is git-ignored and a repository-relative path resolves inside the worktree rather than in the primary checkout (issue 886's fifth finding). The record resolves its store root from the git *common* directory, which is the same directory from the primary checkout and from every linked worktree, so the same file is visible to the coordinator and to every unit. The record also already answers two defects the run file carried separately: an unknown version is a one-line refusal with exit 3 rather than a traceback (card 975), and an unknown top-level field round-trips and is named rather than silently dropped on save (card 989). The spill existed because the run file was rewritten whole on every save and 83% of a 75-unit record was task text; one issue's state is not that file.
+
+**Alternatives rejected.** Keeping a second orchestrate-owned file beside the record, rejected because it reintroduces the two-authorities problem the record exists to end. Keeping the fixed path with a `--run` selector, rejected because that is what card 878 asked for before the record existed and it solves the singleton without solving the worktree-visibility half.
+
+**Revisit when.** The record's `schema` token moves past `run_record.v1`.
+
+### A launch persisted immediately is what makes two `go` calls launch once — not a reservation  {#1025-immediate-persist-not-a-reservation}
+
+**Decision.** The launch loop writes the unit row with `status = running` and a `launch_started_at` stamp and saves *before* calling the launcher, persists the wrapper identity through a launcher callback at session creation rather than after delivery returns, and wraps the whole window so a `BaseException` saves the record and re-raises. There is no claim, no owner token, and no expiry.
+
+**Rationale.** Parent issue 1018 forbids a new lease, reservation, receipt, or ledger, and says to stop and report if a child needs one to pass its own tests. It does not: eligibility reads only `pending` units, so a repeated `go` in the launch window finds the unit `running` and skips it, which is the collision card 900 actually recorded — a polling driver calling twice in sequence. Card 990's half is the interrupt window: the identity was written onto the in-memory unit inside the launch and nothing persisted it until a second save after delivery, so a keyboard interrupt anywhere in a window of up to two minutes left the record claiming the unit was never launched while a real tab existed. A keyboard interrupt is a `BaseException`, which neither existing `except SystemExit` clause catches.
+
+**The residual is named rather than hidden.** Two `go` processes that read the record at the same instant can both see `pending`. That case is not in the record, and the *harm* it would cause — two sessions in one worktree — is separately impossible once every launch builds its own fresh worktree (`{#1025-fresh-worktree-per-launch}`).
+
+**Alternatives rejected.** A durable claim written before launch with an owner and an expiry, rejected as a reservation by another name.
+
+**Revisit when.** A simultaneous double launch is actually observed, at which point the answer is the simplest mechanism covering that demonstrated case, not the protective layer back.
+
+### Every launch gets a fresh worktree; the branch, not the directory, is the unit's identity  {#1025-fresh-worktree-per-launch}
+
+**Decision.** The worktree helper takes the canonical path and, when that path exists on disk or is registered with git, uses the lowest unused numbered sibling instead. It never checks out into an existing directory. The unit's branch is reused when it exists, because the branch holds that unit's history and a relaunch continues it; only the working directory is new. After creation the helper runs a declared setup command in the worktree: `ORCHESTRATE_WORKTREE_SETUP` when set, otherwise `uv sync --locked --extra dev` when a `uv.lock` exists at the worktree root, otherwise nothing, with one printed line saying so.
+
+**Rationale.** Reusing a worktree is what makes "fast-forward it, adopt or close the prior session, preserve the unknown fields" a question at all (card 886); a fresh directory removes the question rather than answering it. The environment step is the fifth recorded collision: a session in a worktree with no virtual environment produces confident work that cannot run its own tests, and the failure surfaces much later as a test result nobody can reproduce.
+
+**Alternatives rejected.** Fast-forwarding or refusing a reused worktree, rejected as above. Copying or symlinking the primary checkout's `.venv`, rejected because a virtual environment carries recorded absolute paths that then point at another directory.
+
+**Revisit when.** Worktree creation cost becomes the dominant cost of a launch.
+
+### The merge turn is ordinary record state, and it carries the guard against reverting a newer `main`  {#1025-merge-turn-carries-the-main-guard}
+
+**Decision.** Each unit row carries `merge_state`, one of `ready`, `merging`, `merged`. A merge refuses to open a second turn while any unit is `merging` and names that unit. Before the parent branch pointer advances, if `origin/main` is not an ancestor of the merge result, the files the merge changes are intersected with the files `origin/main` changed since their merge base, and a non-empty intersection refuses the turn and names every file in it.
+
+**Rationale.** The software-development-lifecycle repository's parent-branch chapter, at revision `5efc869f`, describes merge turns as execution state the Delivery Manager tracks — "not an operator approval, a receipt ceremony, or a separate lock service" — and records that a dedicated lock service was considered and explicitly rejected as overcomplicated race management. A status field with no expiry and no ownership token is that state. The regression guard is card 875 restated: that card reported `collect` merging a run branch into the operator's tree with no currency check, so a per-unit-pull-request run could silently revert work on `main`. The `collect` path is removed by this card, so the concern survives as a rule of the merge turn rather than as a check inside a command that no longer exists.
+
+**Alternatives rejected.** Refusing any merge whose parent branch is behind `main`, rejected because it makes ordinary parallel work unmergeable. A lock service or a turn token, rejected by the source-of-truth document itself.
+
+**Revisit when.** A merge turn needs to be handed between machines, where a status field with no owner stops being enough.
+### The external seat's deferred claim lifecycle is moot, and is recorded rather than built  {#938-external-seat-claim-lifecycle-moot}
+
+**Decision.** The code-review parent deferred the external seat's claim lifecycle (its decision C-D10) behind two triggers: a first standalone use, and an observed duplicate launch. Issue 938 deleted the machinery both triggers depend on — `plugins/saga/scripts/second_opinion.py` and its `SecondOpinionClaimStore`, together with Work's offer, the only path that reached them. Neither trigger can now fire, so the lifecycle collapses to nothing. It is recorded here and not built.
+
+**Rationale.** The card's own instruction was to record it rather than build it if the removal made it moot, and the evidence package had already said it "collapses to nothing if the surrounding machinery is unused". Building a lifecycle for claims nothing can create would add a second, untested state machine for a state no code can enter — the kind of speculative machinery the deferral existed to avoid in the first place.
+
+**Rejected alternative.** Keeping the claim store alive so the lifecycle would still have something to govern. That inverts the card's boundary: retained code needs a live consumer, and a lifecycle waiting for a trigger is not one.
+
+**Revisit when.** An external reviewer seat is given an in-process claim of its own again — which today would mean Orchestrate's session-based path growing durable per-seat claim state, not this module returning.
+
+### `engine_recommend.py` is retained with only its own test as a caller, because issue 938 does not name it  {#938-engine-recommend-residual}
+
+**Decision.** After issue 938 deleted `second_opinion.py`, the engine capability recommender `plugins/saga/scripts/engine_recommend.py` has exactly one importer left: `tests/test_engine_recommend.py`. It is retained unchanged and recorded here as a residual for a card that names it.
+
+**Rationale.** Issue 938 names the offer and its feature-private dispatch, sidecar, streak and state machinery. The recommender is none of those; it is a separate module that the deleted one happened to consume. The repository's rule is that nothing goes unless a card names it, and that rule is load-bearing precisely on a removal card, where the temptation to sweep up one more neighbour is strongest.
+
+**Rejected alternative.** Deleting it in the same change on the grounds that a module whose only importer is its own test is dead. That reasoning is correct about the state and wrong about the authority: it is a removal decision, and removal decisions are made by cards.
+
+**Revisit when.** A card is filed for it, or a new caller appears — the second of which would close this residual without any removal at all. Note that it is not confusable with `lifecycle_state.py recommend-backend`, the execution-backend recommender the lifecycle skills actually call; that one has many live consumers and is untouched.
+
+### The plan-review loop's bound lives in the run record, and the only override is the operator's word  {#1026-review-loop-bound-and-override}
+
+**Decision.** `/plan` Phase 5.4 dispatches the plan review and loops on repair. Its bound is the run record's `standard_cycle_allowance` and `escalated_cycle_allowance`; no cycle count is written into the skill. It exits on exactly three conditions — a pass, the operator's one-word override with a recorded rationale, or exhausted allowances, which stops and reports rather than passing. No finding count, cycle count, unattended mode, or sentence in any skill produces an override.
+
+**Rationale.** Making the review automatic is the point of the card, and an automatic loop with an automatic escape is not a gate. Keeping the numbers in the record rather than the prose means a run can lower its allowance without editing a skill, and the lifecycle repository at revision `5efc869f` already settles them (three standard, two escalated), so a literal in the skill would have been a second copy of a decided number in the place nobody thinks to look.
+
+**Alternatives rejected.** A literal cycle count in the skill — rejected as a second copy of settled state. Passing on exhaustion, so the loop cannot wedge a run — rejected: that is an automatic override wearing a different name, and it fires exactly when the plan is worst. An escape after N findings — same objection.
+
+**Revisit when.** An operator has had to type the override word more than a couple of times on runs whose plans were in fact ready; that would be evidence the review's severities, not the loop, need changing.
+
+### `/plan`'s reviewer is chosen from the run record, not probed from the session  {#1026-reviewer-chosen-from-the-record}
+
+**Decision.** The Plan Reviewer is resolved by reading `<primary checkout>/.claude/saga/runs/issue-<N>.json`: a live `plan-reviewer` row in `roster`, else a staffing plan that names the role and a roster helper that can run here, else this session in review-only mode. Which branch was taken is said out loud and recorded.
+
+**Rationale.** The run continues in other sessions and on other machines, and a rule that reads the environment answers differently in each of them — the same run would review one way under a herdr pane and another way in a background driver, with nothing recording which. Reading the record makes the choice reproducible and auditable; the environment still decides whether branch 2 is *reachable*, but not what the run is supposed to do.
+
+**Live evidence for the fall-through, 2026-09-19.** The acceptance run for issue #1026 took branch 3 for a reason worth recording: the installed agent-launcher on this host is 1.5.2, whose `skills/agent-launcher/scripts/` contains only `composer.py` and `launcher.py`. The roster helper ships at 1.7.0 (issue #1024), which is on `parent/1018` and not installed. Branch 2 globs the **installed** plugin cache, so the roster-pane branch cannot hold on any host whose installed agent-launcher predates 1.7.0, however the record is staffed. The fall-through behaved as designed; the rollout note for this release has to say the roster-pane branch becomes reachable only once 1.7.0 is installed in both plugin trees.
+
+**Alternatives rejected.** Probing for a herdr pane and deciding from that — rejected above. Halting when no pane exists — rejected: it would make the review unreachable in exactly the unattended runs the card exists to serve.
+
+### `execution_spec.py` is deleted by issue #1030, not by issue #1026  {#1026-execution-spec-deferred-to-1030}
+
+**Decision.** Issue #1026 removes `team_emitter.py` and `spec_table.py` and leaves `plugins/saga/scripts/execution_spec.py` in place, although its own second acceptance criterion asks for that file to be gone. Operator decision, 2026-09-19: the criterion is judged at the parent pull request, where the end state is identical.
+
+**Rationale.** On `parent/1018` that file has seven live importers inside saga — `spend_receipt.py:38`, `spend_estimate.py:44`, `spend_retro.py:37`, `manifest_store.py:54`, `tier_efficacy.py:29`, `engine_dispatch.py:27`, `outcome_dispatcher.py:39` — plus roughly thirty test modules. Every one of those seven is already on issue #1030's removal list. Deleting the file in #1026 therefore means deleting those seven modules and the commands that call them: issue #1030's work, pulled into a card scoped as three skills and two scripts, for an end state #1030 reaches anyway.
+
+**Alternatives rejected.** Deleting it here with the cascade — rejected for sequencing, and it would have moved this card from medium risk to high. Making the seven importers tolerate its absence — rejected: that leaves seven dead code paths and a module nobody can tell is unused.
+
+**Revisit when.** Issue #1030's plan keeps any of the seven importers; that module's sequencing argument then has to be made on its own.
+
+### The relocated backend prose moves verbatim, and its guards follow it  {#1026-relocated-prose-and-guards}
+
+**Decision.** `/plan` Phase 5.2, the Workflow-specific half of 5.2a, `/work` §1.4's offer and §1.5 move into `plugins/saga/references/workflow-backend.md` unedited. The guards pinned to their old location are retargeted at the new one rather than deleted: `tests/test_workflow_extraction.py`'s settlement and fresh-shell cases, `tests/test_saga_plugin.py`'s ordered settlement contract and its #693 run-handle guard, and `tests/test_operator_choice_drift.py`'s `/plan` offer surface. The two skills keep a pointer paragraph, not a summary.
+
+**One part of 5.2a stayed, and the generators are why.** The per-unit tier derivation — Step 1, with the generated tier table and the generated effort-honoring note inside it — remains in `skills/plan/SKILL.md` as §5.2a, no longer gated on the Workflow backend. Neither region is Workflow instruction: the effort note covers the `agent`, `external-engine` and `workflow` spawn kinds alike, and the tier table is the staffing heuristic for any backend that spawns per-unit agents. Mechanically it also could not move cheaply: `plan_save_contract.py` renders the effort note *and* the save examples that stay in §5.3, against a single `SKILL` target, so moving the note would have obliged that generator to learn a second target file — machinery this card does not own. Only the spend guards (Steps 1b and 1c), the authoring steps (2 to 5) and the spec-naming convention went to the reference file.
+
+**Rationale.** A guard deleted with the section it guarded removes the protection along with the location, and each of these encodes a real contract — that the driving session owns settlement, that each fenced block is fresh-shell self-contained, that both §3.2 purposes stay named and the fork stays framed on governance. A summary in the skill would have been a second source of a contract whose first source is one file away, which is how the two drift.
+
+**Alternatives rejected.** Moving the generated regions too and teaching `plan_save_contract.py` a second target document — rejected: a generator contract this card does not own, with three tests and a proof script keyed to its single-target shape. Deleting the guards as belonging to removed prose — rejected as above.
+
+**How the second and third relocation misses were found.** Neither `tests/test_operator_choice_drift.py` nor `tests/test_saga_spec_consumer_row.py` was in the targeted test set; both surfaced only in the full suite, the first because the §3.2 purposes travelled with the offer and the second because a generated region's renderer could not follow it. The rule that falls out: after moving a section that contains a generated region or a marker pair, run the full suite before believing the move is finished — a targeted run over the files you edited cannot see a guard that names the file you edited *from somewhere else*.
+
+### The lifecycle repository's roster generator is invoked, never reimplemented and never vendored  {#1001-invoke-the-generator}
+
+**Decision.** `plugins/saga/scripts/review_roster.py` runs `python3 <sdlc-checkout>/tools/docs/gen_review_roster.py --declaration <file>` as a subprocess and carries the document it prints through unchanged. This plugin holds no copy of that generator and reimplements no part of the resolution.
+
+**Rationale.** Architecture decision record ADR-001 makes the plugin a policy-free executor: the lifecycle repository owns what a lens means, which lenses exist, what strictness applies and what threshold must be met. A second implementation of the resolution would be a second policy owner whatever its author intended, and the two would drift the first time either repository changed.
+
+It is possible because the generator is self-contained: it imports only `argparse`, `hashlib`, `json`, `pathlib`, `sys` and `typing`, and resolves the catalogue, the quality profile and the ledger relative to its own location. This was proved before it was planned — run from an export of revision `5efc869f` with a hand-built declaration, it produced a `review_roster.v1` and its validation report with no dependency install and no working-directory requirement. Issue #1001 carried a stop condition on exactly this question, and the condition does not fire.
+
+**Rejected alternatives.** *Vendor the generator.* It buys nothing — no dependency to carry — and guarantees two copies to keep in step. *Keep a fallback roster for when the checkout is absent.* A fallback policy is still a policy; the absence is a named refusal instead, and the review writes `review_incomplete`.
+
+**Revisit when.** The generator gains a third-party dependency, or the lifecycle repository publishes the roster as a build artifact a consumer can fetch rather than compute.
+
+### A run has one review-cycle counter per repair loop, not one per run  {#1001-one-counter-per-loop}
+
+**Decision.** Every `review_result.v2` entry carries a `loop` field valued `code_review` or `post_merge`, and the repair allowance is checked by counting entries whose loop matches — never by the length of the run record's `review_cycles` array.
+
+**Rationale.** The lifecycle repository's rule is that a run has two repair loops, the pre-merge code-review loop and the post-merge loop that functional testing drives, and **each keeps its own allowance and its own counter** under the same three-standard-then-two-escalated rules. Without the field, a long testing phase would silently spend the pre-merge budget, and the cycle number printed in a result would stop matching the ledger it is read against.
+
+**Rejected alternatives.** *One counter per run.* Simpler, and wrong in the one case that matters: a run that needed several post-merge repairs would arrive at its next pre-merge review already capped. *A separate array per loop.* Two arrays where the reader expects one history, and every consumer would have to know to merge them.
+
+**Revisit when.** A third repair loop is introduced, at which point the field is already the extension point.
+
+### A review publishes one comment and never an approving review  {#1001-comment-never-approval}
+
+**Decision.** `review_result.publish` issues exactly one `gh pr comment` naming the reviewed revision as a full forty-character commit identifier. It never submits a pull-request review in any form, commits nothing, and pushes nothing.
+
+**Rationale.** Two failures, both reported as cards under this parent. An approving review attaches an outcome to the pull request that a **later commit inherits** without ever being read — child #937's finding, and the reason a reviewed revision must be bound in the artifact rather than implied by the branch. And a publication step that commits and pushes its own artifact **advances `HEAD`**, which invalidates the freshness check of whatever called the review — child #935's finding.
+
+An abbreviated identifier or a symbolic reference such as `HEAD` is refused at construction, because both stop meaning anything once the branch moves.
+
+**Rejected alternatives.** *An approving review on success only.* The asymmetry does not help: the carry-over problem is about what a later commit inherits, and a pass is exactly the outcome that is dangerous to inherit. *Publish the artifact as a committed document.* That is the arrangement child #935 reports; the evidence lands in the run record's `review_cycles` instead, where every later step of the run already reads.
+
+**Revisit when.** The forge offers a review object that is explicitly bound to a revision and does not transfer.
+
+### The roster helper creates panes through the launcher, never through raw herdr calls  {#1024-roster-creates-through-the-launcher}
+
+**Decision.** `roster.py up` shells out to `launcher.py launch` for every pane it creates, and `roster.py down` closes through `launcher.py close --receipt-json`. It issues no `herdr tab create`, no `herdr agent start`, and no `herdr pane close` of its own.
+
+**Rationale.** The dangerous half of this helper is teardown, and the only thing standing between "close the session I made" and "close the operator's session" is a proof of ownership. That proof already exists in exactly one place: the launcher computes `owned` from a tab-list snapshot taken immediately before the launch, and its `close` path refuses a receipt that does not carry it. The launcher also owns the single door into a pane (`PaneWriter`) and the staged-input stop, which is a rule this repository decided belongs in one implementation (`{#907-pane-writer-owns-the-write-rule}`). Creating panes directly would have been about thirty lines shorter and would have obliged this file to re-derive ownership — a second, weaker copy of the guard, in the file whose whole purpose is to hold that guard.
+
+**Alternatives rejected.** Direct `herdr tab create` plus `herdr agent start`, rejected for the reason above. `agent-herdr crew`, which creates a whole workspace in one call and is named as an option in the card, rejected because a crew returns no per-pane ownership receipt, and one receipt per pane is what teardown is built on; it is recorded as deferred follow-up work in the plan rather than as a non-goal.
+
+**Revisit when.** herdr publishes a creation call that returns a durable ownership token of its own, or the launcher's receipt stops carrying `owned`.
+
+### The bounded wait is `herdr agent wait`, and the socket event stream stays in orchestrate  {#1024-wait-is-a-command}
+
+**Decision.** `roster.py wait` runs `herdr agent wait <target> --timeout <ms>` once per recorded pane, with no `--until` flag. It does not open a socket subscription.
+
+**Rationale.** Card #891 asked for a bounded wait on herdr's own agent state rather than a hand-rolled polling sentinel, and the command path satisfies that: herdr blocks server-side and answers when the agent settles. Omitting `--until` is deliberate — herdr's default match set is idle, done, or blocked, which is exactly the settled-state set wanted, and naming `--until idle` would make a blocked role look like a hang instead of a report. `--timeout` is never omitted, because herdr without one waits forever. A socket-level `events.subscribe` client already exists at `plugins/orchestrate/skills/orchestrate/scripts/herdr_events.py:83`; a second copy in agent-launcher would be the duplicate implementation this repository keeps paying for, and it would need either a live socket or a socket fake in the tests, where the command path needs only the injected runner.
+
+**Alternatives rejected.** A subscription in `roster.py`, rejected as above. Importing orchestrate's module across plugins, rejected because neither plugin is importable as a package and a cross-plugin import would make agent-launcher's floor depend on orchestrate's.
+
+**Revisit when.** A roster grows large enough that one blocking wait per pane, in sequence, is slower than the work it is waiting on — at which point the multi-pane subscription orchestrate already has is the thing to reach for.
+
+### A role session is briefed by a path to its prompt, not by the prompt pasted into its composer  {#1024-dispatch-brief-by-path}
+
+**Decision.** The text `roster.py` sends a new session is a four-line dispatch brief: who the session is, the absolute path of its role prompt, the absolute path of the run record, and the instruction to read the prompt first. The role prompt itself is never sent.
+
+**Rationale.** The Lens Reviewer prompt is 15 KB, and a composer write is the riskiest thing this helper does — the launcher's whole staged-input machinery exists because writes into a terminal composer go wrong in ways that concatenate onto whatever a person left there. Every agent kind the launcher can start reads files. The roles library is on disk at a path resolved from `__file__`, so it is reachable whatever working directory the session starts in. The file is the whole briefing either way; only its transport changes.
+
+**Alternatives rejected.** Inlining the prompt, rejected for the write-size reason; it would also have satisfied the card's dry-run acceptance criterion, which is why the decision is recorded rather than left implicit. Sending a short summary written by the helper, rejected because it would be a second copy of the role's contract that can drift from the library.
+
+**Revisit when.** A vendor the staffing plan can name cannot read a local file.
+
+### The roster helper's exit codes extend the run record's table and add two  {#1024-exit-codes-extend-run-record}
+
+**Decision.** `roster.py` uses 0 success, 1 internal error, 2 refusal, and 3 unknown record version — the four `run_record.py` already publishes — and adds 4 for "not running inside a herdr pane" and 5 for "a role is blocked, or its wait timed out".
+
+**Rationale.** The helper's first act is to read a run record, so a record it cannot read should exit with the same code whichever script read it; a caller scripting around both would otherwise have to keep two tables. The two additions are the conditions a caller must be able to tell apart from an ordinary refusal: running outside a herdr pane is the precondition the whole design rests on, and a blocked role is a result to act on rather than an error to retry. Folding either into 2 would have made the most important precondition indistinguishable from a bad command line.
+
+**Alternatives rejected.** A private table starting from 1, rejected because the record-reading codes would then disagree with saga's for the same condition. Reusing 2 for the outside-a-pane refusal, rejected as above.
+
+**Revisit when.** The run record module changes its own table.
+
+### The run record's version field is `schema`, holding a family token, not a bare version number  {#1023-schema-field-convention}
+
+**Decision.** The run record carries its version in a top-level `schema` field whose value is `run_record.v1`. Reading a record with any other value prints one line to standard error and exits 3.
+
+**Rationale.** This repository's machine-readable artifacts already use exactly that shape: `plan_pre_answers.v1` in saga, `roles_index.v1` and `lifecycle_snapshot.v1` in agent-launcher, `run_fact.v1` in the run-fact ledger, and `review_result.v2` in the simplification review. The family token says *which* artifact a file is as well as which version, so a reader handed a stray JSON file can tell what it is — a bare `"version": "1.0"` cannot. Every later child of #1018 reads this record, so the convention is worth being consistent about rather than novel.
+
+**Alternatives rejected.** `schema_version: "1.0"`, the shape `saga.py` itself uses — rejected because it names no family, and because the newer artifacts in this repository have already moved. A `contract` string, the shape the orchestrate run file uses — rejected for the same reason, and because #975 and #989 are both defects in that file's handling of it.
+
+**Revisit when.** A second version exists. `run_record.v2` is the point at which the refusal has to become a migration, and the refusal text already names the version it writes so the upgrade path is legible from the error.
+
+**Refs.** Issue #1023; plan KTD2; issues #975 (finding F124) and #989 (finding F138); `plugins/saga/references/run-record.md`.
+
+### The run record is written with an atomic replace and takes no lock  {#1023-no-lock-atomic-write}
+
+**Decision.** A write to the run record goes to a sibling temporary file and is moved into place with `os.replace`. There is no lock, no lease, no reservation, and no receipt. A reader that needs to know it holds the newest copy re-reads and compares `updated_at`.
+
+**Rationale.** The parent issue #1018 lists "no new lease, reservation, receipt, or ledger mechanism, whatever a child finds" among its non-goals, and its stop conditions say to stop and report if a child would need a lock to pass its own tests. This one does not: one coordinator owns one run record and the roles it dispatches report back to it, so simultaneous writers are not the normal case, and `os.replace` is atomic on every platform this runs on — a concurrent reader sees either the old file or the new one, never a half-written one. The machinery this record replaces is roughly 4,565 lines of hash-chained, lock-bearing ledgers; reintroducing a lock in the file that replaces them would defeat the exercise.
+
+**Alternatives rejected.** An advisory `flock`, as `run_ledger.py` uses — rejected as the forbidden mechanism, and unnecessary given single ownership. Append-only ticks with derived state, as the saga envelope log does — rejected because the record's value is that it is *one file a reader can read*, and the envelope log already keeps the history.
+
+**Revisit when.** A run legitimately has two concurrent writers — the first candidate is issue #1024's roster helper writing pane identifiers while the coordinator writes `next_step`. The cheap repair is a read-modify-write on a narrow field rather than a lock; the expensive one is a lock, and it needs the operator, because it crosses the parent's non-goal.
+
+**Refs.** Issue #1023; plan KTD4b; parent issue #1018's non-goals and stop conditions.
+
+### The run record wins over the saga envelope for `next_step`  {#1023-record-wins-for-next-step}
+
+**Decision.** Both the run record and saga's envelope log carry a field called `next_step`. The record is authoritative. `saga.authoritative_next_step()` prefers the record and falls back to the envelope only when there is no record; `saga.mirror_next_step_to_record()` is the single write in the other direction, from a tick that sets a step onto the record.
+
+**Rationale.** The two artifacts have different natures. The envelope log is append-only history, and its older ticks are *meant* to hold values that are now stale — that is what makes it a history. The record is one mutable file that every role reads. Reconciling from the envelope onto the record would let a stale tick move a live run backwards, which is the one failure mode this pair can produce and the reason the direction has to be written down rather than left to whichever call site runs last.
+
+**Alternatives rejected.** Newest-timestamp-wins — rejected because the envelope's newest tick and the record's `updated_at` come from different writers at different moments, so "newest" is not a fact about which is correct. Removing `next_step` from the envelope — rejected as out of scope here; the envelope is deleted or reshaped by later children, and this card is additive by design.
+
+**Revisit when.** The removals card (#1030) reshapes the envelope. If `next_step` leaves the envelope entirely, the fallback becomes dead code and the rule becomes trivially true.
+
+**Refs.** Issue #1023; plan KTD8a; `tests/test_run_record.py::test_the_record_is_authoritative_over_a_stale_saga_envelope_next_step`.
+
+### The per-repository profile is a tracked file at the repository root, not under the git-ignored `.saga/`  {#1023-profile-at-repo-root}
+
+**Decision.** The admission step reads its per-repository defaults from `.saga-profile.json` at the repository root, tracked in git.
+
+**Rationale.** The obvious home was `.saga/repository-profile.json`, beside the existing tier overlay that `scripts/tier_defaults.py` reads. `.gitignore:70` excludes `.saga/` in this repository, so a fresh clone or a fresh worktree would see no profile, and admission would ask questions whose answers were settled long ago. That is the same class of failure the run record itself exists to fix, and reintroducing it in the file whose entire job is to stop questions being re-asked would be perverse. A missing profile is not an error — every parameter it would have filled stays unset and joins the question set — so the cost of the decision being wrong is bounded.
+
+**Alternatives rejected.** `.saga/repository-profile.json` — rejected for the reason above. A profile inside the saga plugin — rejected because it is per-repository data and the plugin is shared across repositories. Two files with a precedence ladder, tracked plus local override — rejected as unearned complexity until someone wants a local override.
+
+**Revisit when.** Someone needs a machine-local override of a repository-wide default. The tracked file stays; a `.saga/` overlay reading over it is the addition, and it is additive.
+
+**Refs.** Issue #1023; plan KTD5; `plugins/saga/references/repository-profile.md`.
+
+### The roles library ships fourteen prompts, not the card's thirteen  {#1022-fourteen-roles}
+
+**Decision.** `plugins/agent-launcher/roles/` holds one prompt for each of the fourteen lifecycle roles that can be staffed as an agent session — the catalogue's fifteen minus the Human Operator, who is a person. Issue #1022 enumerates thirteen; the one it omits is the Initial Implementation Worker, role identifier `implementer`.
+
+**Rationale.** The card's non-goal forbids inventing a role the lifecycle does not name, and the lifecycle names this one at `docs/roles/run-roles.md:185`. The card's acceptance criterion is a floor — "at least 14" files — not a cap. Shipping thirteen would leave the build loop as the one step still needing a hand-written prompt, which is the problem the library exists to remove: the roster helper stands up one session per role, and the build loop's worker is a role.
+
+**Alternatives rejected.** Thirteen prompts, literal to the card's list — accurate to the letter and useless to the roster helper. A fourteenth prompt for the Human Operator — a person receives a briefing, not a prompt file, and the lifecycle's own text treats the operator as the authority the run escalates to.
+
+**Revisit when.** The operator says the enumeration was deliberate. The reversal is one file and one row in the README's map.
+
+**Refs.** Issue #1022; plan KTD1; `docs/reviews/doc-review-issue-1022-2026-09-19.md`.
+
+### One Lens Reviewer prompt with per-lens sections, not one file per lens  {#1022-one-lens-file}
+
+**Decision.** `roles/lens-reviewer.md` is a single file: a shared reviewer half stating the role's read-only boundary, then fifteen sections keyed `#### <lens-id>` to the lifecycle's lens catalogue. A consumer sends the shared half plus the one section for the lens it is staffing.
+
+**Rationale.** The rewritten code-review work already names `plugins/agent-launcher/roles/lens-reviewer.md`, singular, as the artifact it consumes. The shared half — score one lens, read dimensions and anchors from the catalogue, report evidence and never decide acceptance — is identical for every lens, and fifteen copies of it is fifteen chances to drift.
+
+**Alternatives rejected.** One file per lens, which would break the named consumer and duplicate the shared half. Putting the dimensions and anchors into the prompt, which would make this repository a second source of policy the architecture decision record ADR-001 in `infiquetra-sdlc` reserves to the lifecycle.
+
+**Revisit when.** A lens needs a reviewer boundary genuinely different from the shared one, rather than different subject matter.
+
+**Refs.** Issue #1022; plan KTD3; `config/lens-catalogue.json` in `infiquetra-sdlc`, read at `67845cdd` and re-pinned to `5efc869f` when the lifecycle advanced mid-run.
+
+### The lifecycle's roles and contracts are vendored and pinned, not read live  {#1022-vendored-lifecycle-snapshot}
+
+**Decision.** `plugins/agent-launcher/roles/lifecycle-snapshot.json` holds the lifecycle's roles, contracts and lenses at the pinned revision, generated from the sibling repository and never hand-edited. Every check of a prompt against the lifecycle reads that file. A separate test compares the snapshot to a live checkout and fails on any difference; it skips where no checkout is reachable.
+
+**Rationale.** The checks have to assert the same things in every environment. Requiring a live checkout made the suite green on a developer machine and red on every continuous-integration runner, because no workflow provides one — and in the cases that degraded to skips it made the runner, the environment that gates the merge, the one verifying least. Vendoring inverts that: the assertions are identical everywhere, and the one environment-dependent check is the parity comparison, whose skip costs nothing because the snapshot is fixed, reviewed data. It also matches what this repository already does with lifecycle-generated data behind the issue-contract vendored parity gate.
+
+**Alternatives rejected.** *Reading the sibling checkout live and requiring it* — the shape that produced the defect; it cannot pass on a runner, and the natural repair when it fails is to weaken the check. *Checking the sibling repository out in the workflow* — possible, but it puts a cross-repository clone and its credentials on the critical path of every pull request to buy a comparison the parity check already makes wherever it matters. *Accepting pinned mode silently* — the original hazard: the prompts would then be compared to a copy in the same repository with nothing saying so.
+
+**Revisit when.** The lifecycle publishes its roles and contracts as a released artifact this repository can depend on by version, at which point the vendored copy becomes a dependency rather than a snapshot.
+
+**Refs.** Issue #1022; `LEARNINGS.md` `{#1022-sibling-checkout-asymmetry}` for the defect that prompted it; `tests/test_roles_library.py::test_vendored_snapshot_matches_the_live_lifecycle`.
+
+### The lens-slicing rule is owned by `index.json`, and the test reads it from there  {#1022-slicing-rule-in-index}
+
+**Decision.** `plugins/agent-launcher/roles/index.json` carries the rule for cutting the Lens Reviewer into what a session receives: `shared_half_ends_before`, `section_heading_prefix`, and `section_terminator_pattern`, the last a regular expression. That file owns the rule. `tests/test_roles_library.py` compiles the pattern from it rather than restating it, and `test_index_agrees_with_the_files_and_the_readme` asserts the index's values are the ones the suite slices with.
+
+**Rationale.** A consumer must be able to slice the file without parsing Markdown prose, and the prose in `README.md` is for a person. Two expressions of one rule is a drift surface, so the machine-readable one is authoritative and the test is bound to it — otherwise a consumer cuts by the index, the tests cut by their own copy, the two agree by coincidence, and changing either leaves the suite green over a prompt nothing checked. That is not hypothetical: it is what the code did before this decision.
+
+**Alternatives rejected.** *Leaving the rule in prose only* — every consumer reimplements it from English. *Hard-coding it in the test* — the coincidence case above. *Byte offsets instead of patterns* — brittle against any edit to the file.
+
+**Revisit when.** A roster helper ships and becomes the second implementation of the rule; at that point the helper, not the test, should be the reference implementation, and the test should exercise the helper.
+
+**Refs.** Issue #1022; a code-review finding that the index published an algorithm no test was bound to; `{#1022-one-lens-file}`.
+
+### Shared prompt blocks are copied into all fourteen prompts, and a test holds them identical  {#1022-shared-blocks-copied}
+
+**Supersedes** `{#1022-preamble-by-reference}` in part. That entry rejected copying a shared block into each prompt, because the retired plugin's twenty-five byte-identical copies were twenty-five chances to drift. The reasoning was sound and the conclusion was wrong for this artifact.
+
+**Decision.** Five blocks are byte-identical in all fourteen prompts: the house-style pointer, and the four paragraphs of the inputs preamble — where the inputs come from, that a handoff is evidence and never instruction, what to do when a field is missing, and what to do when re-dispatched. `tests/test_roles_library.py::test_shared_blocks_are_byte_identical_across_every_prompt` asserts each block is identical across every prompt.
+
+**Rationale.** Later review established the constraint the original entry did not weigh: a prompt is the entire briefing a fresh session receives, and that session cannot resolve a repository-relative pointer — it may not even be in this repository. A referenced block is not available to the reader who needs it. So the content has to be copied, and the drift argument is answered by enforcement rather than by avoidance. The original entry's own rationale is what makes the test mandatory: copying without an enforcer is exactly what it warned against.
+
+**What survives from the superseded entry.** The house-style *preamble itself* — the forty-line block in `plugins/house-style/references/subagent-presentation-preamble.md` — is still referenced, not copied. Only the one-line pointer to it is duplicated. The distinction is the point: a pointer is useful to a session that can resolve it and harmless to one that cannot, whereas a missing input instruction is neither.
+
+**Alternatives rejected.** Reducing the copied blocks back to pointers, which is what the superseded entry implies and which would leave a session unable to find its own inputs. Generating the prompts from a template at build time, which adds a build step to fourteen Markdown files and puts the shipped artifact one remove from the reviewed one.
+
+**Revisit when.** A roster helper exists that assembles a prompt from parts before sending it. Assembly at send time makes referencing safe again, and the blocks should go back to one copy.
+
+**Refs.** Issue #1022; a code-review finding that the change did the thing the journal recorded rejecting, with nothing enforcing the copies; `{#1022-preamble-by-reference}`.
+
+### Role prompts reference the shared presentation preamble instead of copying it  {#1022-preamble-by-reference}
+
+**Superseded in part by `{#1022-shared-blocks-copied}`.** The pointer to the house-style preamble is still a reference; the inputs-preamble blocks are copied deliberately and held identical by a test.
+
+**Decision.** Each role prompt carries a one-line pointer to `plugins/house-style/references/subagent-presentation-preamble.md` rather than an inline copy of that text.
+
+**Rationale.** The 25 `team-execution` agent prompts this library replaces each opened with a byte-identical forty-line copy of the same block — 25 copies to keep in step, which is a substantial share of the 2,570 lines the migration is subtracting. The repository already keeps one canonical copy.
+
+**Alternatives rejected.** Copying the block into each prompt, which is self-contained at the cost of recreating the drift being removed. Generating the prompts from a template at build time, which adds a build step to a directory of fourteen Markdown files.
+
+**Revisit when.** A roster helper ships that cannot resolve a repository-relative path when it sends a prompt, in which case the pointer has to become an inlined block at send time — in the helper, not in these files.
+
+**Refs.** Issue #1022; plan KTD6.
+
+### Role prompts carry no model or effort field  {#1022-no-tier-in-prompts}
+
+**Decision.** The frontmatter of a role prompt is exactly `role`, `role_id`, `emits` and `source`. No `model:` and no `effort:`.
+
+**Rationale.** Choosing a role's vendor, model and effort belongs to the staffing component, and a tier written here would be a second place to change it. It also keeps these files outside the repository's agent-definition lints, which glob `plugins/*/agents/*.md` and apply an Agent-tool contract these prompts are not — they are text sent to a terminal session, not Claude Code agent definitions.
+
+**Alternatives rejected.** A default tier per role in frontmatter, overridable by the staffing component — two sources for one decision, and the file's default would be the one nobody updates.
+
+**Revisit when.** The staffing component needs a per-role hint it cannot derive, and there is no better home for it.
+
+**Refs.** Issue #1022; plan KTD7; `tests/test_roles_library.py::test_prompt_declares_no_tier`.
+
+### The roles library lives in agent-launcher by co-location, and the placement is provisional  {#1022-roles-placement}
+
+**Decision.** `roles/` ships inside the `agent-launcher` plugin, whose manifest describes creating one verified coding-agent session. The plugin's README names the directory and states plainly that nothing in the plugin spawns or orders those roles today.
+
+**Rationale.** The library is content whose only consumers are elsewhere — the roster helper and the code review. `agent-launcher` is the plugin that already speaks to the session layer these prompts are sent through, so it is the least-wrong existing home, and a plugin of its own for fifteen Markdown files would be ceremony. The operator settled the location when the card was written.
+
+**Alternatives rejected.** A plugin of its own — correct by cohesion, disproportionate for content with no code. Putting it in the lifecycle plugin that consumes it — that plugin is being cut down in the same programme, and the library has more than one consumer.
+
+**Revisit when.** A second consumer appears that does not go through the session layer, or the plugin's manifest description has to stretch further than one sentence to cover both jobs. Either is the signal to move it.
+
+**Refs.** Issue #1022; a code-review finding that this was the one load-bearing placement choice with no journal entry.
+
+### One staffing component in fleet-core: one data file, one resolver, the loaders repointed  {#1021-staffing-component}
+
+**Decision.** `staffing.json` becomes the single authoring source for the model palette, the effort vocabulary, the work-shape tier policy, the per-vendor palette, the capability ratings and trust tiers, and the per-role staffing defaults; `models.json` and `tier_policy.json` are deleted. `staffing.py` is the one resolver and composes `tier_palette` and `tier_resolver` rather than replacing them, so their public Python surface is frozen and the 61 files that reference the tier vocabulary do not move. The authoritative vendor kind list is agent-launcher's code-level `VENDOR_FLAGS` (seven vendors); `hermes` is excluded because it reconciles a profile workspace and owns its own routing, and a test pins that exclusion. The per-vendor effort-collapse table and model translation move from Python literals into the data file. Capability ratings are copied from `engine-registry.yaml` with a parity test holding them together until issue #1030 deletes the YAML. The executor-verification ledger is read from the sibling `infiquetra-sdlc` checkout through the `INFIQUETRA_SDLC_PATH` ladder, and an absent, unreadable, or empty ledger yields the lens catalogue's documented-policy outcome rather than an error. Roles map to rated capabilities: planner and plan-reviewer to long-form-writing, worker, release-worker and merging-worker to code-generation, lens-reviewer to adversarial-review, functional-tester to debug. `opencode` gets a palette row carrying `runtime_supported: false`, because `tier_resolver` knows six runtimes and nobody has verified opencode's launch-time model and effort arguments; `SUPPORTED_RUNTIMES` derives from the rows whose flag is true, so launch behavior is unchanged. Deleting `effort-convention.md` is a runtime change, not a documentation change: `plan_save_contract.py` holds its path in a constant and checks the file exists, so the constant is repointed at `staffing.md` in the same commit as the deletion.
+
+**Rationale.** Two production modules holding three path constants, and four test modules, read the two data files by path, so one data file costs an enumerable set of edits rather than a 61-file refactor. The ledger is empty on purpose today, so raising on an unqualified lens would fail every lens resolution on day one. Leaving vendor vocabulary in Python is the second source the single-source guard exists to prevent.
+
+**Alternatives rejected.** Keeping three data files (fails the card's central requirement). Folding `tier_resolver.py` into `staffing.py` (moves runtime argv adaptation and execution classes in the same change, and their consumers are #1030's scope). Vendoring a copy of the qualification ledger (a stale copy would grant qualification never run). Fetching the ledger over the network per resolution (a network call on a path every spawn reads). Deleting `engine-registry.yaml` here (thirteen scripts under `plugins/saga/scripts/` read it and twenty-two files across the plugin name it; they are #1030's scope). Inventing a `testing` capability and rating engines against it (fabricates evidence).
+
+**Revisit when.** Issue #1030 removes `/tier`, `/engines`, and `engine-registry.yaml`; issue #1022 lands the roles library and becomes the role vocabulary's authority; or `hermes` gains a model and effort and enters `VENDOR_FLAGS`.
+
+**Refs.** Issue #1021; plan `docs/plans/2026-09-19-issue-1021-staffing-component-plan.md` KTD1 through KTD11; `docs/analysis/2026-09-19-saga-simplification-review.md` section 6G recommendation R29.
+
+### The board census keys `fields` by field name; a duplicate name raises rather than overwriting  {#1020-census-keyed-by-field-name}
+
+**Decision.** `plugins/mission-control/config/board-schema.json` records each board's `fields` as a
+mapping from field name to field record, not as a sorted list of records. A duplicate field name
+raises `ValueError` rather than letting one field overwrite another.
+
+**Rationale.** The census exists to be read. A list forces every consumer to scan, and issue
+#1020's acceptance criteria — written as executable `jq` commands — index it as a mapping
+(`.boards.operations.fields.Status.options[].name`, `.boards.campps.fields | keys[]`). The
+automatic board moves planned in issue #1028 read this file too. Diff stability, the property the
+sorted list was chosen for, is preserved: keys are emitted in sorted order and `cmd_write` already
+serializes with `sort_keys=True`.
+
+**The blast radius was larger than the first search said, and the way it was missed is the lesson.**
+Planning searched the repository for the strings `board-schema` and `board_schema` and concluded the
+only consumers were `board_census.py` and its own test. That search finds files that name the
+*artifact*. It does not find `plugins/mission-control/config/generated/check_issue_contract_parity.py`,
+which imports `board_census.fetch_project_fields_census` and consumed its result positionally at
+line 158 (`next((f for f in census["fields"] if f["name"] == "Status"), None)`) — under a mapping that
+iterates field-name strings and raises `TypeError`. It was caught during code review by searching for
+callers of the *producing function* instead, and fixed along with three fixtures in
+`tests/test_issue_contract_parity.py`. The full consumer set is four files, and the fix is confirmed
+against real boards: `check_issue_contract_parity.py --live` passes.
+
+**Generalizable rule (also in LEARNINGS).** When changing the shape of a produced value, search for
+callers of the producer, not for mentions of the artifact's name. A consumer that calls the function
+and never names the file is invisible to the obvious search, and reads as a clean blast radius.
+
+**Rejected: keep the list and treat the card's `jq` checks as approximate.** They are executable
+criteria the operator wrote. Narrowing an acceptance check so the existing code passes it is
+weakening the card, and a mapping is also the shape a consumer actually wants.
+
+**Rejected: let a duplicate name overwrite silently.** A mapping keyed by name can lose a field
+that a list cannot. GitHub project field names are unique in practice — counted across all three
+live boards during this work: 16 fields each, no duplicate — so the raise is unreachable today,
+which is precisely why it must be loud if it ever becomes reachable. The raise sits after
+`paginate_or_raise` has run, so a runaway-pagination fixture whose repeated pages carry one field
+name still reports the pagination fault it was written to catch, not a duplicate-name error.
+
+**Revisit when:** a board legitimately grows two fields with one name (GitHub does not allow this
+today), or a consumer needs the fields in live board order rather than by name — at which point the
+record should carry an explicit order key rather than reverting to positional meaning.
+
+**Refs.** Issue #1020 units 1 and 2; `plugins/mission-control/scripts/board_census.py`;
+LEARNINGS [[#1020-skip-on-no-credential-reports-green]] (the companion guard),
+[[#board-census-shape-only-live-skip-424]] (the census's original shape-only scope).
+
+---
+
+### Retired policy in a reference document is deleted, never restated in the new vocabulary  {#1020-delete-retired-policy-dont-restate}
+
+**Decision.** When a board reference documents a policy the schema has withdrawn, remove the
+section. Do not translate it into the current vocabulary. Applied to the work-in-progress **limit**
+tables in `skills/board/references/kanban-workflow.md`, and to the instructions in
+`skills/metrics/SKILL.md` and `skills/metrics/references/metrics-targets.md` that told an agent to
+enforce those limits.
+
+**The distinction that matters: limits were deleted, age thresholds were corrected.** A
+work-in-progress *limit* is a cap on card count, and no code computes one — the schema deleted the
+block and retired the script, so the prose describing it had nothing behind it and was removed.
+A work-in-progress *age* threshold is a real, code-backed measure: `_active_age_thresholds`
+(`scripts/sdlc_manager.py:477-489`) returns three days for every non-terminal Status on every board.
+Those tables stayed, but they had been describing a per-board split with a five-day CAMPPS threshold
+keyed on the retired Status `In Progress`, none of which the function computes. They were rewritten
+to one row. Deleting them would have discarded a measure that exists; restating the limits would
+have reinstated one that does not. The test is whether code computes the thing, not whether the
+prose looks stale.
+
+**Rationale.** `sdlc-schema.json`'s migration decision E6 removed the `wip_limits` block outright
+and retired `check-wip-limits.py`; `sdlc_manager.py:1227-1228` and `:1409` already report that no
+limits exist. Rewriting the tables with stage-flow column names would have reinstated, in prose
+that agents read as instruction, a policy the source of truth deleted — and prose is the surface
+an agent obeys, so a stale instruction there is worse than a stale cache.
+
+**Rejected: map the old per-column numbers onto the nearest new stages.** It reads like
+housekeeping and silently re-enacts the withdrawn policy under new names, with no decision record
+anywhere authorizing the numbers.
+
+**Rejected: leave the tables and note they are historical.** The same document already carried a
+sentence admitting its workflow section was stale and deferring the fix; that sentence survived two
+board migrations. A deferral note in a reference document is not a fix, it is a fix that never
+happens.
+
+**Revisit when:** a work-in-progress limit is deliberately reintroduced, at which point it belongs
+in `sdlc-schema.json` first and in the reference only as a transcription of it.
+
+**Refs.** Issue #1020 unit 4; `sdlc-schema.json` migration note `2026-09-07.1` decision E6;
+`sdlc_manager.py:1227-1228`, `:1409`.
+
 ## 2026-09-19
 
 ### Saga owns its shaping question sets; fleet-core owns the client  {#shaping-judgments-live-in-saga-1037}
@@ -1009,6 +1989,9 @@ the first owned tab. Clearing identity to make the retry possible was the other 
 
 **Rejected.** A new run-file field; a `requeue` subcommand; a second create under any `go`
 branch.
+
+**Superseded in part** by `{#1025-staged-stop-does-not-auto-redeliver}`: the automatic retry is
+gone, the hand repair through `redeliver` stands.
 
 ### Treat unproven composer continuation geometry as inconclusive  {#907-composer-structural-continuations}
 

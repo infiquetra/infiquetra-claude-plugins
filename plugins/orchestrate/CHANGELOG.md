@@ -1,5 +1,144 @@
 # Changelog
 
+## [6.0.0] - 2026-09-20
+
+**Bumped from 5.0.0**, the orchestrate version on `origin/parent/1018` at commit `25619cd1`.
+
+**A major, not a minor.** This card first took 5.1.0 and that was wrong by the plugin's own
+precedent: 5.0.0 was a major bump *because* it removed the `redrive`, `collect` and `land`
+subcommands, under a heading that reads "Changed -- BREAKING". Removing `announce` from the command
+surface is the same class of change, and retiring `merge`'s exit status 2 changes the answer a
+caller already reads.
+
+### Removed -- BREAKING
+
+- The board-writeback path (issue #1028): about 850 lines covering the schema-vocabulary resolver,
+  the rung mapping, the reconcile-controller shell-out, the announcement bodies, the writeback
+  failure reporting, and the `announce` subcommand. Saga submits each of the run's lifecycle
+  boundaries itself now, through mission-control's constrained lifecycle-field mutation, so this
+  driver has no board write to make. `tests/test_orchestrate_board_writeback.py` (1,278 lines) and
+  `tests/test_orchestrate_status_map_contract.py` are deleted with the behaviour they pinned.
+- `merge`'s exit status **2** ("merges landed but a board card was not updated"). No state produces
+  it any more; giving a retired code a new meaning would silently change what an existing caller
+  reads, so it is retired rather than reused.
+
+### Kept
+
+- The plugin-resolution helpers that lived inside the removed block — the version regex, the
+  version ranking, the install-root patterns and the candidate lister — because the run-record
+  lookup still uses them.
+- `fetch_default_branch` and `main_regression_files`, deliberately, rather than importing
+  fleet-core's shared `merge_guard`. This file documents at its resolver why it must not take a
+  resolution dependency on another plugin for something it needs when that plugin is absent, and a
+  safety guard is exactly that. `tests/test_merge_guard.py` drives both implementations through one
+  case table so the two cannot drift apart.
+- The `status_map` run-file field, loaded and saved unchanged so a run file written before this
+  release still round-trips.
+
+## [5.0.0] - 2026-09-19
+
+Orchestrate slims to the run driver: it keeps the worktree, launch, wait, merge and clean half,
+and loses the protective layer built around it (issue #1025).
+
+### Removed
+
+- **`redrive`.** Recovery is a relaunch from the unit's branch, into a fresh worktree. The
+  `prompt_undelivered` state and its one-door-out state machine go with it. A launch that stops on
+  staged input keeps its recorded tab and is reported; clear the composer and use
+  `launcher.py redeliver` by hand, never a second launch.
+- **`collect`.** It merged a run branch into whatever the operator had checked out, with no
+  currency check, so on a per-unit-pull-request run it could silently revert work on `main`
+  (issue #875). The concern survives as a rule of the merge turn instead -- see below.
+- **`land`.** Replaced by `merge`, which takes one merge turn at a time onto the run's parent
+  branch. What went with the name is the bookkeeping around the merge, not the merge: the retained
+  conflict pointer that outlived an invocation, the numbered landing-path fallback and its
+  preserved-path reporting, and the retained-merge recovery that inspected an earlier run's
+  worktree and decided whether to publish it.
+- **The fixed-path run file** `.orchestrate/run.json`, its contract key, its `info/exclude` rule,
+  and the task-spill mechanism that existed because that file was rewritten whole on every save.
+- **The receipt and writeback records**: `record_writeback_outcome`, the persisted
+  `writeback_failed` map, the outstanding-writeback report, and the persisted launch receipt. A
+  failed board write is reported with its reason and its exit code, and re-running `announce` is
+  the retry.
+
+### Changed -- BREAKING
+
+- **State moves to saga's per-issue run record** (`run_record.v1`, under the primary checkout's
+  `.claude/saga/runs/issue-<N>.json`). Every stateful subcommand now takes `--issue <N>`. One
+  record per issue means two issues can be driven in one repository at once, and the store root is
+  resolved from the git *common* directory, so a unit's own worktree reads the same file the
+  coordinator writes. **`start` requires the record and never creates one** -- saga's admission
+  step writes it -- and refuses with exit 2 naming the admission command when there is none.
+- **The companion version floor warns instead of refusing.** A below-floor agent-launcher still
+  defines every name orchestrate calls, so the call is made and the operator is told the install is
+  behind; a missing or unusable companion still refuses.
+- **Upgrade obligation.** An `.orchestrate/run.json` from 4.x is not read by this release. Finish
+  or abandon an in-flight 4.x run before upgrading; there is no migration.
+
+### Added
+
+- **A fresh worktree on every launch**, on the unit's own branch, never a reused path (card #886).
+  A stale worktree is released first -- refusing on uncommitted or unpushed work and naming what is
+  at risk -- so "fresh" never means "discarded".
+- **A virtual-environment step in the worktree helper**: `ORCHESTRATE_WORKTREE_SETUP` when set,
+  otherwise `uv sync --locked --extra dev` when the repository has a `uv.lock`, otherwise nothing.
+  A failing step is named on the unit and the unit is not launched.
+- **The launch is persisted before the launcher is called** (cards #900, #990), and the wrapper
+  identity is written the moment the session exists, so a repeated `go` launches the unit once and
+  an interrupt in the launch window never orphans a real tab. No lock, lease, reservation or
+  receipt: issue #1018 forbids one and none is needed.
+- **`plan-check`**, a non-mutating plan validator running exactly the assertions `start` runs, with
+  an exit status usable as a gate step (card #879).
+- **The width number bounds launches across calls** (card #901). The cap is the record's
+  `concurrency_allocation`, and it counts open roster rows as well as running units, because a role
+  session is an agent session and the number exists for the account's rate limit. `--limit` stays a
+  per-call slice and its help says so.
+- **A parent branch for a parent issue**, with children merging onto it by merge turn. `start`
+  reads the issue's sub-issue count once and names the branch `parent/<N>` or `issue/<N>`.
+- **The guard against reverting a newer `main`** (card #875), as a rule of the merge turn: the turn
+  fetches the comparison ref first and refuses when that fetch fails, then refuses by name any
+  merge that would take a file backwards relative to `origin/main`.
+- **Worktree release at the merge turn** (issue #876), so a merged unit's branch becomes deletable
+  where GitHub needs it to be.
+- **Workspace retirement in `clean`** (issue #876), with ownership read from the record rather than
+  from a name pattern, plus the one useful check from the retired fleet-doctor command: a managed
+  worktree with no live session, reported by path.
+- **Cleanup that runs for every unit** and names every leftover with git's own message, from a
+  reporting block that is exception-proof (issues #960, #979). `clean` exits 3 when something was
+  left behind.
+- **One repair owner per shared blocker**, as a record field. Orchestrate only reads it: a unit
+  whose row names a blocker another unit owns is reported rather than taking a turn for it.
+
+### Fixed
+
+- **The protected-reference denylist strips and casefolds before peeling `refs/heads/`**
+  (issue #874), so ` refs/heads/main`, `refs/HEADS/main`, `Refs/Heads/main` and a tab-prefixed
+  spelling all classify as protected. The same normalisation applies to the run-branch,
+  resolved-branch and base comparisons; the membership set is unchanged.
+- **The launcher's close-failure record survives a launch failure** (issue #944): the handler
+  appends to the unit's note rather than replacing it.
+- **A multi-unit wait records every settlement it observes** into the record's unit rows, under the
+  existing caller timeout, and reports a blocked session rather than answering it (issue #891).
+- **The cleanup-failure tests inject the failure at the command runner** (issue #991), so the same
+  code path runs on every machine and nothing undeletable is left on disk.
+
+### Carried forward from 4.6.0
+
+Issue 1001's move to `review_result.v2` landed on the integration branch first and is carried
+here unchanged; its own section follows below.
+
+## [4.6.0] - 2026-09-19
+
+### Consume `review_result.v2` (issue #1001)
+
+`REVIEW_RESULT_SCHEMA` moves from `review_result.v1` to `review_result.v2`, following Saga's code
+review as it became a policy-free executor of the lifecycle repository's lens catalogue. The pair
+of schema identifiers is the only persistent compatibility contract across that boundary, so this
+is a named constant rather than an inline string: a consumer handed an identifier it does not
+recognise refuses rather than guessing.
+
+No routing behaviour changes. The four typed outcomes and the fix-request routing are unchanged.
+
 ## [4.5.0] - 2026-09-16
 
 ### Fixed

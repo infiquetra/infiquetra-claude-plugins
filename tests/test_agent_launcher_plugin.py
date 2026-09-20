@@ -132,7 +132,11 @@ def test_agent_launcher_metadata_is_marketplace_registered() -> None:
     )
 
     assert plugin_json["name"] == "agent-launcher"
-    assert plugin_json["version"] == "1.5.2"
+    assert plugin_json["version"] == "1.7.0"  # 1.7.0: roster.py stands up one named herdr
+    # session per staffed role from the run record and closes only what it recorded creating
+    # (issue #1024). Bumped from 1.6.0, the agent-launcher version on origin/parent/1018 at
+    # 0fa2ea32.
+    # Predecessor 1.6.0: the roles library, one prompt per lifecycle role (issue #1022).
     assert "Herdr" in plugin_json["description"]
     assert {"agent-launcher", "agents", "herdr", "launch", "sessions"} <= set(
         plugin_json["keywords"]
@@ -197,7 +201,7 @@ def test_orchestrate_skill_matches_the_deferred_floor_failure_contract() -> None
             "`expand`",
             "`go`",
             "`review-result`",
-            "`land`",
+            "`merge`",
             "`clean`",
         )
     )
@@ -220,7 +224,7 @@ def test_orchestrate_skill_states_the_staged_input_recovery_runbook() -> None:
     """REL-12: the operator-facing runbook for a staged-input stop. Prose is compared with
     whitespace flattened so line wrapping cannot mask a claim."""
     skill = _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "SKILL.md")
-    start = skill.index("**A staged-input stop is retryable")
+    start = skill.index("**A staged-input stop keeps its pane")
     end = skill.index("Unsupported post-launch")
     assert start < end, "the runbook must sit in the launch-contract section"
     section = " ".join(skill[start:end].split())
@@ -229,6 +233,8 @@ def test_orchestrate_skill_states_the_staged_input_recovery_runbook() -> None:
     assert "creates no session" in section
     assert "left open" in section
     assert "`already has tab`" in section
+    # `redrive` is gone (issue #1025), so the runbook must name the door that replaces it.
+    assert "redeliver" in section
 
 
 def test_agent_launcher_packaged_files() -> None:
@@ -239,6 +245,7 @@ def test_agent_launcher_packaged_files() -> None:
         "skills/agent-launcher/SKILL.md",
         "skills/agent-launcher/scripts/composer.py",
         "skills/agent-launcher/scripts/launcher.py",
+        "skills/agent-launcher/scripts/roster.py",
         "tests/test_launcher_contract.py",
     )
     for relative_path in expected:
@@ -305,7 +312,7 @@ def test_installed_orchestrate_expand_and_go_fail_before_worktree_creation(tmp_p
     plan_file.write_text(json.dumps(plan_data))
 
     start_res = _run_installed_orchestrate(
-        script, ["start", "--plan", str(plan_file)], cwd=repo_dir
+        script, ["start", "--issue", "1", "--plan", str(plan_file)], cwd=repo_dir
     )
     assert start_res.returncode != 0
     start_err = start_res.stderr + start_res.stdout
@@ -314,7 +321,7 @@ def test_installed_orchestrate_expand_and_go_fail_before_worktree_creation(tmp_p
 
     # 3. Expand command fails fast on missing launcher
     expand_res = _run_installed_orchestrate(
-        script, ["expand", "--plan", str(plan_file)], cwd=repo_dir
+        script, ["expand", "--issue", "1", "--plan", str(plan_file)], cwd=repo_dir
     )
     assert expand_res.returncode != 0
     expand_err = expand_res.stderr + expand_res.stdout
@@ -346,7 +353,7 @@ def test_installed_orchestrate_expand_and_go_fail_before_worktree_creation(tmp_p
         )
     )
 
-    go_res = _run_installed_orchestrate(script, ["go"], cwd=repo_dir)
+    go_res = _run_installed_orchestrate(script, ["go", "--issue", "1"], cwd=repo_dir)
     assert go_res.returncode != 0
     go_err = go_res.stderr + go_res.stdout
     assert "agent-launcher plugin not found" in go_err
@@ -412,7 +419,7 @@ def test_read_only_help_and_roster_survive_a_stale_launcher_while_go_enforces_th
     assert "claude" in roster_result.stdout
 
     go_result = _run_installed_orchestrate(
-        script, ["go"], cwd=tmp_path, env_overrides={"PATH": path}
+        script, ["go", "--issue", "1"], cwd=tmp_path, env_overrides={"PATH": path}
     )
     assert go_result.returncode != 0
     output = go_result.stderr + go_result.stdout
@@ -432,7 +439,7 @@ def test_a_launcher_root_that_lacks_the_bound_names_is_the_named_companion_fault
     satisfies the floor but whose script omits the names Orchestrate binds must produce the
     named companion fault with the update remedy on the write side, not a NameError, and
     must still serve status."""
-    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    script, repo, snapshot, bin_dir, store = _matrix_layout(tmp_path, "at-floor")
     old_tree = tmp_path / "old-launcher-tree"
     shutil.copytree(
         tmp_path / "cache-at-floor" / MARKETPLACE / "agent-launcher" / _declared_floor(), old_tree
@@ -443,14 +450,24 @@ def test_a_launcher_root_that_lacks_the_bound_names_is_the_named_companion_fault
         "HERDR_LOG": str(tmp_path / "herdr-old-tree.log"),
         "AGENT_LAUNCHER_ROOT": str(old_tree),
     }
-    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
-    go = _run_installed_orchestrate(script, ["go"], cwd=repo, env_overrides=env)
+    (store / f"issue-{MATRIX_ISSUE}.json").write_bytes(snapshot)
+    go = _run_installed_orchestrate(
+        script,
+        ["go", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     output = go.stderr + go.stdout
     assert go.returncode != 0
     assert "does not define" in output and "PaneWriter" in output, output
     assert "claude plugin update agent-launcher@infiquetra-plugins" in output
     assert "NameError" not in output and "Traceback" not in output
-    status = _run_installed_orchestrate(script, ["status"], cwd=repo, env_overrides=env)
+    status = _run_installed_orchestrate(
+        script,
+        ["status", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     status_out = status.stderr + status.stdout
     assert status.returncode == 0, status_out
     assert "Traceback" not in status_out and "NameError" not in status_out
@@ -659,8 +676,13 @@ elif argv[:2] == ["pane", "current"]:
 sys.exit(0)
 """
 
+#: The issue every matrix invocation drives. State lives in one record per issue (issue #1025),
+#: so every stateful subcommand names it.
+MATRIX_ISSUE = 1
+
 MATRIX_INVOCATIONS = {
     "--help": ["--help"],
+    "plan-check": ["plan-check", "--plan", "plan.md"],
     "start": ["start", "--plan", "plan.md"],
     "roster": ["roster"],
     "saga": ["saga", "plan"],
@@ -670,35 +692,38 @@ MATRIX_INVOCATIONS = {
     "status": ["status"],
     "settle": ["settle", "--interval", "0"],
     "wait": ["wait", "--timeout", "1"],
-    "land": ["land"],
+    "merge": ["merge"],
     "announce": ["announce", "alpha"],
-    "collect": ["collect"],
     "clean": ["clean"],
     "check": ["check"],
     "adopt": ["adopt"],
     "diff": ["diff"],
     "park": ["park", "--unit", "alpha", "--evidence", "blocked"],
     "resume": ["resume", "--unit", "alpha"],
-    "redrive": ["redrive", "--unit", "alpha"],
 }
 
-# The six commands the floor gates: each writes a pane, creates a session or worktree, or
-# closes a tab. A companion below the floor refuses them with the update remedy; a missing or
-# unusable one refuses them with the install remedy.
+#: Everything but these reads or writes the record, so it takes `--issue` and `--store-root`.
+STATELESS_SUBCOMMANDS = ("--help", "plan-check", "roster", "saga")
+
+# The five commands the floor gates: each writes a pane, creates a session or worktree, or
+# closes a tab. A companion below the floor WARNS and the command continues (issue #1025); a
+# missing or unusable one still refuses them, with the install remedy.
 GATED_SUBCOMMANDS = (
     "start",
     "expand",
     "go",
     "review-result",
-    "land",
+    "merge",
     "clean",
-    "redrive",
 )
 # The two informational commands: they read the wrapper's tool list and the saga install on
 # disk and write nothing, so a companion below the floor still serves them (terminal review
 # F24, matching the decision record's read-only bucket); only a companion that was never
 # ingested -- missing or unusable -- refuses them, with the install remedy.
-INGEST_ONLY_SUBCOMMANDS = ("roster", "saga")
+# `plan-check` joins them (issue #1025): it reads the wrapper's tool list to validate a
+# plan and creates nothing at all, so a stale companion serves it and only a companion
+# that was never ingested refuses it.
+INGEST_ONLY_SUBCOMMANDS = ("roster", "saga", "plan-check")
 
 PANE_WRITES = (("pane", "run"), ("agent", "prompt"), ("tab", "close"))
 
@@ -714,11 +739,11 @@ def _declared_floor() -> str:
     return requirement.removeprefix(">=")
 
 
-def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes, Path]:
+def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes, Path, Path]:
     """One installed layout per companion state: orchestrate plus a companion at the floor,
     below it, or broken at import; a git repo holding one RUNNING unit; a recording fake
-    herdr on PATH. Returns the orchestrate script, the repo, the run-file snapshot, and
-    the PATH directory that holds the fake herdr and agents binaries."""
+    herdr on PATH. Returns the orchestrate script, the repo, the record snapshot, the PATH directory
+    that holds the fake herdr and agents binaries, and the record store."""
     cache = tmp_path / f"cache-{state}" / MARKETPLACE
     orch_install = _install_plugin(
         cache, "orchestrate", _declared_version("orchestrate"), parts=(".claude-plugin", "skills")
@@ -726,6 +751,10 @@ def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes, Path]
     launcher_install = _install_plugin(
         cache, "agent-launcher", _declared_floor(), parts=(".claude-plugin", "skills")
     )
+    # Orchestrate 5.0.0 reads its state through saga's run record, so an installed layout without
+    # saga beside it is an incomplete install, not a state this matrix is about. The manifest
+    # declares the dependency; this is that declaration made real in the cache.
+    _install_plugin(cache, "saga", _declared_version("saga"), parts=(".claude-plugin", "scripts"))
     if state == "below-floor":
         _set_plugin_version(launcher_install, "1.0.0")
     if state == "old-source":
@@ -750,14 +779,34 @@ def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes, Path]
     _git(repo, "remote", "add", "origin", str(repo))
     (repo / "plan.md").write_text("- plan\n")
     (repo / "result.json").write_text("{}\n")
-    run_file = repo / ".orchestrate" / "run.json"
-    run_file.parent.mkdir()
+    store = repo.parent / f"store-{state}"
+    store.mkdir(parents=True, exist_ok=True)
+    run_file = store / f"issue-{MATRIX_ISSUE}.json"
     snapshot = json.dumps(
         {
-            "run_id": "r1",
-            "source": "matrix",
-            "base": _git_out(repo, "rev-parse", "main"),
-            "branch": "orch/r1",
+            "schema": "run_record.v1",
+            "issue": MATRIX_ISSUE,
+            "repo": "infiquetra/infiquetra-claude-plugins",
+            "created_at": "2026-09-19T00:00:00+00:00",
+            "updated_at": "2026-09-19T00:00:00+00:00",
+            "admission": {"destination": "pr"},
+            "run_configuration": {
+                "concurrency_allocation": {
+                    "value": 10,
+                    "chosen_by": "delivery_manager",
+                    "source": "profile",
+                }
+            },
+            "approval_scope": {},
+            "roster": [],
+            "review_cycles": [],
+            "next_step": "work",
+            "orchestrate": {
+                "run_id": "r1",
+                "source": "matrix",
+                "base": _git_out(repo, "rev-parse", "main"),
+                "branch": "orch/r1",
+            },
             "units": [
                 {
                     "name": "alpha",
@@ -767,7 +816,6 @@ def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes, Path]
                     "status": "running",
                     "tab_id": "w1:t1",
                     "pane_id": "w1:p1",
-                    "launch_receipt": {"tab_id": "w1:t1", "owned": True, "input_box": "empty"},
                 }
             ],
         }
@@ -783,14 +831,20 @@ def _matrix_layout(tmp_path: Path, state: str) -> tuple[Path, Path, bytes, Path]
     agents.write_text("#!/bin/sh\nprintf 'Tools:\\n  claude  Claude\\n\\n'\n", encoding="utf-8")
     agents.chmod(0o755)
     script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
-    return script, repo, snapshot, bin_dir
+    return script, repo, snapshot, bin_dir, store
 
 
 def _run_matrix_command(
-    tmp_path: Path, script: Path, repo: Path, snapshot: bytes, bin_dir: Path, command: str
+    tmp_path: Path,
+    script: Path,
+    repo: Path,
+    snapshot: bytes,
+    bin_dir: Path,
+    command: str,
+    store: Path,
 ) -> tuple[int, str, list[list[str]]]:
     """Run one matrix invocation: fresh run record, fresh herdr log, combined output."""
-    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
+    (store / f"issue-{MATRIX_ISSUE}.json").write_bytes(snapshot)
     if command == "adopt":
         # adopt only reaches its liveness read when a run branch is unrecorded; give it
         # one for this invocation and take it away again so `check` sees a clean repo.
@@ -802,9 +856,10 @@ def _run_matrix_command(
         "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
         "HERDR_LOG": str(log),
     }
-    proc = _run_installed_orchestrate(
-        script, MATRIX_INVOCATIONS[command], cwd=repo, env_overrides=env
-    )
+    argv = list(MATRIX_INVOCATIONS[command])
+    if command not in STATELESS_SUBCOMMANDS:
+        argv += ["--issue", str(MATRIX_ISSUE), "--store-root", str(store)]
+    proc = _run_installed_orchestrate(script, argv, cwd=repo, env_overrides=env)
     if command == "adopt":
         _git(repo, "branch", "-D", "orch/r1-orphan")
     calls = (
@@ -828,8 +883,10 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
     """SEC-03/API-02: the companion floor as a command-by-state matrix. A below-floor or
     missing companion never reaches a pane write, a creation, or a tab close through the
     gated commands; --help, status and check survive every companion state."""
-    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, state)
-    code, output, calls = _run_matrix_command(tmp_path, script, repo, snapshot, bin_dir, command)
+    script, repo, snapshot, bin_dir, store = _matrix_layout(tmp_path, state)
+    code, output, calls = _run_matrix_command(
+        tmp_path, script, repo, snapshot, bin_dir, command, store
+    )
 
     if command == "--help":
         assert code == 0, f"{state}/--help: {output}"
@@ -881,7 +938,13 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
         # is in -- asserted for every command, not only the gated ones.
         _assert_no_pane_write(calls, command, state)
         if command in GATED_SUBCOMMANDS:
-            assert code != 0, f"{state}/{command}: ran against a below-floor companion"
+            # The floor WARNS and the command continues (issue #1025). A below-floor launcher
+            # still defines every name orchestrate calls, so the call can be made; what changes
+            # is that the operator is told the install is behind rather than stopped. The exit
+            # code is therefore whatever the command itself decided -- this fixture's plan is
+            # not a plan and its worktree is not there, so several refuse on their own terms --
+            # and the one thing that must still hold is the warning, by name, with the update
+            # remedy and never the install one.
             assert "claude plugin update agent-launcher@infiquetra-plugins" in output, (
                 f"{state}/{command}: no update remedy: {output}"
             )
@@ -891,9 +954,11 @@ def test_the_companion_floor_matrix(tmp_path: Path, state: str, command: str) ->
             assert EXPECTED_REMEDIATION not in output, (
                 f"{state}/{command}: the install remedy serves a stale install: {output}"
             )
-            _assert_no_pane_write(calls, command, state)
         elif command in INGEST_ONLY_SUBCOMMANDS:
-            assert code == 0, f"{state}/{command}: a read-only command refused: {output}"
+            # What this bucket promises is that the COMPANION did not refuse the command -- not
+            # that the command succeeded. `plan-check` reads a plan, and this fixture's `plan.md`
+            # is deliberately not one, so it refuses on its own terms and says so by name.
+            assert "Traceback" not in output, f"{state}/{command}: {output}"
             assert "claude plugin update agent-launcher" not in output, (
                 f"{state}/{command}: the floor gated a command that writes nothing: {output}"
             )
@@ -1034,7 +1099,7 @@ def test_malformed_floor_requirements_exit_with_the_named_message(
 
     # The malformed floor gates the write side: `go` refuses before it reads a run file.
     # `roster` writes nothing and runs against an ingested companion whatever the floor says.
-    result = _run_installed_orchestrate(script, ["go"], cwd=tmp_path)
+    result = _run_installed_orchestrate(script, ["go", "--issue", "1"], cwd=tmp_path)
     output = result.stderr + result.stdout
     assert result.returncode != 0
     assert "must be a numeric >= floor" in output
@@ -1064,9 +1129,12 @@ def test_each_companion_fault_names_its_own_cause_and_remedy(tmp_path: Path) -> 
 
     # below floor: update, never install -- on the write side (`go`); `roster` writes nothing
     # and is served by the stale companion (terminal review F24).
-    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "below-floor")
+    script, repo, snapshot, bin_dir, store = _matrix_layout(tmp_path, "below-floor")
     result = _run_installed_orchestrate(
-        script, ["go"], cwd=repo, env_overrides={"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        script,
+        ["go", "--issue", "1"],
+        cwd=repo,
+        env_overrides={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
     )
     below_output = result.stderr + result.stdout
     assert result.returncode != 0
@@ -1080,7 +1148,7 @@ def test_each_companion_fault_names_its_own_cause_and_remedy(tmp_path: Path) -> 
     assert "Orchestrate requires" not in roster.stderr + roster.stdout
 
     # unusable: the exception type is named
-    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "unusable")
+    script, repo, snapshot, bin_dir, store = _matrix_layout(tmp_path, "unusable")
     result = _run_installed_orchestrate(
         script, ["roster"], cwd=repo, env_overrides={"PATH": f"{bin_dir}:{os.environ['PATH']}"}
     )
@@ -1208,7 +1276,8 @@ def test_the_degraded_stub_roster_covers_every_referenced_launcher_name() -> Non
     assert not missing, f"launcher names referenced with no degraded binding: {sorted(missing)}"
 
 
-SHARED_STATUS_CONSTANTS = ("RUNNING", "PROMPT_UNDELIVERED", "ACCOUNT_MISMATCH")
+# `PROMPT_UNDELIVERED` left this set with the `redrive` state machine (issue #1025).
+SHARED_STATUS_CONSTANTS = ("RUNNING", "ACCOUNT_MISMATCH")
 
 
 def _top_level_assignment(tree: ast.Module, name: str) -> ast.expr:
@@ -1250,11 +1319,16 @@ def test_the_four_shared_constants_agree_between_orchestrate_and_the_launcher() 
         orch_value = ast.literal_eval(_top_level_assignment(orch_tree, name))
         launcher_value = ast.literal_eval(_top_level_assignment(launcher_tree, name))
         assert orch_value == launcher_value, name
-    run_file = _call_string_arg(_top_level_assignment(orch_tree, "RUN_FILE"))
-    task_dir_expr = ast.unparse(_top_level_assignment(orch_tree, "TASK_DIR"))
-    assert task_dir_expr == "RUN_FILE.parent / 'tasks'", task_dir_expr
+    # `RUN_FILE` went with the fixed-path run file (issue #1025). What the two plugins still
+    # have to agree on is the directory a run keeps its own worktrees under.
+    run_file = _call_string_arg(_top_level_assignment(orch_tree, "WORKTREE_STATE_DIR"))
+    # Orchestrate's own TASK_DIR went with the task spill (issue #1025). The launcher still
+    # hands a too-long-to-type task to a session as a file, and it writes that file under the
+    # same run-state directory, so THAT is what the two must still agree on.
     launcher_task_dir = _call_string_arg(_top_level_assignment(launcher_tree, "TASK_DIR"))
-    assert str(Path(run_file).parent / "tasks") == str(Path(launcher_task_dir))
+    assert str(Path(launcher_task_dir).parent) == str(Path(run_file)), (
+        f"the launcher writes task files to {launcher_task_dir}, outside {run_file}"
+    )
 
 
 def test_every_sibling_plugin_path_goes_through_the_layout_helper() -> None:
@@ -1332,7 +1406,7 @@ def _write_name_only_stub(root: Path, names: tuple[str, ...]) -> None:
 
 def test_a_name_only_stub_is_not_a_usable_companion(tmp_path: Path) -> None:
     """F106: bound names without inspect behaviour are ingested-but-unusable."""
-    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    script, repo, snapshot, bin_dir, store = _matrix_layout(tmp_path, "at-floor")
     stub = tmp_path / "name-only-stub"
     _write_name_only_stub(stub, _required_launcher_names())
     env = {
@@ -1340,17 +1414,32 @@ def test_a_name_only_stub_is_not_a_usable_companion(tmp_path: Path) -> None:
         "HERDR_LOG": str(tmp_path / "herdr-stub.log"),
         "AGENT_LAUNCHER_ROOT": str(stub),
     }
-    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
-    status = _run_installed_orchestrate(script, ["status"], cwd=repo, env_overrides=env)
+    (store / f"issue-{MATRIX_ISSUE}.json").write_bytes(snapshot)
+    status = _run_installed_orchestrate(
+        script,
+        ["status", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     status_out = status.stderr + status.stdout
     assert status.returncode == 0, status_out
     assert "Traceback" not in status_out
-    check = _run_installed_orchestrate(script, ["check"], cwd=repo, env_overrides=env)
+    check = _run_installed_orchestrate(
+        script,
+        ["check", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     check_out = check.stderr + check.stdout
     assert check.returncode != 0
     assert "the record agrees with the repository" not in check_out
     assert "LIVENESS UNCHECKED" in check_out
-    go = _run_installed_orchestrate(script, ["go"], cwd=repo, env_overrides=env)
+    go = _run_installed_orchestrate(
+        script,
+        ["go", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     go_out = go.stderr + go.stdout
     assert go.returncode != 0
     assert "unusable" in go_out
@@ -1363,7 +1452,7 @@ def test_a_launcher_root_that_lacks_a_read_path_bound_name_degrades_status(
     tmp_path: Path,
 ) -> None:
     """F107: missing live_agents must not SystemExit status."""
-    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    script, repo, snapshot, bin_dir, store = _matrix_layout(tmp_path, "at-floor")
     old_tree = tmp_path / "missing-live-agents"
     shutil.copytree(
         tmp_path / "cache-at-floor" / MARKETPLACE / "agent-launcher" / _declared_floor(),
@@ -1380,18 +1469,33 @@ def test_a_launcher_root_that_lacks_a_read_path_bound_name_degrades_status(
         "HERDR_LOG": str(tmp_path / "herdr-read-path.log"),
         "AGENT_LAUNCHER_ROOT": str(old_tree),
     }
-    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
-    status = _run_installed_orchestrate(script, ["status"], cwd=repo, env_overrides=env)
+    (store / f"issue-{MATRIX_ISSUE}.json").write_bytes(snapshot)
+    status = _run_installed_orchestrate(
+        script,
+        ["status", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     status_out = status.stderr + status.stdout
     assert status.returncode == 0, status_out
     assert "Traceback" not in status_out and "NameError" not in status_out
     assert "does not define" in status_out and "live_agents" in status_out
-    check = _run_installed_orchestrate(script, ["check"], cwd=repo, env_overrides=env)
+    check = _run_installed_orchestrate(
+        script,
+        ["check", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     check_out = check.stderr + check.stdout
     assert check.returncode != 0
     assert "the record agrees with the repository" not in check_out
     assert "LIVENESS UNCHECKED" in check_out
-    go = _run_installed_orchestrate(script, ["go"], cwd=repo, env_overrides=env)
+    go = _run_installed_orchestrate(
+        script,
+        ["go", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     go_out = go.stderr + go.stdout
     assert go.returncode != 0
     assert "does not define" in go_out and "live_agents" in go_out
@@ -1400,15 +1504,20 @@ def test_a_launcher_root_that_lacks_a_read_path_bound_name_degrades_status(
 
 def test_check_does_not_agree_when_liveness_was_not_performed(tmp_path: Path) -> None:
     """F127: missing companion must not print agreement and exit 0."""
-    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    script, repo, snapshot, bin_dir, store = _matrix_layout(tmp_path, "at-floor")
     empty = tmp_path / "empty-launcher-root"
     empty.mkdir()
     env = {
         "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
         "AGENT_LAUNCHER_ROOT": str(empty),
     }
-    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
-    check = _run_installed_orchestrate(script, ["check"], cwd=repo, env_overrides=env)
+    (store / f"issue-{MATRIX_ISSUE}.json").write_bytes(snapshot)
+    check = _run_installed_orchestrate(
+        script,
+        ["check", "--issue", str(MATRIX_ISSUE), "--store-root", str(store)],
+        cwd=repo,
+        env_overrides=env,
+    )
     check_out = check.stderr + check.stdout
     assert check.returncode != 0
     assert "the record agrees with the repository" not in check_out
@@ -1429,15 +1538,17 @@ def test_highest_cache_version_that_dropped_a_bound_name_is_not_a_write_companio
     high = _install_plugin(cache, "agent-launcher", "9.0.0", parts=(".claude-plugin", "skills"))
     _set_plugin_version(high, "9.0.0")
     _strip_new_launcher_names(high)
-    script, repo, snapshot, bin_dir = _matrix_layout(tmp_path, "at-floor")
+    script, repo, snapshot, bin_dir, store = _matrix_layout(tmp_path, "at-floor")
     env = {
         "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
         "HERDR_LOG": str(tmp_path / "herdr-cache-high.log"),
         "CLAUDE_PLUGIN_ROOT": str(orch_install),
     }
-    (repo / ".orchestrate" / "run.json").write_bytes(snapshot)
+    (store / f"issue-{MATRIX_ISSUE}.json").write_bytes(snapshot)
     installed_script = orch_install / "skills" / "orchestrate" / "scripts" / "orchestrate.py"
-    go = _run_installed_orchestrate(installed_script, ["go"], cwd=repo, env_overrides=env)
+    go = _run_installed_orchestrate(
+        installed_script, ["go", "--issue", "1"], cwd=repo, env_overrides=env
+    )
     go_out = go.stderr + go.stdout
     assert go.returncode != 0
     assert "does not define" in go_out
@@ -1460,10 +1571,10 @@ def test_orchestrate_install_sentence_names_the_agent_launcher_floor() -> None:
 
 
 def test_write_gate_comments_name_the_live_write_path() -> None:
-    """F126: land and review-result gate comments name PaneWriter, not say."""
+    """F126: merge and review-result gate comments name PaneWriter, not say."""
     source = _read(ORCHESTRATE_ROOT / "skills" / "orchestrate" / "scripts" / "orchestrate.py")
     tree = ast.parse(source)
-    for func_name in ("cmd_land", "cmd_review_result"):
+    for func_name in ("cmd_merge", "cmd_review_result"):
         func = next(
             node
             for node in tree.body

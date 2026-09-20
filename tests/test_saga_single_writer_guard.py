@@ -41,7 +41,7 @@ def _load(name: str) -> ModuleType:
     return module
 
 
-RC = _load("reversibility_certificate")
+RC = _load("op_allowlist")
 
 # The step-1 live receipt as DATA, not as a sentence in a docstring. Every single-select and
 # built-in field the three boards carried on 2026-08-25. The tests below read the real
@@ -183,37 +183,6 @@ def test_guard_fails_closed_on_a_direct_write_fixture(tmp_path: Path) -> None:
     assert _FIELD_ARGV_RE.search(argv_text)
 
 
-def test_correction_allowlist_is_covered_by_the_live_field_receipt() -> None:
-    """F3 substitution: every correction field is either live today or recorded as not-live.
-
-    The receipt is only evidence if something reads it. This asserts the REAL
-    ``reversibility_certificate.CORRECTION_FIELDS`` against the live field list, so
-    widening the allowlist to a field nobody inventoried fails here.
-    """
-    unaccounted = set(RC.CORRECTION_FIELDS) - LIVE_BOARD_FIELDS - ALLOWED_NOT_YET_LIVE
-    assert unaccounted == set(), (
-        "correction fields with no entry in the live receipt and no not-yet-live record: "
-        + ", ".join(sorted(unaccounted))
-    )
-    assert "Status" in RC.CORRECTION_FIELDS
-    assert "Status" in LIVE_BOARD_FIELDS
-
-
-def test_stage_is_allowlisted_by_name_and_is_not_a_live_field() -> None:
-    """F3 substitution: Stage is a name on the allowlist, not a field on any board.
-
-    Creating a Stage field means adding it to ``LIVE_BOARD_FIELDS`` and dropping it from
-    ``ALLOWED_NOT_YET_LIVE``; this test fails until both halves are done, which is exactly
-    the deliberate change the receipt is meant to force.
-    """
-    assert "Stage" in RC.CORRECTION_FIELDS
-    assert "Stage" in ALLOWED_NOT_YET_LIVE
-    assert "Stage" not in LIVE_BOARD_FIELDS
-    assert ALLOWED_NOT_YET_LIVE.isdisjoint(LIVE_BOARD_FIELDS), (
-        "a field cannot be both live and recorded as not-yet-live"
-    )
-
-
 def test_certificate_retains_no_autonomous_lifecycle_write_authority() -> None:
     """W7 (SDLC R30/R32): the certificate keeps GATING a set-field-status submission, but Saga
     holds no AUTONOMOUS write authority over a lifecycle field. The concrete autonomy site is the
@@ -231,29 +200,3 @@ def test_certificate_retains_no_autonomous_lifecycle_write_authority() -> None:
     # The gate the certificate still applies to a submission is field identity (GATE by field),
     # never autonomy: an authorized verdict exists ONLY for ops the operator routes.
     assert RC.authorize_write("set-field-status") == RC.AUTHORIZED
-
-
-def test_certificate_retains_gating_authority() -> None:
-    """W7 (SDLC R32, plan KTD4): the certificate RETAINS its gating half — reversibility
-    classification, the non-lifecycle-field GATE, and the replay key — while its autonomous half
-    is retired. Field identity is NOT re-implemented: Status/Stage stay authorized by name
-    (CORRECTION_FIELDS), and the idempotency key still varies by op, repo, number, field, target."""
-    assert RC.authorize_write("set-field-status") == RC.AUTHORIZED
-    assert RC.authorize_write("sub-issue-close") == RC.AUTHORIZED
-    # Non-lifecycle / operator-owned fields stay GATEd (field identity, retained).
-    assert RC.authorize_correction_field("Stage") == RC.AUTHORIZED  # name seam for W13
-    assert RC.authorize_correction_field("Initiative") == RC.GATE
-    assert RC.authorize_correction_field("Objective") == RC.GATE
-    assert RC.authorize_write("parent-issue-close") == RC.GATE  # ALWAYS_OPERATOR
-    # Replay key: varies by op, repo, number, field, and target (plan grounding at 0.143.0).
-    key_a = RC.idempotency_key("set-field-status", "infiquetra/x", 42, "Active", field="Status")
-    key_b = RC.idempotency_key("set-field-status", "infiquetra/x", 42, "Active", field="Stage")
-    key_c = RC.idempotency_key("set-field-status", "infiquetra/y", 42, "Active", field="Status")
-    key_d = RC.idempotency_key("set-field-status", "infiquetra/x", 42, "Done", field="Status")
-    assert len({key_a, key_b, key_c, key_d}) == 4, "the replay key discriminates on field+target"
-
-
-def test_no_set_field_stage_op_kind() -> None:
-    """Preserved from the existing guard (SDLC R32): no ``set-field-stage`` op kind exists — the
-    certificate's Stage authorization is a NAME seam for W13, never a new op kind."""
-    assert "set-field-stage" not in {ok.value for ok in RC.all_op_kinds()}

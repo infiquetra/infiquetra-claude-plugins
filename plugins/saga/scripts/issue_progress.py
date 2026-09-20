@@ -166,6 +166,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         dest="doc_review_blocked",
         action="store_false",
     )
+    parser.add_argument(
+        "--doc-review-fixes",
+        help="pipe-separated list of safe fixes the document review applied",
+    )
     parser.add_argument("--doc-review-findings", help="pipe-separated list of doc review findings")
     parser.add_argument("--doc-review-override")
     parser.add_argument("--review-gate-override")
@@ -192,6 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             review_status=args.review_status,
             doc_review_artifact=args.doc_review_artifact,
             doc_review_blocked=args.doc_review_blocked,
+            doc_review_fixes=_split_pipe(args.doc_review_fixes),
             doc_review_findings=_split_pipe(args.doc_review_findings),
             doc_review_override=args.doc_review_override,
             review_gate_override=args.review_gate_override,

@@ -61,7 +61,8 @@ Threat model (read before trusting a field):
   defense against a lying leaf.
 
 No I/O at import; the only file the module reads is via the sibling tier registry
-(``tier_resolver`` -> ``tier_policy.json``), loaded lazily on first tier lookup.
+(``tier_resolver`` -> the ``work_shapes`` block of ``staffing.json``), loaded lazily
+on first tier lookup.
 """
 
 from __future__ import annotations

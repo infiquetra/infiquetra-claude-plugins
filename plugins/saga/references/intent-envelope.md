@@ -1,5 +1,10 @@
 # The IntentEnvelope — one committed run-start posture (#380)
 
+> **Issue 1030 removed the `/outcome` coordinator this envelope was captured for.**
+> `intent_envelope.py` survives and its schema is unchanged, but every `/outcome` verb named below
+> is gone. Read this as the record of a captured posture and its schema, not as a set of commands
+> to run.
+
 Run-start posture — attended vs. unattended, which ceremony gates apply, what spend posture
 follows — is captured **once**, as one committed, schema-validated envelope, and every consumer
 resolves through it. No plugin asks its own posture question; the fleet drift-guard test
@@ -120,7 +125,7 @@ drift-guarded no-reprompt contract, H-F2-9).
 | `/outcome` harvest | `ceremony_gates.reviews_required == "gate"` implies a `code-review` closure check on every code leaf — the leaf's `done` transition needs review evidence at the close SHA (via `closure_gate` + `evidence_ledger`) |
 | `/plan` Step 1 | `intent_envelope.seeded_tier(spec, work_shape)` seeds the per-unit tier table defaults from the committed posture (`recommend_tier(work_shape, run_mode)`); the table, operator override flow, and `VERIFY_N_CAP` mechanics are unchanged |
 | `/work` | resolves spend decisions through `intent_envelope.py spend` / `resolve_spend_action` — attended spend increases need an explicit approval token (`PostureError` otherwise); unattended runs stay cache-tight silently |
-| team-execution Step B1 | `plugins/team-execution/skills/team-execution/scripts/posture_check.py` — the wired fan-out consumer (exit 2 on a posture refusal) |
+| team-execution Step B1 (archived by issue #1030) | the plugin's posture-check script was the wired fan-out consumer, exit 2 on a posture refusal; no consumer remains |
 | mission-control capture | `sdlc_manager.py issue intent-envelope` renders the ship-policy block; prepared-issue readiness BLOCKS on a present-but-invalid block |
 
 ## The issue-carried envelope (ask once, on the issue)

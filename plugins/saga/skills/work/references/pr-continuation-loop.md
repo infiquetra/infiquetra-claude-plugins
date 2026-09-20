@@ -3,7 +3,7 @@
 `/work` does not dead-end at PR-ready. It **owns the round-N continuation loop** around the PR, driven by
 the saga's round spine and the `destination` field. Every outward mutation is offered/confirmed, never
 silent. Deploy and canary belong to `deploy`. `/work` owns its own re-entry — it does **not**
-depend on `/resume` being rebuilt.
+depend on any other command.
 
 ## Re-entry detection (SKILL Phase 0.4)
 
@@ -46,20 +46,6 @@ engine derives `next_round = max(rounds_seen) + 1` at save time (saga-spec §6.1
 `next_round` directly**; it is a derived field. Each round re-enters Phases 2-5 with the incremented round
 and re-runs the test + review gates from scratch (re-verify, don't trust the prior round's evidence).
 
-## Repeated-failure second-opinion sidecar
-
-When a plan enables the `/work` repeated-failure trigger, its
-`saga.work-second-opinion.v1` sidecar is part of the current work-session pair, not the Saga tick and not a
-PR-loop counter. A new work round uses a new sidecar round/epoch; never carry an old offer key across the
-round bump. The sidecar's `attempt_id` represents one applied fix and its following test run, so CI reruns
-or repeated local test commands must reuse the same ID and cannot advance a streak.
-
-On resume, load and validate the sidecar before another fix or dispatch. An existing accepted/requested
-identity is a replay guard, not permission to rerun the wrapper: recover a missing raw artifact as visible
-unavailable, or, when the enriched artifact is durable, complete only its missing `available`/`apply`
-transition. A declined or unattended offer remains per-offer evidence and never becomes a stored global
-preference.
-
 ## Between-rounds tier escalation proposal (#364, gated)
 
 Before re-executing round N+1 after a **failure row** (CHANGES_REQUESTED, red checks, a refuted
@@ -70,21 +56,21 @@ work is how rounds loop. When it is, **propose** climbing exactly one rung via
 
 ```
 Round N failed at sonnet/medium. Propose re-running the affected unit(s) at
-sonnet/high (+1 effort rung). Confirm to apply via /tier patch + re-emit, or
+sonnet/high (+1 effort rung). Confirm to apply by re-deriving the unit's tier and re-emitting, or
 decline to re-run at the same tier.
 ```
 
 Rules (all load-bearing):
 
 - **Gated, never silent** — this is a documented affordance the operator confirms; the ask rides
-  the same `is_escalation` → confirm-before-re-emit pattern as the `/tier` mid-run lever (#365).
+  the same `is_escalation` → confirm-before-re-emit pattern the mid-run tier lever used (#365; the `/tier` command that carried it was removed by issue 1030).
   A silent between-rounds climb is never permitted in the attended `/work` loop.
 - **One rung per proposal** (`escalate_tier` — effort-first, then model), never a multi-rung jump.
 - **End-clamp** — when `escalate_tier` returns `None` (top of ladder, or blocked by the #365
   session ceiling), state that plainly ("at top of ladder — no escalation available; this is now
   a defect-shaped problem, not a depth-shaped one") and propose nothing.
 - **The cost delta is ordinal** (`<old> → <new> (+1 <axis> rung)`) — the cost-weighted spend-delta
-  classifier is #367's; this mirrors the same deferral recorded in `commands/tier.md`.
+  classifier is #367's; this mirrors the same deferral the removed `/tier` command recorded.
 - **Consult the run's `spend_envelope` first (#366).** When the spec carries a `spend_envelope`, fold
   the climb's added spend through `SpendEnvelope.consider(delta)` (`delta = to_spend(new) - to_spend(old)`)
   before surfacing the proposal. If the climb *crosses* the envelope, that crossing IS the "ask once"
@@ -94,31 +80,25 @@ Rules (all load-bearing):
   auto-applied — cheapening is the operator's call at the next `/plan` (the #368 write-back is the
   durable home for that judgment).
 
-## Merge is a confirmed git op `/work` owns
+## The merge turn belongs to the integrate step
 
-When `destination ⊇ merge` and the approved-fresh row fires, `/work` performs the merge itself — but only
-as an **explicitly operator-confirmed** ceremony — four separate `ship_ceremony.py run` invocations,
-one transition each: `run --operator-confirmed merge`, a bare `run` for `checkout_main`, a bare `run`
-for `pull`, then `run --operator-confirmed branch_delete:<target>` naming the resolved head branch
-(issues #345/#526/#635) — never silent. There is
-no separate "git/human" skill; merge is a
-git op `/work` owns under confirmation (saga-spec §1.1 keeps deploy as deploy's hard boundary, but merge
-is a git operation, not a deployment) — `ship_ceremony.py` is the mechanism that carries out that
-confirmed op and records each transition's reversibility tier on the saga tick, not a new authority. Use
-the repo's merge method; respect branch protections (if the operator cannot merge, hand back the PR and
-stop, and `ship_ceremony.py`'s state stays at the last successful transition, ready to resume).
+When `destination ⊇ merge` and the approved-fresh row fires, the merge is the **integrate step's**
+merge turn onto the parent branch or `main`, not a ceremony this skill runs. The ship ceremony that
+used to carry it — four confirmed `ship_ceremony.py run` invocations, one transition each, with a
+merge expectation, a hazard vocabulary and an undo path — was removed in issue #1027 along with its
+five modules.
 
-## Merge-watcher and hazards — safety contracts around merge
+**What was removed is the mechanism, not the confirmation.** The pull-request open, the review
+request, and the merge each stay explicitly confirmed — the preservation contract issue #1029
+declared — and each is now an ordinary `gh` or `git` operation rather than a transition in a table.
+There is still no separate "git/human" skill, and merge is still a git operation rather than a
+deployment (saga-spec §1.1 keeps deploy as deploy's hard boundary). Use the repository's merge
+method and respect branch protections: if the operator cannot merge, hand back the pull request and
+stop.
 
-The ceremony records a **merge expectation** at PR-open (target head SHA, required-check names,
-review state) before any poll loop begins. At merge time, the expectation is re-validated against
-live PR state; divergence (head moved, check flipped/missing, review regressed) blocks merge with
-a named failure. A branch-delete refuses unless the merge is confirmed landed (`mergedAt`
-non-null); deleting a base branch while child PRs are stacked on it triggers a stacked-PR hazard.
-Both are blockable until resolved or acknowledged with `--acknowledge-hazard <hazard-id>`.
-`git ship --undo` is gated like forward merge: `--operator-confirmed undo` for reversals of
-landed merges, bare `--undo` for reversible-only plans. Undo is forward-only (new revert commit
-on `main`, branch resurrected from recorded SHA), never history-rewriting.
+There is **no rollback command**. `/ship --undo` went with the ceremony, because what it reversed —
+a multi-transition ceremony caught mid-flight — no longer happens. A merge is undone with ordinary
+git, and a revert is a forward commit as it always was.
 
 ## Deploy / canary belong to deploy
 
@@ -138,11 +118,11 @@ this rebuild deferred to it). `/work`'s own behavior on merge is unchanged: it s
 `phase_status=complete` and `next_step="run /qa (ship-readiness)"` and routes to `/qa` **advisorily**,
 but **leaves `lifecycle_phase=work`** — it does **not** claim "/qa owns/advances the qa slot" from inside
 `/work`; the advance happens when `/qa` actually runs and passes. The saga legitimately sits at `work`
-post-merge until `/qa` lands the advance; `/handoff` deriving `resume-ready` for that state is correct
+post-merge until `/qa` lands the advance; deriving `resume-ready` for that state is correct
 (the thread *is* resume-ready-into-qa).
 
-Likewise **`/resume` routing is advisory**. `/work`'s own Phase-0.4 re-entry (this file) is the
-load-bearing "come back later" mechanism — it does not depend on the `/resume` stub being rebuilt. A
+`/work`'s own Phase-0.4 re-entry (this file) is the
+load-bearing "come back later" mechanism, and since issue 1030 removed `/resume` it is the only one. A
 re-invocation of `/work` on a saga with `pr_refs` re-runs this transition table; that is the durable loop.
 
 ## Saga writes summary (this loop)

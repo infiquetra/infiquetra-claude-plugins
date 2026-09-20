@@ -308,7 +308,7 @@ Orchestrate reads the account back off the session — its statusline first, the
 
 **`merge`** defaults to `true`, and `false` means "this branch is to be read, not merged." Set it on
 competing-plan rows: several planners writing their own version of the same document cannot be
-merged by git without a conflict at best, and a silently interleaved plan at worst. `land` then
+merged by git without a conflict at best, and a silently interleaved plan at worst. `merge` then
 skips them and says so by name, so a branch holding the only copy of something is never quietly left
 behind.
 
@@ -331,11 +331,10 @@ python3 "$S" settle                                # sessions with branch eviden
 python3 "$S" land                                  # finished units -> the run branch
 python3 "$S" go                                    # the next phase, now able to see their work
 python3 "$S" review-result --file <result.json>     # persist the controller result and route repairs
-python3 "$S" collect                               # the run branch -> your tree, once
 python3 "$S" clean --merged --branches             # close what has landed
 ```
 
-**`check` before you `collect` (and `status` for live drift).** The run file is written only by this
+**`check` before you `merge` (and `status` for live drift).** The run file is written only by this
 script, and only for actions this script performed — so a session started by hand leaves a branch
 nothing will ever land or reap, and nothing notices. `check` compares the record against git and
 herdr and names every disagreement: a branch with no unit, a unit marked done that committed nothing,
@@ -354,7 +353,7 @@ python3 "$S" resume --unit <name>                  # open/adopt missing PR and c
 `adopt` is the repair for a branch with no unit. It rebuilds the row from the branch, its worktree
 and the session sitting in it, and leaves `task`, `after`, `serialize`, `model` and `effort` empty
 rather than inventing them — the session already has its task, and nothing is ever sent to it
-again. Once adopted, the work is visible to `land` and `clean` like any other unit.
+again. Once adopted, the work is visible to `merge` and `clean` like any other unit.
 
 **`park` and `resume` for push-succeeded / PR-creation-blocked recovery.** When a worker pushes its
 branch successfully but cannot create its pull request (e.g. rate-limited or blocked by session
@@ -382,18 +381,18 @@ Union merge keeps both sides of an append-only file with no markers. Use it for 
 changelogs; do **not** use it for source, where keeping both sides of a conflict is how you get code
 that compiles and means something nobody wrote.
 
-**`clean --merged` belongs after every `land`, not once at the end.** A phase's sessions are
+**`clean --merged` belongs after every `merge`, not once at the end.** A phase's sessions are
 finished the moment their work is on the run branch, and leaving them open for the rest of the run is how
 a workspace ends up with a dozen idle tabs nobody can tell apart. `--merged` only ever closes a unit
 whose work survived, so it is safe to run unattended — a unit that landed nothing keeps its tab and
 its worktree, because those are the evidence.
 
-**`land` is not optional and it is not cleanup.** It is how a phase becomes real to the next one.
+**`merge` is not optional and it is not cleanup.** It is how a phase becomes real to the next one.
 Units branch from the run branch, so a reviewer can only find a plan there if the planner's work was
 landed first — the way a team pushes back to the feature branch rather than reading each other's
 branches. Skip it and the next phase opens on nothing and writes something plausible about nothing.
 
-`land` also names any unit that finished without committing. That is the failure worth seeing: not a
+`merge` also names any unit that finished without committing. That is the failure worth seeing: not a
 missing merge, but a session that produced nothing and reported itself done.
 
 Between `go` and `settle`, use `wait` — it blocks on herdr's event socket rather than polling, then
@@ -453,13 +452,13 @@ without owned paths, because a role alone cannot select the responsible worker.
 ### Collect and route the typed review result
 
 The Code Review controller emits one complete typed result. Preserve its exact UTF-8 bytes in a file
-and collect it once:
+and merge it by turn:
 
 ```bash
 python3 "$S" review-result --file .orchestrate/review-result.json
 ```
 
-The command stores the complete string in `run.json` before it reads any route. It reads only the
+The command stores the complete string in the per-issue run record before it reads any route. It reads only the
 routing envelope: `outcome` plus each fix request's identity, `owner`, and `touched_paths`. It never
 imports Code Review's scorer, derives an overall, applies an acceptance threshold, counts cycles, or
 treats finding priority or confidence as another gate.
@@ -471,21 +470,21 @@ Orchestrate creates a replacement from the matching role's approved vendor, mode
 permission configuration; run `go` to launch it.
 For `human` and `release`, the command prints and persists `OPERATOR ACTION` and creates no Work unit.
 
-After every routed Work request has landed, `land` resubmits the exact landed revision through the
+After every routed Work request has landed, `merge` resubmits the exact landed revision through the
 same Code Review controller. Any outstanding human or release request prevents that resubmission;
 Orchestrate never pretends operator-owned work was repaired.
 
 **Competing plans are read, not merged by git.** When `/plan` ran in several vendors' worktrees, open
-each one's plan document directly and write the merged plan yourself. Do not `collect` those
+each one's plan document directly and write the merged plan yourself. Do not `merge` those
 branches into each other. Say so in the plan — `"merge": false` on each of those rows — rather than
-remembering it at `land` time. `land` has no other way to know, and it merges everything finished
+remembering it at `merge` time. `merge` has no other way to know, and it merges everything finished
 that does not say otherwise.
 
-## Board writeback — what `land` and `announce` do to a card
+## Board writeback — what `merge` and `announce` do to a card
 
 A run file may carry an `issues` mapping (unit name to `owner/repo#N`) and an optional `status_map`.
-With it, `land` writes each unit it merged back to that unit's issue card, and `announce` is the
-door for the boundaries `land` does not cover. Without an `issues` mapping this is a no-op and
+With it, `merge` writes each unit it merged back to that unit's issue card, and `announce` is the
+door for the boundaries `merge` does not cover. Without an `issues` mapping this is a no-op and
 nothing about the run changes.
 
 **Orchestrate never writes GitHub.** Every write is a submission through saga's
@@ -503,27 +502,27 @@ refused before any submission, because an older saga silently drops the `Stage` 
 success. The agent-launcher floor is enforced at runtime as a command-by-state matrix:
 `--help` survives a stale or missing companion, `status` and `check` degrade to
 liveness-unknown when it is missing or unusable, and the seven pane-write, session-create or
-tab-close commands -- `start`, `expand`, `go`, `review-result`, `land`, `clean`, and `redrive` --
+tab-close commands -- `start`, `expand`, `go`, `review-result`, `merge`, `clean`, and `go` (a relaunch builds a fresh worktree) --
 refuse with an update or install remedy. `roster` and `saga` write nothing, so a stale companion still
 serves them; only a missing or unusable one refuses them. The mission-control floor is a
 declaration the installer reads.
 
-Read the exit code, not the prose. `land` and `announce` both exit **2** when a card was not
-updated, and every failure prints its reason and whether a retry can clear it. `land`'s full
+Read the exit code, not the prose. `merge` and `announce` both exit **2** when a card was not
+updated, and every failure prints its reason and whether a retry can clear it. `merge`'s full
 exit-code table:
 
 | Exit | Meaning |
 |---|---|
-| 0 | Every unit that was ready merged, its card was updated, and any owed review resubmission was made. |
+| 0 | Every unit that was ready merged and any owed review resubmission was made. |
 | 1 | The merge into the run branch could not complete: a conflict worktree is retained or the landing ref could not be updated; the reason and the retained path are printed and the unit is left untouched. |
-| 2 | Merges landed but a board card was not updated, or an earlier writeback is still outstanding. |
 | 3 | Merges landed but a landing worktree could not be removed. Not returned when exit 4 also applies. |
 | 4 | A review resubmission that was owed was not made: the prompt failed, the controller's composer held staged input, or operator-owned fix requests held the resubmission. Outranks exit 3. |
 
-The codes are pinned against the command's own return statements by a test. A failure survives
-the invocation: a later `land` re-reports any unit still outstanding rather than exiting 0 over a
-card it never fixed. Each writeback also names, on stderr, which saga executed it and which schema
-validated the rung — several copies of each are usually installed.
+The codes are pinned against the command's own return statements by a test. Exit 2 is retired: it
+meant "merges landed but a board card was not updated", and this command no longer writes to a
+board at all — saga submits each lifecycle boundary itself, through mission-control's constrained
+mutation (issue 1028). Giving a retired code a new meaning would silently change what an existing
+caller reads, so it is gone rather than reused.
 
 ## Phase 6 — report
 

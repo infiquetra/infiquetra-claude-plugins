@@ -797,18 +797,3 @@ def test_tool_floor_case_variant_edit_fails(tmp_path: pathlib.Path) -> None:
         },
     )
     assert "tool-scope-floor" in _blocking_rule_ids(red)
-
-
-def test_team_execution_reviewers_pinned_to_floor_coverage() -> None:
-    """The 10 team-execution reviewer files must keep `role-tier: adversarial-review`
-    (self-declared classification is what puts them under the tool-scope floor) and the
-    Bash-bearing non-mutating roster. Deleting the role-tier line would silently exempt a
-    reviewer from the floor; this pin makes that a red test instead."""
-    reviewer_files = sorted((PLUGINS_ROOT / "team-execution" / "agents").glob("*-reviewer.md"))
-    assert len(reviewer_files) == 10, [p.name for p in reviewer_files]
-    for path in reviewer_files:
-        fm = agent_spec.parse_frontmatter_file(path)
-        assert fm.get("role-tier") == "adversarial-review", path.name
-        tools = agent_spec.parse_tools_value(fm["tools"])
-        assert "Bash" in tools, path.name
-        assert not set(tools) & agent_spec._MUTATING_TOOLS, path.name

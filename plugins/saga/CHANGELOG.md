@@ -1,5 +1,779 @@
 # Changelog
 
+## [1.0.0] - 2026-09-20
+
+**The removals.** Issue #1030, the closing child of parent #1018. Eleven commands, their skills and
+the machinery behind them are gone; thirteen commands remain.
+
+### Fixed -- the parent's code review
+
+The one code review on the parent pull request found that the removals had been carried through the
+code but not through the prose the plugin ships, and that narrowing the backend list had left one
+crash behind.
+
+- **`lifecycle_state.recommend_execution_backend` no longer raises when the Workflow tool is
+  absent.** The reachable-backend list was narrowed to `["inline"]` while the line removing
+  `cc-workflows-ultracode` from it stayed, so every call passing `workflow_available=False` --
+  including `recommend-backend --no-workflow`, which
+  `skills/work/references/execution-strategy.md` instructs `/work` to produce -- died with
+  `ValueError: list.remove(x): x not in list`. A regression case in
+  `tests/test_saga_plugin.py` now takes that branch.
+- **The manual describes the surface that exists.** `README.md` no longer routes the reader to
+  `/handoff`, `/resume`, `/pulse`, `/fleet-doctor` or `/outcome`, and its command count is the real
+  one. `docs/commands.md` drops the eleven removed commands' cards and `/undo`'s. `docs/README.md`,
+  `docs/lifecycle.md`, `docs/boundaries.md`, `docs/scenarios.md` and `docs/state-readiness.md` lose
+  their routes to removed commands and their links to the four deleted diagrams.
+- **`references/operator-choice.md` states one selectable backend**, marks its escalation,
+  capability-gate and OutcomeOrchestrator sections historical, and no longer links two deleted
+  scripts or carries a fenced command whose command line had been deleted out from under its flags.
+- **Eight skill surfaces stop offering an archived backend.** `/work`, `/plan`, `/code-review`,
+  `/founder-review`, `/retro` and `/investigate`, with their reference documents, state `inline`
+  rather than rendering a choice; `/work`'s Phase 1.5 Claude Code Workflow step says it cannot be
+  entered; `/qa` no longer cites the deleted dispatch table.
+- **The suite no longer decides two verdicts from the ambient environment.** `tests/conftest.py`
+  scrubs `CLAUDE_PLUGIN_ROOT` and `AGENT_LAUNCHER_ROOT`, as it already did for the saga concurrency
+  override and the `INFIQUETRA_FLEET_` family. Without that, two tests passed from a shell and
+  failed from the pre-push gate — whose pytest child inherits the variable every plugin hook is
+  given — because the launcher ingest and the mutation canary both resolved installed plugins
+  instead of the roots the tests had built. The behaviour predates this release.
+- **The surviving skills stop routing to removed commands.** `/handoff` becomes `mission-control`,
+  which is what it always meant, across `/brainstorm`, `/spec`, `/investigate`, `/office-hours`,
+  `/ideate`, `/founder-review`, `/retro` and their reference documents. `/loop`, `/resume`, `/tier`
+  and `/outcome report` are restated per sentence, because each meant something different where it
+  stood. `/plan` no longer tells the agent to resolve tiers through the removed
+  `scripts/tier_defaults.py`; it reads fleet-core's staffing component directly, as that module
+  already did.
+- **`qa_strategies` parses a declared command the way its sibling does.** The strategy runner built
+  its argument vector with `str.split`, so a profile command holding a quoted argument with a space
+  (`pytest -k "not slow"`) ran as a different command with no error anywhere; `build_loop` has
+  always used `shlex.split` for the same kind of value. Both call sites in `qa_strategies` now do
+  too, and an unparseable command is refused by name rather than raised.
+- **Two guards were repaired rather than removed.** The `archived-orchestration-mode` canary in
+  `tools/canary_registry.json` quoted an enum literal that no longer existed, so it reported `error`
+  instead of proving anything; it now reports `caught`. `tests/test_operator_choice_drift.py` had
+  been emptied to zero test functions and collected nothing; it is rewritten to pin the document's
+  enum claim against `saga.py`.
+
+### The thirteen commands that remain
+
+`/plan`, `/doc-review`, `/work`, `/code-review`, `/qa`, `/retro`, `/office-hours`, `/ideate`,
+`/brainstorm`, `/spec`, `/investigate`, `/strategy`, and `/founder-review` with its `/ceo-review`
+alias -- fourteen files for thirteen commands.
+
+### Removed -- BREAKING
+
+- **Eleven commands and nine skills.** `/outcome`, `/loop`, `/resume`, `/handoff`, `/optimize`,
+  `/pulse`, `/delegation-audit`, `/promote`, `/engines`, `/tier`, `/fleet-doctor`.
+- **Seventy-three script modules**, by family: the outcome coordinator (19 modules), the engine
+  registry and dispatch family (18), the concurrency, lease, envelope, ceremony, receipt, teardown
+  and undo family (7), the ledgers, the closure and completeness gates, the reversibility
+  certificate, the spend readers (7), the delegation audit, the session-forensics readers, and the
+  standalone command scripts. The consensus scorer stays, as the card requires.
+- **`execution_spec.py`, `concurrency_governor.py` and `dispatch_settlement.py`** with the
+  cc-workflows plugin they served, which is archived in this release. `references/workflow-backend.md`
+  goes with them.
+- **Four hooks and both agents**, and with them the `SessionEnd`, `Stop` and `SubagentStop` events.
+- **The generated documentation atlas** and the spawn-site inventory.
+
+### Changed -- BREAKING
+
+- **One execution backend.** `ORCHESTRATION_MODES` is `("inline",)`. team-execution and
+  cc-workflows are both archived in this release, so there is no offer to make and nothing for the
+  operator to choose between. The enum strings stay a durable wire contract: a persisted tick
+  recording either archived value still loads and still renders its label, and
+  `tests/test_saga_spec_consumer_row.py` pins that.
+- **The closed op allowlist survives the reversibility certificate.** `op_allowlist.py` keeps the
+  default-deny list of mission-control operations saga may submit without a human; the reversibility
+  tiering that wrapped it went with the ship ceremony that consumed it.
+- **The spore freezes the saga box and the run record**, not an outcome DAG.
+- **`run_record.py` and `manifest_store.py` own their store primitives** rather than borrowing them
+  from the deleted outcome store -- the same choice `fleet_commons/audit_store.py` already made.
+- **Review roles run as roster sessions in their own worktrees**, replacing the `CLAUDE.md`
+  sandbox-spawn rule.
+
+### The line count, measured
+
+`plugins/saga/scripts` goes from 60,133 lines to **20,520** -- 104 modules to 32. The card's
+criterion is under 15,000, and it is **not met**; the reason is arithmetic, not scope.
+
+The simplification review set that number against saga at commit `fb69f6b3` and projected ~11,856
+surviving script lines. Since then this parent's own cards added **7,071 lines in eleven new
+modules** -- the run record, admission, the build loop, the merge turn, the release step, the review
+roster and result, the shaping judgments, the continuation context, the op allowlist, and issue
+#1039's 1,762-line `/qa` strategy catalogue -- plus **615 lines** of growth in modules that already
+existed. Subtract the 7,686 lines the projection could not have counted and the figure is **12,834**,
+under the target and close to the review's estimate. The removal did what was asked; the target
+predates the replacement.
+
+### Tests
+
+The saga suite falls from 302 test files to 184. Every deleted module took its tests with it. No
+test was marked advisory, skipped or `xfail`, and the gate's coverage contract against `ci.yml` is
+untouched.
+
+## [0.173.0] - 2026-09-20
+**Bumped from 0.171.0**, the saga version on `origin/parent/1018` at commit `61da4b1c`. 0.172.0 is
+skipped on purpose: issue #1039 takes that number from the same base, and two cards writing an
+identical version string never conflict — the manifest and the marketplace entry come through a merge
+clean and the only signal is two bodies under one changelog heading.
+
+**This is not the 1.0.0 the card names.** Issue #1030 calls for saga 1.0.0 as the version of a
+release that removes eleven commands *and* the script families behind them. The command surface is
+gone; the script families are not, blocked on a finding recorded in
+`docs/work-sessions/2026-09-20-issue-1030-removals-and-release.md`. A version says what shipped, and
+taking 1.0.0 here would leave the complete release with no number to be.
+
+### Removed -- BREAKING
+
+- **Eleven commands and nine skills.** `/outcome`, `/loop`, `/resume`, `/handoff`, `/optimize`,
+  `/pulse`, `/delegation-audit`, `/promote`, `/engines`, `/tier` and `/fleet-doctor` are gone, with
+  the nine skill directories behind them. Fourteen command files remain: the thirteen surviving
+  commands plus the `/ceo-review` alias. The eleven removed commands were carried by **ten** files —
+  `/delegation-audit` was reached through its skill alone.
+- **Four hooks, and the three event keys that held only them.** The delegation tripwire, the
+  delegation stop audit, the team-spawn residency check and the team teardown hook are deregistered
+  and deleted; `SessionEnd`, `Stop` and `SubagentStop` leave `hooks.json` with them. Eight hooks
+  remain.
+- **Both agents.** `saga:mechanical-executor` and `saga:readonly-verifier`, with the
+  agent-registration canary entry and its guard.
+- **The generated documentation atlas.** Four SVGs, `docs/model/saga-docs-model.yaml`, the visuals
+  page and `scripts/render_docs_visuals.py`. A hand-maintained model of a command surface goes stale
+  the moment the surface moves; `tests/test_command_surface.py` now guards the surface directly.
+- **The spawn-site inventory**, `references/sandbox-spawn-sites.md`, with the project instruction it
+  supported.
+
+### Removed -- BREAKING (the team-execution archive)
+
+- **`team-execution` is no longer an execution backend.** The plugin is archived by this card; its
+  final entry is `plugins/team-execution/CHANGELOG.md` at version 4.0.0, written at commit
+  `005e7e70`, one commit before the directory was deleted. `ORCHESTRATION_MODES` is now
+  `("inline", "cc-workflows-ultracode")` and `lifecycle_state.ORCHESTRATION_TIERS` is two rungs.
+  The enum strings remain a durable wire contract: a persisted tick recording `team-execution` still
+  reads back and still renders a label, so no saga becomes unreadable — the value is simply no
+  longer selectable.
+- **`recommend_execution_backend()` returns `inline` under every trigger.** Ruling C5 (issue #840)
+  forbids recommending a Workflow, and the only other value is gone. The size, risk and
+  gated-consensus signals are still computed; they now select the rationale the tick records rather
+  than a different backend. `/plan` §5.2 and `/work` §3 therefore render no backend offer, and still
+  record both `--orchestration-recommended` and `--orchestration-mode` so the decision is not silent.
+- **`/work` no longer stores Layer-2 artifact pointers.** The script that wrote them lived in the
+  archived plugin. The tick's `--artifact-pointers` flag still accepts a typed pointer, because the
+  field is durable and historical ticks read back, but nothing in the chain writes one; large
+  evidence goes in the run record's per-unit envelopes.
+- **The 25 agent prompts are not lost.** They are the source material for
+  `plugins/agent-launcher/roles/`. Recorded as DECISIONS `{#team-execution-archived-1030}`.
+
+### Tests (the archive)
+
+- **`tests/test_team_execution_archived.py` is new.** It checks the plugin in every syntax a caller
+  could use — a directory, a marketplace entry, an import, a `spec_from_file_location` by path, a
+  plugin-resolution call, and a bare command line in a skill — and carries its own two self-tests
+  proving the scanner fires on each actionable syntax and stays silent on a historical mention. It
+  failed 8 of its 17 cases before the removal.
+- Seven `tests/test_team_execution_*.py` files are deleted, including the twenty-two cases already
+  skipped with a reason naming this archive step. `tests/test_team_emitter_and_spec_table_removed.py`
+  is **kept**: its subject is that two modules stay gone, not that this plugin exists, and it is the
+  guard against re-adding what this release removes.
+- The agent inventory in `tests/test_agent_preamble_identity.py` goes from 34 files to 9. The
+  canary registry loses its `team-execution-pointers` entry, whose mutation target is gone.
+
+### Changed
+
+- **Review roles run as roster sessions in their own worktrees.** The `CLAUDE.md` rule that every
+  review-class Agent-tool spawn must name saga's read-only verifier and pass `isolation: "worktree"`
+  is replaced. The hazard is unchanged — a reviewer sharing the tree it reviews can clobber it — but
+  the roster helper gives each role its own worktree when it creates the session, so the property
+  holds by construction instead of depending on four mechanisms and every caller's memory.
+  `/code-review`, `/investigate`, `/brainstorm` and `/work`'s execution-strategy reference say it the
+  new way.
+- **`/spec` and `/strategy` stop citing the dispatch table** in the deleted `/loop` skill, and
+  `/spec`'s onward routing stops naming `/handoff`. `/retro` stops citing the promotion contract in
+  the deleted `/promote` skill and carries the promotability rule itself.
+
+### Tests
+
+- **`tests/test_command_surface.py` is new** and replaces two hand-maintained inventories in
+  `tests/test_saga_plugin.py`. It asserts the surviving set, the removed names in the card's own
+  spelling, and that every surviving command resolves a skill whose frontmatter declares the same
+  name — three things a file count cannot distinguish. It failed 22 of its 37 cases on the base.
+- **`tests/test_saga_hooks.py` is rewritten** around a re-add guard naming each retired hook by
+  filename and a set assertion over the eight survivors, plus both directions of the
+  registered-versus-on-disk check. Verified by breaking it: restoring one registration fails three of
+  its six cases.
+- Nine test files retired with their subjects. The suite goes from 302 files to 296. No test was
+  marked advisory, skipped or `xfail`, and the gate's coverage contract against `ci.yml` is
+  untouched.
+- The gate-absence ratchet baseline shrank by its four vanished skill files, which is the direction
+  the lint's own procedure allows. The check itself is unchanged.
+
+### Fixed
+
+- **Nineteen reference documents were deleted and restored in the same branch.** They describe the
+  families this card removes, but the families are the script removal and the script removal is
+  blocked, so fifteen of the nineteen were verified to document a module still on disk. Deleting the
+  documentation of live code is worse than leaving both: the next reader hits a module with no
+  contract. They go when their scripts go. Recorded as LEARNINGS
+  `{#docs-go-with-their-code-1030}`.
+## [0.172.0] - 2026-09-20
+
+**Bumped from 0.171.0**, the saga version on `origin/parent/1018` at commit `61da4b1c`
+(issue #1028). Re-read at the merge turn rather than above this branch's own base, per the
+identical-version-strings-merge-silently trap this changelog has recorded before.
+
+### Changed
+
+- **`/qa` is now the lifecycle's functional test: a prescribed strategy catalogue with declared
+  evidence and a computed verdict** (issue #1039). The nine-way risk router, the improvised
+  per-class checks, the model-assigned severity bands and the ship-shaped verdicts are gone.
+
+  In their place: ten strategies declared as data in `references/qa-catalogue.yaml`; a
+  per-repository profile in the optional `qa` block of `.saga-profile.json`
+  (`references/qa-profile.schema.json`); one advisory judgment that may only widen the computed
+  selection and never narrow it; drivers that return exactly one of `passed`, `failed` or
+  `blocked`; one evidence envelope per strategy appended to the run record
+  (`references/qa-envelope.schema.json`); and a verdict counted from those three values —
+  `pass`, `pass-with-proof-debt`, or `fail`.
+
+  The verdict words changed because the decision changed. The step now runs after the release
+  deployment, so it no longer decides whether to ship; it decides whether the shipped thing works.
+
+  Routing splits where it used to merge: a `fail` re-enters the build loop, and a **required**
+  `blocked` stops for the operator, because the causes of a block are environment, credential and
+  permission and no build loop repairs one. The two have distinct exit codes (`4` and `5`).
+
+  Five drivers ship — `cli-smoke`, `contract-check`, `deploy-boundary`, `installed-surface`, and
+  `api-workflow` by delegation to the executor the profile declares. **Five strategies are
+  declared without a driver and say so**, returning `blocked` with a stated reason and a revisit
+  condition: `data-check` and `infrastructure-read-back` (each needs a credential decision the
+  operator owns), `manual-runbook` (a person runs it by definition), and — a narrowing beyond the
+  specification's stated boundary, declared here rather than hidden — `app-ui` and
+  `hosted-surface`, because no application surface, hosted page or browser target exists in this
+  repository to exercise a driver against, and an unexercised driver is the silent skip this
+  redesign exists to remove wearing a new name. Both reopen with the first repository whose
+  profile declares them.
+
+  One runner serves two proof boundaries. The build loop's scenario smoke (issue #1027) names the
+  same command at `--boundary branch-preview`; no line of `build_loop.py` changed.
+
+- **`release_step.record_functional_test` no longer reports a blocked scenario as a pass.** It
+  validated all three scenario states and then computed its status from the failed list alone, so
+  a scenario list holding nothing but `blocked` entries returned `passed` — the silent skip
+  prescribed testing exists to remove, arriving through the back door. A required blocked scenario
+  now returns `blocked` and stops for the operator without counting a repair cycle; an optional one
+  returns `passed-with-proof-debt` carrying the debt by name; a scenario that does not say which it
+  is counts as required, because the safe default is the one that cannot pass unproved.
+
+- **The status card's `/qa` projection follows the functional test** rather than a health-scored
+  report. Its rows are Selection · Preflight · Evidence · Proof debt · Verdict. Evidence follows
+  the per-strategy results rather than the verdict word, so a run whose strategies could not run
+  never renders as a finished one, and Proof debt stays visible on a passing run.
+
+### Removed
+
+- **`scripts/qa_health_score.py` and its test.** The 0-100 number was computed from counts of
+  model-assigned severities. The new model assigns no severity, so there is nothing left to count,
+  and a number with no inputs is worse than no number.
+
+- **The evidence-custody ledger call from the `/qa` reference documents.** The three remaining
+  references to `evidence_ledger.py` under `skills/qa/` are gone; the module itself is removed by
+  its own card in the same release.
+
+- `skills/qa/references/risk-taxonomy.md` and `skills/qa/references/qa-report.md` are **renamed**,
+  not deleted, into `qa-catalogue-reference.md` and `qa-evidence-and-verdict.md`, so their history
+  stays attached to their successors and no file carries a name that lies about its contents.
+
+## [0.171.0] - 2026-09-20
+**Bumped from 0.170.0**, the saga version on `origin/parent/1018` at commit `25619cd1` (issue
+#1027's build loop). This card first took 0.170.0 against 23959a80 and issue #1027 took the same
+number against the same head, which is the collision this note was written to warn about: the
+manifest and the marketplace entry merged **silently**, because two cards writing an identical
+string never conflict, and the only signal left was two bodies under one changelog heading. The
+number is renumbered above the integration branch at each merge turn rather than above this
+branch's own base.
+
+### Added
+
+- `scripts/merge_turn.py` — the merge turn over the run record (issue #1028). Exactly one worker
+  merges at a time, derived from `units[].merge_state` and checked against git rather than held by
+  a lock: a row left at `merging` by a turn that died is released, not trusted. The destination
+  follows `admission.destination`. A merge that would take a file backwards relative to a freshly
+  fetched default branch is refused **by name**, and a failed fetch refuses the turn rather than
+  letting the guard read a stale remote-tracking reference. After a merge both re-integrations run
+  and are reported separately: the advanced destination branch into every surviving unit branch,
+  and the fetched default branch into the parent branch. No lock, lease, reservation or receipt.
+- `scripts/release_step.py` — the release, the functional test and the close. The parent pull
+  request is merged bound to the exact head its required checks ran against
+  (`gh pr merge --match-head-commit`), a refusal is classified from GitHub's `mergeStateStatus`
+  rather than from a watch command's exit status, and the reviewed head and the landed commit are
+  recorded separately because a squash or a rebase produces a different commit. Where the
+  repository profile declares `nonproduction_destination: none`, the absence is recorded with its
+  reason and nothing is deployed — a result, not an error. No production deployment exists on this
+  path.
+- `scripts/board_progression.py` — a lifecycle **boundary** interface:
+  `--record <path> --boundary <name> [--dry-run]`. A caller names one of the run's six boundaries
+  and a fixed table chooses the `(Stage, Status)` pair; `review-accepted` prints that no submission
+  is allowed there, because the lifecycle repository's allowed list carries no row for it.
+
+### Changed
+
+- **Board writes are bounded by value, not just by field.** Any `(Stage, Status)` pair outside
+  `lifecycle_field_mutation.allowed_submissions` is now refused before a board is touched. That
+  list is what the lifecycle repository calls the single authority on what a caller may submit, and
+  nothing in this repository read it: the certificate authorised the field names and said nothing
+  about the values. `Ready to merge` and `Closeout` are live Operations options that saga therefore
+  never submits.
+- `skills/work/SKILL.md` — sections 4.4, 5.4 and 5.5 now carry the merge turn, the release, the
+  functional-test hand-off and the close, with one board move per boundary. The two non-field
+  operations (progress comment, sub-issue close) are unchanged.
+- `skills/qa/SKILL.md` — the frozen criteria and the scenario results are read from and written to
+  the **run record** instead of the evidence ledger.
+- `skills/retro/SKILL.md` — the reconciliation-recipe, tier-efficacy and engine-registry
+  calibration passes are replaced by one pass over the run record and the journal. The engine
+  benchmark, calibration, staleness, capability-Elo, control-chart and spend readers go with the
+  machinery they read.
+
+### Removed
+
+- `scripts/effort_ledger.py` and `references/effort-policy.yaml`. Its only importer was its own
+  test; `run_configuration.staffing_models_and_efforts` holds the decision now.
+
+### Deferred (recorded, not done)
+
+- `evidence_ledger.py`, `run_ledger.py` and `dispatch_settlement.py` stay for issue #1030, each for
+  a reason now written into `references/run-record.md`. `evidence_ledger`'s sole production
+  importer is `closure_gate.py`, whose whole subject is that ledger and which issue #1030 deletes
+  along with its two dependents; removing it here would mean deleting or rewriting modules this
+  card does not name. Card #1028's `test ! -f evidence_ledger.py` criterion is therefore **not met
+  on this branch**, and that is reported rather than forced.
+
+## [0.170.0] - 2026-09-20
+**Bumped from 0.169.0**, the saga version on `origin/parent/1018` at commit `23959a80`. This card
+had taken 0.169.0 while its suite ran; issue #1029 merged that number onto the integration branch
+first, so the card renumbered above it rather than shipping a colliding version.
+
+### Added
+
+- **`/work` is the build loop, and its finish line is written down before the work starts**
+  (issue #1027). The exit criterion lives in the run record — the mechanical baseline from the
+  repository profile, the plan's child-scoped functional checks, a branch preview deployment where
+  the repository declares one, and the plan's scenario smoke. A worker reads it before writing a
+  line, runs it, and repeats until green; on the green iteration the loop records the full
+  forty-character revision that `/code-review` then freezes. "Working software" is a fact the
+  worker checks rather than a judgment it reaches at the end.
+- **`plugins/saga/scripts/build_loop.py`** runs the criterion once per invocation and records every
+  result under a new `build_loop` key on the unit's row. `--dry-run` prints the criterion, the lens
+  catalogue check each baseline command answers, every catalogue check the baseline does not cover
+  and why, every named scanner the repository has not configured, and whether a preview is
+  declared. `run_record.v1` does not change: a unit row's key set is deliberately not fixed.
+- **`plugins/saga/references/mechanical-baseline.md`** is the contract — the check map from the
+  lens catalogue at sdlc revision `5efc869f` to this repository's commands with every divergence
+  named, the three check statuses, the branch preview in all three of its cases, the record block
+  and the exit-code table.
+
+### Changed
+
+- **A failing check is a loop iteration, never a refusal.** `build_loop.py` exits 4 to say "not
+  green yet", a code distinct from every refusal code precisely so a caller cannot read it as
+  "stop". The instruction on seeing it is to implement again and run it again.
+- **An unexecutable check is `could-not-execute`, never a pass and never a fail** — the lens
+  catalogue's own rule. A missing program, a timeout, and a command that does not parse are
+  environment problems, not defects in the work.
+- **Globs in a baseline command are expanded by the loop, not by a shell.** The loop found this on
+  its first real run: with `shell=False`, this repository's own `plugins/*/tests/` reached pytest as
+  a literal path and was recorded as a `fail` indistinguishable from a real test failure. Tokens
+  carrying `*`, `?` or `[` now expand against the repository root the way a shell would, a token
+  matching nothing passes through unchanged, and `shell=False` stays.
+- **Every check runs from the repository root**, named by `--repo-root` rather than inherited from
+  the caller's directory. `--profile` reads the profile from elsewhere without moving the
+  repository.
+- **`branch_preview_command`** is a new optional key in `.saga-profile.json`, documented in
+  `references/repository-profile.md`. Where a repository declares a preview and names no command,
+  the loop records `could-not-execute` with that reason and never guesses a deployment command.
+- **The pull-request open, the review request and the merge stay explicitly confirmed** — issue
+  #1029's preservation contract, which outlived the mechanism that used to carry it.
+
+### Removed
+
+- **The ship ceremony and the confirmed-only merge**: `ship_ceremony.py`, `ceremony_hazards.py`,
+  `ship_receipt.py`, `ship_teardown.py` and `ship_undo.py` (175,034 bytes) with their four test
+  files (5,854 lines), the `SessionStart` hook entry that ran `ship_teardown.py reclaim`, and every
+  importer repaired. The merge turn belongs to the integrate step; there is no rollback command,
+  and a merge is undone with ordinary git.
+- **The risk-gated hard test gate** leaves `/work` and `references/test-and-gates.md`. It asked a
+  worker to decide, at the end of its own work, which change kinds deserved tests; a criterion
+  written before the work replaces that judgment. `change_kinds` is still derived and recorded, and
+  now gates nothing.
+- **The front-loaded ceremony start** that opened a draft pull request right after the saga mint.
+  The build loop opens no pull request: there is nothing to review until the criterion is green.
+
+### Deferred to issue #1030
+
+`merge_watcher.py` and its test file, which the removals above orphan; `lifecycle_state.py`'s
+`requires_hard_test_gate` function with the two `/loop` references to it; and `saga.py`'s
+`ceremony_transition` and `ceremony_tier` fields, which now have no producer. None is named by this
+card, and issue #1030's removal pass owns the commands that still read them, so one card retires
+each vocabulary together with its readers.
+## [0.169.0] - 2026-09-20
+
+**Bumped from 0.168.0**, the saga version on `origin/parent/1018` at commit `87a5329e`, the merge
+of issue #1025. This card took 0.167.0 against `b98e94ea` and then 0.168.0 against `54a526b1`;
+issue #938 took the first number and issue #1025 the second, each landing while this card's suite
+ran, so the card renumbered above them at each merge turn rather than shipping a colliding version.
+Neither collision produced a conflict of its own — both sides wrote the identical string into
+`plugin.json` and `marketplace.json`, so git merged them silently, and only the changelog's prose
+and the version literal in `tests/test_saga_plugin.py` differed enough to stop the merge.
+
+### Added
+
+- A `SessionStart` hook for the `startup` and `resume` sources,
+  `hooks/next_step_session_hook.py`, that announces the run record's `next_step` when a run is
+  live — and announces **nothing** when the record says the step is done, when the run is closed,
+  or when there is no record at all (issue #1029). The plugin had no session-start reader of the
+  run record before this: the spore's reader was matched on `compact` alone, so a cold session
+  learned nothing from the record and re-grounded on whatever the older envelope log happened to
+  say. The session that produced the card opened carrying exactly such a stale step.
+- A `UserPromptSubmit` hook, `hooks/prompt_suggestion_hook.py`, that names the saga command the
+  operator's text is about. It matches **locally**: the installed plugin's own command names, and
+  the step the run record already says is next, used only when the prompt asks to get on with the
+  run. It makes no network call, imports no client, logs nothing, and writes no file. It is
+  advisory and can never block or rewrite a prompt. Issue #1038's exploration measured a
+  typed-judgment version at 93 percent accuracy and still recommended deferring it, because
+  whether the operator's live prompt text may be sent to a third-party vendor is an open operator
+  decision; this ships the registration and the local matcher, and adds no call.
+- `scripts/next_step_context.py`, the one place the suppression rule is written. It is a module of
+  its own rather than a function on `run_record` because `saga_spore` imports `saga` and `saga`
+  imports `run_record`, so a resolver on the record would close an import cycle that the lazy
+  import would then hide at runtime.
+
+### Changed
+
+- Every lifecycle skill ends by **doing** the next step in the same turn instead of recommending
+  it (issue #1029). `/plan` continues into `/work`, reading `admission.destination` from the run
+  record so a `plan-only` destination still stops. `/doc-review` returns its result to `/plan`'s
+  review loop when that loop dispatched it, and otherwise continues into `/work` only when all
+  three hold: the document classified as a plan, the review was standalone, and no `P0` or `P1`
+  remains. `/work` runs `/qa` after a merge. `/code-review` performs each verdict's own next step.
+  `/qa` continues into `/retro` on a pass and into the merge-state branch on a failure.
+- **What is confirmed did not move.** `/work`'s pull-request open, review request, and merge stay
+  explicitly operator-confirmed, and a continuation that would fire one of them without a
+  confirmation is a stop. Continuation changed which step runs next, never what is asked first.
+- The compaction spore no longer renders the run-record block when the frozen `next_step` is
+  empty. It used to print `next_step:` with nothing after it, which reads as an instruction with
+  no content. The session-start hook and the spore now apply one rule from one module, so the two
+  readers of that field cannot drift apart on what "done" means.
+- `/qa`'s post-merge defect route and `/plan`'s `/handoff` and `/brainstorm` exits are named rather
+  than run: opening a defect thread and handing work to an SDLC issue are outward-facing writes and
+  stay the operator's to take.
+- Two shaping skills, `/brainstorm` and `/office-hours`, lost the phrase "recommended next" from
+  their closing text. Their routing behaviour is unchanged — they are not lifecycle skills — but
+  the card's acceptance grep covers every skill in the plugin.
+
+### Not changed
+
+- `/loop`, `/resume`, `/handoff` and the handoff and intent envelope machinery are all still here.
+  Issue #1030 removes them; this card removes nothing.
+
+## [0.168.0] - 2026-09-20
+
+**Bumped from 0.167.0**, the saga version on `origin/parent/1018` at commit `54a526b1`. This card
+had taken 0.166.0 and then 0.167.0; issues #1026 and #938 merged each of those numbers onto the
+integration branch while this card's suite ran, so the card renumbered above them at the merge
+turn rather than shipping a colliding version.
+
+### Changed
+
+- **The run record's `units` rows are documented as an extension point** (issue #1025).
+  `plugins/saga/references/run-record.md` gains a section naming the three keys the orchestrate
+  plugin adds to a unit row -- `merge_state`, `launch_started_at` and `shared_blockers` -- and
+  states the rule they are added under: a row's key set is deliberately not fixed, because a row is
+  one consumer's working state rather than a cross-consumer contract, and a key another consumer
+  does not know is left alone. The same section records that orchestrate keeps its own run-level
+  state under a top-level `orchestrate` key, which the module already preserves unchanged across a
+  read and a write, and that it never writes `admission`, `approval_scope`, `run_configuration`,
+  `review_cycles` or `roster`. No code changes; `run_record.v1` is unchanged.
+
+## [0.167.0] - 2026-09-20
+
+**Bumped from 0.166.0** by issue #938 on `origin/parent/1018`.
+
+### Removed
+
+- **Work's in-process external-engine second-opinion offer, and the machinery private to it
+  (issue #938).** `/work` no longer tells an agent to print an offer when a target fails three fix
+  attempts, and no longer routes an acceptance into a dispatch. The offer's section leaves
+  `skills/work/SKILL.md`, its sidecar section leaves `skills/work/references/pr-continuation-loop.md`,
+  and `scripts/second_opinion.py` (2,076 lines) is deleted whole: the dispatch functions, the
+  `SecondOpinionClaimStore` and its claim state, the `saga.work-second-opinion.v1` sidecar, the
+  per-target failure-streak detector, and the typed projections. Every one of them was checked for a
+  caller first — thirteen exported names across `plugins/`, `tests/`, `scripts/` and `tools/`, of
+  which ten had no outside reference at all and the other three appeared only in the prose and the
+  test file this change removes.
+
+  This is a narrower path than the operator's session-based reviewer model, which Orchestrate owns;
+  issue #776 retired the transport it once launched through and kept Saga's ownership of review
+  policy, and issue #1001 removed the review side. This removes what those two left.
+
+### Changed
+
+- **The external-content trust boundary is retained, and its guard is narrowed rather than
+  weakened.** `references/engine-output-trust-boundary.md` keeps every row, every forbidden sink and
+  every rule; only the Source cell of the `external_opinion.findings[].content` row changes, because
+  it named the deleted script. `tests/test_engine_output_trust_boundary.py` scanned two Python call
+  sites and now scans the one that remains, with its contract anchors, its seeded-unsafe fixtures and
+  its adversarial-payload test unchanged. Its three consumers — the review panel's gate surface in
+  `scripts/engine_dispatch.py`, the Orchestrate seats, and the team-execution advisory validator —
+  all still pass.
+- **`tests/test_saga_second_opinion.py` keeps what outlived two removals.** The two tests about the
+  deleted module go; the three about surviving contracts stay, and its tombstone test now names all
+  four deleted modules so none can return unnoticed.
+- Work's merge confirmation, its typed review outcomes and the rule that a programmatic code review
+  writes nothing durable are unchanged, and are now pinned by a test, because this release edits the
+  file that carries them.
+
+## [0.166.0] - 2026-09-20
+
+**Bumped from 0.165.0**, the saga version on `origin/parent/1018` at commit `542e9810`. This card
+branched from `4e951f0e` and had taken 0.165.0; issue #1001 merged that same number onto the
+integration branch while this card's suite ran, so the card renumbered above it at the merge turn
+rather than shipping a colliding version.
+
+### Changed
+
+- `/plan` ends by running the plan review instead of recommending it (issue #1026). Phase 5.4
+  dispatches `/doc-review` to the Plan Reviewer — a herdr pane through agent-launcher's roster
+  helper when the run record's `roster` carries one or its staffing plan names `plan-reviewer` and
+  the helper can run, otherwise the same session in review-only mode — and then loops review,
+  repair, re-check, recording one entry per turn in the record's `review_cycles`. The loop's bound
+  is the record's `standard_cycle_allowance` and `escalated_cycle_allowance`, not a number written
+  into the skill. It exits on a pass, on the operator's one-word override, or on exhausted
+  allowances, and the last of those stops and reports rather than passing.
+- The card's move to `Planning` / `Ready for Active` moved from the head of Phase 5 to §5.5, after
+  the review loop. Its trigger is the recorded pass, which is not observable where the submission
+  used to sit.
+- `/work` §1.3 still refuses to execute on an open `P0` or `P1` without a recorded operator
+  override — unchanged behaviour, now stated as a preservation contract with a `gate-record`
+  marker and a named evidence order: the run record's `review_cycles` first, then same-session
+  output, then the latest matching `docs/reviews/` artifact. Chat memory is not evidence.
+- `/doc-review` reviews an explicitly submitted path as given and never redirects it; it carries
+  the cycle definition from the lifecycle repository at revision `5efc869f`; and it binds each
+  verdict to the revision it read (cards #933, #1026).
+- The rubric command resolves from any working directory: the skill's invocation is now
+  repository-root-relative rather than relative to the skill's own directory, which only ever
+  resolved from `plugins/saga/skills/doc-review/` (card #932).
+- A rubric that cannot be loaded now **stops** the review. The skill's "continue with the readiness
+  review where safe" sentence is replaced, and one layer down `lifecycle_review.py`'s
+  `rubrics list-cores` and `list-extras` no longer exit 0 printing nothing when the rubric library
+  is absent — a reviewer read that as "no rubrics apply" (card #932).
+- The extras-rubric instructions read each applicability condition before the step that selects on
+  it (card #932).
+- Document Review carries the standalone operator-is-the-transport clause, and both Document Review
+  and Code Review state the prohibition generally rather than naming retired scripts, so a
+  differently-named equivalent is covered too (card #931).
+- Document Review's `external_opinion` / `claude_adjudication` cross-reference no longer points at
+  `../code-review/references/findings-schema.md`, which defines neither name; the fields are
+  defined in Document Review's own section. The guard that used to assert the *path string* —
+  and so passed while the reference was broken — is replaced by one that resolves the target and
+  reads it (card #931).
+- The retired external-engine dispatch is gone from Document Review's reviewer-panel section; the
+  only representable external seat is a named Orchestrate `external-reviewer` unit (issue #776
+  residue, card #931).
+- `review` is documented as a declared `lifecycle_phase` that no code path writes, in
+  `references/saga-spec.md` and in `/work`; no write path to it was added (card #934). Whether the
+  phase should be advanced by a step remains an open operator decision.
+- "The latest matching artifact" is defined, by the two filename conventions the `docs/reviews/`
+  corpus already uses, with ambiguity between them surfaced as a finding rather than guessed
+  (card #934).
+- A review artifact records a real commit SHA whenever the reviewed document is committed;
+  `working tree` is reserved for a document not yet in a commit (card #934).
+- "Safe fixes are enabled by default" loses the word `default`, which described a report-only
+  switch the skill never defined; a plain-language report-only request is honoured instead
+  (card #934).
+
+### Added
+
+- `plugins/saga/references/workflow-backend.md` (515 lines) — the new home of the Claude Code
+  Workflow and team-execution-emission instructions, moved out of `/plan` Phase 5.2 and the
+  Workflow-specific half of 5.2a, and `/work` §1.4 and §1.5 (card #808's NARROW ruling, issue
+  #1026). The two skills keep the contract a reader needs in order to decide whether to open it:
+  the backend's name, that it is reached only by explicit operator invocation, and the file's path.
+  `/plan` ends at 728 lines against 772 and `/work` at 864 against 1,142, after the new Phase 5.4
+  and the rewritten `/work` §1.3 added their own text back.
+- **The per-unit tier derivation stayed in `/plan`**, as §5.2a, and is no longer gated on the
+  Workflow backend. It is the staffing heuristic for any backend that spawns per-unit agents — its
+  effort-honoring note covers the `agent`, `external-engine` and `workflow` spawn kinds alike — and
+  both of the generated regions inside it are rendered by generators that target that file.
+- `--doc-review-fixes` on `issue_progress.py`, with its forwarding line in `/work`'s Phase-4
+  command. The parameter had existed and been rendered since the beginning with no flag able to
+  populate it, so the issue comment recorded a review's findings and silently dropped what was done
+  about them (card #932).
+
+### Removed
+
+- `plugins/saga/scripts/team_emitter.py` and `plugins/saga/scripts/spec_table.py`, with
+  `tests/test_team_emitter.py` and `tests/test_spec_table.py`. Every other reference is repaired
+  rather than left to fail at runtime: `execution_spec.recompile_for_tier` now emits the inline
+  baseline for the `team-execution` tier, and the four skills and commands that invoked
+  `spec_table.py` to render an approval table now describe building that table from the spec.
+- `plugins/saga/scripts/execution_spec.py` is **not** removed here. It has seven live importers
+  inside saga, every one of them already on issue #1030's removal list, so deleting it with them
+  reaches the same end state without pulling that card's work forward. Issue #1026's second
+  acceptance criterion is satisfied at the parent pull request, where the end state is identical.
+
+## [0.165.0] - 2026-09-19
+
+**Bumped from 0.164.0**, the saga version on `origin/parent/1018` at commit `4e951f0e` when that
+card branched.
+
+### Code review becomes a policy-free executor (issue #1001)
+
+Until now this plugin decided for itself what good code means. It shipped
+`references/lens-roster.json`, a fourteen-lens quality policy with its own dimensions, anchors and
+acceptance thresholds, and scored against it. A plugin upgrade could therefore change the
+acceptance bar for every repository, with no decision anywhere that said so. That is the problem
+architecture decision record ADR-001 in `infiquetra/infiquetra-sdlc` — the lifecycle repository —
+exists to fix.
+
+**Added**
+
+- `plugins/saga/scripts/review_roster.py` — builds an `applicability_declaration.v1` from the run
+  record's lens declaration and resolves `review_roster.v1` by **invoking the lifecycle
+  repository's own `tools/docs/gen_review_roster.py` as a subprocess**. No copy of that generator
+  is vendored here and the resolution is never reimplemented. The card carried a stop condition —
+  stop if the generator cannot be invoked without vendoring it — and it does not fire: the
+  generator imports only the standard library and resolves its inputs from its own location.
+- `plugins/saga/scripts/review_result.py` — the `review_result.v2` writer. Finding identity is the
+  catalogue's fingerprint of path, line and category; one review history per unit, with a second
+  refused; one cycle counter per repair loop; residual defects prepared at the cycle cap; and
+  publication as exactly one pull-request comment.
+- `review_consensus.compute_verdict` — the verdict as a total function of three facts about the
+  cycle, and a command line that prints one of `accepted`, `repairs_requested`,
+  `cycle_cap_best_available`, `review_incomplete` and nothing else.
+
+**Removed**
+
+- `plugins/saga/references/lens-roster.json`, and with it `ROSTER_PATH`, `load_scoring_policy`,
+  `always_on_lenses`, `recommend_conditional_lenses`, `resolve_lens_selection`,
+  `launch_approved_lenses` and the four conditional-approval classes. Thresholds now arrive as an
+  argument — the roster the run resolved — rather than being looked up in a file this plugin owns.
+- The review-side whole-diff external advisory seat, `ExternalAdvisoryReview` and
+  `ExternalFindingAdjudication`. Removing Work's own in-process second-opinion offer and its
+  private dispatch, sidecar, streak and state modules is **issue 938**, a separate card: those
+  files are not in issue 1001's list.
+- The evidence-ledger write and the `docs/reviews/` publication lane from this skill. The evidence
+  lands in the run record's `review_cycles`, where every later step of the run already reads. The
+  `evidence_ledger.py` module stays — it has other callers; only this call site went.
+- The per-commit conditional-lens approval prompt. The lens set is settled once, at admission.
+
+**Changed**
+
+- `review_result.v1` becomes `review_result.v2`, and Orchestrate's consumer moves with it. The
+  pair of schema identifiers is the only persistent compatibility contract between the two
+  repositories, so a consumer that does not recognise one refuses rather than guesses.
+- `references/lens-catalog.md` is renamed `references/lens-execution.md`. It sat one letter from
+  the lifecycle repository's `config/lens-catalogue.json`, which is the collision child #939
+  reported.
+- `plugins/saga/scripts/admission.py` reads `staffing.lens_catalogue()` correctly. It returns a
+  pair — a mapping keyed by lens identifier, and a version — and the consumer was reading `lenses`
+  and `strictness_ladder` keys off the mapping, so `per_lens_score_threshold` could not be filled
+  by any path. Admission now fills **13 of 13** run-configuration parameters. The origin of the
+  defect is issue #1023, which owns `lens_catalogue`.
+
+**Known state, on purpose**
+
+The lifecycle repository's `config/executor-verifications.json` has no entries: no executor has
+been qualified against any lens's fixtures. The roster generator therefore assigns no scoring
+executor, no lens establishes a threshold, and **every review returns `review_incomplete` today**.
+That is the honest answer rather than a failure — a score from an unqualified model is not weak
+evidence, it is not evidence — and it changes when the first qualification lands, with no change
+here. `tests/test_review_dry_run.py` asserts it, so the day it changes is a diff someone reads.
+
+Issue 1001's fifth acceptance criterion, one real review on a pull request, is **deferred to the
+parent pull request that issue 1030 opens**: children of parent 1018 open no pull request of their
+own. What ships proved instead is the four scripted criteria plus a full dry run of the review
+against this branch's own diff, with the lens sessions replaced by an injected fake executor.
+
+## [0.164.0] - 2026-09-19
+
+**Bumped from 0.163.0**, the saga version on `origin/parent/1018` at commit `0fa2ea32` when this
+card branched.
+
+### Changed
+
+- `/work` and `/code-review` now name agent-launcher's roster helper as the one path from a run
+  record's staffing plan to a set of live role sessions (issue #1024). `/work` gains "Role sessions:
+  the roster helper"; `/code-review` gains "Lens reviewers as role sessions: the roster helper",
+  where one pane per applicable lens is briefed from the Lens Reviewer prompt sliced to that lens.
+  Both say the same two things: the run record's `roster` array is the only authority on what may be
+  closed, and a blocked role is reported rather than answered. Neither skill closes a role pane by
+  hand.
+
+## [0.163.0] - 2026-09-19
+
+**Bumped from 0.161.0, the saga version on `origin/parent/1018` at commit `550ae6ce` when this card
+was built.** The fold of `main` into that integration branch has since landed as `132ea6ab` and
+renumbered the tier-overlay release to 0.162.0, which this 0.163.0 sits above.
+
+- **One JSON run record per issue, and an admission questionnaire asked once (#1023).**
+  `scripts/run_record.py` and `scripts/admission.py` are new. The record holds the admission
+  answers, the thirteen run-configuration parameters, the seven approval boundaries, the roster with
+  its pane identifiers, the units with their worktree, branch and merge-turn state, the review
+  results by cycle, and `next_step`. Its schema is a reference document,
+  `references/run-record.md`, with a test that fails when the document and the code disagree.
+
+- **The record lives outside every worktree and is addressed by an absolute path.** The store root
+  is the git *common* directory's parent plus `.claude/saga/runs`, so a process in a linked worktree
+  resolves the same file as one in the primary checkout. A repository-relative path resolves inside
+  the worktree, where the git-ignored directory does not exist — the failure issue 886's fifth
+  finding reported against the orchestrate plugin's `.orchestrate/`.
+
+- **An unknown record version is one line and exit 3, never a traceback (#975).** Every loader call
+  sits inside the command line's single catch, which is the arrangement finding F124 said was
+  missing. An unknown *top-level field* round-trips unchanged and is reported by name (#989), rather
+  than being dropped silently on the next save.
+
+- **The run record is authoritative over the saga envelope for `next_step`.**
+  `saga.authoritative_next_step()` prefers the record and falls back to the envelope only when there
+  is no record; `saga.mirror_next_step_to_record()` is the one write in the other direction. The
+  spore hooks now freeze and re-inject the record across the compaction boundary.
+
+- **`/plan issue` runs admission first.** The card validator gates it, every defaultable parameter is
+  filled from the new `.saga-profile.json`, fleet-core's staffing component and the lifecycle
+  repository's decided defaults, and only what is left is put to the operator — once, in one message.
+  An answer already in the record is never re-asked.
+
+- **Nothing is removed.** The six stores the record replaces — the run-fact, evidence-custody,
+  dispatch-settlement and effort ledgers, the envelope tokens and the ship receipts — stay in place;
+  the removals card (#1030) deletes them once every reader has moved. The replacement map is in
+  `references/run-record.md`.
+
+## [0.162.0] - 2026-09-19
+
+Renumbered from 0.161.0 when `main` was folded into `parent/1018`: issue #1037 took 0.161.0 on `main`
+first (commit 1a29774a), so this integration-branch section sits above it.
+
+**Requires fleet-core 0.28.0 or later.** `scripts/tier_defaults.py` loads
+`fleet_commons.staffing`, which fleet-core gained in the release that became 0.28.0, at import time. Installing this saga
+without that fleet-core makes the module fail to import with a message naming both the required and
+the resolved version. This repository has two installed plugin roots and a release has updated one
+and not the other six times, so check both.
+
+
+- **The per-repository tier overlay reads through one implementation (#1021).**
+  `scripts/tier_defaults.py` keeps its five public functions and their behaviour but is now a thin
+  shim over `fleet_commons.staffing`: the overlay read, its validation and the registry lookup live
+  once, in fleet-core. `write_tier_default` validates through the same public check the read uses,
+  so a write can no longer accept a tier the read would refuse. `parse_tier_band` stays here,
+  because it parses a GitHub issue body. `TierDefaultsError` still reaches every caller that
+  catches it.
+- **The generated tier table and the effort-convention pointer follow the merged data file
+  (#1021).** `skills/plan/SKILL.md`'s generated tier-table block is re-rendered from
+  `staffing.json`, and `scripts/plan_save_contract.py`'s `EFFORT_REFERENCE` constant — which is
+  checked for existence at contract-load time, not merely linked — now names
+  `plugins/fleet-core/references/staffing.md`. `scripts/plan_save_proof.py` follows it, and so do the four
+  documents that named the deleted `tier_policy.json` — `references/sandbox-spawn-sites.md`,
+  `skills/work/references/execution-strategy.md`, `skills/work/SKILL.md` and
+  `skills/plan/SKILL.md` — together with two comments in `scripts/lifecycle_state.py`.
+
 ## [0.161.0] - 2026-09-19
 
 - **Eleven advisory typed judgments inside `/ideate`, `/brainstorm` and `/office-hours` (#1037).** The three shaping commands each make small repeated judgments per run that an orchestrating model made by reading prose: the same candidate list deduped differently between runs, forty candidates meant 780 pairwise comparisons nobody wanted to make by hand, and none of it left a record anyone could score later. `plugins/saga/scripts/shaping_judgments.py` now asks those judgments as typed questions -- six for `/ideate` (`dedupe`, `axis`, `grounding-fit`, `tactical-scope`, `rubric`, `revival`), four for `/brainstorm` (`scope-tier`, `consequence`, `question-order`, `readiness`) and the routing distribution for `/office-hours` (`route`) -- batched one request per body of text through the fleet-core TypeSafe client that #1032 shipped. There is no HTTP, retry or redaction code in saga: the client owns all of it, and its `prepare_state` is the only path to a transport, so redaction cannot be skipped from here. Every judgment is **advisory** and none is a gate: no existing question, rule or hard gate changed, a confident answer never suppresses a question the skill would otherwise ask, the `dedupe` judgment **groups** and the identifier set coming out equals the set going in, the `tactical-scope` keyword list and the revival new-evidence gate stay floors a judgment may only widen, the consequence factors come back one probability per factor and are never aggregated into a tier, and the `/office-hours` distribution is shown but never routed on. Each fails open with a one-line note to exactly the behaviour the command had before. Bumped to 0.161.0 rather than 0.160.0: issue #1036 took 0.160.0 on `main` first (`f70a63c0`), so this section sits above it and the two releases stay distinguishable.

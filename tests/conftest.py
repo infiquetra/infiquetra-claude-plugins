@@ -58,8 +58,31 @@ def _clear_ambient_fleet_admission_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
+# --- The installed-plugin root must not leak into a test that builds its own install ---
+# CLAUDE_PLUGIN_ROOT is set by Claude Code for every plugin hook, so a suite launched from one --
+# the saga pre-push gate is the one that matters -- inherits it. ``orchestrate.py``'s launcher
+# resolution reads it (`_launcher_script`, at the `CLAUDE_PLUGIN_ROOT` branch) and falls back to
+# the *installed* agent-launcher beside that root. A test that builds a deliberately broken
+# launcher in ``tmp_path`` then silently exercised the real installed one instead, so
+# ``test_a_launcher_that_fails_mid_file_binds_nothing`` failed, and the canary's subprocesses
+# inherited the same variable and resolved fleet-core without the root under test, so
+# ``test_plan_contract_guards_have_teeth`` reported the ``plan-save-contract-engine-root`` guard
+# ``toothless``. Both passed from a plain shell and failed from the push gate: the same tree,
+# two verdicts, decided by the environment the runner happened to carry.
+_PLUGIN_ROOT_ENV_VARS = ("CLAUDE_PLUGIN_ROOT", "AGENT_LAUNCHER_ROOT")
+
+
+@pytest.fixture(autouse=True)
+def _clear_ambient_plugin_root_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep plugin-resolution tests independent of the harness's installed-plugin root."""
+
+    for var in _PLUGIN_ROOT_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
 # --- #279 hard floor: GitHub-write test modules can never touch the live operations board ---
-_GH_WRITE_TEST_MODULES = {"test_mission_control", "test_outcome_board_sync", "test_ship_ceremony"}
+# "test_ship_ceremony" was a member until issue #1027 removed the ship ceremony and its suite.
+_GH_WRITE_TEST_MODULES = {"test_mission_control", "test_outcome_board_sync"}
 
 
 @pytest.fixture(autouse=True)

@@ -49,8 +49,9 @@ After the task list, pick how to execute from task count and dependency structur
 | **Parallel subagents** | 3+ tasks that pass the Parallel Safety Check below. Dispatch independent units simultaneously; run dependent units after their prerequisites complete. Requires plan-unit metadata. |
 
 This strategy choice (inline / serial / parallel **subagent dispatch**) is the *mechanical* "how do I run
-the units" decision and is independent of the **backend** choice below (`inline` / `team-execution` /
-`cc-workflows-ultracode`), which is the operator-choice contract for *which runtime owns the work*.
+the units" decision and is independent of the recorded **backend** below, which is the
+operator-choice contract for *which runtime owns the work*. Since issue #1030 that contract has one
+value, `inline`, so the only live decision here is the mechanical one above.
 
 ## Parallel Safety Check (required before parallel dispatch)
 
@@ -76,15 +77,13 @@ deferred-implementation questions, and the instruction to check the unit's test 
 four applicable categories (happy / edge / error / integration) and supplement gaps. **Preserve the
 U-ID** in the dispatch and in everything the subagent reports back.
 
-**Mechanical units (census, file-exist checks, JSON validation, grep counts, link checks) should use
-the `mechanical-executor` agent** (`plugins/saga/agents/mechanical-executor.md`) instead of a generic
-`Task` agent.  The mechanical executor runs on haiku (cheap tier), is Bash-only, and is op-discriminated
-— pass it a single `op:` payload; it rejects unknown ops rather than guessing.  Dispatch it inline
-(not as a parallel subagent) because its output feeds the calling phase directly.  Example dispatch
-payload:
+**Mechanical units (census, file-exist checks, JSON validation, grep counts, link checks) run
+inline in this session.**  They were dispatched to a dedicated cheap-tier Bash-only agent until issue
+1030 removed both saga agents; the work is a shell command and a read of its output, which costs less
+run here than it costs to stand an agent up for it.  Run the command, read the result, and carry on —
+the point of the old agent was to keep the tier cheap, and inline is cheaper still.  Example:
 
 ```
-op: census
 glob: plugins/*/agents/*.md
 ```
 
@@ -121,26 +120,15 @@ it would be 'WIP', wait." Use the plan's Implementation Units as a starting guid
 adapting to what you find. Stage only the files for that logical unit (not `git add .`). Use clean
 conventional messages with **no attribution footers**.
 
-## Effort-escrow accounting (#366)
+## Effort accounting — the run record, not an escrow ledger
 
-When a plan set per-unit effort allocations (`/plan` Step 1b), thread the escrow ledger
-(`plugins/saga/scripts/effort_ledger.py`) through execution so actual-vs-planned spend is accounted, not
-just planned. These are named CLI calls, not intent — the ledger state lives under the git-ignored
-`.claude/saga/`; never `git add` it.
+The effort-escrow ledger and its policy file are **removed** (issue 1028). What replaced them is the
+run record's `run_configuration.staffing_models_and_efforts`: the model and effort each role runs at,
+decided once at admission and readable by every later step from one file.
 
-- **Before dispatching a unit** whose declared work looks likely to exceed its allocation, consult the
-  ledger for an escalation-request:
-  `python3 plugins/saga/scripts/effort_ledger.py escalate --unit <U-ID> --requested <to_spend> --reason "<why>"`.
-  A returned `ESCALATION` surfaces to the operator **before** the unit runs (never after the overspend),
-  mirroring the #364 between-rounds gate — surfaced, never silently auto-approved.
-- **After a unit completes**, record its actual spend so an under-spending unit refunds the unused
-  budget to the run pool:
-  `python3 plugins/saga/scripts/effort_ledger.py record --unit <U-ID> --actual <to_spend>`.
-- `python3 plugins/saga/scripts/effort_ledger.py report` prints the current pool, allocations, and any
-  pending escalation-requests for the resume/handoff summary.
-
-Absent an `effort-policy.yaml`, the ledger uses the safe default (refund unused, surface escalations,
-never auto-approve).
+Nothing accrues, refunds or escalates per unit any more. A unit whose work looks likely to need a
+different tier is a staffing question, and it goes to the operator as one rather than through an
+allocation arithmetic nobody was reading.
 
 ## Already shipped → verify, don't reimplement
 
@@ -152,15 +140,10 @@ already landed some units.
 
 ## Backend recommendation — `recommend_execution_backend()` (Phase 1.4)
 
-`/work` lands the deferred operator-choice helper (operator-choice §7), **narrowed by issue #808**.
-Compute the cheapest-correct **Saga** backend (`inline` or `team-execution`), pre-select that Saga
-backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default or
-automatic backend and never a generic interchangeable execution backend; **do not pre-select** it —
-the recommender never returns it (issue #840 C5). Enter a Claude Code Workflow only by **explicit
-invocation**. Before calling the CLI, **probe Workflow-tool availability with `ToolSearch`** (needed
-if the operator later invokes a Workflow) and pass the result as `--workflow-availability-source
-probed`; fall back to the `asserted` default only when a live probe isn't possible on this host. Call
-the CLI:
+`/work` lands the deferred operator-choice helper (operator-choice §7). Since issue #1030 archived
+the `team-execution` plugin and removed the `cc-workflows` plugin there is one backend, `inline`, so
+the helper's job is no longer to choose between backends — it is to compute the work shape and
+return the rationale the run records. Call the CLI:
 
 ```bash
 python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
@@ -174,24 +157,24 @@ python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
 ```
 
 It returns JSON: `{recommended, rationale, alternatives, backends, workflow_availability}`.
-`recommended` / `rationale` / `alternatives` are unchanged. `backends` is the full-enumeration payload —
-always exactly three ordered `{backend, status, note}` entries (`inline`, `team-execution`,
-`cc-workflows-ultracode`) with `status` in `{recommended, alternative, unavailable}`; there is no
-`omit_ultracode` key. `workflow_availability` echoes `{available, source}`, where `source` is `probed`
-or `asserted` (KTD3) — the provenance of the availability check.
+`recommended` is always `inline` and `alternatives` is always empty, because issue #1030 archived
+every other backend. `backends` is the full-enumeration payload — one ordered `{backend, status,
+note}` entry for `inline` with `status` in `{recommended, alternative, unavailable}`; the enumeration
+contract is that no backend is ever silently dropped, not that the list has a particular length.
+`workflow_availability` echoes `{available, source}`, where `source` is `probed` or `asserted`
+(KTD3) — kept because a caller that probed the host is entitled to see what the probe said, even
+though nothing now turns on it.
 
-The recommendation reuses `should_offer_team_execution`'s thresholds (functional file count — raw
-`--file-count` minus `--release-surface-file-count` — ≥ 8, phase_count ≥ 4, security, infra, cross-repo,
-deployment-sensitive) **or** a gated needs-consensus signal for `team-execution`; broad-independent-fanout,
-an adversarial-confidence pass (prove-by-refutation / judge-panel), advisory consensus, or any of the five
-`--workflow-shape` entries (`understand` / `design` / `research` / `review` / `migrate`) without elevated
-risk for `cc-workflows-ultracode`; `inline` otherwise. An unknown `--workflow-shape` value raises loud
-(`ValueError`) — never a silent downgrade to inline. Pass `--release-surface-file-count` for the count of
+The same signals are still computed — `should_offer_team_execution`'s thresholds (functional file
+count — raw `--file-count` minus `--release-surface-file-count` — ≥ 8, phase_count ≥ 4, security,
+infra, cross-repo, deployment-sensitive) or a gated needs-consensus signal — but since issue #1030
+they select the `rationale` the run records rather than a different backend. An unknown
+`--workflow-shape` value still raises loud (`ValueError`) — never a silent downgrade. Pass `--release-surface-file-count` for the count of
 release-bookkeeping files (plugin.json, marketplace.json, CHANGELOGs, version drift pins) inside
 `--file-count` — they carry no functional risk and must not trip the size trigger on their own. Pass
 `--no-code-surface` for pure docs/spec/research output: it voids the code-shaped proxies (size, and the
 `has_infra` / `has_security` keyword flags that false-positive on docs) so a big docs change isn't
-conscripted into team-execution — only `--cross-repo` and gated `--needs-consensus` keep it there. Set
+counted as escalating on its size alone — only `--cross-repo` and gated `--needs-consensus` do that. Set
 `--adversarial-confidence` ONLY on an explicit operator request for many-independent-attempt verification
 (refute-N, a judge panel, perspective-diverse lenses) — not inferred from generic "make me more confident"
 phrasing, and not when 1-3 review lenses would do; that bar keeps confidence work from over-routing to
@@ -199,16 +182,12 @@ ultracode. `alternatives` lists every reachable backend **independent of which o
 an overlap job (consensus AND fan-out) still offers both — escalation stays one step (operator-choice
 §3.3).
 
-Surface the recommendation with `AskUserQuestion` (or channel-inline), rendering the **two Saga
-backends** (`inline` and `team-execution`): pre-select `team-execution` when a gated size/risk/
-consensus trigger fired, otherwise `inline`. Do not add `cc-workflows-ultracode` as a third
-interchangeable choice. If the
-operator **explicitly invokes** `cc-workflows-ultracode` but it turns out unavailable, HALT with a
-recovery line pointing at `team-execution` or `inline` — never silently substitute. Record the
-operator's pick via the saga's `--orchestration-mode` (Phase 1.4) — that is the durable home for the
-choice (operator-choice §6). Pass the helper's `recommended` value — the bare enum string, since
-`--orchestration-recommended` takes `choices=ORCHESTRATION_MODES`, not the JSON object — even when
-the pre-select differs, so R12 telemetry still sees recommended-vs-chosen.
+**Do not surface a question.** With one backend there is nothing to ask and nothing to pre-select;
+an offer whose only option is the default is ceremony. Record `inline` via the saga's
+`--orchestration-mode` (Phase 1.4) — that is the durable home for the choice (operator-choice §6) —
+and pass the helper's `recommended` value to `--orchestration-recommended` as the bare enum string,
+since that flag takes `choices=ORCHESTRATION_MODES` rather than the JSON object. R12 telemetry still
+sees recommended-vs-chosen, which is the point of writing both even when they agree.
 
 ## Build-unit tier resolution — `resolve_build_unit_tier()` (Phase 2)
 
@@ -225,11 +204,12 @@ python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
 An explicit `{model, effort}` on the plan unit wins on **precedence** — and is validated against the
 same vocabulary the shape path resolves from, so a model or effort the registry does not carry is
 refused rather than passed through to a spawn. Otherwise the work shape is selected and resolved
-through the shared registry: `plugins/fleet-core/scripts/fleet_commons/tier_policy.json` via
+through the shared registry: the `work_shapes` block of
+`plugins/fleet-core/scripts/fleet_commons/staffing.json` via
 `tier_resolver` / `tier_defaults`. When a unit declares neither a tier nor a work shape, the selected
 shape is `mechanical` — bounded, specified work per `/work`'s own execution context and the middle
 rung that bounds either-direction error (KTD7) — so the resolver with neither argument resolves the
-`mechanical` row from `tier_policy.json`, not a literal at the spawn site. Values stay in that
+`mechanical` row from `staffing.json`, not a literal at the spawn site. Values stay in that
 registry; this file only names the shape-selection rule — `resolve_build_unit_tier` in
 `lifecycle_state.py` is the single delegation seam behind the subcommand. **The resolver takes no
 host or session input at all**, which is what makes inheritance impossible: it cannot consult a host

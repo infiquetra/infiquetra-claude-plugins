@@ -177,17 +177,17 @@ type: <feat|fix|refactor|chore|docs|perf|test>
 status: active            # active on creation; /work flips to completed on ship
 date: YYYY-MM-DD          # ISO 8601, ASCII digits
 origin: <repo-relative path to the upstream brainstorm/requirements doc; set when planning from one>
-backend: <inline|team-execution|cc-workflows-ultracode>   # the execution backend, decided here
+backend: inline          # the execution backend; `inline` is the only value since issue #1030
 deepened: YYYY-MM-DD      # optional; added when the confidence pass substantively strengthened the plan
 ---
 ```
 
 - **`title` / `type` / `status` / `date` / `backend`** are required on every newly created plan.
 - **`backend:`** carries the execution decision to whoever executes. `/work` honours it and does
-  not re-offer; it only offers when the field is absent. The default values written here are
-  `inline` or `team-execution`. Record `cc-workflows-ultracode` only after **explicit invocation**
-  of a Claude Code Workflow (issue #808 NARROW); it is never a default/automatic backend and never
-  a generic interchangeable execution backend. This lives in the plan document rather than
+  not re-offer. The only value to write is `inline`: issue #1030 archived the `team-execution`
+  plugin and removed the `cc-workflows` plugin, so `ORCHESTRATION_MODES` is `("inline",)` and there
+  is nothing else to record. A plan written before that release may still carry one of the two
+  archived strings, and `/work` reads it as history. This lives in the plan document rather than
   in the saga tick because the tick is untracked local state and does not survive a worktree
   boundary, a different machine, or a different vendor — while the plan document is committed and
   travels with the work. Newly created plans MUST record it; legacy plans that lack it stay

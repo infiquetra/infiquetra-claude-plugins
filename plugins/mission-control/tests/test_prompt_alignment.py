@@ -43,8 +43,16 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.17.0"
-    )  # 2.17.0: advisory triage suggestions and the widen-only labels union (issue 1035)
+        plugin_json["version"] == "2.20.0"
+    )  # 2.20.0: the saga readiness reader loses its handoff-envelope and
+    # reversibility-certificate paths, both removed by issue 1030. Predecessor 2.19.0:
+    # the tier-band comment names fleet-core's merged staffing data (issue 1021);
+    # renumbered from 2.18.0 when main was folded into parent/1018.
+    # Predecessor 2.18.0: board census regenerated and keyed by field name, stage-flow prose,
+    # drift guard (issue 1020); renumbered from 2.17.0 in the same fold.
+    # Predecessor 2.17.0: advisory triage suggestions and the widen-only labels union (issue 1035)
+    # Predecessor 2.16.0: schema resync, Risk body field, Saga readiness delegation
+    # (issues 999/1000/942)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]
@@ -158,7 +166,7 @@ def test_prepared_issue_guidance_routes_natural_language_creation() -> None:
     assert "Create an issue from the brainstorm" in skill
     assert "handoff_maturity" in skill
     assert "If team or project is ambiguous, ask" in skill
-    assert "Never auto-move a prepared issue to `Ready`" in skill
+    assert "Never auto-move a prepared issue to `Ready for Planning`" in skill
     assert "from the brainstorm" in create_command
     assert "handoff the plan" in create_command
     assert "/loop <issue>" not in create_command
@@ -225,18 +233,6 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
         text = _read(path)
         for phrase in stale_phrases:
             assert phrase not in text, f"{path.relative_to(ROOT)} contains stale phrase {phrase!r}"
-
-
-def test_saga_handoff_routes_without_copying_issue_templates() -> None:
-    handoff = _read(ROOT / "plugins/saga/skills/handoff/SKILL.md")
-    issue_command = _read(PLUGIN_ROOT / "commands/issue.md")
-
-    assert "Do not copy SDLC issue templates into this skill." in handoff
-    assert "/issue --prepare --from <source> --maturity <maturity>" in handoff
-    assert "issue prepare" in issue_command
-    assert "do not copy\n   SDLC issue template sections into Saga" in issue_command
-    assert "### Objective" not in handoff
-    assert "### Acceptance criteria" not in handoff
 
 
 def test_find_package_root_resolves_plugin_root() -> None:

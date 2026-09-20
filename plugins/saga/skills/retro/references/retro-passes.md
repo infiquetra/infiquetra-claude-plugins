@@ -75,18 +75,11 @@ read subcommands of `gh` — never create / edit / merge.
 
 ---
 
-## Pass 3 — Transcript-review fan-out (reuse the /resume scripts, context-safe)
+## Pass 3 — Transcript-review fan-out (context-safe)
 
-Reuse the `/resume` forensic substrate, file-mediated. The orchestrator **never reads a raw `.jsonl` or a
+Reuse the transcript-forensics substrate, file-mediated. The orchestrator **never reads a raw `.jsonl` or a
 skeleton file** — paths only.
 
-```bash
-SCRATCH=$(mktemp -d -t retro-sessions-XXXXXX)
-# thread-scoped: identify sessions from the saga / branch.
-# windowed: discover, recency-ranked, capped, current session excluded:
-python3 plugins/saga/scripts/discover_sessions.py --repo <repo-folder> --days <N> --exclude <current-session-id>
-python3 plugins/saga/scripts/extract_session_skeleton.py --output "$SCRATCH/<id>.skeleton.txt" < <session-file>
-```
 
 **Fan-out (optional, offered).** When several sessions warrant parallel synthesis, **OFFER** a backend per
 `../../../references/operator-choice.md` and dispatch **one generic agent per session** (`Explore` / `Task` —
@@ -147,7 +140,7 @@ apply / skip / modify; channel session: inline the choice):
   clustering, no `infiquetra-context-library` write — those are the `promote` skill. The marker waits in
   place for the next `promote` run.
 - **Source of truth** — the canonical marker form + the drift-stable `<repo>:<hash>` source key are frozen
-  in `../../promote/references/promotion-contract.md` §1–§2; the recurrence-net feeder and the gated upsert
+  by the promotability rule in `../SKILL.md`; the recurrence-net feeder and the gated upsert
   live in the `promote` skill (do not reimplement them here).
 
 ---
@@ -157,7 +150,7 @@ apply / skip / modify; channel session: inline the choice):
 The passes neither source had:
 
 - **(a) new-skill / plugin detection** — repeated friction (esp. flagged recurring in Pass 4) that a new
-  skill or plugin would remove → propose a `QUEUED.md` entry or a `/handoff`.
+  skill or plugin would remove → propose a `QUEUED.md` entry or a `mission-control` issue.
 - **(b) refine-lifecycle** — propose diffs to the saga SKILLs when the thread exposed a
   gap or a wrong instruction (including `skills/retro/SKILL.md` itself — proposal only, never
   self-applied).
@@ -174,6 +167,6 @@ auto-run** it, never auto-launch a destructive self-edit.
 
 ## Pass 7 — Route
 
-Surfaced follow-ups → `/handoff` (becomes an SDLC issue) or `QUEUED.md` (durable backlog). Route per
-`loop/references/dispatch-table.md` — read it, never restate it. No saga write; `/retro` is terminal and
+Surfaced follow-ups → `mission-control` (becomes an SDLC issue) or `QUEUED.md` (durable backlog). Route per
+No saga write; `/retro` is terminal and
 saga READ-ONLY.

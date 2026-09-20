@@ -57,9 +57,12 @@ SAGAS_DIR = STATE_DIR / "sagas"
 LEGACY_CHECKPOINT_DIR = STATE_DIR / "checkpoints"
 
 # Default branch names a saved ``branch`` field must not be silently overwritten with once a real
-# work branch is already recorded (issue #480). ``ship_ceremony.py``'s ``_do_checkout_main`` runs
-# ``git checkout main`` before ``branch_delete``, so a live-git refresh on that progress-save would
-# otherwise erase the very branch ``branch_delete`` still needs to delete. Mirrors the ceremony's
+# work branch is already recorded (issue #480). The ship ceremony this guard was written against
+# checked ``main`` out before deleting the work branch, so a live-git refresh on that progress-save
+# would otherwise erase the very branch the delete still needed. That ceremony was removed with
+# issue #1027; the guard stays, because "a default branch name never overwrites a recorded work
+# branch" is true of every caller and not only of the one that made it visible. Mirrors the
+# ceremony's
 # own hard-coded ``main`` checkout (``master`` included for older repos).
 _DEFAULT_BRANCHES = frozenset({"main", "master"})
 
@@ -76,12 +79,10 @@ LIFECYCLE_PHASES = ("ideation", "brainstorm", "plan", "review", "work", "qa", "r
 PHASE_STATUSES = ("pending", "in_progress", "complete")
 STATUSES = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
 DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
-ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
-# ship_ceremony.py's reversibility-tier vocabulary (issue #345). saga.py only validates the
-# closed set here; the transition ORDER and index-derivation are ship_ceremony.py's own
-# domain (CeremonyTier), never saga.py's — keeps the generic engine decoupled from one
-# consumer's transition table.
-CEREMONY_TIERS = ("reversible", "additive", "always_operator")
+# Two values since issue #1030 archived the team-execution plugin. The strings are a frozen wire
+# contract carried in persisted sagas, so a tick that recorded "team-execution" still reads back;
+# it is simply no longer selectable, because the backend it named no longer exists.
+ORCHESTRATION_MODES = ("inline",)
 
 # Display-label map (R8 / KTD5).  Maps the stored enum string to the human-readable
 # label surfaced in every offer.  The enum values in ORCHESTRATION_MODES are the
@@ -89,7 +90,9 @@ CEREMONY_TIERS = ("reversible", "additive", "always_operator")
 # this map is additive and never changes their meaning.  A key miss falls back to
 # the raw enum string — never errors.
 ORCHESTRATION_MODE_LABELS: dict[str, str] = {
-    "cc-workflows-ultracode": "dynamic workflows",
+    # Kept deliberately after issue #1030 archived the plugin: a persisted saga can still carry
+    # this string, and a reader that fell back to the raw enum would show a worse label for a
+    # historical tick than the one it was written with. The map is additive and never gates a choice.
     "team-execution": "team execution",
     "inline": "inline",
 }
@@ -236,13 +239,6 @@ class Saga:
     adr_refs: ListOrAbsent = ABSENT
     journal_refs: ListOrAbsent = ABSENT
 
-    # ship_ceremony.py state (issue #345, KTD2): the last transition it ran and that
-    # transition's reversibility tier. No index is stored — ship_ceremony.py derives the
-    # index from `ceremony_transition` against its own canonical TRANSITIONS order each
-    # time, so there is never a stored index to drift out of sync with the name.
-    ceremony_transition: str = ""
-    ceremony_tier: str = ""
-
     # Disposition detail.
     blockers: str = ""
     open_questions: ListOrAbsent = ABSENT
@@ -300,8 +296,6 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "pr_refs",
     "adr_refs",
     "journal_refs",
-    "ceremony_transition",
-    "ceremony_tier",
     "blockers",
     "open_questions",
     "checks_run",
@@ -703,11 +697,17 @@ class SagaTickIndexWriteError(OSError):
 
 
 def _orchestration_rank(mode: str) -> int | None:
-    """Tier rank of an orchestration mode (inline < team-execution < cc-workflows-ultracode).
+    """Tier rank of an orchestration mode. One rung since issue #1030: ``inline``.
 
     Returns the index in ``ORCHESTRATION_MODES`` (a higher index is a richer/costlier tier),
     or ``None`` for an unrecognized value (the guard then can't reason about direction and is
-    lenient).
+    lenient). With one rung there is no upgrade or downgrade left to detect, and the function
+    stays because the ladder is the shape the guard reads, not a count it assumes.
+
+    That leniency is what keeps a saga written before issue #1030 readable: ``team-execution`` was
+    the middle rung until that card archived the plugin, and a persisted tick still carrying the
+    string ranks ``None`` rather than raising. The value is refused at the command line, where a
+    new choice is made, and accepted on the way back in, where history is only being read.
     """
     try:
         return ORCHESTRATION_MODES.index(mode)
@@ -819,8 +819,8 @@ def save(
     git = current_git_state(root, runner=runner)
     # ``branch`` refreshes from live git on EVERY save (issue #480), not just the first, so a saga
     # minted on ``main`` by ``/plan`` — before its work branch exists — starts tracking the real
-    # branch as soon as ``/work`` re-saves on it, and ship_ceremony's ``branch_delete`` guard then
-    # sees the actual branch instead of the mint-time ``main``. Two guards on the refresh: the
+    # branch as soon as ``/work`` re-saves on it, and any later reader sees the actual branch
+    # instead of the mint-time ``main``. Two guards on the refresh: the
     # empty ``git["branch"]`` read (detached HEAD / no git) never clobbers a stored value, and a
     # save made back on the default branch never overwrites an already-recorded real work branch
     # (else the ceremony's own ``checkout_main`` progress-save would erase what ``branch_delete``
@@ -923,8 +923,6 @@ def _tick_snapshot(saga: Saga) -> dict[str, Any]:
             "summary": saga.summary,
             "open_questions": _materialize(saga.open_questions),
             "rounds_seen": _materialize(saga.rounds_seen),
-            "ceremony_transition": saga.ceremony_transition,
-            "ceremony_tier": saga.ceremony_tier,
         }
     )
     return snapshot
@@ -1038,6 +1036,66 @@ def read_ticks(root: Path, saga_id: str) -> list[Saga]:
         key=lambda p: envelope_sort_key(p.name),
     )
     return [parse_envelope(p.read_text(encoding="utf-8")) for p in files]
+
+
+def authoritative_next_step(
+    root: Path,
+    saga_id: str,
+    *,
+    store_root: Path | None = None,
+) -> str:
+    """Return the run's ``next_step``, preferring the run record over this envelope log (#1023).
+
+    Both this engine and the run record carry a field of that name, so something has to say which
+    wins. The RECORD wins (plan KTD8a): it is the one file every role reads, and the envelope log
+    is append-only history whose older ticks are *meant* to hold stale values, so reconciling in
+    the other direction would let a stale tick move a live run backwards.
+
+    Falls back to the envelope's value when there is no record for the issue, when the saga is not
+    issue-shaped, or when the record module is unavailable — a missing record means "no run record
+    yet", never "no next step".
+    """
+    saga = restore(root, saga_id)
+    envelope_value = saga.next_step if saga is not None else ""
+    if saga is None or saga.kind != "issue" or not saga.id.isdigit():
+        return envelope_value
+    try:
+        import run_record  # noqa: PLC0415  (optional at call time, by design)
+
+        resolved = Path(store_root) if store_root is not None else run_record.resolve_store_root()
+        recorded = run_record.get_next_step(resolved, int(saga.id))
+    except Exception:
+        return envelope_value
+    return recorded or envelope_value
+
+
+def mirror_next_step_to_record(
+    saga: Saga,
+    *,
+    store_root: Path | None = None,
+) -> Path | None:
+    """Write *saga*'s ``next_step`` onto the issue's run record; return the path, or ``None``.
+
+    The write direction that KTD8a allows: a tick that sets a next step updates the authority.
+    Silent on every failure a caller cannot act on — a saga tick must not fail because the run
+    record's store is unreachable, since the tick is the older and more fundamental artifact.
+
+    **``save`` deliberately does not call this.** Mirroring automatically would resolve the real
+    store — the primary checkout's live ``.claude/saga/runs`` — from every test in the suite that
+    saves a tick against a temporary root, which is a live write from a unit test. A caller that
+    wants the mirror asks for it and, in a test, names the store
+    (``tests/test_run_record.py::test_saving_a_saga_tick_does_not_write_into_the_record_store_by_itself``
+    pins that).
+    """
+    if saga.kind != "issue" or not saga.id.isdigit() or not saga.next_step:
+        return None
+    try:
+        import run_record  # noqa: PLC0415  (optional at call time, by design)
+
+        resolved = Path(store_root) if store_root is not None else run_record.resolve_store_root()
+        return run_record.set_next_step(resolved, int(saga.id), saga.next_step)
+    except Exception:
+        return None
 
 
 def _normalized_plan_path(root: Path, plan_path: str) -> Path:
@@ -1519,8 +1577,6 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         pr_refs=_split_list(args.pr_refs),
         adr_refs=_split_list(args.adr_refs),
         journal_refs=_split_list(args.journal_refs),
-        ceremony_transition=args.ceremony_transition,
-        ceremony_tier=args.ceremony_tier,
         blockers=args.blockers,
         open_questions=_split_list(args.open_questions),
         checks_run=_split_list(args.checks_run),
@@ -1623,17 +1679,6 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument("--pr-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--adr-refs", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--journal-refs", default=None, help="pipe-separated; omit = carry forward")
-    p.add_argument(
-        "--ceremony-transition",
-        default="",
-        help="ship_ceremony.py: last transition run (e.g. 'open_pr'); omit = carry forward",
-    )
-    p.add_argument(
-        "--ceremony-tier",
-        default="",
-        choices=[*CEREMONY_TIERS, ""],
-        help="ship_ceremony.py: reversibility tier of that transition; omit = carry forward",
-    )
     p.add_argument("--open-questions", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--checks-run", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument(

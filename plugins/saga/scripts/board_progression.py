@@ -32,7 +32,11 @@ from typing import Any
 
 
 def _cert():
-    import reversibility_certificate as _m  # noqa: PLC0415
+    """The closed op allowlist. Issue 1030 removed `reversibility_certificate.py` with the ship
+    ceremony that consumed its tiering; `op_allowlist.py` is the default-deny half that survives,
+    and it keeps the same `authorize_write` / AUTHORIZED / GATE / OpKind surface so every call
+    site below is unchanged."""
+    import op_allowlist as _m  # noqa: PLC0415
 
     return _m
 
@@ -300,6 +304,159 @@ def assignment_identity(assignments: list[tuple[str, str]]) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# The lifecycle boundaries (issue 1028)
+# ---------------------------------------------------------------------------
+
+#: The ``(Stage, Status)`` pairs a caller may submit, mirroring
+#: ``lifecycle_field_mutation.allowed_submissions`` in the vendored
+#: ``plugins/mission-control/config/sdlc-schema.json``. The schema is the authority and is read at
+#: run time where it resolves; this constant is the offline fallback, and
+#: ``tests/test_board_progression.py`` fails if the two drift apart. Having both is deliberate: a
+#: dry run must work on a machine with no mission-control install, and a safety list that silently
+#: becomes empty because a file was missing is worse than no list at all.
+ALLOWED_SUBMISSIONS: tuple[tuple[str, str], ...] = (
+    ("Planning", "Designing"),
+    ("Planning", "Ready for Active"),
+    ("Active", "Implementing"),
+    ("Verify", "Awaiting verification"),
+    ("Verify", "Ready to close"),
+    ("Retro", "Ready to close"),
+)
+
+#: The run's lifecycle boundaries, each mapped to the ONE move the lifecycle repository allows
+#: there. ``None`` is a real answer, not a gap: ``review-accepted`` has no row in the allowed list,
+#: so saga submits nothing at that boundary rather than inventing a move. ``close`` carries two
+#: rows because ``retro_trigger.no_trigger_closure`` says a run with no fired trigger closes from
+#: Verify and never enters Retro; the caller says which by passing ``retro_trigger_fired``.
+BOUNDARIES: dict[str, tuple[str, str] | None] = {
+    "admission-exit": ("Planning", "Designing"),
+    "plan-review-pass": ("Planning", "Ready for Active"),
+    "build-start": ("Active", "Implementing"),
+    "review-accepted": None,
+    "merge-and-deploy": ("Verify", "Awaiting verification"),
+    "close": ("Verify", "Ready to close"),
+}
+
+#: The ``close`` boundary's other row, taken when a retro trigger fired.
+CLOSE_AFTER_RETRO: tuple[str, str] = ("Retro", "Ready to close")
+
+#: Why ``review-accepted`` prints nothing. Stated once, so the command line and the tests say the
+#: same thing and a reader is not left thinking the boundary was forgotten.
+NO_SUBMISSION_NOTE = (
+    "no allowed submission at this boundary: the lifecycle repository's "
+    "lifecycle_field_mutation.allowed_submissions carries no row for review acceptance, so saga "
+    "submits nothing here and records the boundary in the run record only"
+)
+
+
+def _vendored_schema_paths() -> list[Path]:
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parents[3] / "mission-control" / "config" / "sdlc-schema.json",
+    ]
+    with contextlib.suppress(RuntimeError):
+        root, _rung = resolve_mission_control_root()
+        candidates.append(Path(root) / "config" / "sdlc-schema.json")
+    return candidates
+
+
+def allowed_submissions() -> tuple[tuple[str, str], ...]:
+    """The allowed ``(Stage, Status)`` pairs — from the schema where it resolves, else the mirror.
+
+    A schema that resolves but carries no ``allowed_submissions`` block falls back rather than
+    returning an empty tuple, because an empty allowed list would refuse every move and read as a
+    board outage rather than as the missing block it is.
+    """
+    for path in _vendored_schema_paths():
+        try:
+            raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        rows = (raw.get("lifecycle_field_mutation") or {}).get("allowed_submissions")
+        if isinstance(rows, list) and rows:
+            pairs = [
+                (str(row.get("stage")), str(row.get("status")))
+                for row in rows
+                if isinstance(row, dict) and row.get("stage") and row.get("status")
+            ]
+            if pairs:
+                return tuple(pairs)
+    return ALLOWED_SUBMISSIONS
+
+
+def allowed_submission_refusal(assignments: list[tuple[str, str]]) -> str | None:
+    """``None`` when this pair is allowed; otherwise the one-line refusal naming what was asked.
+
+    Only a PAIR is judged. A single-field submission goes through the legacy ``field`` /
+    ``target_state`` keys, which the outcome coordinator uses for board states that are not
+    lifecycle boundaries at all; issue 1030 removes that caller, and widening this guard to cover
+    it today would refuse writes that are currently correct.
+    """
+    if len(assignments) != len(EXPECTED_ASSIGNMENT_FIELDS):
+        return None
+    by_field = dict(assignments)
+    stage = by_field.get("Stage", "")
+    status = by_field.get("Status", "")
+    if (stage, status) in allowed_submissions():
+        return None
+    allowed = "; ".join(f"{a} / {b}" for a, b in allowed_submissions())
+    return (
+        f"the pair Stage={stage!r}, Status={status!r} is not one the lifecycle repository allows a "
+        f"caller to submit. The allowed submissions are: {allowed}"
+    )
+
+
+def resolve_boundary(name: str, *, retro_trigger_fired: bool = False) -> dict[str, Any]:
+    """The single move *name* submits, or the honest absence of one.
+
+    Returns ``{"boundary", "stage", "status", "submits"}``. ``submits`` is False only for
+    ``review-accepted``; every other boundary submits exactly one pair.
+    """
+    if name not in BOUNDARIES:
+        known = ", ".join(BOUNDARIES)
+        raise ValueError(f"unknown boundary {name!r}; the run's boundaries are: {known}")
+    pair = BOUNDARIES[name]
+    if pair is None:
+        return {
+            "boundary": name,
+            "stage": None,
+            "status": None,
+            "submits": False,
+            "note": NO_SUBMISSION_NOTE,
+        }
+    if name == "close" and retro_trigger_fired:
+        pair = CLOSE_AFTER_RETRO
+    return {"boundary": name, "stage": pair[0], "status": pair[1], "submits": True}
+
+
+def boundary_payload(move: dict[str, Any]) -> dict[str, Any]:
+    """The submission payload for a resolved boundary — both halves, never one."""
+    return {"assignments": [["Stage", move["stage"]], ["Status", move["status"]]]}
+
+
+def read_boundary_context(record_path: Path) -> dict[str, Any]:
+    """The repository, issue number and retro-trigger flag a boundary move needs.
+
+    Read from the run record rather than passed on the command line, because the record is the one
+    file every role reads and a hand-typed issue number is how a move lands on the wrong card.
+    """
+    raw = json.loads(Path(record_path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{record_path} does not hold a JSON object")
+    schema = str(raw.get("schema") or "")
+    if schema and schema != "run_record.v1":
+        raise ValueError(
+            f"run record {record_path} declares schema {schema!r}; this reader knows run_record.v1"
+        )
+    extra = raw.get("retro") if isinstance(raw.get("retro"), dict) else {}
+    return {
+        "repo": str(raw.get("repo") or ""),
+        "number": int(raw.get("issue") or 0),
+        "retro_trigger_fired": bool(extra.get("trigger_fired")),
+    }
+
+
+# ---------------------------------------------------------------------------
 # The per-op primitive (the extracted mechanism)
 # ---------------------------------------------------------------------------
 
@@ -369,6 +526,14 @@ def authorize_and_write(
         for field_name, _option in assignments:
             if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
                 return {"status": "gated", **base, "field": field_name, "verdict": "GATE"}
+        # The VALUE, not just the field (issue 1028). The certificate authorizes ``Stage`` and
+        # ``Status`` as names and says nothing about what may be written into them, so before this
+        # guard any caller could put a card into any option the board happened to carry. The
+        # lifecycle repository calls ``lifecycle_field_mutation.allowed_submissions`` "the single
+        # authority" on what a caller may submit, and nothing read it.
+        pair_refusal = allowed_submission_refusal(assignments)
+        if pair_refusal is not None:
+            return {"status": "gated", **base, "verdict": "GATE", "error": pair_refusal}
         # The replay identity names the whole submission (#927): see ``assignment_identity``.
         field_kw, state_kw = assignment_identity(assignments)
         base["field"] = field_kw
@@ -798,11 +963,100 @@ def _repo_root_default() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _run_boundary(args: argparse.Namespace) -> int:
+    """Resolve one lifecycle boundary and either print its move or submit it.
+
+    One move per boundary and nothing else. A refused move is REPORTED and the command exits
+    non-zero; it is never retried here, because a silent retry against a board that just said no is
+    how a wrong move becomes a loop.
+    """
+    if not args.record:
+        print(
+            json.dumps({"ok": False, "error": "--boundary needs --record <run record path>"}),
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        context = read_boundary_context(Path(args.record).resolve())
+        move = resolve_boundary(
+            args.boundary, retro_trigger_fired=bool(context["retro_trigger_fired"])
+        )
+    except (OSError, ValueError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        return 2
+
+    if not move["submits"]:
+        print(json.dumps({**move, "repo": context["repo"], "number": context["number"]}))
+        return 0
+    if args.dry_run:
+        print(
+            json.dumps(
+                {
+                    **move,
+                    "repo": context["repo"],
+                    "number": context["number"],
+                    "dry_run": True,
+                    "payload": boundary_payload(move),
+                }
+            )
+        )
+        return 0
+
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else _repo_root_default()
+    ledger_dir = (
+        Path(args.ledger_dir).resolve() if args.ledger_dir else _default_ledger_dir(repo_root)
+    )
+    cert = _cert()
+    op_kind = str(cert.OpKind.SET_FIELD_STATUS)
+    writer: Callable[..., None] = _gated_writer
+    if cert.authorize_write(op_kind) == cert.AUTHORIZED:
+        try:
+            mission_control_root, _rung = resolve_mission_control_root()
+        except RuntimeError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 1
+        writer = default_board_writer(
+            mission_control_root=mission_control_root, project=args.project
+        )
+    record = authorize_and_write(
+        op_kind,
+        context["repo"],
+        context["number"],
+        move["status"],
+        board_writer=writer,
+        ledger_dir=ledger_dir,
+        payload=boundary_payload(move),
+        extra={"boundary": args.boundary, "stage": move["stage"]},
+    )
+    print(json.dumps(record))
+    if record.get("status") in ("written", "skipped", "gated"):
+        return 0
+    # Reported, never retried: the caller decides, with the reason in front of it.
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Certificate-gated autonomous board writer (#344)."
+        description="Certificate-gated autonomous board writer (#344); lifecycle boundaries (1028)."
     )
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    # The boundary interface (issue 1028). It sits at the top level rather than under a subcommand
+    # because a caller names a lifecycle boundary and nothing else: there is no second verb here,
+    # and `write` stays for the op-kind callers issue 1030 removes.
+    parser.add_argument("--record", default="", help="path to the run record JSON file")
+    parser.add_argument(
+        "--boundary",
+        default="",
+        help="the lifecycle boundary whose one allowed move to submit: " + ", ".join(BOUNDARIES),
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="print the single move and write nothing"
+    )
+    # Shared with the `write` subcommand's own copies; the subparser's value wins when a
+    # subcommand is used, and these are what the boundary path reads.
+    parser.add_argument("--project", default="operations")
+    parser.add_argument("--ledger-dir", default="")
+    parser.add_argument("--repo-root", default="")
+    sub = parser.add_subparsers(dest="cmd", required=False)
 
     p_write = sub.add_parser("write", help="authorize + idempotently write one board op")
     p_write.add_argument(
@@ -823,6 +1077,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+
+    if args.boundary:
+        return _run_boundary(args)
+    if not args.cmd:
+        parser.error("name a --boundary (with --record), or use the `write` subcommand")
 
     if args.cmd == "write":
         repo_root = Path(args.repo_root).resolve() if args.repo_root else _repo_root_default()

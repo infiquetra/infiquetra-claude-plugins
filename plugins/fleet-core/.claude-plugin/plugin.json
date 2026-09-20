@@ -1,7 +1,7 @@
 {
   "name": "fleet-core",
-  "version": "0.27.0",
-  "description": "Fleet-commons library: shared primitives, liveness decisions, execution-class routing, bridge receipts, attestations, the delegation audit store, and the TypeSafe client with its jev tool.",
+  "version": "0.31.0",
+  "description": "Fleet-commons library: the one staffing component (work shape, role and lens to vendor, model and effort), shared primitives, liveness decisions, execution-class routing, and the delegation audit.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

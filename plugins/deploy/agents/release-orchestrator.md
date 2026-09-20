@@ -66,4 +66,5 @@ Coordinate Infiquetra deployment work without owning product or code-review deci
 - Do not deploy non-Infiquetra repositories.
 - Do not bypass repository checks, branch protection, or SDLC gates.
 - Do not turn deployment state into committed raw cache files.
-- Do not replace `team-execution`; invoke it only when the release needs broader validation.
+- Broader release validation is the lensed code review and the build loop's mechanical baseline;
+  the `team-execution` plugin that used to own it was archived by issue #1030.

@@ -17,6 +17,8 @@ fleet-core/
 └── scripts/
     ├── fleet_commons_shim.py     # canonical shim — consumers vendor a byte-identical copy
     └── fleet_commons/            # the primitives, one stdlib-only module each
+        ├── staffing.json         # the one staffing data file: palette, policy, vendors, ratings, roles
+        ├── staffing.py           # the one staffing resolver: by work shape, by role, by role and lens
         └── tier_palette.py       # MODELS / EFFORTS / CHEAP_MODELS / ENGINE_INTENTS + ranks
 ```
 

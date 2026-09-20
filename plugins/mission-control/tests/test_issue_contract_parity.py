@@ -279,8 +279,8 @@ def test_live_leg_flags_rename(tmp_path) -> None:
     def fake_fetch_fields_census(project_number):
         # Upstream renamed "Ready" -> "In Review"; "Idea"/"Shaping"/"Done" unchanged.
         return {
-            "fields": [
-                {
+            "fields": {
+                "Status": {
                     "name": "Status",
                     "options": [
                         {"id": "1", "name": "Idea"},
@@ -289,7 +289,7 @@ def test_live_leg_flags_rename(tmp_path) -> None:
                         {"id": "4", "name": "Done"},
                     ],
                 }
-            ]
+            }
         }
 
     schema_path = tmp_path / "sdlc-schema.json"
@@ -318,12 +318,12 @@ def test_live_leg_passes_when_all_options_resolve(tmp_path) -> None:
 
     def fake_fetch_fields_census(project_number):
         return {
-            "fields": [
-                {
+            "fields": {
+                "Status": {
                     "name": "Status",
                     "options": [{"id": "1", "name": "Idea"}, {"id": "2", "name": "Done"}],
                 }
-            ]
+            }
         }
 
     schema_path = tmp_path / "sdlc-schema.json"
@@ -341,7 +341,7 @@ def test_live_leg_raises_unavailable_when_schema_missing(tmp_path) -> None:
     with pytest.raises(mod.LiveParityUnavailableError):
         mod.live_status_option_errors(
             schema_path=tmp_path / "does-not-exist.json",
-            fetch_fields_census=lambda n: {"fields": []},
+            fetch_fields_census=lambda n: {"fields": {}},
             project_mappings={},
         )
 
@@ -422,3 +422,53 @@ def test_find_package_root_fails_loudly_when_missing(tmp_path: Path) -> None:
         RuntimeError, match=r"package root containing \.claude-plugin/plugin\.json not found"
     ):
         _find_package_root(dummy_file)
+
+
+def test_a_duplicate_field_name_fails_hard_rather_than_skipping(tmp_path) -> None:
+    """The census refuses a board with two same-named fields (#1020). That is a
+    defect on the board, not an access failure, so it must not be folded into
+    LiveParityUnavailableError -- which callers read as "skip"."""
+    mod = _load_parity()
+    sys.path.insert(0, str(PACKAGE_ROOT / "scripts"))
+    from board_census import DuplicateFieldNameError
+
+    schema = {
+        "boards": {"operations": {"workflow": "stage_flow"}},
+        "workflows": {"stage_flow": {"statuses": ["Capturing"]}},
+    }
+    schema_path = tmp_path / "sdlc-schema.json"
+    schema_path.write_text(json.dumps(schema))
+
+    def raises_duplicate(project_number):
+        raise DuplicateFieldNameError("duplicate field name 'Status'")
+
+    with pytest.raises(DuplicateFieldNameError):
+        mod.live_status_option_errors(
+            schema_path=schema_path,
+            fetch_fields_census=raises_duplicate,
+            project_mappings={"operations": {"number": 3}},
+        )
+
+
+def test_a_non_json_response_still_skips_rather_than_failing_hard(tmp_path) -> None:
+    """`json.JSONDecodeError` subclasses `ValueError`, so a handler written
+    against the bare type would turn a failing live call into a hard failure.
+    The documented posture for unreachable live access is SKIP."""
+    mod = _load_parity()
+
+    schema = {
+        "boards": {"operations": {"workflow": "stage_flow"}},
+        "workflows": {"stage_flow": {"statuses": ["Capturing"]}},
+    }
+    schema_path = tmp_path / "sdlc-schema.json"
+    schema_path.write_text(json.dumps(schema))
+
+    def returns_non_json(project_number):
+        json.loads("not json at all")
+
+    with pytest.raises(mod.LiveParityUnavailableError):
+        mod.live_status_option_errors(
+            schema_path=schema_path,
+            fetch_fields_census=returns_non_json,
+            project_mappings={"operations": {"number": 3}},
+        )

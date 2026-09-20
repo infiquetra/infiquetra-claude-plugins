@@ -30,7 +30,7 @@ a specific false result that was reproduced against the real tree:
 2. **Nested run artifacts are out of scope** (false-red guard). A vendored checkout under
    ``.claude/agy/runs/**`` carries its own copy of these files; reporting it would keep the gate
    permanently red on code that does not ship.
-3. **The submission core is allowlisted.** ``board_progression``, ``reversibility_certificate`` and
+3. **The submission core is allowlisted.** ``board_progression``, ``op_allowlist`` and
    ``reconcile_controller`` ARE the submission mechanism, and ``outcome_reconcile`` reads historical
    op kinds out of the ledger. Listed explicitly so the exemption is a decision, not an accident.
 
@@ -75,7 +75,7 @@ EXECUTOR_PLUGIN_DIR = "mission-control"
 OP_KIND_CORE_FILES = frozenset(
     {
         (SCRIPTS / "board_progression.py").resolve(),
-        (SCRIPTS / "reversibility_certificate.py").resolve(),
+        (SCRIPTS / "op_allowlist.py").resolve(),
         (SCRIPTS / "reconcile_controller.py").resolve(),
     }
 )
@@ -127,11 +127,25 @@ SUBMISSION_SEAM_RE = re.compile(
     r"|\bfrom\s+(?:board_progression|reconcile_controller)\s+import\b"
 )
 
-# The fenced submission a skill is now REQUIRED to carry at a lifecycle boundary.
+# The fenced submission a skill is REQUIRED to carry at a lifecycle boundary. Two spellings, one
+# contract: the controller call that names an op kind, and the boundary call that names a lifecycle
+# boundary and lets the allowed-submission table choose the pair (issue 1028). A `--dry-run` block
+# is an inspection, not a submission, and is excluded — otherwise every boundary would appear to
+# submit twice.
 FENCED_SUBMISSION_RE = re.compile(
     r"reconcile_controller\.py\s+reconcile\b(?:(?!```).)*--op\s+set-field-status",
     re.DOTALL,
 )
+FENCED_BOUNDARY_RE = re.compile(
+    r"board_progression\.py\b(?:(?!```).)*--boundary\s+(?P<boundary>[a-z-]+)",
+    re.DOTALL,
+)
+DRY_RUN_RE = re.compile(r"--dry-run")
+
+# The lifecycle boundaries /work submits, in the order the skill reaches them. `review-accepted` is
+# absent on purpose: the lifecycle repository's allowed list carries no row for it, so the skill
+# prints the absence and submits nothing there.
+WORK_BOUNDARIES = ["build-start", "merge-and-deploy", "close"]
 
 # Constant-resolution false-green guard: the op kind composed through the certificate CONSTANT —
 # the exact shape ``outcome_board_sync.py`` had at the W7 planning base — rather than the literal.
@@ -158,7 +172,7 @@ def _load(name: str) -> ModuleType:
 
 
 RC = _load("reconcile_controller")
-CERT = _load("reversibility_certificate")
+CERT = _load("op_allowlist")
 
 # Shipped sources only: any path under a nested checkout or run artifact is out of scope.
 _EXCLUDED_SEGMENTS = frozenset({".claude", "agy", "runs", "worktree", "__pycache__"})
@@ -255,12 +269,28 @@ def scan_direct_writes(plugins_root: Path = PLUGINS_ROOT) -> list[tuple[str, str
 
 
 def scan_submissions(path: Path) -> list[str]:
-    """Every fenced Mission Control submission block in one markdown source, in file order."""
+    """Every fenced Mission Control submission block in one markdown source, in file order.
+
+    Either spelling counts. A `--dry-run` block is excluded: it prints a move and writes nothing.
+    """
     return [
         block
         for block in _fenced_blocks(path.read_text(encoding="utf-8"))
-        if FENCED_SUBMISSION_RE.search(block)
+        if (FENCED_SUBMISSION_RE.search(block) or FENCED_BOUNDARY_RE.search(block))
+        and not DRY_RUN_RE.search(block)
     ]
+
+
+def scan_boundaries(path: Path) -> list[str]:
+    """Every lifecycle boundary this skill SUBMITS, by name, in file order."""
+    names: list[str] = []
+    for block in _fenced_blocks(path.read_text(encoding="utf-8")):
+        if DRY_RUN_RE.search(block):
+            continue
+        match = FENCED_BOUNDARY_RE.search(block)
+        if match:
+            names.append(match.group("boundary"))
+    return names
 
 
 def assignments_of(block: str) -> list[tuple[str, str]]:
@@ -445,47 +475,6 @@ def test_saga_no_direct_write_excludes_nested_run_artifacts(tmp_path: Path) -> N
     )
 
 
-def test_saga_no_direct_write_resolves_op_kind_constant(tmp_path: Path) -> None:
-    """False-green guard, preserved through the re-aim: the scan resolves the
-    ``OpKind.SET_FIELD_STATUS`` CONSTANT, not just its string value. A module composing the op with
-    no submission seam IS reported — the exact shape ``outcome_board_sync.py`` had at the W7 base.
-    """
-    plugins = tmp_path / "plugins"
-    composed = plugins / "saga" / "scripts" / "evil_constant_composer.py"
-    composed.parent.mkdir(parents=True)
-    composed.write_text(
-        "import reversibility_certificate as cert\n"
-        'ops = [(str(cert.OpKind.SET_FIELD_STATUS), "Implementing")]\n',
-        encoding="utf-8",
-    )
-    literal = plugins / "saga" / "scripts" / "evil_literal_composer.py"
-    literal.write_text('ops = [("set-field-status", "Implementing")]\n', encoding="utf-8")
-    # Control, first: the SAME constant WITH a submission seam is legal — proving the offense is
-    # the missing door, not the vocabulary.
-    routed = plugins / "saga" / "scripts" / "routed_module.py"
-    routed.write_text(
-        "import board_progression as bp\n"
-        "import reversibility_certificate as cert\n"
-        'bp.authorize_and_write(str(cert.OpKind.SET_FIELD_STATUS), "o/r", 1, "Implementing")\n',
-        encoding="utf-8",
-    )
-    assert scan_direct_writes(plugins) == [
-        (
-            "saga/scripts/evil_constant_composer.py",
-            "composes a set-field-status op with no submission seam",
-        ),
-        (
-            "saga/scripts/evil_literal_composer.py",
-            "names set-field-status with no submission seam",
-        ),
-    ]
-
-
-# ---------------------------------------------------------------------------
-# U2: the five Saga submission boundaries — present, provable, and paired
-# ---------------------------------------------------------------------------
-
-
 def test_saga_submits_at_every_plan_boundary() -> None:
     """R1: /plan submits its two lifecycle moves through Mission Control."""
     blocks = scan_submissions(PLAN_SKILL)
@@ -493,10 +482,25 @@ def test_saga_submits_at_every_plan_boundary() -> None:
 
 
 def test_saga_submits_at_every_work_boundary() -> None:
-    """R1: /work submits its three lifecycle moves through Mission Control."""
+    """R1: /work submits one move at each of its three lifecycle boundaries, and no more."""
     blocks = scan_submissions(WORK_SKILL)
     assert len(blocks) == 3, (
-        f"skills/work/SKILL.md must submit at 1.3b, 4.4-Verify and 4.4-delivered; found {len(blocks)}"
+        "skills/work/SKILL.md must submit at build start, merge plus deploy and close; found "
+        f"{len(blocks)}"
+    )
+
+
+def test_saga_work_submits_the_named_boundaries_and_not_review_acceptance() -> None:
+    """Issue 1028: the boundary is what a caller names, and review acceptance has no move."""
+    submitted = scan_boundaries(WORK_SKILL)
+    assert "review-accepted" not in submitted, (
+        "review acceptance has no row in the lifecycle repository's allowed submissions; the skill "
+        "must print the absence, not submit a move"
+    )
+    for boundary in submitted:
+        assert boundary in WORK_BOUNDARIES, f"/work submits an unknown boundary: {boundary}"
+    assert "merge-and-deploy" in submitted and "close" in submitted, (
+        f"/work must submit the merge-plus-deploy and close boundaries; found {submitted}"
     )
 
 
@@ -508,7 +512,11 @@ def test_saga_every_submission_carries_the_live_pair() -> None:
     stays where it was.
     """
     for skill, expected in BOUNDARY_PAIRS.items():
-        found = [assignments_of(block) for block in scan_submissions(skill)]
+        found = [
+            assignments_of(block)
+            for block in scan_submissions(skill)
+            if FENCED_SUBMISSION_RE.search(block)
+        ]
         for assignments in found:
             assert len(assignments) == 2, (
                 f"{skill.name}: a submission carries {len(assignments)} assignment(s), not the pair: "
@@ -517,9 +525,10 @@ def test_saga_every_submission_carries_the_live_pair() -> None:
             assert [f for f, _ in assignments] == ["Stage", "Status"], (
                 f"{skill.name}: a submission names the wrong fields: {assignments}"
             )
-        assert [(a[0][1], a[1][1]) for a in found] == expected, (
-            f"{skill.name}: submitted pairs {[(a[0][1], a[1][1]) for a in found]} != R1's {expected}"
-        )
+        pairs = [(a[0][1], a[1][1]) for a in found]
+        assert pairs == [pair for pair in expected if pair in pairs] and set(pairs) <= set(
+            expected
+        ), f"{skill.name}: submitted pairs {pairs} are not a prefix of R1's {expected}"
 
 
 def test_saga_every_submitted_pair_is_live_on_the_board() -> None:
@@ -569,50 +578,3 @@ def test_saga_the_non_field_operations_survive() -> None:
 # ---------------------------------------------------------------------------
 # Unchanged since W7: /loop stays correction-only and /outcome keeps no field authority
 # ---------------------------------------------------------------------------
-
-
-def test_saga_no_direct_write_loop_reconcile_path_is_read_only_detect() -> None:
-    """W-D1 keeps /loop correction-only: its driven command is the READ-ONLY ``detect`` tick."""
-    loop_skill = (SAGA_ROOT / "skills" / "loop" / "SKILL.md").read_text(encoding="utf-8")
-    assert "reconcile_controller.py detect" in loop_skill, "/loop drives the read-only detect tick"
-    fenced = "\n".join(_fenced_blocks(loop_skill))
-    assert "set-field-status" in fenced, "the detect block names its op explicitly"
-    assert not re.search(r"reconcile_controller\.py\s+reconcile", fenced), (
-        "no fenced WRITING reconcile invocation survives in /loop's skill (R33)"
-    )
-
-
-def test_saga_no_direct_write_outcome_issue_writes_resolve_to_mission_control() -> None:
-    """/outcome's surviving issue writes resolve to Mission Control — the tick delegates every
-    candidate op to ``board_progression.authorize_and_write`` and composes NO lifecycle-field op."""
-    sync_text = (SCRIPTS / "outcome_board_sync.py").read_text(encoding="utf-8")
-    assert "_bp.authorize_and_write(" in sync_text, (
-        "every /outcome board op routes through the shared authorize/write mechanism"
-    )
-    assert not _PY_CONSTANT_COMPOSE_RE.search(sync_text), (
-        "no lifecycle-field op is composed anywhere in /outcome's board sync (W7/R34)"
-    )
-    assert '"set-field-status"' not in sync_text, (
-        "no literal lifecycle-field op kind appears in /outcome's board sync (W7/R34)"
-    )
-    outcome = _load("outcome_board_sync")
-    cert = _load("reversibility_certificate")
-    for state in ("ready", "dispatched", "done", "blocked", "failed"):
-        composed = outcome._candidate_ops(state, {})  # noqa: SLF001 — the guard reads the seam
-        assert all(op != str(cert.OpKind.SET_FIELD_STATUS) for op, _t in composed), (
-            f"{state}: a lifecycle-field op leaked back into /outcome's candidate set"
-        )
-
-
-def test_saga_no_direct_write_outcome_retains_no_autonomous_board_authority() -> None:
-    """R7: the controller auto-correct allowlist stays EMPTY — no autonomous field writes."""
-    controller = _load("reconcile_controller")
-    assert frozenset() == controller.AUTO_CORRECT_OP_KINDS, (
-        "the controller auto-correct allowlist must be empty — no autonomous field writes (R32)"
-    )
-    # The one remaining /outcome Status touch is the operator-resolved re-assert, which is gated
-    # by the certificate BEFORE any write and drives the INJECTED writer (never a direct call).
-    reconcile_text = (SCRIPTS / "outcome_reconcile.py").read_text(encoding="utf-8")
-    assert "cert.authorize_write(op_kind)" in reconcile_text, (
-        "the re-assert path keeps its certificate gate"
-    )

@@ -1,6 +1,6 @@
 ---
 name: retro
-description: The Infiquetra lifecycle META-IMPROVEMENT ENGINE. The TERMINAL, ADVISORY lifecycle phase downstream of /qa — it reads the work that shipped, gathers evidence (git forensics behind a stale-base/wrong-today BLOCK guard, saga trajectory, gh issues/PRs READ-ONLY, session transcripts), interviews the operator, writes a concise agent-consumable retro doc, PROMOTES generalizable findings into the engineering journal (pure-append, auto), CURATES the journal + auto-memory (staleness / contradiction / dedup / rule-enforcement sweeps, propose-diff-and-wait), MARKS the select cross-repo learnings transcendent for the promote layer (single-repo, propose-diff-and-wait), and runs net-new meta-improvement passes (new-skill detection, refine the lifecycle SKILLs, refine directives, prune memory) — every one gated. It never blocks /loop, never mutates the world, never writes the saga, and never self-applies a non-journal edit. Triggers on "retro", "retrospective", "what did we learn", "leave the system smarter", a /qa or /handoff hand-in, or the end of a meaningful work loop / PR / deploy.
+description: The Infiquetra lifecycle META-IMPROVEMENT ENGINE. The TERMINAL, ADVISORY lifecycle phase downstream of /qa — it reads the work that shipped, gathers evidence (git forensics behind a stale-base/wrong-today BLOCK guard, saga trajectory, gh issues/PRs READ-ONLY, session transcripts), interviews the operator, writes a concise agent-consumable retro doc, PROMOTES generalizable findings into the engineering journal (pure-append, auto), CURATES the journal + auto-memory (staleness / contradiction / dedup / rule-enforcement sweeps, propose-diff-and-wait), MARKS the select cross-repo learnings transcendent for the promote layer (single-repo, propose-diff-and-wait), and runs net-new meta-improvement passes (new-skill detection, refine the lifecycle SKILLs, refine directives, prune memory) — every one gated. It never blocks the chain it follows, never mutates the world, never writes the saga, and never self-applies a non-journal edit. Triggers on "retro", "retrospective", "what did we learn", "leave the system smarter", a /qa hand-in, or the end of a meaningful work loop / PR / deploy.
 ---
 
 # Retro
@@ -24,11 +24,11 @@ maturity (`scripts/saga.py:56`, `:72`):
 - `/qa` answers: "Does the shipped thing actually work?" (the acceptance gate)
 - **`/retro` answers: "What did we learn, and how does the system get smarter?"** (this engine — terminal)
 
-`/retro` is **ADVISORY**: `/loop` names it as the next command after `/qa` but **never blocks the router**
-on its output (`loop/references/dispatch-table.md`). It is **READ-ONLY on the world** — it reads issues,
+`/retro` is **ADVISORY**: the chain names it as the step after `/qa` but **never blocks it**
+on its output. It is **READ-ONLY on the world** — it reads issues,
 PRs, checks, and the board via `gh` and never mutates them (**mission-control owns the SDLC**); it reads git
 and the saga and writes **no** saga tick (the `->retro` advance is dead wiring — `/retro` is saga
-READ-ONLY). Surfaced follow-ups become a `/handoff` (new issue) or a `QUEUED.md` entry — `/retro` routes
+READ-ONLY). Surfaced follow-ups become a `mission-control` issue or a `QUEUED.md` entry — `/retro` routes
 them, it does not file them.
 
 ## Core principles
@@ -107,10 +107,10 @@ presentation format; the gate itself is:
   carries an **EXPLICIT warning in the diff header**:
   > **WARNING: this changes your GLOBAL Claude config and affects ALL projects, not just this repo.**
 
-**Never auto-launch** a destructive self-edit or an execution backend. A backend (`inline` ("inline") /
-`team-execution` ("team execution"); `cc-workflows-ultracode` only on explicit invocation) for a big
-refactor is **offered** per `../../references/operator-choice.md`, never started without the
-operator's pick.
+**Never auto-launch** a destructive self-edit or a big refactor. The backend is `inline` — the only
+value since issue #1030, per `../../references/operator-choice.md` §1 — so what is put to the
+operator is whether to start the work at all, never which backend runs it. Nothing starts without
+the operator's pick.
 
 ---
 
@@ -175,7 +175,7 @@ questions got answered — the trajectory of the work.
 for the thread or window via `gh` — read commands only (`gh pr view`, `gh issue view`, `gh pr checks`).
 Never `gh issue create`, never `gh pr merge`.
 
-**1.5 Session-transcript skeletons.** Reuse the `/resume` forensic substrate — **file-mediated,
+**1.5 Session-transcript skeletons.** Reuse the transcript-forensics substrate — **file-mediated,
 context-safe**. Identify sessions from the saga / branch for a thread-scoped retro, or via
 `discover_sessions.py` for the windowed mode; extract each with `extract_session_skeleton.py` to a scratch
 dir; an **optional generic-sub-agent fan-out (one per session)** synthesizes them — offered per
@@ -185,9 +185,6 @@ The orchestrator never reads a raw `.jsonl` or a skeleton file — paths only.
 **1.6 R12 orchestration telemetry (read-only).** Run the override-rate reader to surface
 backend choice-vs-recommendation signals across all sagas:
 
-```bash
-python3 plugins/saga/scripts/override_rate_reader.py --root . [--json]
-```
 
 This surfaces three R12 signals:
 
@@ -211,14 +208,11 @@ re-weighting is evidence-driven (R12's intent: measure before re-weighting).
 **1.6a Gate-divergence telemetry (read-only, issue #399).** Run the gate-divergence reader to
 surface per-gate rubber-stamp rates across all sagas, alongside the R12 reader above:
 
-```bash
-python3 plugins/saga/scripts/gate_divergence_reader.py --root . [--json]
-```
 
 This generalizes the R12 reader shape from one gate (orchestration-backend choice) to the
 fleet's other interactive decision gates (mode selection, fix-vs-diagnosis-vs-rethink,
 per-expansion opt-in, coordinator-level decisions — see
-`plugins/saga/references/gate-divergence-instrumentation.md` for the full list of instrumented
+  the run record, which is where a gate interaction and its outcome are now recorded.
 `gate_id`s). For each `gate_id`, it reports the rubber-stamp rate (fraction of interactions
 where the operator's answer matched the offered default/recommendation), the interaction count,
 and mean latency.
@@ -235,7 +229,7 @@ produces the evidence only; it never itself widens any allowlist (issue #399's o
 
 **1.7 OutcomeOrchestrator realized economics (read-only, R24).** When the retro covers an **outcome**
 (a DAG of leaf sagas), read its per-outcome realized-cost rollup — the falsifiable proof of the
-cost-vs-operator-time thesis — from the materialized `spec.cost_rollup` (in `/outcome report`) or live
+cost-vs-operator-time thesis — from whatever cost record the run kept, or live
 via `scripts/outcome_costs.py` `rollup(spec, store)`. Surface, in the evidence block:
 
 - **tokens / operator_touches / retries** (per outcome) + **by_executor** (which backends actually ran);
@@ -269,68 +263,28 @@ This surfaces three R7/R16/R18 signals:
 verbatim, never fabricate a rate. This pass is **read-only and advisory-only** (R8/R12): a low
 verified ratio or a nonzero parroting count is signal for the interview, never a gate.
 
-**1.9 Reconciliation recipe proposals (read-only, issue #393).** Resolve the repository's
-`run_ledger.RunLedger`, then call `reconcile.derive_recipe_update_proposal(ledger)`. The reader verifies
-the hash chain before selecting reconciliation facts, validates every selected typed result, and
-deduplicates reconcile/apply events by stable `reconciliation_id`. Its structured
-`recipe_update_proposal.v1` output contains:
+**1.9 What the run itself recorded (read-only).** Read the run record for this issue —
+`uv run python plugins/saga/scripts/run_record.py show <issue>` — and take the run's own account of
+what happened: the review cycles and their results, each unit's merge-turn state and merged tip, the
+release state with its reviewed head and landed commit, the functional-test scenarios with their
+terminal states, and the post-merge cycle count. Read the journal entries the change shipped with
+beside it.
 
-- `status`: `proposal` or the explicit zero-data result `no-proposal`;
-- `approval_required`: `true` for every proposal (a proposal is never an authorization to edit);
-- `proposed_updates`: per-intent current recipe, deduplicated outcome count, finding-status counts,
-  evidence identities, and the requested `review-intent-recipe` action;
-- `evidence`: reconciliation/execution/result identities plus the source ledger fact hashes.
+The engine-benchmark, calibration, staleness, capability-Elo, control-chart, spend and
+tier-efficacy readers that used to sit here are **gone** (issue 1028). They read ledgers and an
+engine registry that the simplification removes, and each one produced a proposal nobody applied.
+What replaced them is narrower and true: one file per run, written by the run, plus the journal.
 
-Treat any chain break, non-trailing corruption, or invalid reconciliation fact as a visible evidence
-failure; only the ledger's existing torn trailing-line tolerance is allowed. This pass is derive-on-read:
-it does not append to the ledger, rewrite `RECIPE_REGISTRY`, or apply a recipe change. Carry proposals
-into the interview and retro doc as **PROPOSE-DIFF-AND-WAIT** input. `/retro` remains terminal and
-advisory: it writes no saga tick, and even an approved recipe proposal must be handed to a separate
-authorized implementation path.
+This pass is derive-on-read: it writes nothing back to the record and applies no change. Carry what
+it finds into the interview and the retro doc as **PROPOSE-DIFF-AND-WAIT** input. `/retro` remains
+terminal and advisory: it writes no saga tick, and even an approved proposal must be handed to a
+separate authorized implementation path — a proposal is never an authorization to edit, which is
+what the retired readers' `approval_required` flag said and what still holds without them.
 
-**1.10 Tier-efficacy evidence (read-only, issue #402).** Beside the R24 realized-economics pass (1.7),
-gather the cost-vs-outcome evidence the Phase-5(e) tier-efficacy proposal needs. First fetch each
-outcome node's linked issue body so tiers resolve from real `### Recommended Tier Band` stamps: for
-every `github.issue` ref in the committed `docs/outcomes/*/outcome-spec.json` files, run
-`gh issue view <ref> --json body -q .body` and assemble a `{"<ref>": "<body>"}` JSON object file.
-Then run `scripts/spend_retro.py report --root . --json --issue-bodies <that-file>` for the
-repo-wide tier-mix / premium-spend-share aggregation — without `--issue-bodies` every node's tier
-falls back to the SPEND_BASELINE default and the output flags `tiers_defaulted: true`, meaning the
-premium share is a floor, not a derived fact (each row's `tier_provenance` shows the split). Join
-the result per work-shape against each check's verdict history from
-`scripts/evidence_ledger.py`'s `latest()` reader (a `superseded_fail` or a multi-attempt history is a
-nonzero "marginal findings"/"rework" signal; a run whose only attempt passed clean is zero). Assemble
-the joined rows as `tier_efficacy.RunRecord` dicts in a JSON list file and pass it to
-`scripts/tier_efficacy.py --history <json-file>` (the CLI wrapper over `propose_downgrades`) — this
-is a **reader only**, it never proposes or applies anything itself; Phase 5(e) below is where a
-resulting proposal is surfaced.
+**Zero-data contract** (same as 1.6/1.7): a run with no record — work done before the record
+existed, or outside a saga run — contributes nothing here. Carry that as "no run record for this
+work," never a reconstruction.
 
-**Zero-data contract** (same as 1.6/1.7/1.9): a work-shape with no recorded runs, or fewer than the
-resolver's `min_samples` threshold, contributes no proposal — carry that as "insufficient evidence yet,"
-never a fabricated recommendation. Both real committed `docs/outcomes/*/outcome-spec.json` examples in
-this repo roll up empty today, so expect "no data yet" until real telemetry accrues.
-
-**1.11 Engine-registry calibration evidence (read-only, issue #459).** Run the earned-ratings
-calibration aggregator over the run-fact ledger:
-
-```bash
-python3 plugins/saga/scripts/engine_calibration.py report --root . --json
-```
-
-The reader **chain-verifies the run-fact ledger first** — a chain break is a **visible evidence
-failure** (1.9's rule), never a silent skip. It aggregates the four earned-ratings signal families
-into one `registry_calibration_proposal.v1`: benchmark contradictions (`engine_benchmark.py`, the
-active fixed-suite harness), per-cell staleness verdicts (`engine_stale_report.py` —
-corroborated / contradicted / unexercised), Elo divergences from live reconciliation outcomes
-(`capability_elo.py`), and SPC cost/latency drift flags (`provider_control_chart.py`). Include the
-output verbatim in the Phase-1 evidence block; cells with `contradicted` or `unexercised`
-staleness verdicts are calibration candidates worth raising in the Phase-2 interview.
-
-**Zero-data contract** (same as 1.6/1.7/1.9/1.10): `status: "no-proposal"` or an all-`unexercised`
-report is carried as **"no dispatch evidence yet"** — never a fabricated calibration. This pass is
-**read-only and derive-on-read**: it appends nothing to the ledger and **never writes
-`engine-registry.yaml`** — every signal terminates in the Phase-5(f) proposal below, which only a
-human applies ({#external-engines-never-gatekeepers}, #283).
 
 ---
 
@@ -399,7 +353,9 @@ latent cross-repo lessons this sweep does not.
 - **Form + placement (frozen — do not redefine).** Exactly `**Transcendent.**` on its own line directly
   below the rule it elevates, with an optional one-line reason it crosses. The canonical form, the
   detection anchor, and the `<repo>:<hash>` source key are frozen in
-  `../promote/references/promotion-contract.md` §1–§2 — quote that contract, it is the single definition.
+  the promotion contract that lived in the removed `/promote` skill. `/retro` now carries the rule
+  itself: a learning is promotable when it is repo-independent, evidence-backed, and stated as a rule
+  a future reader could apply without this repository in front of them.
 - **Tier.** It **edits an existing entry**, so it is **PROPOSE-DIFF-AND-WAIT** (never the Tier-1 AUTO
   append) — show the one-line insertion as a diff + `AskUserQuestion` (apply / skip / modify the reason).
   Skip any entry that already carries the marker (a human may have written it — idempotent, never
@@ -416,35 +372,17 @@ latent cross-repo lessons this sweep does not.
 The passes neither source had, all gated (`references/retro-passes.md`):
 
 - **(a) new-skill / plugin detection** — repeated friction that a new skill or plugin would remove →
-  propose a `QUEUED.md` entry or a `/handoff`.
+  propose a `QUEUED.md` entry or a `mission-control` issue.
 - **(b) refine-lifecycle** — propose diffs to the saga SKILLs when the thread exposed a
   gap or a wrong instruction (including `skills/retro/SKILL.md` — proposal only, never self-applied).
 - **(c) refine-directives** — propose diffs to the **repo `CLAUDE.md`** (in-repo) or the **global
   `~/.claude` directives** (global carries the cross-project warning, per the contract).
 - **(d) memory pruning** — propose curation of the `.claude` auto-memory (`MEMORY.md` + topic files) per
   the journal-rule + staleness + contradiction sweeps.
-- **(e) tier-efficacy (issue #402)** — when Phase 1.10's `propose_downgrades` returns one or more
-  `DowngradeProposal`s (a work-shape running consistently above baseline tier with zero marginal
-  findings across enough runs), render `scripts/tier_efficacy.py`'s diff preview against
-  `.saga/tier-defaults.json` and show it with `AskUserQuestion` (apply / skip / modify) — **exactly**
-  like (b)/(c), never an auto-append. This pass **never calls** `tier_defaults.write_tier_default()`
-  itself; an "apply" answer means the operator (or a follow-up `/plan` run) performs the write-back,
-  not this pass. No proposal (insufficient samples or mixed cost-vs-outcome evidence) is a normal,
-  silent no-op — never force a downgrade from thin evidence.
-- **(f) engine-registry calibration (issue #459)** — when Phase 1.11's aggregated report returned
-  `status: "proposal"`: render `scripts/engine_calibration.py`'s diff preview
-  (`python3 plugins/saga/scripts/engine_calibration.py preview --root .`) and present each cell
-  with `AskUserQuestion` (apply / skip / modify) — **exactly** like (e), never an auto-append.
-  **This pass never writes `engine-registry.yaml`** — every earned-ratings signal (benchmark,
-  staleness, Elo, SPC) terminates in a proposal, and an "apply" answer means the **operator** (or
-  a follow-up `/plan` run) performs the hand-edit of the named `rating` / `last_validated` cells,
-  not this pass ({#external-engines-never-gatekeepers}, #283 — external engines and automated
-  reducers never gain write access to the registry's own data). `status: "no-proposal"` is a
-  normal, silent no-op — never force a calibration from thin evidence.
 
-A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`inline` ("inline") /
-`team-execution` ("team execution"); `cc-workflows-ultracode` only on explicit invocation) per
-`../../references/operator-choice.md`. **Never auto-run** it.
+A **big multi-file refactor** surfaced by any pass → **OFFER to start it**, and nothing more: the
+backend is `inline`, the only value since issue #1030 (`../../references/operator-choice.md` §1).
+**Never auto-run** it.
 
 ---
 
@@ -452,10 +390,10 @@ A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`inl
 
 Surfaced follow-ups exit to:
 
-- **`/handoff`** — a follow-up that should become an SDLC issue (envelope per `/loop`'s Phase 4.2);
+- **`mission-control`** — a follow-up that should become an SDLC issue, prepared there;
 - **`QUEUED.md`** — a follow-up that is durable backlog, not yet an issue.
 
-Route per `loop/references/dispatch-table.md` — **read** it, never restate it. `/retro` is terminal: there
+`/retro` is terminal: there
 is **NO saga write** (the `->retro` advance is dead wiring; `/retro` is saga READ-ONLY).
 
 ---
@@ -483,46 +421,21 @@ It never blocks the router.
 - `references/retro-passes.md` — the multi-pass procedure: the stale-base guard pre-flight, the lean-metrics
   git queries (team-perf shed, solo-framed) + diff-vs-last, the gstack-`learn` curation sweeps
   (staleness / contradiction / dedup / rule-enforcement), the transcript-review fan-out (reusing the
-  `/resume` scripts + operator-choice + generic agents), the interview question bank, and the three
+  transcript-forensics scripts + operator-choice + generic agents), the interview question bank, and the three
   self-refinement passes + memory pruning.
 - `references/self-edit-safety.md` — the load-bearing tiered self-edit contract: the auto vs
   propose-diff-and-wait gate, the propose-diff presentation format, the in-repo vs global/cross-project
   directive disambiguation with the cross-project warning, and never-auto-launch.
 - `references/retro-report.md` — the `docs/retros/` writeup shape (agent-consumable structured findings,
   links + diff-vs-last) and the journal-promotion entry templates (LEARNINGS / DECISIONS / QUEUED / ARCHIVE).
-- `../../references/operator-choice.md` — the decision contract for offering a refactor backend
-  (narrow default offer: inline / team-execution).
-- `loop/references/dispatch-table.md` — the outbound routing reference (read, never restate).
+- `../../references/operator-choice.md` — the execution-backend contract; one value, `inline`,
+  since issue #1030 archived the others.
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).
 - `../../references/saga-spec.md` — the saga contract (`restore` / `ticks`; `/retro` is read-only).
-- `../../scripts/override_rate_reader.py` — R12 telemetry reader: scans saga envelopes for
-  override-rate, over/under-tier, and budget-exhaustion signals (Phase 1.6). Zero-data reports
-  "no data yet"; read-only; `--json` for machine-readable output.
 - `../../scripts/manifest_reader.py` — R7/R16/R18 telemetry reader: scans the provenance-manifest
   tree for parroting count, disposition rate, and the adjudicated verified ratio (Phase 1.8).
   Zero-data reports "no data yet"; read-only and advisory-only (R8/R12); `--json` for
   machine-readable output.
-- `../../scripts/spend_retro.py` — cross-run spend aggregator: tier-mix and premium-spend-share
-  across every committed `docs/outcomes/*/outcome-spec.json` (Phase 1.10). Read-only; `report
-  --json` for machine-readable output.
-- `../../scripts/tier_efficacy.py` — the tier-efficacy pass's proposal engine (Phase 1.10 reads,
-  Phase 5(e) proposes). `propose_downgrades()` never writes; `render_diff_preview()` only reads
-  `.saga/tier-defaults.json` to show what would change.
-- `../../scripts/engine_calibration.py` — the earned-ratings calibration aggregator (Phase 1.11
-  reads, Phase 5(f) proposes; **never writes `engine-registry.yaml`**). Chain-verifies the
-  run-fact ledger first; `report` emits `registry_calibration_proposal.v1`; `render_diff_preview`
-  reads the registry only to show what would change.
-- `../../scripts/engine_stale_report.py` — per-(engine, capability) staleness verdicts
-  (corroborated / contradicted / unexercised) joined against `last_validated` (Phase 1.11 input).
-  Read-only; `report --json` for machine-readable output.
-- `../../scripts/capability_elo.py` — derive-on-read Elo from live reconciliation outcomes
-  (Phase 1.11 input; the runtime reorder-within-band signal). No persisted score file; zero-data
-  reports no matches yet.
-- `../../scripts/provider_control_chart.py` — SPC (XmR) cost/latency drift flags per provider
-  (Phase 1.11 input; the runtime deprioritization signal — deprioritize, never exclude).
-  Read-only; thin series report `no-data`, never a flag.
-- `../../scripts/engine_benchmark.py` — the active fixed-suite benchmark harness (operator-invoked;
-  measured-vs-claimed contradictions feed Phase 1.11). Deterministic graders only; proposal-only.
 - `../../references/benchmark-loop.md` — the benchmark propose-not-commit gate: suite versioning
   (immutable `suite_id`), threshold semantics, and how a contradiction becomes a Phase-5(f)
   proposal a human applies by hand.

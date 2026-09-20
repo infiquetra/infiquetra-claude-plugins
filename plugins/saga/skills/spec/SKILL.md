@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Interrogate a vague ask into a precise, backlog-ready WHAT spec — five-Why, scope/MVP lock, failure-mode enumeration, read-code-first, quantify-everything. Convergent and relentless on one decided direction. Triggers on "spec this out", "turn this into a spec", "what exactly are we building", "sharpen this ask before handoff", and when /office-hours, /loop, or /brainstorm have settled the WHY but the WHAT is still fuzzy.
+description: Interrogate a vague ask into a precise, backlog-ready WHAT spec — five-Why, scope/MVP lock, failure-mode enumeration, read-code-first, quantify-everything. Convergent and relentless on one decided direction. Triggers on "spec this out", "turn this into a spec", "what exactly are we building", "sharpen this ask before handoff", and when /office-hours or /brainstorm have settled the WHY but the WHAT is still fuzzy.
 argument-hint: "[vague ask | issue# | rough doc path]"
 ---
 
@@ -28,17 +28,17 @@ never enters the work thread and never writes the saga. Its lane, vs its neighbo
 - **vs `/plan`** — `/plan` settles the HOW (architecture, approach, KTDs, the implementation register).
   `/spec` pins the precise **WHAT** (who, current behavior, target, scope boundaries, acceptance,
   failure modes) and stops at the water's edge of design.
-- **vs `/handoff`** — `/handoff` is the thin envelope that routes an artifact to `mission-control`.
+- **vs filing the card** — filing routes an artifact to `mission-control`.
   `/spec` produces the sharp **source** that envelope points at.
 
 **Routes IN:** `/office-hours` frame-diagnostic (a settled "what exactly are we building" question),
-`/loop`, `/brainstorm` (a convergent ask emerging from divergent exploration), or direct invocation.
+`/brainstorm` (a convergent ask emerging from divergent exploration), or direct invocation.
 
-**Routes OUT:** `/handoff` (-> `mission-control` -> issue -> `/work`); `/plan` (when the WHAT is locked
-but a HOW must still be settled); an **optional `/doc-review`** readiness pass before handoff.
+**Routes OUT:** `mission-control` (-> issue -> `/plan`); `/plan` (when the WHAT is locked
+but a HOW must still be settled); an **optional `/doc-review`** readiness pass before filing.
 
 Resolve any cross-command route through the lifecycle routing reference at
-`saga/skills/loop/references/dispatch-table.md` (referenced by path; do not copy the
+the routing each command's own skill states (do not copy the
 routing table here).
 
 ## Core principles
@@ -143,7 +143,7 @@ confirming. Then:
     read each with `rubrics read --phase spec --slug <slug>`, apply every `core` rubric and the
     fitting `extras` by judgment. This is the WHAT-rigor readiness check; do not add a new command.
   - **`/doc-review` pass** — hand the spec to `/doc-review` for the broader readiness-skeptic review.
-- **Route onward:** `/handoff` (-> `mission-control` -> issue -> `/work`) when the WHAT is locked and ready
+- **Route onward:** `mission-control` (-> issue -> `/work`) when the WHAT is locked and ready
   for the backlog; `/plan` when a HOW must still be settled; or stop if the user is done.
 - **No saga write.** `/spec` is off-chain; it does not advance or mint any work thread.
 
@@ -164,7 +164,7 @@ register) nor `/brainstorm`'s divergent exploration job. It reads the repo but d
   `saga/skills/plan/references/interrogation.md` and is deliberately not duplicated
   here.
 - `references/spec-template.md` — the locked `docs/specs/` artifact: frontmatter + sections, the
-  post-write checklist, and the `/handoff` routing note (the artifact is a `/handoff` source mapping to
+  post-write checklist, and the `mission-control` routing note (the artifact is a `mission-control` source mapping to
   `requirements-ready`; `mission-control` owns the issue body).
 - `saga/references/formatting-style.md` — the shared formatting contract the written spec follows
   (one-line section summaries, short blank-separated paragraphs, comparative data as tables/bullets).

@@ -2,7 +2,7 @@
 """CI lint: every gate site must declare its machine-readable operator-absence contract (#371).
 
 "We forgot to say what happens on silence" becomes a build failure, not an operator surprise.
-The lint enumerates gate call sites across ``plugins/saga`` and ``plugins/team-execution`` and
+The lint enumerates gate call sites across ``plugins/saga`` and
 fails the build on any site with no declared ``absence_behavior``. Two site families:
 
 **Markdown gate sites** (skills/commands/agents are prompt surfaces): every line mentioning
@@ -54,7 +54,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_ROOTS = ("plugins/saga", "plugins/team-execution")
+# ``plugins/team-execution`` was the second root until issue #1030 archived that plugin. A scan
+# root that does not exist is a hard error by design, so the root is removed rather than made
+# optional -- an optional root is a root that can silently stop being scanned.
+DEFAULT_ROOTS = ("plugins/saga",)
 DEFAULT_BASELINE = Path(__file__).resolve().parent / "gate_absence_baseline.json"
 
 ABSENCE_BEHAVIORS = ("HALT", "safe-default-with-record", "escalate")

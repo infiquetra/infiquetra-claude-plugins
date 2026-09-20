@@ -13,15 +13,57 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -77,24 +119,28 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(repo: Path, units: list[dict[str, Any]], branch: str = "orch/r1") -> None:
-    base = subprocess.run(
-        ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
     ).stdout.strip()
-    payload = {
-        "run_id": "r1",
-        "source": "a test",
-        "base": base,
-        "branch": branch,
-        "units": units,
-    }
-    path = repo / ".orchestrate" / "run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _read_run(repo: Path) -> dict[str, Any]:
-    raw: dict[str, Any] = json.loads((repo / ".orchestrate" / "run.json").read_text())
+    raw: dict[str, Any] = _support.read_record(test_store(), _support.TEST_ISSUE)
     return raw
 
 
@@ -134,26 +180,8 @@ class TestCheck(_NoLiveSessions):
     ) -> None:
         _write_run(repo, [_unit("alpha"), _unit("beta")])
         monkeypatch.chdir(repo)
-        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert orchestrate.cmd_check(NS()) == 0
         assert "the record agrees with the repository" in capsys.readouterr().out
-
-    def test_an_unrecorded_numbered_landing_worktree_is_reported(
-        self,
-        orchestrate: ModuleType,
-        repo: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        _write_run(repo, [_unit("alpha"), _unit("beta")])
-        retained = repo / ".orchestrate" / "land-r1-1"
-        _git(repo, "worktree", "add", "--detach", str(retained), "orch/r1")
-        monkeypatch.chdir(repo)
-
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
-
-        out = capsys.readouterr().out
-        assert f"LANDING WORKTREE {retained}" in out
-        assert "run `orchestrate.py clean --merged` to retry cleanup" in out
 
     def test_a_branch_with_no_unit_is_unrecorded(
         self,
@@ -166,7 +194,7 @@ class TestCheck(_NoLiveSessions):
         _write_run(repo, [_unit("alpha"), _unit("beta")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(NS()) == 1
         out = capsys.readouterr().out
         assert "UNRECORDED stray -- branch orch/r1-stray is not a unit in this run" in out
 
@@ -180,7 +208,7 @@ class TestCheck(_NoLiveSessions):
         """``orch/r1`` exists like any other run branch, but it is no unit and must never appear."""
         _write_run(repo, [_unit("alpha"), _unit("beta")])
         monkeypatch.chdir(repo)
-        orchestrate.cmd_check(argparse.Namespace())
+        orchestrate.cmd_check(NS())
 
         out = capsys.readouterr().out
         assert "branch orch/r1 is not a unit" not in out
@@ -197,7 +225,7 @@ class TestCheck(_NoLiveSessions):
         _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("empty")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(NS()) == 1
         assert "NO COMMITS empty" in capsys.readouterr().out
 
     def test_a_done_unit_with_unlanded_commits_is_reported(
@@ -213,7 +241,7 @@ class TestCheck(_NoLiveSessions):
         _git(repo, "checkout", "main")
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(NS()) == 1
         out = capsys.readouterr().out
         assert "NOT LANDED alpha" in out
         assert "1 commit not on orch/r1" in out
@@ -232,7 +260,7 @@ class TestCheck(_NoLiveSessions):
         _git(repo, "checkout", "main")
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert orchestrate.cmd_check(NS()) == 0
         out = capsys.readouterr().out
         assert "NOT LANDED" not in out
         assert "the record agrees with the repository" in out
@@ -274,7 +302,7 @@ class TestLooksDone:
         _fake_agents(orchestrate, monkeypatch, {"fix-52": "idle"})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(NS()) == 1
         out = capsys.readouterr().out
         assert (
             "  LOOKS DONE fix-52 -- marked running, but its session is idle "
@@ -296,7 +324,7 @@ class TestLooksDone:
         _fake_agents(orchestrate, monkeypatch, {"fix-52": "done"})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert orchestrate.cmd_check(NS()) == 1
         assert (
             "  LOOKS DONE fix-52 -- marked running, but its session is done "
             "and its branch has commits"
@@ -317,7 +345,7 @@ class TestLooksDone:
         _fake_agents(orchestrate, monkeypatch, {"slow": "idle"})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert orchestrate.cmd_check(NS()) == 0
         out = capsys.readouterr().out
         assert "LOOKS DONE" not in out
         assert "the record agrees with the repository" in out
@@ -337,7 +365,7 @@ class TestLooksDone:
         _fake_agents(orchestrate, monkeypatch, {"fix-52": "working"})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert orchestrate.cmd_check(NS()) == 0
         assert "LOOKS DONE" not in capsys.readouterr().out
 
     def test_a_done_unit_is_not_looks_done(
@@ -352,7 +380,7 @@ class TestLooksDone:
         _fake_agents(orchestrate, monkeypatch, {"alpha": "idle", "beta": "idle"})
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert orchestrate.cmd_check(NS()) == 0
         assert "LOOKS DONE" not in capsys.readouterr().out
 
 
@@ -389,7 +417,7 @@ class TestHerdrIsOptional:
         _write_run(repo, [_unit("alpha")])
         _hide_herdr(tmp_path, monkeypatch)
         monkeypatch.chdir(repo)
-        orchestrate.cmd_check(argparse.Namespace())
+        orchestrate.cmd_check(NS())
 
     def test_adopt_survives_a_machine_without_herdr(
         self,
@@ -402,7 +430,7 @@ class TestHerdrIsOptional:
         _write_run(repo, [])
         _hide_herdr(tmp_path, monkeypatch)
         monkeypatch.chdir(repo)
-        orchestrate.cmd_adopt(argparse.Namespace(yes=False))
+        orchestrate.cmd_adopt(NS(yes=False))
 
 
 class TestAdopt(_NoLiveSessions):
@@ -422,7 +450,7 @@ class TestAdopt(_NoLiveSessions):
         _write_run(repo, [_unit("alpha"), _unit("beta")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_adopt(argparse.Namespace(yes=False)) == 0
+        assert orchestrate.cmd_adopt(NS(yes=False)) == 0
         out = capsys.readouterr().out
         assert "would adopt: stray" in out
         assert "nothing written -- rerun with --yes" in out
@@ -443,7 +471,7 @@ class TestAdopt(_NoLiveSessions):
         monkeypatch.chdir(repo)
         monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
 
-        assert orchestrate.cmd_adopt(argparse.Namespace(yes=False)) == 0
+        assert orchestrate.cmd_adopt(NS(yes=False)) == 0
 
         output = capsys.readouterr().out
         assert "WARNING: run branch 'orch/r1' does not resolve" in output
@@ -464,7 +492,7 @@ class TestAdopt(_NoLiveSessions):
         _write_run(repo, [_unit("alpha"), _unit("beta")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_adopt(argparse.Namespace(yes=True)) == 0
+        assert orchestrate.cmd_adopt(NS(yes=True)) == 0
         out = capsys.readouterr().out
         assert "adopted: stray" in out
         assert "1 unit(s) written to the run file" in out
@@ -509,7 +537,7 @@ class TestAdopt(_NoLiveSessions):
             ],
         )
 
-        assert orchestrate.cmd_adopt(argparse.Namespace(yes=True)) == 0
+        assert orchestrate.cmd_adopt(NS(yes=True)) == 0
 
         units = {u["name"]: u for u in _read_run(repo)["units"]}
         assert units["stray"]["worktree"] == str(worktree)
@@ -532,7 +560,7 @@ class TestAdopt(_NoLiveSessions):
         _write_run(repo, [_unit("alpha"), _unit("beta")])
         monkeypatch.chdir(repo)
 
-        orchestrate.cmd_adopt(argparse.Namespace(yes=True))
+        orchestrate.cmd_adopt(NS(yes=True))
         units = {u["name"]: u for u in _read_run(repo)["units"]}
         assert units["stray"]["status"] == "done"
         assert units["stray"]["vendor"] == "unknown"
@@ -550,7 +578,7 @@ class TestAdopt(_NoLiveSessions):
         _write_run(repo, [_unit("alpha"), _unit("beta")])
         monkeypatch.chdir(repo)
 
-        orchestrate.cmd_adopt(argparse.Namespace(yes=True))
+        orchestrate.cmd_adopt(NS(yes=True))
         units = {u["name"]: u for u in _read_run(repo)["units"]}
         assert units["hollow"]["status"] == "failed"
 
@@ -567,7 +595,7 @@ class TestAdopt(_NoLiveSessions):
         _write_run(repo, [_unit("alpha"), _unit("beta")])
         monkeypatch.chdir(repo)
 
-        assert orchestrate.cmd_adopt(argparse.Namespace(yes=True)) == 0
-        assert orchestrate.cmd_adopt(argparse.Namespace(yes=True)) == 0
+        assert orchestrate.cmd_adopt(NS(yes=True)) == 0
+        assert orchestrate.cmd_adopt(NS(yes=True)) == 0
         names = [u["name"] for u in _read_run(repo)["units"]]
         assert names.count("stray") == 1

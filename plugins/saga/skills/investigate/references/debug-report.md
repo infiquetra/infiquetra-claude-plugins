@@ -75,10 +75,10 @@ does not edit existing entries.
 
 ---
 
-## /handoff defect-routing note (trackable confirmed defect)
+## mission-control defect-routing note (trackable confirmed defect)
 
 When the investigation confirms a **trackable defect** that needs implementation work, route it through
-`/handoff` as a **defect-type SDLC issue** (`handoff_envelope.py --issue-type defect`; `defect` is a real
+`mission-control` as a **defect-type SDLC issue** (`handoff_envelope.py --issue-type defect`; `defect` is a real
 mission-control taxonomy type). Two rules:
 
 1. **The report is EVIDENCE, not a handoff source.** Open the defect by **describing the bug** — symptom,
@@ -91,13 +91,13 @@ mission-control taxonomy type). Two rules:
    `docs/investigations/`, so passing the report as `--source` would fall through to `requirements-ready`
    and mis-classify the handoff (a `requirements-ready` defect would then get bounced by `/work` back to
    `/plan`). `handoff_envelope.py` still **requires** a source — so give it the durable artifact that
-   actually drives the work (or have `/handoff` open the issue from the described defect), and link the
+   actually drives the work (or have `mission-control` open the issue from the described defect), and link the
    report as evidence. Carry the defect via `--issue-type defect`, never via the report path.
 
-**The fix reaches `/work` via the /handoff ISSUE, not via `/work` reading `docs/investigations/`.** `/work`
+**The fix reaches `/work` via the mission-control ISSUE, not via `/work` reading `docs/investigations/`.** `/work`
 consumes a **plan path**, a **GitHub issue ref**, or a **resume request** (`work/SKILL.md` Phase 0.1) — it
-does **not** consume an investigation doc path. So: `/investigate` → `/handoff` → SDLC issue (DEFECT) →
+does **not** consume an investigation doc path. So: `/investigate` → `mission-control` → SDLC issue (DEFECT) →
 `/work` executes the issue. An **inline trivial fix already applied + self-verified** routes instead to
 `/work` or `/code-review` to SHIP it via a PR (the fix is on a branch; `/investigate` never pushes). A
-**design problem** routes to `/brainstorm`. Route per `loop/references/dispatch-table.md` — read it, never
+**design problem** routes to `/brainstorm`. Route to the command that owns the finding, never
 restate it. No saga write.

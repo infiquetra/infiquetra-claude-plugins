@@ -198,7 +198,7 @@ two-line route. The common case is route-only with no file. When you do write on
 docs/office-hours/<YYYY-MM-DD>-<topic>-frame.md
 ```
 
-with frontmatter `kind: frame-note` (plus `date`, `topic`, and the recommended next command). The
+with frontmatter `kind: frame-note` (plus `date`, `topic`, and the command to run next). The
 frame-note template is in the reference. **Never write to `docs/ideation/`** — that path belongs to
 `/ideate` and a frame note there would collide with its resume scan. Frame notes live in their own
 `docs/office-hours/` directory.
@@ -242,6 +242,6 @@ problem to carry into it — not a vague "let me know."
 **HARD GATE (restated, absolute):** from this session you never implement, never write a plan, never
 scaffold, and never file an SDLC issue. Office-hours produces durable source material only — it never
 creates or mutates a GitHub issue and never runs `gh issue create`.
-Mission Control owns issue creation, reached through `/handoff`.
+Mission Control owns issue creation; route there.
 Office-hours is upstream of execution: it routes to a next command and stops there. It does not
 select an execution backend and does not consume `references/operator-choice.md`.

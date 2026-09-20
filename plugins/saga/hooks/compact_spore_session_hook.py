@@ -55,7 +55,7 @@ def main() -> None:
         sys.exit(0)
 
     try:
-        common_dir = saga_spore.outcome_store.resolve_common_dir(repo_root)
+        common_dir = saga_spore.run_record._resolve_common_dir(repo_root)
         path = saga_spore.spore_path(common_dir, session_id)
         if not path.is_file():
             sys.exit(0)

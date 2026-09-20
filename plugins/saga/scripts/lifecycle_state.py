@@ -115,9 +115,11 @@ def requires_hard_test_gate(change_kinds: Sequence[str]) -> bool:
     return bool(risky.intersection(kind.lower() for kind in change_kinds))
 
 
-# KTD4: the fixed backend enumeration order the offer always renders, most-capable last so the
-# ladder reads inline -> team-execution -> cc-workflows-ultracode.
-_ALL_BACKENDS = ("inline", "team-execution", "cc-workflows-ultracode")
+# KTD4: the fixed backend enumeration order the offer always renders, most-capable last. One
+# entry since issue #1030 archived both of the others, so the "ladder" is a single rung; the
+# tuple stays a tuple because the enumeration contract — every backend gets an entry, never a
+# silent drop — is what callers read, not the length.
+_ALL_BACKENDS = ("inline",)
 
 
 def _availability_note(*, workflow_available: bool, workflow_availability_source: str) -> str:
@@ -139,7 +141,7 @@ def _enumerate_backends(
     workflow_available: bool,
     workflow_availability_source: str,
 ) -> list[dict[str, str]]:
-    """Build the full-enumeration ``backends`` payload (KTD4): all three, never a silent drop.
+    """Build the full-enumeration ``backends`` payload (KTD4): every one, never a silent drop.
 
     Every backend gets a ``{backend, status, note}`` entry. ``status`` is
     ``recommended`` for the winner, ``alternative`` for a reachable non-winner, and
@@ -202,12 +204,12 @@ def recommend_execution_backend(
 ) -> dict[str, object]:
     """Recommend an execution backend, mirroring operator-choice.md section 3.
 
-    Reuses ``should_offer_team_execution`` for the team-execution trigger
-    (passing all six required kwargs). Per the operator ruling C5 (issue #840),
-    ``recommend_execution_backend()`` never returns ``cc-workflows-ultracode`` with
-    status ``recommended`` under any trigger: default offers present ``inline`` or
-    ``team-execution`` only. Claude Code Workflows remain available only via explicit
-    invocation or an already-approved recorded choice.
+    Per the operator ruling C5 (issue #840), ``recommend_execution_backend()`` never returns
+    ``cc-workflows-ultracode`` with status ``recommended`` under any trigger. Since issue #1030
+    archived team-execution, ``inline`` is therefore the only value this function recommends;
+    Claude Code Workflows remain available only via explicit invocation or an already-approved
+    recorded choice. ``should_offer_team_execution`` is still computed, and its result now selects
+    the recorded rationale rather than a different backend.
 
     GATED vs ADVISORY consensus (R7 keystone). A ``needs_consensus`` signal is
     no longer an unconditional hard-force to team-execution. The governance axis
@@ -252,8 +254,9 @@ def recommend_execution_backend(
     ``should_offer_team_execution`` so the size trigger fires on FUNCTIONAL surface
     only (``file_count - release_surface_file_count >= 8``).
 
-    ``backends`` (KTD4) always enumerates ALL THREE backends in a fixed order
-    (``inline`` / ``team-execution`` / ``cc-workflows-ultracode``) as ordered
+    ``backends`` (KTD4) always enumerates ALL backends in a fixed order
+    (``inline`` / ``cc-workflows-ultracode``; team-execution was the third until issue
+    #1030 archived it) as ordered
     ``{backend, status, note}`` entries with
     ``status in {recommended, alternative, unavailable}`` — never a silent drop.
     The unavailable status only ever attaches to ``cc-workflows-ultracode`` when
@@ -273,8 +276,13 @@ def recommend_execution_backend(
             f"valid sources are {', '.join(WORKFLOW_AVAILABILITY_SOURCES)}"
         )
 
+    # The size/risk and gated-consensus signals used to escalate to team-execution. Issue #1030
+    # archived that plugin, and what it provided -- reviewer consensus and named scanners -- is now
+    # the lensed code review and the build loop's mechanical baseline, both of which an inline run
+    # already performs. So the signals no longer pick a different backend; they are computed and
+    # reported, because the rationale a run records is still worth having.
     gated_consensus = needs_consensus and consensus_is_gated
-    team = (
+    escalating = (
         should_offer_team_execution(
             file_count=file_count,
             phase_count=phase_count,
@@ -288,16 +296,22 @@ def recommend_execution_backend(
         or gated_consensus
     )
 
-    if team:
-        recommended = "team-execution"
-        rationale = "size/risk or consensus signal -> review consensus + gates fit"
+    recommended = "inline"
+    if escalating:
+        rationale = (
+            "size/risk or consensus signal -> the lensed code review and the mechanical baseline "
+            "carry it inline"
+        )
     else:
-        recommended = "inline"
         rationale = "no escalation signal -> the agent does the work itself"
 
-    reachable = ["inline", "team-execution", "cc-workflows-ultracode"]
-    if not workflow_available:
-        reachable.remove("cc-workflows-ultracode")
+    # One reachable backend since issue #1030. The line that used to drop
+    # ``cc-workflows-ultracode`` from this list when the Workflow tool was absent stayed behind
+    # after the list shrank, and ``list.remove`` on an absent value raises: every call with
+    # ``workflow_available=False`` died with ``ValueError: list.remove(x): x not in list``.
+    # ``workflow_available`` is still echoed in the result, because a caller that probed the host
+    # is entitled to see what the probe said, but it no longer removes anything.
+    reachable = ["inline"]
     alternatives = [backend for backend in reachable if backend != recommended]
 
     result: dict[str, object] = {
@@ -320,24 +334,22 @@ def recommend_execution_backend(
     # recommendation is byte-identical to today's for every existing caller (none pass a ledger) and
     # for an empty ledger (the no-data fallback). A ledger implies ``run_ledger`` is already imported
     # (the caller built the RunLedger from it), so this lazy import keeps ``lifecycle_state`` light.
-    if ledger is not None:
-        import run_ledger
-
-        avg_tokens = run_ledger.last_n_prior(ledger, "spend", "tokens", prior_n)
-        if avg_tokens is not None:
-            result["prior"] = {"metric": "spend.tokens", "n": prior_n, "avg_tokens": avg_tokens}
+    # A `ledger` argument used to add a prior from the run-fact ledger's spend series. Issue 1030
+    # removed that ledger with the ceremony family, so the argument is accepted and ignored rather
+    # than changed: every existing caller passes nothing, and the recommendation is unchanged.
     return result
 
 
 # Orchestration tiers, ordered from the most-capable (dynamic workflows, Claude Code
 # only) down to the always-runnable inline baseline. Capability-portable degradation
 # (R11) only ever recompiles DOWN this ladder — a host that cannot run dynamic
-# workflows still runs team-execution or, at the floor, the inline/serial baseline.
-# The enum strings are the frozen wire contract (mirrors saga.py ORCHESTRATION_MODES).
-ORCHESTRATION_TIERS = ("cc-workflows-ultracode", "team-execution", "inline")
+# workflows falls to the inline/serial baseline. Both of the rungs above inline left with
+# issue #1030, so the ladder is one rung and every degradation lands on it. The enum strings
+# mirror saga.py ORCHESTRATION_MODES.
+ORCHESTRATION_TIERS = ("inline",)
 
-# Only the dynamic-workflow tier needs the Workflow tool. team-execution and inline
-# run on any host, so an off-host resume only ever downgrades AWAY from this one tier.
+# Only the dynamic-workflow tier needs the Workflow tool. inline runs on any host, so an
+# off-host resume only ever downgrades AWAY from this one tier.
 _HOST_DEPENDENT_TIERS = frozenset({"cc-workflows-ultracode"})
 
 
@@ -345,7 +357,7 @@ def recheck_orchestration_capability(
     *,
     orchestration_mode: str,
     workflow_available: bool,
-    fallback_mode: str = "team-execution",
+    fallback_mode: str = "inline",
 ) -> dict[str, object]:
     """Re-check host capability on resume and recompile ONLY the orchestration tier (R11).
 
@@ -359,7 +371,7 @@ def recheck_orchestration_capability(
     orchestration tier and the human-readable downgrade note).
 
     ``fallback_mode`` is the preferred landing tier when a downgrade is needed (default
-    ``team-execution``, the next rung down — still parallel/gated, just host-portable).
+    ``inline``, which since issue #1030 is also the only rung there is).
     If the caller asks for a fallback that is itself host-dependent or unknown, this floors
     to ``inline`` — the always-runnable baseline — rather than picking another tier that
     might also be unavailable.
@@ -434,13 +446,13 @@ def _assert_known_tier(model: str, effort: str, *, source: str) -> None:
     """Refuse a model, an effort, or a COMBINATION the shared tier vocabulary does not carry.
 
     The vocabulary is ``fleet_commons.tier_palette``'s ``MODELS`` / ``EFFORTS``, reached through the
-    same shim :mod:`tier_defaults` uses, so there is one authority rather than a second copy here.
+    ``fleet_commons_shim``, so there is one authority rather than a second copy here.
 
     Membership in each list separately is not enough, and checking only that was the gap: every
     effort is a legal effort and every model a legal model, but not every pairing runs. ``haiku``
     tops out below ``xhigh``, so a plan naming that model at that effort passed two membership
     checks and named a tier no host can execute. The sibling path could never produce it -- an
-    overlay entry goes through ``_validate_shape_and_tier`` against the registry, and a registry
+    overlay entry goes through ``fleet_commons.staffing.validate_tier`` against the registry, and a registry
     default is runnable by construction -- so an explicit tier was the one door into this function
     that skipped the check its own alternative enforces.
     """
@@ -472,8 +484,9 @@ def resolve_build_unit_tier(
 
     Precedence mirrors the shared tier chain: an explicit ``plan_tier`` wins; otherwise the work
     shape (default ``mechanical`` for an undeclared unit per
-    ``references/execution-strategy.md``) is resolved through :mod:`tier_defaults` /
-    :mod:`fleet_commons.tier_resolver`, never a literal at the spawn site.
+    ``references/execution-strategy.md``) is resolved through
+    :mod:`fleet_commons.tier_resolver`, never a literal at the spawn site. The ``tier_defaults``
+    rung that sat in front of it was removed with issue 1030.
 
     **An explicit tier is validated against the same vocabulary its sibling path resolves from.**
     It used to be returned after a key-presence check alone, so a plan naming ``{"model": "gpt-5"}``
@@ -495,16 +508,18 @@ def resolve_build_unit_tier(
         _assert_known_tier(model, effort, source="plan_tier")
         return {"model": model, "effort": effort}
     shape = work_shape or "mechanical"
-    # Delegate to the existing chain so values stay in tier_policy.json and a
-    # malformed .saga/tier-defaults.json still raises TierDefaultsError.
+    # The repo-overlay chain in `tier_defaults.py` was removed by issue 1030; issue 1021 had already
+    # moved the tier policy into fleet-core's staffing component, which is the single source now.
     from pathlib import Path as _Path  # noqa: PLC0415  (lazy to avoid top-level side effects)
 
     _scripts_dir = _Path(__file__).resolve().parent
     if str(_scripts_dir) not in sys.path:
         sys.path.insert(0, str(_scripts_dir))
-    import tier_defaults as _tier_defaults  # noqa: PLC0415
+    import fleet_commons_shim  # noqa: PLC0415
 
-    return _tier_defaults.resolve_tier_with_overlay(shape)
+    resolver = fleet_commons_shim.load("tier_resolver")
+    resolved = resolver.resolve(None, shape)
+    return {"model": resolved.model, "effort": resolved.effort}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -583,7 +598,10 @@ def _build_parser() -> argparse.ArgumentParser:
     recheck.add_argument(
         "--orchestration-mode",
         default="inline",
-        help="the tier as resumed (cc-workflows-ultracode|team-execution|inline)",
+        help=(
+            "the tier as resumed; a saga written before issue #1030 may still carry "
+            "cc-workflows-ultracode or team-execution, and either is floored to inline"
+        ),
     )
     recheck.add_argument(
         "--no-workflow",
@@ -592,8 +610,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     recheck.add_argument(
         "--fallback-mode",
-        default="team-execution",
-        help="preferred landing tier on a downgrade (default: team-execution; floors to inline)",
+        default="inline",
+        help="preferred landing tier on a downgrade (default: inline, the only tier left)",
     )
 
     return parser

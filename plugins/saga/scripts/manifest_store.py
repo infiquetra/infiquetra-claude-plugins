@@ -44,16 +44,12 @@ import os
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import completeness_gate  # noqa: E402  (after the sys.path shim, by design)
-import execution_spec  # noqa: E402
-import outcome_store  # noqa: E402
-import provenance_manifest  # noqa: E402
+import run_record  # noqa: E402  (after the sys.path shim, by design)
 
 # Subdirectory under the git common dir that holds every saga's manifest tree. Namespaced
 # separately from ``outcome_store.STORE_NAMESPACE`` — manifests exist independent of the
@@ -70,16 +66,32 @@ class ManifestStoreError(ValueError):
     """A manifest-store operation was rejected (bad id, missing file, malformed JSON)."""
 
 
+def _sanitise(name: str, *, what: str = "id") -> str:
+    """Reject a path-traversing or empty identifier before it becomes a directory name.
+
+    This lived in ``outcome_store._safe_name`` until issue 1030 removed the outcome coordinator.
+    It is defined here because a store that builds paths from caller-supplied identifiers must own
+    the check that makes that safe -- borrowing it from a sibling was always the weaker arrangement,
+    and there is no sibling left to borrow from.
+    """
+    text = str(name).strip()
+    if not text:
+        raise ValueError(f"{what} must not be empty")
+    if text in {".", ".."} or "/" in text or "\\" in text or "\x00" in text:
+        raise ValueError(f"{what} {name!r} is not a safe path segment")
+    return text
+
+
 def _safe_name(name: str, *, what: str = "id") -> str:
     """Reject a name that would escape the store directory (path traversal / separators).
 
-    Delegates to ``outcome_store._safe_name`` — one implementation of the security-relevant
+    One implementation of the security-relevant
     traversal guard (this module already leans on the sibling's private helpers, e.g.
     ``_atomic_write``), translated into this store's error type.
     """
     try:
-        return cast(str, outcome_store._safe_name(name, what=what))
-    except outcome_store.OutcomeStoreError as exc:
+        return cast(str, _sanitise(name, what=what))
+    except ValueError as exc:
         raise ManifestStoreError(str(exc)) from exc
 
 
@@ -102,7 +114,7 @@ class Store:
         *,
         runner: Any = None,
     ) -> Store:
-        common = outcome_store.resolve_common_dir(repo_root, runner=runner)
+        common = run_record._resolve_common_dir(repo_root, runner=runner)
         return cls(root=common / MANIFEST_NAMESPACE / _safe_name(saga_id, what="saga_id"))
 
     def ensure(self) -> Store:
@@ -251,7 +263,7 @@ def resolve_manifest_ref(
     ref = payload.get(MANIFEST_REF_KEY)
     if not isinstance(ref, str) or not ref.strip():
         return None
-    common = outcome_store.resolve_common_dir(repo_root, runner=runner)
+    common = run_record._resolve_common_dir(repo_root, runner=runner)
     path = (common / ref).resolve()
     # Refuse to read outside the manifest tree even if a stray pointer tries to escape it.
     root = (common / MANIFEST_NAMESPACE).resolve()
@@ -272,86 +284,6 @@ def resolve_manifest_ref(
 
 # ---------------------------------------------------------------------------
 # record-completeness (U4/KTD7) — driver-materialized output_completeness
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class CompletenessRecord:
-    """One unit's persisted manifest plus the completeness_gate verdict that produced it."""
-
-    unit_id: str
-    path: Path
-    manifest: dict[str, Any]
-    failure: completeness_gate.Failure | None
-
-
-def _output_completeness_for(
-    unit: execution_spec.Unit, result: Any
-) -> tuple[provenance_manifest.OutputCompleteness, completeness_gate.Failure | None]:
-    """Derive the declared-vs-produced subrecord and any completeness_gate trip for one unit."""
-    contract = completeness_gate.Contract.from_unit(unit)
-    failure = completeness_gate.classify(result, contract=contract, unit_id=unit.unit_id)
-    parsed = completeness_gate._parse_result(result)
-    if isinstance(parsed, dict):
-        produced_keys: list[str] = list(parsed.keys())
-    else:
-        produced_keys = []
-    produced_count: int | None = None
-    if isinstance(parsed, (list, dict, set, tuple)):
-        produced_count = len(parsed)
-    output_completeness = provenance_manifest.OutputCompleteness.derive(
-        declared_keys=list(contract.returns),
-        target_count=contract.target_count,
-        produced_keys=produced_keys,
-        produced_count=produced_count,
-    )
-    return output_completeness, failure
-
-
-def record_completeness(
-    spec: execution_spec.ExecutionSpec,
-    results: dict[str, Any],
-    *,
-    saga_id: str,
-    store: Store,
-) -> list[CompletenessRecord]:
-    """Persist one driver-materialized manifest per unit in ``spec`` (KTD7).
-
-    Every declared unit gets an ``output_completeness`` subrecord (not only contract-bearing
-    ones) — the missing-output *trip* is what's restricted to contract-bearing units (R10/AE3);
-    a prose/side-effect-only leaf still gets a (zero-declared, always-passing) subrecord so the
-    manifest tree stays a complete per-unit ledger.
-    """
-    records: list[CompletenessRecord] = []
-    created_at = datetime.now(UTC).isoformat()
-    for unit in spec.units:
-        result = results.get(unit.unit_id)
-        output_completeness, failure = _output_completeness_for(unit, result)
-        manifest = provenance_manifest.Manifest(
-            execution_id=unit.unit_id,
-            saga_ref=saga_id,
-            attribution=provenance_manifest.Attribution(
-                kind=provenance_manifest.ProducerKind.CC_WORKFLOWS,
-                identity=unit.label or unit.unit_id,
-                effort=unit.tier.effort,
-                protocol="",
-            ),
-            disposition=provenance_manifest.Disposition.RAN_AS_REQUESTED,
-            created_at=created_at,
-            output_completeness=output_completeness,
-        )
-        manifest_dict = manifest.to_dict()
-        path = write_noncanonical_manifest(store, unit.unit_id, manifest_dict)
-        records.append(
-            CompletenessRecord(
-                unit_id=unit.unit_id, path=path, manifest=manifest_dict, failure=failure
-            )
-        )
-    return records
-
-
-# ---------------------------------------------------------------------------
-# CLI
 # ---------------------------------------------------------------------------
 
 
@@ -403,31 +335,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         for execution_id in list_noncanonical_manifests(store):
             print(execution_id)
-        return 0
-
-    if args.command == "record-completeness":
-        spec_data = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-        spec = execution_spec.ExecutionSpec.from_dict(spec_data)
-        results_data = json.loads(Path(args.results).read_text(encoding="utf-8"))
-        if not isinstance(results_data, dict):
-            print("results file must contain a JSON object of unit_id -> result", file=sys.stderr)
-            return 1
-        records = record_completeness(spec, results_data, saga_id=args.saga_id, store=store)
-        tripped = [r for r in records if r.failure is not None]
-        for record in records:
-            print(str(record.path))
-        if tripped:
-            for record in tripped:
-                failure = record.failure
-                if failure is None:
-                    continue
-                print(
-                    f"missing-output: unit={record.unit_id} "
-                    f"class={failure.failure_class.value} "
-                    f"{failure.message}",
-                    file=sys.stderr,
-                )
-            return 1
         return 0
 
     parser.error(f"unknown command {args.command!r}")

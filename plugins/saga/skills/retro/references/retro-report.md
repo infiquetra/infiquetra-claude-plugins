@@ -35,7 +35,7 @@ Path: `docs/retros/<saga-id-or-issue>-<date>.md`. **Agent-consumable structured 
 - Recurring (compounding signal): <friction seen in a prior retro → Pass 6(a) new-skill candidate>.
 
 ## Surfaced follow-ups
-- → /handoff: <follow-up that should become an SDLC issue>
+- → mission-control issue: <follow-up that should become an SDLC issue>
 - → QUEUED: <durable backlog item>
 
 ## Proposed edits (Tier-2, awaiting operator)
@@ -77,7 +77,7 @@ to the top** of each file. New entries are Tier-1 AUTO (pure append).
 The `**Transcendent.**` line is **not** part of the auto-append — most entries never carry it. It marks the
 select few rules that cross repositories, and it is added later by the Phase-4 transcendence-marking sweep
 as a **Tier-2 propose-diff-and-wait** edit (it modifies an existing entry), in the one canonical form
-frozen by `../promote/references/promotion-contract.md` §1. `/retro` writes it into this repo only; the
+frozen by the promotability rule in `../SKILL.md`. `/retro` writes it into this repo only; the
 cross-repo collection and the gated `infiquetra-context-library` upsert are the separate `promote` skill.
 
 ### DECISIONS.md

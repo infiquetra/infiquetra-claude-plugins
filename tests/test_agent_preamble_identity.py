@@ -24,8 +24,10 @@ PREAMBLE_PATH = (
     REPO_ROOT / "plugins" / "house-style" / "references" / "subagent-presentation-preamble.md"
 )
 
-# The enumerated ground truth: exactly these 36 paths, spread across 9 plugins (25 of them
-# under team-execution). Do NOT replace this with a glob -- see module docstring (a).
+# The enumerated ground truth: exactly these 9 paths, spread across 6 plugins. Issue 1030 removed
+# saga's two agents -- the mechanical executor and the read-only verifier -- and archived the
+# team-execution plugin, whose 25 agent prompts live on as roles in plugins/agent-launcher/roles/.
+# Do NOT replace this with a glob -- see module docstring (a).
 EXPECTED_AGENT_FILES: tuple[str, ...] = (
     "plugins/agy/agents/agy-coder.md",
     "plugins/agy/agents/agy-reviewer.md",
@@ -35,33 +37,6 @@ EXPECTED_AGENT_FILES: tuple[str, ...] = (
     "plugins/home-lab-ops/agents/homelab-sre.md",
     "plugins/mission-control/agents/sdlc-operator.md",
     "plugins/redis-channel/agents/redis-channel-coach.md",
-    "plugins/saga/agents/mechanical-executor.md",
-    "plugins/saga/agents/readonly-verifier.md",
-    "plugins/team-execution/agents/ai-usefulness-reviewer.md",
-    "plugins/team-execution/agents/api-compat-scanner.md",
-    "plugins/team-execution/agents/api-contract-tester.md",
-    "plugins/team-execution/agents/api-reviewer.md",
-    "plugins/team-execution/agents/architecture-reviewer.md",
-    "plugins/team-execution/agents/clarity-reviewer.md",
-    "plugins/team-execution/agents/code-quality-reviewer.md",
-    "plugins/team-execution/agents/concurrency-tester.md",
-    "plugins/team-execution/agents/dependency-scanner.md",
-    "plugins/team-execution/agents/deploy-watcher.md",
-    "plugins/team-execution/agents/devils-advocate-reviewer.md",
-    "plugins/team-execution/agents/event-flow-tester.md",
-    "plugins/team-execution/agents/github-actions-monitor.md",
-    "plugins/team-execution/agents/iac-cost-scanner.md",
-    "plugins/team-execution/agents/infra-reviewer.md",
-    "plugins/team-execution/agents/performance-tester.md",
-    "plugins/team-execution/agents/privacy-reviewer.md",
-    "plugins/team-execution/agents/runtime-monitor.md",
-    "plugins/team-execution/agents/scenario-tester.md",
-    "plugins/team-execution/agents/sdk-regression-tester.md",
-    "plugins/team-execution/agents/security-reviewer.md",
-    "plugins/team-execution/agents/security-scanner.md",
-    "plugins/team-execution/agents/smoke-tester.md",
-    "plugins/team-execution/agents/testing-reviewer.md",
-    "plugins/team-execution/agents/ui-regression-tester.md",
     "plugins/unifi/agents/unifi-network-ops.md",
 )
 
@@ -72,8 +47,8 @@ def _discovered_agent_files() -> list[pathlib.Path]:
     return sorted(REPO_ROOT.glob("plugins/*/agents/*.md"))
 
 
-def test_expected_agent_file_count_is_exactly_36() -> None:
-    assert len(EXPECTED_AGENT_FILES) == 36
+def test_expected_agent_file_count_is_exactly_9() -> None:
+    assert len(EXPECTED_AGENT_FILES) == 9
 
 
 def test_enumerated_agent_files_match_disk_exactly() -> None:
@@ -90,15 +65,15 @@ def test_enumerated_agent_files_match_disk_exactly() -> None:
         f"{sorted(str(p.relative_to(REPO_ROOT)) for p in missing_from_disk)}"
     )
     assert not unexpected_on_disk, (
-        f"Agent file(s) exist on disk but are not in the enumerated 36-file expectation "
+        f"Agent file(s) exist on disk but are not in the enumerated 9-file expectation "
         f"(a new agent file was added without being given the preamble and added here): "
         f"{sorted(str(p.relative_to(REPO_ROOT)) for p in unexpected_on_disk)}"
     )
-    assert len(actual) == 36, f"Expected exactly 36 agent files, found {len(actual)}"
+    assert len(actual) == 9, f"Expected exactly 9 agent files, found {len(actual)}"
 
 
-def test_synthetic_37th_agent_file_is_flagged(tmp_path: pathlib.Path) -> None:
-    """Negative case proving the assertion in the prior test isn't vacuous: simulates a 37th
+def test_synthetic_extra_agent_file_is_flagged(tmp_path: pathlib.Path) -> None:
+    """Negative case proving the assertion in the prior test isn't vacuous: simulates an extra
     `plugins/*/agents/*.md` file that was never given the preamble, using the SAME
     set-difference decision the positive test relies on."""
     expected = {REPO_ROOT / rel for rel in EXPECTED_AGENT_FILES}

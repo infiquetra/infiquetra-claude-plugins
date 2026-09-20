@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Render `/plan`'s Step-1 tier table markdown from `tier_policy.json` (U3, #362 R6).
+"""Render `/plan`'s Step-1 tier table markdown from `staffing.json` (U3, #362 R6).
 
 Replaces the prose-only heuristic table authored by hand at
-``plugins/saga/skills/plan/SKILL.md`` (formerly lines 298-304) with a block rendered
+``plugins/saga/skills/plan/SKILL.md`` (its Phase 5.2a) with a block rendered
 straight from the registry, so a registry edit is the only way to change the table —
 no second, hand-maintained copy to drift out of sync. ``tests/test_tier_resolver.py``
 parses the live SKILL.md block and asserts it equals this renderer's output
@@ -27,7 +27,7 @@ import fleet_commons_shim  # noqa: E402
 _tier_resolver = fleet_commons_shim.load("tier_resolver")
 
 TIER_TABLE_BEGIN = (
-    "<!-- BEGIN GENERATED TIER TABLE (rendered from tier_policy.json via "
+    "<!-- BEGIN GENERATED TIER TABLE (rendered from staffing.json via "
     "render_tier_table.py — do not hand-edit; a seeded divergence fails "
     "tests/test_tier_resolver.py::test_skill_registry_sync) -->"
 )

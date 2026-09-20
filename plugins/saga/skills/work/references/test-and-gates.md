@@ -1,8 +1,18 @@
-# Test and Gates — what must pass before PR-ready
+# Test and Gates — what holds around the build loop
 
-What `/work` tests during execution and what it gates on before reaching PR-ready. Test mechanics adapted
-from CE `ce-work`; the merge-base and staleness/readiness machinery from gstack `ship` / `land-and-deploy`;
-the hard gate from `requires_hard_test_gate` (the canonical change-kind constant).
+What `/work` does around the build loop: how it finds and shapes tests while implementing, how it runs
+the criterion against the merged state, and how it reads the code review's typed outcome afterwards.
+Test mechanics adapted from CE `ce-work`; the merge-base and staleness/readiness machinery from gstack
+`ship` / `land-and-deploy`.
+
+**What green means is not here.** The exit criterion — the mechanical baseline, the plan's functional
+checks, the branch preview, the scenario smoke — is written in the run record at admission and is run by
+`plugins/saga/scripts/build_loop.py`. Its contract is
+`plugins/saga/references/mechanical-baseline.md`. The risk-gated hard test gate that used to live in
+this file was removed in issue #1027: it asked a worker to decide, at the end of its own work, which
+change kinds deserved tests, and a written criterion read before the work replaces that judgment. The
+guidance below still shapes the tests a worker writes; it no longer decides whether the work may
+proceed.
 
 ## Test discovery
 
@@ -56,26 +66,17 @@ git merge origin/<base> --no-edit   # or: test against $(git merge-base origin/<
 If the merge has conflicts, resolve simple ones (e.g. CHANGELOG ordering) and stop on anything ambiguous.
 Run the suite after merging the base.
 
-## Hard test gate (`requires_hard_test_gate`)
+## Change kinds, recorded rather than gated
 
-The change-kind gate is the canonical constant in `scripts/lifecycle_state.py`:
+`change_kinds` is still derived and still recorded in the work-session writeup, because a later reader
+wants to know what kind of change this was. It no longer decides anything: the exit criterion is
+written in the run record before the work starts, so nothing here weighs a change kind against a test
+and concludes that the work may or may not proceed.
 
-```python
-requires_hard_test_gate(change_kinds)  # True if any kind in
-# {"behavior", "security", "infra", "api", "deployment", "data"}
-```
-
-- **Risky change-kinds** (behavior / security / infra / api / deployment / data) → tests are **required**;
-  PR-ready is **blocked** without them.
-- **Soft change-kinds** (docs / config / trivial) → tests may be skipped **only with an explicit
-  rationale** recorded in the work-session and the issue comment (`--blockers` / the work-session note).
-
-Derive `change_kinds` from the plan's unit types and the `parse_issue.py` flags (`has_security`,
-`has_infra`, `has_api`). When in doubt, treat it as risky.
-
-Pass `--flags` to `parse_issue.py` to widen those keyword flags with a model judgment before deriving
-`change_kinds`: the union can only add a flag, never remove one, and a client failure returns the
-keyword result unchanged. The keys and their meaning are identical either way.
+Derive it from the plan's unit types and the `parse_issue.py` flags (`has_security`, `has_infra`,
+`has_api`). Pass `--flags` to `parse_issue.py` to widen those keyword flags with a model judgment: the
+union can only add a flag, never remove one, and a client failure returns the keyword result unchanged.
+The keys and their meaning are identical either way.
 
 ## Review-readiness gate (the hard PR gate)
 

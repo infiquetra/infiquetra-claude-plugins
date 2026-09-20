@@ -4,7 +4,7 @@ Covers the registry-derived vocabulary (U1), the ladder operations and effort-ce
 clamp (U2), the unsupported-combo HALT + ladder-monotonicity invariant (U3), the
 repo-wide bare-literal drift guard (U4), and the operator-table sync check + onboarding
 guard (U5). The vocabulary now lives in fleet-core's ``tier_palette.py``, derived from
-``models.json`` — these tests are the standing drift guards the issue's Definition of
+``staffing.json`` — these tests are the standing drift guards the issue's Definition of
 Done requires.
 """
 
@@ -19,7 +19,7 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 FLEET_CORE_SCRIPTS = REPO_ROOT / "plugins" / "fleet-core" / "scripts"
-MODELS_JSON = FLEET_CORE_SCRIPTS / "fleet_commons" / "models.json"
+STAFFING_JSON = FLEET_CORE_SCRIPTS / "fleet_commons" / "staffing.json"
 
 sys.path.insert(0, str(FLEET_CORE_SCRIPTS))
 
@@ -27,7 +27,7 @@ from fleet_commons import tier_palette  # noqa: E402
 from fleet_commons.tier_palette import TierPaletteError  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# U1 (AC2) — MODELS/EFFORTS derive from models.json's explicit rank/rung.
+# U1 (AC2) — MODELS/EFFORTS derive from staffing.json's explicit rank/rung.
 # ---------------------------------------------------------------------------
 
 
@@ -157,60 +157,6 @@ def test_supports_effort_matrix() -> None:
     assert tier_palette.supports_effort("opus", "xhigh") is True
     assert tier_palette.supports_effort("haiku", "high") is True
     assert tier_palette.supports_effort("haiku", "xhigh") is False
-
-
-def test_segment_units_refactor_uses_ladder_ops() -> None:
-    """The refactored segment_units() merge must equal the old strongest-model/highest-effort."""
-    sys.path.insert(0, str(REPO_ROOT / "plugins" / "saga" / "scripts"))
-    import fleet_commons_shim
-
-    tp = fleet_commons_shim.load("tier_palette")
-    # A haiku/high segment merged with a sonnet/medium sibling -> sonnet/high.
-    assert tp.strongest("model", ["haiku", "sonnet"]) == "sonnet"
-    assert tp.strongest("effort", ["high", "medium"]) == "high"
-
-
-# ---------------------------------------------------------------------------
-# U3 (AC6/AC7) — unsupported-combo HALT (engine-owned excluded) + ladder
-# monotonicity invariant over every adjacent pair.
-# ---------------------------------------------------------------------------
-
-sys.path.insert(0, str(REPO_ROOT / "plugins" / "saga" / "scripts"))
-
-import execution_spec as es  # noqa: E402
-
-
-def test_unsupported_combo_halts_for_claude_teammate() -> None:
-    """AC6: a Claude haiku/xhigh tier HALTs at validate() — a typed error, not a clamp."""
-    with pytest.raises(es.SpecError, match="ceiling"):
-        es.Tier(model="haiku", effort="xhigh").validate("unit u1")
-    # within-ceiling combos pass untouched
-    es.Tier(model="haiku", effort="high").validate("unit u1")
-    es.Tier(model="opus", effort="xhigh").validate("unit u1")
-
-
-def test_engine_owned_tier_excluded_from_ceiling_halt() -> None:
-    """is_engine_owned=True skips the ceiling check (chaperone-dispatch stays pinned)."""
-    es.Tier(model="haiku", effort="xhigh").validate("unit u1", is_engine_owned=True)
-
-
-def test_unit_validate_halts_claude_but_not_engine_owned() -> None:
-    """The Unit.validate wiring: a Claude unit HALTs; an engine-owned unit does not."""
-    claude = es.Unit(
-        unit_id="u1", label="l", tier=es.Tier(model="haiku", effort="xhigh"), prompt="p"
-    )
-    with pytest.raises(es.SpecError, match="ceiling"):
-        claude.validate("spec")
-
-    engine_owned = es.Unit(
-        unit_id="u2",
-        label="l",
-        tier=es.Tier(model="haiku", effort="xhigh"),
-        prompt="p",
-        capability="code-generation",
-        engine_intent="offload",
-    )
-    engine_owned.validate("spec")  # excluded from the ceiling HALT — must not raise
 
 
 @pytest.mark.parametrize(
@@ -347,7 +293,7 @@ def test_guard_reds_when_vocab_reintroduced() -> None:
 
 PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
 TEAM_SKILL_MD = REPO_ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "SKILL.md"
-TIER_PALETTE_RUNBOOK = REPO_ROOT / "plugins" / "fleet-core" / "references" / "tier-palette.md"
+STAFFING_RUNBOOK = REPO_ROOT / "plugins" / "fleet-core" / "references" / "staffing.md"
 
 _TIER_TOKEN = re.compile(r"\b([a-z0-9-]+)/([a-z0-9-]+)\b")
 
@@ -366,19 +312,8 @@ def _tier_token_drift(text: str) -> list[str]:
     return bad
 
 
-def test_tier_catalog_check() -> None:
-    """AC8 (team-execution half): no unspaced `model/effort` token in the team-execution
-    worker table drifts from the vocabulary. That table uses unspaced tokens (`opus/high`);
-    the /plan table is spaced and is guarded by render-equality instead — see
-    test_plan_table_render_synced (and test_tier_resolver.py::test_skill_registry_sync).
-    A spaced regex here would false-positive on prose ("high / low"), so the two tables use
-    the guard each fits."""
-    drift = sorted(set(_tier_token_drift(TEAM_SKILL_MD.read_text(encoding="utf-8"))))
-    assert drift == [], f"team-execution SKILL.md tier tokens drift from the palette: {drift}"
-
-
 def test_plan_table_render_synced() -> None:
-    """AC8 (/plan half): the /plan tier table equals a fresh render from tier_policy.json, so
+    """AC8 (/plan half): the /plan tier table equals a fresh render from staffing.json, so
     a spaced-token drift (`opus / superhigh`) OR removal of the generated block reds this —
     the coverage the unspaced tier-token check above cannot provide for /plan."""
     from fleet_commons import render_tier_table
@@ -398,10 +333,10 @@ def test_tier_catalog_check_reds_on_drift() -> None:
 def test_onboarding_guard() -> None:
     """AC4: the onboarding runbook exists and encodes the {#tier-vocab-ordering} rule; a
     mis-inserted model at the wrong rank is caught by the import-time ordering guard."""
-    assert TIER_PALETTE_RUNBOOK.exists()
-    runbook = TIER_PALETTE_RUNBOOK.read_text(encoding="utf-8")
+    assert STAFFING_RUNBOOK.exists()
+    runbook = STAFFING_RUNBOOK.read_text(encoding="utf-8")
     assert ".index(" in runbook and "{#tier-vocab-ordering}" in runbook
-    assert "models.json" in runbook
+    assert "staffing.json" in runbook
     # a correct prepend derives a clean order; a mis-ranked insertion is rejected.
     good = {"m0": {"rank": 0}, "fable": {"rank": 1}, "opus": {"rank": 2}}
     assert tier_palette._derive_ordered(good, "rank", "model") == ("m0", "fable", "opus")

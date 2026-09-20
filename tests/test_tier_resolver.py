@@ -1,6 +1,6 @@
 """Tests for U1 (R2): the machine-readable work-shape -> tier registry.
 
-Asserts `tier_policy.json` parses as JSON, every `default_model` / `default_effort`
+Asserts the `work_shapes` block of `staffing.json` parses as JSON, every `default_model` / `default_effort`
 is a member of the canonical `MODELS` / `EFFORTS` vocabulary (tier_palette.py), and
 all generated work-shape rows from `plugins/saga/skills/plan/SKILL.md:298-304` are
 represented as registry keys.
@@ -10,13 +10,21 @@ from __future__ import annotations
 
 import json
 import pathlib
-import re
 import sys
 
 import pytest
 
 FLEET_CORE_SCRIPTS = pathlib.Path(__file__).parent.parent / "plugins" / "fleet-core" / "scripts"
-TIER_POLICY_PATH = FLEET_CORE_SCRIPTS / "fleet_commons" / "tier_policy.json"
+STAFFING_PATH = FLEET_CORE_SCRIPTS / "fleet_commons" / "staffing.json"
+
+
+def _work_shapes() -> dict[str, dict[str, str]]:
+    """The work-shape registry, read from the one staffing data file (issue #1021)."""
+    document: dict[str, dict[str, dict[str, str]]] = json.loads(
+        STAFFING_PATH.read_text(encoding="utf-8")
+    )
+    return document["work_shapes"]  # type: ignore[return-value]
+
 
 sys.path.insert(0, str(FLEET_CORE_SCRIPTS))
 
@@ -38,13 +46,12 @@ SKILL_MD_ROWS = (
 
 @pytest.fixture(scope="module")
 def registry() -> dict[str, dict[str, str]]:
-    data: dict[str, dict[str, str]] = json.loads(TIER_POLICY_PATH.read_text())
-    return data
+    return _work_shapes()
 
 
 def test_tier_policy_is_valid_json() -> None:
-    """tier_policy.json parses as JSON and is a non-empty object."""
-    data = json.loads(TIER_POLICY_PATH.read_text())
+    """The staffing registry's work_shapes block parses as JSON and is a non-empty object."""
+    data = _work_shapes()
     assert isinstance(data, dict)
     assert data
 
@@ -260,7 +267,7 @@ def test_cli_resolve_unknown_work_shape_errors(capsys: pytest.CaptureFixture[str
 
 
 # ---------------------------------------------------------------------------
-# U3 (R6): `/plan`'s Step-1 tier table is rendered from `tier_policy.json`, not
+# U3 (R6): `/plan`'s Step-1 tier table is rendered from `staffing.json`, not
 # hand-authored — a drift-guard fails a seeded divergence between SKILL.md's
 # generated block and the registry.
 # ---------------------------------------------------------------------------
@@ -268,6 +275,9 @@ def test_cli_resolve_unknown_work_shape_errors(capsys: pytest.CaptureFixture[str
 from fleet_commons import render_tier_table  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
+# Issue 1026 relocated most of /plan's Phase 5.2a to references/workflow-backend.md but kept
+# the per-unit tier derivation, and this generated block with it: the tier table is the
+# staffing heuristic for any backend that spawns per-unit agents, not Workflow instruction.
 PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
 
 
@@ -310,38 +320,10 @@ def test_skill_registry_sync_catches_seeded_divergence() -> None:
 # same tier the agent already carried pre-migration (no re-tiering, KTD7).
 # ---------------------------------------------------------------------------
 
-TEAM_EXECUTION_AGENTS_DIR = REPO_ROOT / "plugins" / "team-execution" / "agents"
 
 # stem -> pre-migration `model:` literal, verified against the frontmatters
 # before U4's edit (KTD7): all *-reviewer = opus, all *-tester = sonnet, all
 # *-scanner/*-monitor/deploy-watcher = haiku.
-_PRE_MIGRATION_MODEL_BY_STEM = {
-    "ai-usefulness-reviewer": "opus",
-    "api-compat-scanner": "haiku",
-    "api-contract-tester": "sonnet",
-    "api-reviewer": "opus",
-    "architecture-reviewer": "opus",
-    "clarity-reviewer": "opus",
-    "code-quality-reviewer": "opus",
-    "concurrency-tester": "sonnet",
-    "dependency-scanner": "haiku",
-    "deploy-watcher": "haiku",
-    "devils-advocate-reviewer": "opus",
-    "event-flow-tester": "sonnet",
-    "github-actions-monitor": "haiku",
-    "iac-cost-scanner": "haiku",
-    "infra-reviewer": "opus",
-    "performance-tester": "sonnet",
-    "privacy-reviewer": "opus",
-    "runtime-monitor": "haiku",
-    "scenario-tester": "sonnet",
-    "sdk-regression-tester": "sonnet",
-    "security-reviewer": "opus",
-    "security-scanner": "haiku",
-    "smoke-tester": "sonnet",
-    "testing-reviewer": "opus",
-    "ui-regression-tester": "sonnet",
-}
 
 
 def _parse_frontmatter(text: str) -> dict[str, str]:
@@ -357,51 +339,9 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
     return fields
 
 
-def test_role_tier_resolves_for_all_agents() -> None:
-    """Every team-execution agent carries a `role-tier:` that resolves through the
-    registry to the exact `{model}` it had before the U4 migration (KTD7: no
-    agent's effective model changes)."""
-    agent_paths = sorted(TEAM_EXECUTION_AGENTS_DIR.glob("*.md"))
-    assert len(agent_paths) == 25, f"expected 25 team-execution agents, found {len(agent_paths)}"
-
-    for path in agent_paths:
-        stem = path.stem
-        assert stem in _PRE_MIGRATION_MODEL_BY_STEM, f"unclassified agent: {stem}"
-        fields = _parse_frontmatter(path.read_text(encoding="utf-8"))
-
-        assert "role-tier" in fields, f"{stem} is missing role-tier: frontmatter"
-        assert "model" in fields, f"{stem} is missing its model: fallback"
-
-        role_tier = fields["role-tier"]
-        fallback_model = fields["model"]
-        pre_migration_model = _PRE_MIGRATION_MODEL_BY_STEM[stem]
-
-        # The documented `model:` fallback is untouched by the migration.
-        assert fallback_model == pre_migration_model, (
-            f"{stem}: model: fallback changed from {pre_migration_model!r} "
-            f"to {fallback_model!r} — U4 must not re-tier agents"
-        )
-
-        # Resolving the role-tier alias through the registry reproduces the
-        # agent's pre-migration model — tier-preservation, not re-tiering.
-        resolution = tier_resolver.resolve(None, role_tier)
-        assert resolution.model == pre_migration_model, (
-            f"{stem}: role-tier {role_tier!r} resolves to {resolution.model!r}, "
-            f"expected pre-migration model {pre_migration_model!r}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# U5 (R7, KTD6): effort emission into /plan's per-unit tier table and
-# team-execution's A7 worker table, plus the spawn-site-enumeration drift
-# guard over sandbox-spawn-sites.md. Team Execution's marker also describes
-# live dispatch-time honoring (#993); #363 remains the A7 parser/cell-shape pin.
-# ---------------------------------------------------------------------------
-
 TEAM_EXECUTION_SKILL_MD = (
     REPO_ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "SKILL.md"
 )
-SANDBOX_SPAWN_SITES_MD = REPO_ROOT / "plugins" / "saga" / "references" / "sandbox-spawn-sites.md"
 
 _EFFORT_EMISSION_MARKER = "EFFORT-EMISSION MARKER (#362 U5, R7, KTD6)"
 
@@ -412,140 +352,3 @@ def test_effort_emitted_into_plan_tier_table() -> None:
     assert "tier_resolver.resolve(...).model" in text
     assert "tier_resolver.resolve(...).effort" in text
     assert "`<model>/<effort>`" in text
-
-
-def test_effort_emitted_into_team_execution_a7_table() -> None:
-    """team-execution's A7 worker table documents the same `<model>/<effort>` cell
-    shape, sourced from the same resolver, aligned with #363's parser (R7)."""
-    text = TEAM_EXECUTION_SKILL_MD.read_text(encoding="utf-8")
-    assert _EFFORT_EMISSION_MARKER in text
-    assert "fleet_commons.tier_resolver.resolve(...).model" in text
-    assert ".effort" in text
-    assert "#363" in text
-
-
-def test_team_execution_effort_marker_describes_live_honoring() -> None:
-    """Team Execution's EFFORT-EMISSION MARKER describes live dispatch-time
-    honoring via inject_effort, not an emission-only / no-honoring account,
-    while keeping the `<model>/<effort>` cell-shape clause (#993).
-    """
-    text = TEAM_EXECUTION_SKILL_MD.read_text(encoding="utf-8")
-    opener = "<!-- EFFORT-EMISSION MARKER"
-    start = text.find(opener)
-    assert start != -1, "Team Execution SKILL.md is missing the EFFORT-EMISSION MARKER opener"
-    closer = "-->"
-    close = text.find(closer, start)
-    assert close != -1, "Team Execution SKILL.md is missing the EFFORT-EMISSION MARKER closer"
-    marker = text[start : close + len(closer)]
-    normalized = re.sub(r"\s+", " ", marker)
-
-    assert "inject_effort(prompt, effort, spawn_kind)" in normalized, (
-        "EFFORT-EMISSION MARKER must name the live inject_effort(prompt, effort, spawn_kind) seam"
-    )
-    assert "Workflow" in normalized and "external-engine" in normalized, (
-        "EFFORT-EMISSION MARKER must describe Workflow and external-engine routes"
-    )
-    assert "real control" in normalized, (
-        "EFFORT-EMISSION MARKER must say Workflow/external-engine routes use real controls"
-    )
-    assert "pass through" in normalized, (
-        "EFFORT-EMISSION MARKER must say Workflow/external-engine routes pass through the seam"
-    )
-    assert "native Agent tool" in normalized, (
-        "EFFORT-EMISSION MARKER must name the native Agent tool limitation"
-    )
-    assert "no real per-call effort knob" in normalized, (
-        "EFFORT-EMISSION MARKER must say the native Agent tool has no real per-call effort knob"
-    )
-    assert "EFFORT_RIDER[effort]" in normalized, (
-        "EFFORT-EMISSION MARKER must name the labeled EFFORT_RIDER[effort] proxy directive"
-    )
-    assert "`<model>/<effort>`" in normalized, (
-        "EFFORT-EMISSION MARKER must keep the <model>/<effort> cell-shape clause"
-    )
-    assert ".model" in normalized and ".effort" in normalized, (
-        "EFFORT-EMISSION MARKER must keep resolver .model / .effort sources"
-    )
-
-    lowered = normalized.casefold()
-    assert "emission only" not in lowered, (
-        "EFFORT-EMISSION MARKER must not claim emission-only (retired account)"
-    )
-    assert "no dispatch-time honoring" not in lowered, (
-        "EFFORT-EMISSION MARKER must not claim dispatch-time honoring is absent (retired account)"
-    )
-
-
-def _parse_spawn_site_work_shapes(text: str) -> list[tuple[str, str]]:
-    """Extract (site-label, resolver-work-shape) pairs from the in-scope spawn-site
-    table's last column and the "Also in-scope" prose's trailing work-shape note."""
-    pairs: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        if not line.startswith("| `") or "Resolver work-shape" in line:
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 4:
-            continue
-        skill, _file, _site, work_shape = cells[0], cells[1], cells[2], cells[3]
-        pairs.append((skill.strip("`"), work_shape.strip("`")))
-    # The prose-only "Also in-scope" verifier-emitting sites row.
-    if "Resolver work-shape: `judgment`" in text:
-        pairs.append(("execution_spec.py verifier-emitting sites", "judgment"))
-    return pairs
-
-
-def test_spawn_site_enumeration_routes_through_resolver() -> None:
-    """Every enumerated spawn site in `sandbox-spawn-sites.md` names a resolver
-    work-shape (registry key or `role-tier:` alias) that actually resolves — a new
-    bare palette literal (e.g. a hardcoded `opus`/`haiku` string) at an enumerated
-    site fails this test instead of silently bypassing the resolver (R7)."""
-    text = SANDBOX_SPAWN_SITES_MD.read_text(encoding="utf-8")
-    pairs = _parse_spawn_site_work_shapes(text)
-    assert pairs, "no enumerated spawn sites found in sandbox-spawn-sites.md"
-
-    registry = json.loads(TIER_POLICY_PATH.read_text())
-    valid_keys = set(registry.keys()) | set(tier_resolver.ROLE_TIER_ALIASES)
-
-    for site, work_shape in pairs:
-        assert work_shape not in MODELS, (
-            f"{site}: work-shape column holds a bare model literal {work_shape!r}, "
-            "not a resolver work-shape/role-tier key"
-        )
-        assert work_shape in valid_keys, (
-            f"{site}: work-shape {work_shape!r} is not a registry key or role-tier alias"
-        )
-        # A real resolve() call, not just membership — catches a key that exists in
-        # name but no longer resolves cleanly (e.g. a malformed registry row).
-        resolution = tier_resolver.resolve(None, work_shape)
-        assert resolution.model in MODELS
-        assert resolution.effort in EFFORTS
-
-
-def test_model_field_is_native_and_resolver_independent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`model:` is the field Claude Code reads NATIVELY at spawn; the resolver is a
-    PARALLEL lookup, not something `model:` falls back from. So there is no resolver-level
-    fallback: when the registry is unavailable the resolver RAISES (no silent degrade),
-    while the native `model:` value keeps working by construction — a structural
-    non-dependency (KTD5), not a fallback mechanism."""
-
-    def _boom(*_args: object, **_kwargs: object) -> dict[str, dict[str, str]]:
-        raise FileNotFoundError("fleet_commons unavailable (simulated)")
-
-    monkeypatch.setattr(tier_resolver, "load_policy", _boom)
-
-    for stem, pre_migration_model in _PRE_MIGRATION_MODEL_BY_STEM.items():
-        path = TEAM_EXECUTION_AGENTS_DIR / f"{stem}.md"
-        fields = _parse_frontmatter(path.read_text(encoding="utf-8"))
-        native_model = fields["model"]
-
-        # The registry-backed resolver RAISES when load_policy is down — it does NOT
-        # silently fall back to the frontmatter model (there is no such code path)...
-        with pytest.raises(FileNotFoundError):
-            tier_resolver.resolve(None, fields["role-tier"])
-
-        # ...but the native `model:` value is a plain, directly usable literal that
-        # Claude Code reads without the resolver or the registry.
-        assert native_model == pre_migration_model
-        assert native_model in MODELS

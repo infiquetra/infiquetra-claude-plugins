@@ -2,70 +2,86 @@
 
 **Status:** canonical contract · **plugin version:** 0.5.0
 **Companion:** [`references/saga-spec.md`](./saga-spec.md) — the **STORAGE** contract for the chosen value.
-**Audience:** every lifecycle command that runs work or routes work (`/loop`, `/work`, and the rest as they
-rebuild) implements against this file when deciding *how* work executes.
+**Audience:** every lifecycle command that runs work or routes work (`/work`, and the rest)
+implements against this file when deciding *how* work executes.
 
-This is the **DECISION contract** for choosing an execution backend in saga. Where
+This is the **DECISION contract** for the execution backend in saga. Where
 `saga-spec.md` says *how the choice is stored* (the `orchestration_mode` / `orchestration_ref` fields), this
-document says *how the choice is made and offered*. Lifecycle owns the **CHOICE**, not the execution: it
-recommends a backend, surfaces it, and records what the operator picked. The backends themselves do the
-work.
+document says *how the choice is made*. Lifecycle owns the **CHOICE**, not the execution.
 
 > The CLI-backed execution-backend helper **shipped with the `/work` rebuild**: `recommend_execution_backend()`
 > lives in [`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py) (the `recommend-backend` subcommand).
-> The prose offer hooks in `/loop` and `/work` cite this file; both call the helper (`/work` since 0.10.0,
-> `/loop` since 0.11.0 — `/loop` offers a backend per decision point for `/loop`-owned work and writes the
-> choice to the saga). This spec was settled as a doc-only foundation in 0.5.0 **before** consumers calcified
-> against it, then the helper landed with `/work` and `/loop` became its second caller.
+> `/work` has called it since 0.10.0. `/loop` was its second caller until issue 1030 removed that
+> command; the helper itself survives, and since the same issue archived every backend above
+> `inline` it returns `inline` with a work-shape rationale rather than a choice.
 
 ---
 
-## 1. The three execution backends
+## 1. The one selectable execution backend
 
-There are exactly three recorded enum values. The stored value is **EXACTLY one of** `inline |
-team-execution | cc-workflows-ultracode` — these strings are the contract (they match
-`ORCHESTRATION_MODES` in [`scripts/saga.py`](../scripts/saga.py) and §4 of `saga-spec.md`). Prose
-labels people say out loud ("CC workflows", "ultracode", "team mode") are **not** the contract; only
-the enum strings are.
+> **Issue 1030 narrowed this menu to one.** `ORCHESTRATION_MODES` in
+> [`scripts/saga.py`](../scripts/saga.py) is now `("inline",)`. The `team-execution` plugin was
+> archived and the `cc-workflows` plugin was removed, so neither backend is installed and neither
+> can be selected. **Sections 3, 4 and 8 below are a historical record** of how the three-way menu
+> was offered; read them to understand a saga written before the release, not to make a choice
+> today. Sections 1 and 2 are current. Sections 5, 6 and 7 are current about the transport and the
+> storage, and they name `/loop`, `/resume`, `/optimize` and `/outcome` as writers and consumers.
+> All four were removed by the same issue, so read each such row as a record of which command wrote
+> a field, never as a command to run.
 
-**NARROW offer (issue #808).** The default Saga offer is `inline` and `team-execution` only.
-`cc-workflows-ultracode` remains available only by **explicit invocation** as a task-local mechanism
-inside a Herdr-managed Claude Code session. It is never a default or automatic Saga backend and
-never a generic interchangeable execution backend (DECISIONS `{#cc-workflows-backend-narrow-808}`).
-`/plan` and `/work` must not pre-select it, must not include it as a third interchangeable choice,
-and must not silently substitute it for `inline` or `team-execution`.
+There is exactly one selectable enum value: the stored `orchestration_mode` a new run writes is
+`inline`. That string is the contract, and it matches `ORCHESTRATION_MODES` in
+[`scripts/saga.py`](../scripts/saga.py) and §4 of `saga-spec.md`. Prose labels people say out loud
+("CC workflows", "ultracode", "team mode") were never the contract; only the enum strings were.
+
+**Two strings still read back and are never written.** `team-execution` and
+`cc-workflows-ultracode` remain a frozen wire contract: a saga tick recorded before the release
+still carries one, still loads, and still renders its label through
+`ORCHESTRATION_MODE_LABELS`. `_orchestration_rank` returns `None` for either, which is what keeps
+the provenance guard lenient on history while `saga.py` refuses the value at the command line,
+where a *new* choice is being made.
 
 | Backend (enum) | What it is | Owns execution? | Availability |
 |---|---|---|---|
-| `inline` | The agent does the work itself, single-context / serial. **The default.** | the agent | always |
-| `team-execution` | The team-execution plugin: a `## Team Structure` plan section + worker / reviewer / validator agents with consensus + gates. | yes — team-execution owns its own run | plugin installed |
-| `cc-workflows-ultracode` | The Claude Code **Workflow** tool: deterministic multi-agent orchestration (ultracode) — broad fan-out **and** independent/adversarial verification. | yes — the Workflow runtime owns its own run | **Claude Code only** (§4) |
+| `inline` | The agent does the work itself, single-context / serial. **The only value a new run writes.** | the agent | always |
+| `team-execution` | The archived team-execution plugin's worker / reviewer / validator run. | — | **archived (issue 1030)**; readable at rest, never selectable |
+| `cc-workflows-ultracode` | The Claude Code **Workflow** tool's deterministic multi-agent orchestration. | — | **removed (issue 1030)**; readable at rest, never selectable |
 
-**Ownership boundary.** Lifecycle **chooses**; the backends **execute**. `team-execution` and
-`deploy` are **offered, not vendored** — lifecycle never reimplements their machinery, it points
-to them and records the pointer. A saga holds the choice (`orchestration_mode`) and a pointer into the
-backend (`orchestration_ref`); it is never the execution authority.
+What the archived backend provided — reviewer consensus and named scanners — is now the lensed
+code review and the build loop's mechanical baseline, both of which an inline run already performs.
+
+**Ownership boundary.** Lifecycle **chooses**; the backends **execute**. `deploy` is **offered, not
+vendored** — lifecycle never reimplements its machinery, it points to it and records the pointer. A
+saga holds the choice (`orchestration_mode`) and a pointer into the backend
+(`orchestration_ref`); it is never the execution authority.
 
 ---
 
 ## 2. Who decides
 
-The operator decides; lifecycle makes the cheapest-correct path one keystroke away.
+The operator decides; lifecycle makes the cheapest-correct path one keystroke away. With one
+selectable value there is no menu left to render, so what remains of this section is the *rationale*
+a run records, not a question it asks.
 
-- **inline by default.** Absent any escalation signal, work runs `inline`. No ceremony.
-- **Auto-recommend a Saga backend.** Lifecycle reads the work shape (§3) and pre-selects `inline` or
-  `team-execution`. This is a recommendation, not an imposition. A Workflow is entered only when the
-  operator explicitly invokes it.
-- **ALWAYS surface the Saga choice.** Even when the recommendation is `inline`, the offer names
-  `team-execution` so escalation is **one step**. Do not treat `cc-workflows-ultracode` as a third
-  interchangeable alternative in that default offer.
-- **Operator confirms or overrides.** The recorded value is whatever the operator picked, not what lifecycle
-  guessed. An explicit invocation of `cc-workflows-ultracode` is a named operator act, not an override
-  of a default third option.
+- **inline, always.** Work runs `inline`. No ceremony, and no offer, because there is nothing to
+  offer against.
+- **The work shape still selects a rationale.** `recommend_execution_backend` in
+  [`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py) still computes the size, risk and
+  gated-consensus signals §3 describes. They no longer pick a different backend; they choose which
+  sentence the run records about why it ran the way it did, which is worth keeping.
+- **Operator override is still the operator's.** A recorded value is whatever the operator set. An
+  operator who explicitly invokes a Claude Code Workflow inside their own session is doing something
+  task-local; it is not a saga backend, and saga does not record one for it.
 
 ---
 
-## 3. When to escalate (triggers)
+## 3. When to escalate (triggers) — historical
+
+> **Historical since issue 1030.** Both backends this section escalates to are gone: the
+> `team-execution` plugin is archived and the `cc-workflows` plugin is removed. The
+> signals below are still computed in `lifecycle_state.py`, but they now select the
+> rationale a run records rather than a different backend (§2). Read this to understand a
+> saga written before the release.
 
 ### 3.1 `inline` -> `team-execution`
 
@@ -169,7 +185,12 @@ Recommended-default rule of thumb (which one to pre-select):
 
 ---
 
-## 4. Capability gate (`cc-workflows-ultracode` is Claude Code only)
+## 4. Capability gate (`cc-workflows-ultracode` is Claude Code only) — historical
+
+> **Historical since issue 1030.** `cc-workflows-ultracode` is no longer a saga backend,
+> so there is no capability to gate. The host-portability rule this section states —
+> halt rather than silently substitute a backend the host cannot run — is the part worth
+> keeping, and it survives in `recheck_orchestration_capability`.
 
 This plugin runs on hosts **without** the Workflow tool (e.g. redis-channel sessions, other runners). Two
 rules keep the contract honest across hosts:
@@ -223,12 +244,12 @@ answer must quote.
 
 **Answer (operator → session).** The operator's reply arrives as an ordinary `<channel …>` inbound.
 The session recognizes a gate answer with the pure helper
-`outcome_gate_transport.parse_gate_answer(inbound, pending_gate_ids)` and, on an `approve` verdict, runs:
+`outcome_gate_transport.parse_gate_answer(inbound, pending_gate_ids)` and, on an `approve` verdict, records the approval through the coordinator's own approve command, passing the answerer and the transport as provenance.
 
-```bash
-python3 plugins/saga/scripts/outcome.py approve <outcome_id> \
-  --answerer "<inbound username/user_id>" --transport "<inbound source>"
-```
+> The command this section used to spell out was `outcome.py approve`, and issue 1030 removed
+> that script with the `/outcome` command. The transport shape is what this section documents and
+> it outlived the coordinator; the exact argument line did not, so it is described rather than
+> quoted.
 
 This is **doc-only + CLI-driven** (`{#operator-choice-framework}`): no background daemon parses the
 channel; the session recognizes the reply and invokes the CLI, exactly as it does for a channel-inline
@@ -322,13 +343,17 @@ Each command cites this file at its own rebuild. The CLI-backed execution-backen
 
 ---
 
-## 8. OutcomeOrchestrator: the full backend menu + the presence-conditional degrade policy (R6/R23)
+## 8. OutcomeOrchestrator: the full backend menu + the presence-conditional degrade policy (R6/R23) — historical
 
-The three backends above are the leaf-saga choice. The **OutcomeOrchestrator** (the coordinator over a
-DAG of leaf sagas) routes EACH leaf through the same seam but over a **wider menu** and adds an automatic,
-presence-conditional **degrade** decision the single-saga layer does not have. This is encoded in
-[`scripts/outcome_dispatcher.py`](../scripts/outcome_dispatcher.py) (`resolve_available`,
-`degrade_decision`, `recommend_outcome_backend`, `fork_is_cheap`) + [`scripts/outcome_liveness.py`](../scripts/outcome_liveness.py).
+> **Removed by issue 1030.** The `/outcome` coordinator, `outcome_dispatcher.py` and
+> `outcome_liveness.py` all left the plugin with the eleven removed commands. Running one piece of
+> work across several sessions is the `orchestrate` plugin's, and it makes its own routing
+> decisions. This section is kept as the record of what the wider menu was and why it degraded the
+> way it did; nothing in it describes code that is still here.
+
+The backends above were the leaf-saga choice. The OutcomeOrchestrator (the coordinator over a
+DAG of leaf sagas) routed EACH leaf through the same seam but over a **wider menu** and added an automatic,
+presence-conditional **degrade** decision the single-saga layer did not have.
 
 **The full menu (R6), host-conditional.** `resolve_available()` returns:
 
@@ -373,10 +398,8 @@ cache miss and is not cheap).
 
 - Storage contract (where the choice lives): [`references/saga-spec.md`](./saga-spec.md)
   (`orchestration_mode` / `orchestration_ref`, enum domain §4).
-- Canonical team-execution trigger constants: [`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py)
-  (`should_offer_team_execution`).
-- OutcomeOrchestrator backend menu + degrade policy: [`scripts/outcome_dispatcher.py`](../scripts/outcome_dispatcher.py)
-  + liveness [`scripts/outcome_liveness.py`](../scripts/outcome_liveness.py) (§8 above).
+- The work-shape signals, which now select a recorded rationale rather than a backend: [`scripts/lifecycle_state.py`](../scripts/lifecycle_state.py)
+  (`should_offer_team_execution`, `recommend_execution_backend`).
 - Channel-inline offer convention (do not duplicate): [`skills/brainstorm/SKILL.md`](../skills/brainstorm/SKILL.md).
 - Decision record: [`docs/engineering-journal/DECISIONS.md`](../../../docs/engineering-journal/DECISIONS.md)
   `#operator-choice-framework`.

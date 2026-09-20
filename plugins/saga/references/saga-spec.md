@@ -2,7 +2,13 @@
 
 **Status:** canonical contract · **schema_version:** `1.0` · **plugin version:** 0.24.0
 **Engine:** [`scripts/saga.py`](../scripts/saga.py)
-**Audience:** the four execution-loop commands (`/plan`, `/work`, `/resume`, `/loop`) implement against this
+
+> **Issue 1030 removed `/resume`, `/loop` and `/handoff`.** This file is the storage contract and it
+> is current: the fields, their types and their invariants are unchanged. Where it names one of
+> those commands as a writer or a consumer, read it as the record of which command wrote a field,
+> never as a command to run. `/plan` and `/work` are the writers that remain.
+
+**Audience:** the execution-loop commands (`/plan`, `/work`) implement against this
 file when they are rebuilt. They MUST treat the field names, enum values, and operation semantics below as
 the single source of truth. If code and this document disagree, that is a bug in one of them — fix it, do
 not work around it.
@@ -10,8 +16,9 @@ not work around it.
 > The engine shipped as a primitive in 0.4.0 (unit tests + manual smoke) and is now **consumed**: `/plan`
 > (0.7.0) writes a plan saga via `save`, `/code-review` (0.8.0) is the first review-track consumer
 > (append-only/never-mint to an existing thread's `review_paths`), and `/work` (0.10.0) is the **primary
-> writer** — it `scan`s/`restore`s on re-entry and writes a tick per phase. `/resume` + `/loop` wiring
-> remains queued. This spec is the single source of truth those consumers implement against.
+> writer** — it `scan`s/`restore`s on re-entry and writes a tick per phase. The `/resume` and `/loop`
+> wiring that was queued here never shipped; issue 1030 removed both commands instead, and `/work`
+> owns re-entry. This spec is the single source of truth those consumers implement against.
 
 ---
 
@@ -143,8 +150,8 @@ construct a `Saga` (no default); all others have the listed default.
 | `pr_refs` | list[str] | — | snapshot | Pointers to PRs. |
 | `adr_refs` | list[str] | — | snapshot | `ADR-NNNN` pointers into the journal. |
 | `journal_refs` | list[str] | — | snapshot | Pointers to journal entries. |
-| `ceremony_transition` | str | — | `""` | ship_ceremony.py (#345): last transition run (e.g. `open_pr`). Carry-forward scalar, not a snapshot list — one thread has one ceremony in flight. |
-| `ceremony_tier` | str | — | `""` | ship_ceremony.py (#345): reversibility tier of `ceremony_transition` (`reversible`/`additive`/`always_operator`). No index is stored; `ship_ceremony.py` derives it from the transition name against its own canonical order each read, so there is nothing to drift out of sync. |
+| `ceremony_transition` | str | — | `""` | The ship ceremony's last transition run (#345), e.g. `open_pr`. Carry-forward scalar, not a snapshot list — one thread had one ceremony in flight. The ceremony was removed in #1027 and nothing writes this now; #1030 retires it with the commands that read it. |
+| `ceremony_tier` | str | — | `""` | The reversibility tier of `ceremony_transition` (`reversible`/`additive`/`always_operator`), #345. No index was stored; the ceremony derived it from the transition name against its own canonical order each read, so there was nothing to drift out of sync. Removed with the ceremony in #1027; #1030 retires it. |
 | `blockers` | str | — | `""` | Free-text blockers. |
 | `open_questions` | list[str] | — | snapshot | Outstanding questions (snapshot — see §6). |
 | `checks_run` | list[str] | — | snapshot | Tests / gates run (snapshot). |
@@ -192,12 +199,20 @@ historical `status`↔`phase_status` ambiguity.
 | `ideation` | `idea-ready` |
 | `brainstorm` | `requirements-ready` |
 | `plan` | `plan-ready` |
-| `review` | `plan-ready` |
+| `review` | `plan-ready` (declared, never written — see below) |
 | `work` | `resume-ready` |
 | `qa` | `resume-ready` |
 | `retro` | `resume-ready` |
 
 Fallback for any unmapped value: `requirements-ready` (matches `handoff_envelope.infer_maturity`'s default).
+
+**`review` is a declared phase that nothing writes.** It is a legal value of `LIFECYCLE_PHASES` in
+`scripts/saga.py` and of `--lifecycle-phase`, and a repository-wide search finds no code path that
+sets it. Plan review is a step inside the plan phase — `/plan` Phase 5.4 dispatches it and loops on
+repair — so a saga goes `plan` → `work` and never records `review`. The row stays because the value
+is accepted on read; it is documented as unwritten so a reader does not go looking for the writer.
+Whether the phase should become one a step advances is an open operator decision, recorded on issue
+934 and not taken here.
 
 **Off-chain doc-path note (`/spec`).** A `docs/specs/` artifact (off-chain `/spec`) is not on the saga
 chain: `handoff_envelope.infer_lifecycle_phase` returns `"unknown"` for it (no `spec` member is added to
@@ -540,7 +555,7 @@ this table is the wiring contract for their own queued items.
 
 | Command | Reads | Writes (`save`) |
 |---|---|---|
-| **/plan** | `scan` (§2.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`), `adr_refs`, `decisions`, `orchestration_mode`, `orchestration_recommended`, `orchestration_ref` (only when `orchestration_mode=cc-workflows-ultracode`), `orchestration_operator_choice` (derived from an explicit mode flag unless an explicit choice is supplied; omitting both preserves the prior choice or starts empty). |
+| **/plan** | `scan` (§2.3) | `lifecycle_phase=plan`, `phase_status=complete`, `plan_path`, `destination`, `deploy_autonomy` (only when `destination=nonprod-deploy`), `adr_refs`, `decisions`, `orchestration_mode`, `orchestration_recommended`, `orchestration_operator_choice` (derived from an explicit mode flag unless an explicit choice is supplied; omitting both preserves the prior choice or starts empty). |
 | **/work** | `restore` (rehydrate `round`/`phase`/`checks_run`/`next_step`) | primary writer: per-phase ticks, round bump (`rounds_seen`), `checks_run`, `work_session_paths`, `issue_ref` adoption, `status=done` at completion. |
 | **/code-review** | the diff + `scan`/`restore` (the existing work-thread) | review-track consumer: appends `review_paths` (append-only, never mints); **never advances `lifecycle_phase`** (preserves it). |
 | **/qa** | `restore` (the work-thread) | qa-track consumer: writes `qa_paths`; on PASS advances `lifecycle_phase` `work`→`qa`; on FAIL keeps `lifecycle_phase=work`. Never mints. |

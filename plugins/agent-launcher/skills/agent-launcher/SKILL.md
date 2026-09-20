@@ -59,6 +59,52 @@ python3 "$S" redeliver --vendor <tool> --task <tab-name> --cwd "$PWD" --prompt <
 
 `redeliver` takes the tab, pane and ownership from the receipt the stop wrote and the task and launch settings from the same flags `launch` took. Two receipt shapes are retryable: a staged-input stop (`input_box` is `staged`) and a prompt that was sent but never observed to be taken (`prompt_delivered` is `false`). It refuses, before any Herdr call and with exit code **2**, an empty `--prompt`, a receipt missing `unit_name`, `pane`, `tab_id`, `owned`, or `agent_name`, a receipt written for a different task name, a receipt that already delivered the prompt, and a receipt that records neither retryable shape. It never runs the wrapper create. It inspects the pane before its first write whatever the ownership, and it refuses to prompt a session that has visibly started since the stop (any Herdr status other than idle or unknown, including `done`), because that session may already hold the task; that refusal is recorded on the receipt as `prompt_delivered: false` and the command exits **1**, as does any retry whose prompt was not observed to be taken. A delivered retry exits **0**. Orchestrate uses the same door: rerun `go` and a unit stopped on staged input is redelivered into its recorded pane rather than launched twice, and `redrive --unit` re-prompts a unit recorded `prompt_undelivered`.
 
+## A whole roster from a run record
+
+One session at a time is the launcher above. A whole set of role sessions for one issue is
+`roster.py`, beside it in the same directory. It is the only supported path from a run record's
+staffing plan to a set of live role sessions; do not assemble one by hand from `launch` calls.
+
+```bash
+R="$CLAUDE_PLUGIN_ROOT/skills/agent-launcher/scripts/roster.py"
+python3 "$R" up   --record <absolute run-record path> --dry-run   # prints; creates nothing
+python3 "$R" up   --record <absolute run-record path>
+python3 "$R" wait --record <absolute run-record path> --timeout 600000
+python3 "$R" down --record <absolute run-record path>
+```
+
+`up` reads `run_configuration.staffing_models_and_efforts` from the run record, resolves each role
+to its prompt in `plugins/agent-launcher/roles/`, and creates one named pane per role **through
+the launcher above** — so every pane carries an ownership receipt. It records each pane in the run
+record's `roster` array as a `roster_entry.v1` row before it launches the next one, and it is
+idempotent per role: re-running it after an interruption repairs the roster rather than doubling
+it. `--issue <N>` resolves the record through saga's store root instead of `--record`; passing both
+is a refusal.
+
+**Name the account.** The staffing plan carries a vendor, a model and an effort, because those are
+tiers; the account a session runs under is not, so no staffing row supplies one. Without
+`--account company|personal` the helper appends no account flag and the wrapper's own default
+applies — the personal account. Pass `--account` on `up` for any roster that must run on the
+company account. A staffing row carrying its own `account` overrides the flag for that role.
+
+`down` closes **only** the rows that array records this helper as having created, whose ownership
+receipt is still on disk, and which are not the pane the command is running in. It never reads
+`herdr agent list` to decide what to close. There is no `herdr agent close` subcommand in herdr at
+all — closing is a tab operation, and the launcher's `close` is the one place this plugin performs
+it, because that is where ownership is proven.
+
+`wait` always carries a `--timeout` and sends no `--until`, so herdr's own settled-state default
+(idle, done, or blocked) applies. A blocked role is **reported** — its role, pane, and output tail —
+and never answered: the helper has no prompt or key-send path after a launch.
+
+Exit codes extend the run record's own table: `0` success, `1` an internal error, `2` a refusal,
+`3` an unknown record version, `4` **not running inside a herdr pane**, `5` a role is blocked or its
+wait timed out. Every subcommand refuses outside a herdr pane, because a session outside one cannot
+identify the pane it would have to protect from its own teardown.
+
+What it does not do: create git worktrees (the orchestrate driver owns that per unit), close a pane
+it did not create, or control a herdr session from outside a pane.
+
 ## The surface Orchestrate binds
 
 Orchestrate does not import this plugin; it reads `launcher.py` and executes it into its own

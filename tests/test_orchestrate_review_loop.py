@@ -14,12 +14,54 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -77,7 +119,9 @@ def _worker(
 
 
 def _run(orchestrate: ModuleType, *units: Any) -> Any:
-    return orchestrate.Run(run_id="review-run", source="test", base="base", units=list(units))
+    """A run attached to its own record, so ``save()`` has somewhere to write (issue #1025)."""
+    run = orchestrate.Run(run_id="review-run", source="test", base="base", units=list(units))
+    return _support.attach_record(run, test_store())
 
 
 def _request(fix_id: str, owner: str, *paths: str) -> dict[str, Any]:
@@ -94,7 +138,7 @@ def _request(fix_id: str, owner: str, *paths: str) -> dict[str, Any]:
 
 def _result(outcome: str, *requests: dict[str, Any], **extra: Any) -> str:
     payload: dict[str, Any] = {
-        "schema": "review_result.v1",
+        "schema": "review_result.v2",
         "outcome": outcome,
         "fix_requests": list(requests),
         **extra,
@@ -389,9 +433,9 @@ def test_mixed_work_and_operator_requests_block_resubmission_for_the_real_reason
         is False
     )
 
-    run.save(tmp_path / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
-    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    assert orchestrate.cmd_status(NS()) == 0
     output = capsys.readouterr().out
     assert "resubmission held by operator-owned fix requests" in output
     assert "awaiting landed Work repairs" not in output
@@ -422,20 +466,19 @@ def test_typed_result_round_trips_byte_identically_without_policy_parsing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw = (
-        '{\r\n  "schema": "review_result.v1",\r\n  "outcome": "accepted",\r\n'
+        '{\r\n  "schema": "review_result.v2",\r\n  "outcome": "accepted",\r\n'
         '  "fix_requests": [],\r\n  "lens_results": {"derived_overall": "not a number",'
         ' "dimensions": null},\r\n  "finding_metadata": {"priority": "P0",'
         ' "confidence": 100}\r\n}\r\n'
     )
     run = _run(orchestrate, _controller(orchestrate))
-    run_path = tmp_path / ".orchestrate" / "run.json"
     result_path = tmp_path / "result.json"
     result_path.write_bytes(raw.encode("utf-8"))
-    run.save(run_path)
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
 
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
-    restored = orchestrate.Run.load()
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
+    restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
 
     assert restored.review_outcome == "accepted"
     assert restored.review_result == raw
@@ -449,21 +492,22 @@ def test_failed_live_dispatch_keeps_the_result_retryable_and_the_worker_protecte
 ) -> None:
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
     run = _run(orchestrate, worker, _controller(orchestrate))
-    run_path = tmp_path / ".orchestrate" / "run.json"
     result_path = tmp_path / "result.json"
     raw = _result(
         "repairs_requested",
         _request("retry-dispatch", "review-fixer", "src/file.py"),
     )
     result_path.write_text(raw)
-    run.save(run_path)
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: _live(worker))
     attempts: list[str] = []
 
     def flaky_prompt(handle: str, text: str) -> None:
         protected = next(
-            u for u in orchestrate.Run.load().units if (u.agent_name or u.name) == handle
+            u
+            for u in orchestrate.Run.load(_support.TEST_ISSUE, test_store()).units
+            if (u.agent_name or u.name) == handle
         )
         assert [request["fix_id"] for request in protected.fix_requests] == ["retry-dispatch"]
         attempts.append(text)
@@ -472,19 +516,22 @@ def test_failed_live_dispatch_keeps_the_result_retryable_and_the_worker_protecte
 
     _stub_prompt_door(orchestrate, monkeypatch, flaky_prompt)
 
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
-    failed = orchestrate.Run.load()
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 1
+    failed = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert failed.review_result == raw
     assert failed.review_outcome is None
     assert [request["fix_id"] for request in failed.unit("builder").fix_requests] == [
         "retry-dispatch"
     ]
 
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
-    assert orchestrate.Run.load().review_outcome == "repairs_requested"
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
+    assert (
+        orchestrate.Run.load(_support.TEST_ISSUE, test_store()).review_outcome
+        == "repairs_requested"
+    )
     assert len(attempts) == 2
 
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
     assert len(attempts) == 2
 
 
@@ -495,14 +542,13 @@ def test_failed_dispatch_to_a_worker_that_dies_moves_the_fix_to_one_replacement(
 ) -> None:
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
     run = _run(orchestrate, worker, _controller(orchestrate))
-    run_path = tmp_path / ".orchestrate" / "run.json"
     result_path = tmp_path / "result.json"
     raw = _result(
         "repairs_requested",
         _request("retry-after-worker-died", "review-fixer", "src/file.py"),
     )
     result_path.write_text(raw)
-    run.save(run_path)
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
     live = _live(worker)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: live)
@@ -514,11 +560,11 @@ def test_failed_dispatch_to_a_worker_that_dies_moves_the_fix_to_one_replacement(
 
     _stub_prompt_door(orchestrate, monkeypatch, failed_prompt)
 
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 1
     live.clear()
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
 
-    recovered = orchestrate.Run.load()
+    recovered = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     replacements = [
         unit for unit in recovered.units if unit.name != worker.name and unit.fix_requests
     ]
@@ -531,8 +577,10 @@ def test_failed_dispatch_to_a_worker_that_dies_moves_the_fix_to_one_replacement(
     assert recovered.eligible() == replacements
     assert len(attempts) == 1
 
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
-    assert len(orchestrate.Run.load().units) == len(recovered.units)
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
+    assert len(orchestrate.Run.load(_support.TEST_ISSUE, test_store()).units) == len(
+        recovered.units
+    )
     assert len(attempts) == 1
 
 
@@ -543,14 +591,13 @@ def test_unknown_result_schema_is_persisted_verbatim_but_never_routed(
 ) -> None:
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
     run = _run(orchestrate, worker, _controller(orchestrate))
-    run_path = tmp_path / ".orchestrate" / "run.json"
     result_path = tmp_path / "result-v99.json"
     raw = _result(
         "repairs_requested",
         _request("must-not-route", "review-fixer", "src/file.py"),
-    ).replace("review_result.v1", "review_result.v99")
+    ).replace("review_result.v2", "review_result.v99")
     result_path.write_text(raw)
-    run.save(run_path)
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         orchestrate,
@@ -559,9 +606,9 @@ def test_unknown_result_schema_is_persisted_verbatim_but_never_routed(
     )
 
     with pytest.raises(SystemExit, match="unsupported schema 'review_result.v99'"):
-        orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path)))
+        orchestrate.cmd_review_result(NS(file=str(result_path)))
 
-    restored = orchestrate.Run.load()
+    restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert restored.review_result == raw
     assert restored.review_outcome is None
     assert restored.unit("builder").fix_requests == []
@@ -609,10 +656,10 @@ def test_status_collapses_untrusted_review_fields_to_one_line(
             "touched_paths": ["src/file.py\nforged-status-row"],
         }
     ]
-    run.save(tmp_path / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
 
-    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    assert orchestrate.cmd_status(NS()) == 0
     lines = capsys.readouterr().out.splitlines()
 
     review_lines = [line for line in lines if line.startswith("Code Review result:")]
@@ -646,10 +693,10 @@ def test_status_preserves_the_complete_operator_action_line(
             "touched_paths": touched_paths,
         }
     ]
-    run.save(tmp_path / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
 
-    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    assert orchestrate.cmd_status(NS()) == 0
     operator_lines = [
         line for line in capsys.readouterr().out.splitlines() if line.startswith("OPERATOR ACTION:")
     ]
@@ -738,6 +785,9 @@ def test_clean_merged_keeps_a_landed_worker_with_an_outstanding_fix(
         branch="orch/review-run",
         units=[worker],
     )
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     run.resolve_branch_once()
     assert orchestrate.reapable(worker, run) is True
@@ -783,7 +833,11 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
         task="work",
         worktree=str(worktree),
         tab_id="w1:t1",
+        # The receipt is no longer persisted, so the ownership fact the close needs lives on the
+        # unit itself (issue #1025). Both are set here: the receipt for the in-memory path, the
+        # field for everything after a reload.
         launch_receipt={"tab_id": "w1:t1", "owned": True},
+        owned=True,
         status="done",
     )
     run_record = orchestrate.Run(run_id="review-run", source="test", base="main", units=[unit])
@@ -798,13 +852,18 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
         return real_run(cmd, **kwargs)
 
     monkeypatch.setattr(orchestrate, "run", selective_run)
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
-    run_record.save()
+    _support.save_run(run_record, test_store())
 
-    args = argparse.Namespace(merged=False, branches=False, all=False, remote="origin")
-    assert orchestrate.cmd_clean(args) == 0
+    args = NS(merged=False, branches=False, all=False, remote="origin")
+    # Exit 3: the close was attempted on a tab this run owns and could not be made, so something
+    # this run owns was left behind and the status says so (issue #1025).
+    assert orchestrate.cmd_clean(args) == 3
     first_output = capsys.readouterr().out
-    saved = orchestrate.Run.load().unit("worker")
+    saved = orchestrate.Run.load(_support.TEST_ISSUE, test_store()).unit("worker")
 
     assert worktree.exists()
     failure = "tab close failed (1) for w1:t1: herdr refused; pane is busy"
@@ -812,10 +871,10 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
     assert f"kept worker: {failure}" in first_output
     assert "kept (not done, or its work not on the run branch): worker" not in first_output
 
-    assert orchestrate.cmd_clean(args) == 0
+    assert orchestrate.cmd_clean(args) == 3
     second_output = capsys.readouterr().out
     assert f"kept worker: {failure}" in second_output
-    assert orchestrate.Run.load().unit("worker").note == failure
+    assert orchestrate.Run.load(_support.TEST_ISSUE, test_store()).unit("worker").note == failure
 
 
 @pytest.mark.parametrize(
@@ -869,6 +928,9 @@ def test_clean_merged_keeps_the_review_controller_while_review_work_is_outstandi
         review_resubmit_pending=review_resubmit_pending,
         operator_fix_requests=[operator_request] if operator_request is not None else [],
     )
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     run.resolve_branch_once()
 
@@ -907,10 +969,13 @@ def test_land_names_the_operator_request_holding_review_resubmission(
         review_resubmit_pending=True,
         operator_fix_requests=[_request(fix_id, "human", "src/operator.txt")],
     )
-    run.save(repo / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
 
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    assert orchestrate.cmd_merge(NS(clean=False)) == 4
     output = capsys.readouterr().out
 
     assert f"Code Review resubmission held by operator-owned fix request: {fix_id}" in output
@@ -963,7 +1028,10 @@ def test_land_retries_a_failed_review_resubmission_after_the_repair_is_already_l
         review_outcome="repairs_requested",
         review_resubmit_pending=True,
     )
-    run.save(repo / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     attempts: list[str] = []
 
@@ -974,19 +1042,19 @@ def test_land_retries_a_failed_review_resubmission_after_the_repair_is_already_l
 
     _stub_prompt_door(orchestrate, monkeypatch, flaky_prompt)
 
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    assert orchestrate.cmd_merge(NS(clean=False)) == 4
     first_output = capsys.readouterr().out
     landed_tip = _git_out(repo, "rev-parse", "orch/review-run")
-    failed = orchestrate.Run.load()
+    failed = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert "REVIEW RESUBMIT FAILED: controller prompt failed" in first_output
     assert failed.review_resubmit_pending is True
     assert failed.unit("builder").fix_requests == []
 
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+    assert orchestrate.cmd_merge(NS(clean=False)) == 0
     second_output = capsys.readouterr().out
-    retried = orchestrate.Run.load()
+    retried = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert "resubmitted landed revision" in second_output
-    assert "landed on orch/review-run: nothing new" in second_output
+    assert "merged onto orch/review-run: nothing new" in second_output
     assert _git_out(repo, "rev-parse", "orch/review-run") == landed_tip
     assert len(attempts) == 2
     assert all(landed_tip in prompt for prompt in attempts)
@@ -1375,7 +1443,10 @@ def test_land_exits_4_when_the_resubmission_is_withheld_on_staged_input(
         review_outcome="repairs_requested",
         review_resubmit_pending=True,
     )
-    run.save(repo / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
     dumps = iter(
         [_claude_composer_pane("❯ operator draft that was never sent"), _claude_composer_pane("❯ ")]
@@ -1393,30 +1464,30 @@ def test_land_exits_4_when_the_resubmission_is_withheld_on_staged_input(
 
     monkeypatch.setattr(orchestrate, "run", herdr_boundary)
 
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    assert orchestrate.cmd_merge(NS(clean=False)) == 4
     first_output = capsys.readouterr().out
     assert "REVIEW RESUBMIT FAILED" in first_output
     assert "already holds staged input" in first_output
     assert prompts == []
-    withheld = orchestrate.Run.load()
+    withheld = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert withheld.review_resubmit_pending is True
     assert withheld.unit("code-review-controller").status == "done"
 
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+    assert orchestrate.cmd_merge(NS(clean=False)) == 0
     assert len(prompts) == 1
-    assert orchestrate.Run.load().review_resubmit_pending is False
+    assert orchestrate.Run.load(_support.TEST_ISSUE, test_store()).review_resubmit_pending is False
 
 
 def test_the_documented_land_exit_codes_are_the_ones_the_command_returns() -> None:
     """Terminal review cycle 2, F66: two of land's exit codes were documented nowhere. The
-    command document carries the table; this reads the codes out of it and out of cmd_land's
+    command document carries the table; this reads the codes out of it and out of cmd_merge's
     own return statements and requires the two sets to be equal."""
     doc = (SCRIPT.parents[3] / "commands" / "orchestrate.md").read_text(encoding="utf-8")
     table = doc[doc.index("exit-code table:") :]
     documented = {int(m) for m in re.findall(r"^\| (\d) \|", table, re.MULTILINE)}
     tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
     land = next(
-        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "cmd_land"
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "cmd_merge"
     )
     returned: set[int] = set()
     for node in ast.walk(land):
@@ -1514,7 +1585,7 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     """#893: a cycle-1 accepted artifact cannot overwrite a stored cycle-cap result."""
     stored = json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "cycle_cap_best_available",
             "cycle_history": [{"cycle": 1}, {"cycle": 2}, {"cycle": 3}],
             "fix_requests": [],
@@ -1523,7 +1594,7 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     )
     incoming = json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "accepted",
             "cycle_history": [{"cycle": 1}],
             "fix_requests": [],
@@ -1537,20 +1608,20 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     )
     result_path = tmp_path / "incoming.json"
     result_path.write_text(incoming)
-    run.save(tmp_path / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit, match="terminal review outcome"):
-        orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path)))
-    reloaded = orchestrate.Run.load()
+        orchestrate.cmd_review_result(NS(file=str(result_path)))
+    reloaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert reloaded.review_slot(controller)["review_outcome"] == "cycle_cap_best_available"
     assert reloaded.review_slot(controller)["review_result"] == stored
 
     result_path.write_text(stored)
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
 
     shorter = json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "repairs_requested",
             "cycle_history": [{"cycle": 1}],
             "fix_requests": [],
@@ -1559,7 +1630,7 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     )
     longer = json.dumps(
         {
-            "schema": "review_result.v1",
+            "schema": "review_result.v2",
             "outcome": "repairs_requested",
             "cycle_history": [{"cycle": 1}, {"cycle": 2}],
             "fix_requests": [],
@@ -1570,10 +1641,10 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     run2.write_review_slot(
         run2.review_controller(), review_result=longer, review_outcome="repairs_requested"
     )
-    run2.save(tmp_path / ".orchestrate" / "run.json")
+    _support.save_run(run2, test_store())
     result_path.write_text(shorter)
     with pytest.raises(SystemExit, match="cycle-regressed"):
-        orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path)))
+        orchestrate.cmd_review_result(NS(file=str(result_path)))
 
 
 def test_land_in_lifecycle_a_does_not_resubmit_a_running_controller_in_lifecycle_b(
@@ -1699,20 +1770,38 @@ def test_land_exit_4_outranks_leftover_landing_path_exit_3(
         review_resubmit_pending=True,
         operator_fix_requests=[_request("held", "human", "src/x.py")],
     )
-    run.save(repo / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
-    land_path = repo / ".orchestrate" / f"land-{run.run_id}"
+    # The landing worktree went with the landing bookkeeping (issue #1025); the turn's own
+    # detached worktree is what can now be left behind, so that is the cleanup failure to
+    # simulate. It only exists when a unit actually merges, so one does.
+    _git(repo, "checkout", "-q", "-b", "orch/review-run-worker", "orch/review-run")
+    _commit(repo, "worker.txt")
+    _git(repo, "checkout", "-q", "main")
+    run.units.append(
+        orchestrate.Unit(
+            name="worker",
+            vendor="claude",
+            task="x",
+            branch="orch/review-run-worker",
+            status=orchestrate.DONE,
+        )
+    )
+    _support.save_run(run, test_store())
     original_run = orchestrate.run
 
     def fail_remove(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if cmd[:4] == ["git", "worktree", "remove", "--force"] and cmd[-1] == str(land_path):
+        if cmd[:4] == ["git", "worktree", "remove", "--force"] and "merge-review-run" in cmd[-1]:
             return subprocess.CompletedProcess(cmd, 1, "", "simulated cleanup failure")
         return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
     monkeypatch.setattr(orchestrate, "run", fail_remove)
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    assert orchestrate.cmd_merge(NS(clean=False)) == 4
     output = capsys.readouterr().out
-    assert "LANDING CLEANUP FAILED" in output
+    assert "CLEANUP FAILED" in output
     assert "operator-owned fix" in output
 
 
@@ -1742,9 +1831,12 @@ def test_land_exits_4_when_resubmission_is_held_by_operator_fix_requests(
         review_resubmit_pending=True,
         operator_fix_requests=[_request("held-fix", "human", "src/op.py")],
     )
-    run.save(repo / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
+    # The merge turn refreshes its comparison ref and refuses when that fetch fails
+    # (issue #1025), so every repository here gets the local bare remote.
+    _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    assert orchestrate.cmd_merge(NS(clean=False)) == 4
     assert "operator-owned fix" in capsys.readouterr().out
 
 
@@ -1762,9 +1854,10 @@ def test_retrying_review_result_does_not_reprompt_a_worker_that_already_took_its
         _request("fix-a", "review-fixer", "src/a.py"),
         _request("fix-b", "review-fixer", "src/b.py"),
     )
+
     result_path = tmp_path / "result.json"
     result_path.write_text(raw)
-    run.save(tmp_path / ".orchestrate" / "run.json")
+    _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: _live(first, second))
     sent: list[str] = []
@@ -1775,8 +1868,8 @@ def test_retrying_review_result_does_not_reprompt_a_worker_that_already_took_its
             raise orchestrate.StagedInputError("composer holds staged input")
 
     monkeypatch.setattr(orchestrate, "_send_with_pane_guard", sender)
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 1
     assert sent == ["first", "second"]
     sent.clear()
-    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 1
     assert sent == ["second"]

@@ -8,14 +8,56 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import orchestrate_support as _support
 import pytest
+
+# --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
+
+TEST_ISSUE = 1
+
+
+_STORE: Path | None = None
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_record_store(tmp_path: Path) -> Iterator[None]:
+    """Pin this test's record store to its own ``tmp_path``.
+
+    Never the resolved store -- that is the developer's own ``.claude/saga/runs`` -- and never
+    derived from the working directory either: a helper called before a test changes directory
+    would then write one store and read another.
+    """
+    global _STORE
+    _STORE = tmp_path / "orch-test-store"
+    _STORE.mkdir(parents=True, exist_ok=True)
+    yield
+    _STORE = None
+
+
+def test_store() -> Path:
+    """This test's record store."""
+    assert _STORE is not None, "the record store is pinned by an autouse fixture"
+    return _STORE
+
+
+def NS(**fields: object) -> argparse.Namespace:
+    """A command Namespace carrying this test's issue and store."""
+    # `merge` and `clean` carry optional flags the parser defaults; a Namespace built by
+    # hand has to default them too, or the command reads an attribute that is not there.
+    defaults = {"remote": "origin", "compare": "main"}
+    return argparse.Namespace(
+        issue=TEST_ISSUE,
+        store_root=str(test_store()),
+        **{**defaults, **fields},
+    )
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -86,23 +128,24 @@ def _unit(name: str, **overrides: Any) -> dict[str, Any]:
     }
 
 
-def _write_run(
-    repo: Path,
-    units: list[dict[str, Any]],
-    *,
-    include_branch: bool = True,
-) -> None:
-    payload: dict[str, Any] = {
-        "run_id": "r1",
-        "source": "run-branch resolution test",
-        "base": _git_out(repo, "rev-parse", "main"),
-        "units": units,
-    }
-    if include_branch:
-        payload["branch"] = "orch/r1"
-    run_file = repo / ".orchestrate" / "run.json"
-    run_file.parent.mkdir(parents=True, exist_ok=True)
-    run_file.write_text(json.dumps(payload, indent=2) + "\n")
+def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+    """Write this test's run into the per-issue run record (issue #1025).
+
+    There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
+    than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    """
+    _support.ensure_origin(repo)
+    base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=False, capture_output=True, text=True
+    ).stdout.strip()
+    block: dict[str, Any] = {"run_id": "r1", "source": "a test", "base": base, "branch": "orch/r1"}
+    block.update(overrides)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=[_support.fill_unit_row(u) for u in (units or [])],
+        **block,
+    )
 
 
 def _rename_run_branch(repo: Path) -> None:
@@ -126,7 +169,7 @@ def test_load_resolves_the_run_branch_once_and_predicates_reuse_it(
         return cast(str | None, original(ref))
 
     monkeypatch.setattr(orchestrate, "resolve_ref", counting_resolve)
-    loaded = orchestrate.Run.load()
+    loaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
 
     assert loaded.branch_state == orchestrate.RunBranchState(
         "orch/r1", _git_out(repo, "rev-parse", "orch/r1")
@@ -149,7 +192,7 @@ def test_check_names_a_renamed_run_branch_without_false_no_commit_findings(
     monkeypatch.chdir(repo)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
 
-    assert orchestrate.cmd_check(argparse.Namespace()) == 1
+    assert orchestrate.cmd_check(NS()) == 1
 
     output = capsys.readouterr().out
     assert "run branch 'orch/r1' does not resolve" in output
@@ -176,7 +219,7 @@ def test_go_reports_the_missing_branch_before_evaluating_a_dependency(
     monkeypatch.chdir(repo)
 
     with pytest.raises(SystemExit, match=r"orch/r1.*does not resolve.*cannot go"):
-        orchestrate.cmd_go(argparse.Namespace(limit=0))
+        orchestrate.cmd_go(NS(limit=0))
 
     assert "committed nothing" not in capsys.readouterr().out
 
@@ -193,7 +236,7 @@ def test_go_refuses_a_missing_run_branch_even_when_no_unit_is_eligible(
     monkeypatch.chdir(repo)
 
     with pytest.raises(SystemExit, match=r"orch/r1.*does not resolve.*cannot go"):
-        orchestrate.cmd_go(argparse.Namespace(limit=0))
+        orchestrate.cmd_go(NS(limit=0))
 
     assert "nothing eligible" not in capsys.readouterr().out
 
@@ -201,13 +244,9 @@ def test_go_refuses_a_missing_run_branch_even_when_no_unit_is_eligible(
 @pytest.mark.parametrize(
     ("command", "args", "expected"),
     [
-        ("status", argparse.Namespace(), 0),
-        ("check", argparse.Namespace(), 1),
-        (
-            "clean",
-            argparse.Namespace(merged=True, branches=False, all=False),
-            0,
-        ),
+        ("status", {}, 0),
+        ("check", {}, 1),
+        ("clean", {"merged": True, "branches": False}, 0),
     ],
 )
 def test_diagnostic_commands_still_run_and_name_an_unresolvable_branch(
@@ -216,7 +255,7 @@ def test_diagnostic_commands_still_run_and_name_an_unresolvable_branch(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     command: str,
-    args: argparse.Namespace,
+    args: dict[str, object],
     expected: int,
 ) -> None:
     repo = _repo(tmp_path, ("alpha",))
@@ -225,7 +264,7 @@ def test_diagnostic_commands_still_run_and_name_an_unresolvable_branch(
     monkeypatch.chdir(repo)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
 
-    result = getattr(orchestrate, f"cmd_{command}")(args)
+    result = getattr(orchestrate, f"cmd_{command}")(NS(**args))
 
     output = capsys.readouterr().out
     assert result == expected
@@ -235,7 +274,7 @@ def test_diagnostic_commands_still_run_and_name_an_unresolvable_branch(
         assert "alpha" in output.split("kept", 1)[1]
 
 
-@pytest.mark.parametrize("command", ["land", "go"])
+@pytest.mark.parametrize("command", ["merge", "go"])
 def test_land_and_go_refuse_an_unresolvable_run_branch(
     orchestrate: ModuleType,
     tmp_path: Path,
@@ -247,7 +286,7 @@ def test_land_and_go_refuse_an_unresolvable_run_branch(
     _write_run(repo, units)
     _rename_run_branch(repo)
     monkeypatch.chdir(repo)
-    args = argparse.Namespace(clean=False) if command == "land" else argparse.Namespace(limit=0)
+    args = NS(clean=False) if command == "merge" else NS(limit=0)
 
     with pytest.raises(SystemExit, match=rf"orch/r1.*does not resolve.*cannot {command}"):
         getattr(orchestrate, f"cmd_{command}")(args)
@@ -264,15 +303,15 @@ def test_resolvable_run_branch_keeps_existing_command_behaviour(
     monkeypatch.chdir(repo)
     monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
 
-    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    assert orchestrate.cmd_status(NS()) == 0
     assert "alpha" in capsys.readouterr().out
-    assert orchestrate.cmd_check(argparse.Namespace()) == 0
+    assert orchestrate.cmd_check(NS()) == 0
     assert "the record agrees with the repository" in capsys.readouterr().out
-    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+    assert orchestrate.cmd_merge(NS(clean=False)) == 0
     assert "already there: alpha" in capsys.readouterr().out
-    assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+    assert orchestrate.cmd_go(NS(limit=0)) == 0
     assert "nothing eligible" in capsys.readouterr().out
-    assert orchestrate.cmd_clean(argparse.Namespace(merged=True, branches=False, all=False)) == 0
+    assert orchestrate.cmd_clean(NS(merged=True, branches=False, all=False)) == 0
     output = capsys.readouterr().out
     assert "closed: alpha" in output
     assert "does not resolve" not in output
@@ -291,10 +330,11 @@ def test_legacy_record_without_a_branch_keeps_the_head_based_go_path(
             _unit("alpha"),
             _unit("beta", branch=None, status="pending", after=["alpha"]),
         ],
-        include_branch=False,
+        branch="",
     )
+
     monkeypatch.chdir(repo)
-    loaded = orchestrate.Run.load()
+    loaded = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     launched: list[str] = []
 
     assert loaded.branch == ""
@@ -308,11 +348,13 @@ def test_legacy_record_without_a_branch_keeps_the_head_based_go_path(
         unit.status = "running"
 
     monkeypatch.setattr(orchestrate, "launch", fake_launch)
-    assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+    assert orchestrate.cmd_go(NS(limit=0)) == 0
 
     output = capsys.readouterr().out
     assert launched == ["beta"]
     assert "does not resolve" not in output
     assert "committed nothing" not in output
-    with pytest.raises(SystemExit, match=r"predates `land`"):
-        orchestrate.cmd_land(argparse.Namespace(clean=False))
+    # The message moved with the command: `land` is `merge`, and a run with no parent
+    # branch is told `start` creates one (issue #1025).
+    with pytest.raises(SystemExit, match=r"no parent branch"):
+        orchestrate.cmd_merge(NS(clean=False))

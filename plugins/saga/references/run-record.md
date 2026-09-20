@@ -183,6 +183,12 @@ so the two do not drift:
 | `launch_started_at` | when the driver persisted this unit's launch, written **before** the launcher is called. This is what makes a repeated launch call launch the unit once; there is no reservation |
 | `shared_blockers` | blockers this unit meets, each naming the one unit that owns the repair, so two units never both repair the same thing. The driver only reads these; the producer is whoever notices the blocker |
 
+The build loop is the second such consumer, and issue 1027 added one key under the same rule:
+
+| Key | Holds |
+|---|---|
+| `build_loop` | the written exit criterion as it was read, one entry per loop iteration with every check's result, and — on the green iteration only — the full forty-character revision handed to code review. Its full contract, the three check statuses and the exit-code table are in `plugins/saga/references/mechanical-baseline.md`, documented there so the two do not drift |
+
 Orchestrate also keeps its own run-level state under a top-level key named `orchestrate` — the run
 branch, the base commit, the issue mapping and its review state. That key is unknown to this module
 and is preserved unchanged across a read and a write, which is exactly the extension point the
@@ -237,7 +243,7 @@ place the state belongs; a module is deleted once every reader has moved, and th
 
 The **Status** column is what actually happened, so a reader can tell a plan from a fact. Issue 1028
 removed one module and deferred three, each for a reason recorded here rather than left to be
-rediscovered.
+rediscovered; issue 1027 removed a fifth with the ship ceremony.
 
 | Store | Module | Replaced by | Status |
 |---|---|---|---|
@@ -246,7 +252,7 @@ rediscovered.
 | Dispatch-settlement ledger | `dispatch_settlement.py` | `roster`, with its pane identifiers | deferred to issue 1030 — its importers are the outcome coordinator and the archived team-execution plugin, and it reads `run_ledger` |
 | Effort ledger | `effort_ledger.py` | `run_configuration.staffing_models_and_efforts` | **removed by issue 1028**, with `effort-policy.yaml`; its only importer was its own test |
 | Envelope tokens | `envelope_token.py` | `approval_scope` and the merge-turn field in `units` | issue 1030 |
-| Ship receipts | `ship_receipt.py` | the merge and release state in `units` | issue 1030 |
+| Ship receipts | `ship_receipt.py` | the merge and release state in `units` | **removed by issue 1027**, with the ship ceremony |
 
 Two things stay and are not replaced at all: the saga envelope log under `.claude/saga/sagas/`,
 which is the append-only history this single mutable file deliberately does not keep, and the spore

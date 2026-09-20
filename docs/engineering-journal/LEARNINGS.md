@@ -2,6 +2,45 @@
 
 ## 2026-09-20
 
+### Two cards taking the same version merge silently; the changelog is the only place it shows  {#1028-identical-version-strings-merge-silently}
+
+**Evidence.** Issues 1027 and 1028 both bumped saga to `0.170.0` against the same integration head,
+`23959a80`. At the merge, `plugins/saga/.claude-plugin/plugin.json` and the saga row in
+`.claude-plugin/marketplace.json` came through with **no conflict at all** — both read `0.170.0`
+afterwards, and `check_release_surface_parity.py` and `sync_marketplace.py --check` both passed,
+because the manifest and the registry agreed with each other. The only conflict was in
+`plugins/saga/CHANGELOG.md`: two entry bodies under one `## [0.170.0]` heading.
+
+**Mechanism.** Git conflicts on differing lines. Two writers who produce the *identical* line have
+not diverged in git's terms, so a same-version bump is a clean merge by construction. Every
+parity check downstream compares the manifest against the registry, and both carry the same wrong
+number, so they agree — which is exactly what they are built to check. The changelog conflicts only
+because the two bodies differ, and if a card ever writes a thin enough entry that the bodies merge
+too, nothing catches it.
+
+**Generalizable rule.** After merging an integration branch, **re-read every `plugin.json` and
+marketplace entry you bumped** rather than trusting a clean merge. The signal for a collision is two
+changelog sections under one number, never a conflict on the version itself. This card's own
+`0.170.0` changelog body contains the sentence warning about it — written one merge turn before the
+collision it describes arrived.
+
+### A deletion that runs to a conflict marker takes whatever sits between  {#1028-deleting-to-a-conflict-marker}
+
+**Evidence.** Issue 1028's merge with issue 1027. A resolution script deleted from a named paragraph
+through the `>>>>>>>` marker to drop a block issue 1027 had removed upstream. The close step sat
+between the two, so it went as well. Nothing failed at the merge; the loss surfaced four commands
+later when `tests/test_saga_no_direct_write.py` reported the work skill submitting two boundaries
+where three were expected.
+
+**Mechanism.** A conflict marker is a position, not a boundary of meaning. Slicing to it deletes
+every line in between, and in a hand-resolved section those lines are frequently the other side's
+content, which is why nothing complains. The guards caught it only because one of them counts
+something.
+
+**Generalizable rule.** Resolve a conflict by writing the section you want, not by deleting to a
+marker. When a slice is unavoidable, print what falls inside it before applying, and re-run the
+guards that count rather than the guards that match.
+
 ### A card can name a board move the lifecycle forbids, and only reading the allowed list catches it  {#1028-card-named-a-forbidden-board-move}
 
 **Evidence.** Issue #1028, planning and build. The card's fourth acceptance criterion asks that a
@@ -61,6 +100,59 @@ built for a caller that already asked; a caller that *derived* the answers has n
 check that the code cannot write it for an answer no human gave. Until `admission.py` learns a
 per-answer source, the true source belongs in the plan document beside each answer, which is where
 this run put it.
+### A scanner a repository runs advisory cannot be promoted to a blocking check without measuring it first  {#1027-measure-before-promoting-an-advisory-scanner}
+
+**Evidence.** Issue #1027, `plugins/saga/references/mechanical-baseline.md`. The card asked for
+bandit to become an entry in the build loop's mechanical baseline. Bandit is installed here
+(`pyproject.toml`, `bandit>=1.7`) and continuous integration has always run it advisory —
+`.github/workflows/ci.yml:282` ends the step with `|| true`. Measured on the card's base commit
+`87a5329e`: `uv run python -m bandit -r plugins/ scripts/ tests/ tools/ -ll -q` reports 136 medium
+and 9 high findings over 231,188 lines and exits 1.
+
+**Mechanism.** The build loop's defining rule is that a failing check is an iteration and never a
+refusal. Promoting a check that fails on 145 pre-existing findings makes the loop unable to reach
+green on the first iteration and on every iteration after it — which is a refusal, arriving through
+the one door the design left open, and looking from the outside exactly like a slow worker. The
+tell is that the failure is not about the work: nothing the card does can clear it.
+
+**Generalizable rule.** Before moving any check from advisory to blocking, run it on the current
+tree and read the count. A check with pre-existing failures blocks the next change, not the debt
+that caused it, and "advisory" is usually load-bearing rather than an oversight.
+
+### The loop that runs the checks finds what a command line assumed about its shell  {#1027-no-shell-means-globs-need-expanding}
+
+**Evidence.** Issue #1027, `plugins/saga/scripts/build_loop.py`'s `expand_globs`. The first real
+run of the build loop against this repository's own baseline recorded
+`uv run pytest tests/ plugins/*/tests/ -q` as `fail`, detail
+`ERROR: file or directory not found: plugins/*/tests/`.
+
+**Mechanism.** The loop runs every check with `shell=False`, because a baseline entry is tracked
+configuration and tracked configuration must not reach `sh -c`. But the entry was written by a
+person, for a shell, and carried a glob. With no shell to expand it, pytest received a literal path
+that does not exist — and the loop recorded that as a `fail`, indistinguishable in the record from a
+genuine test failure. The security property and the configuration format disagreed, and the
+disagreement surfaced as a wrong verdict rather than an error.
+
+**Generalizable rule.** When you stop running a stored command through a shell, you inherit every
+shell behaviour that command silently depended on — globbing, `~`, variable expansion, the working
+directory. Expand what a shell would expand, or the stored command means something different than
+it did before, and the difference shows up as a false failure rather than a crash.
+
+### A count in a card goes stale between filing and building  {#1027-read-the-file-not-the-card}
+
+**Evidence.** Issue #1027 and the objective plan's section A10 both describe
+`plugins/saga/skills/work/SKILL.md` as "1,121 lines today". On the card's base commit `87a5329e`
+the file is 815 lines: issues #1026 and #938 each took prose out of it after the card was written
+and before it was branched.
+
+**Mechanism.** A card filed at the top of a tree is written against the tree as it stood then, and
+every sibling that merges first moves the ground under it. The count is the visible instance; the
+invisible ones are the line numbers a plan cites, which are wrong in the same way and do not
+announce themselves.
+
+**Generalizable rule.** Treat every quantity in a card as of the date it was filed. Re-measure
+against the base commit before planning from it, and say in the plan which revision each number was
+read at.
 
 ### A sibling taking the same version number produces no conflict, because both sides write the identical string  {#1029-same-version-collision-merges-silently}
 

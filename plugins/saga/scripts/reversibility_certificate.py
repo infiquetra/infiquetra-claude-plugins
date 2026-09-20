@@ -73,9 +73,11 @@ class OpKind(StrEnum):
     SUB_ISSUE_REOPEN = "sub-issue-reopen"
     ISSUE_PROGRESS_COMMENT = "issue-progress-comment"
     PARENT_ISSUE_CLOSE = "parent-issue-close"
-    # issue #347 U3 (KTD7): the certificate authority for ship_teardown.reclaim's
-    # merged-worktree removal. Reversible — a merged-only reclaim leaves the branch/
-    # commit on origin/main, so the worktree can be re-created via ``git worktree add``.
+    # issue #347 U3 (KTD7): the certificate authority for the ship-teardown reclaim's
+    # merged-worktree removal (that module was removed in #1027; the write class stays
+    # because the certificate vocabulary is shared and other callers reclaim worktrees).
+    # Reversible — a merged-only reclaim leaves the branch/commit on origin/main, so the
+    # worktree can be re-created via ``git worktree add``.
     WORKTREE_RECLAIM_MERGED = "worktree-reclaim-merged"
     # #449: the envelope-authorized merge write class. NOT part of the base allowlist a
     # caller gets for free — ``authorize_write`` always GATEs it (its tier is neither

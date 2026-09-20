@@ -46,17 +46,23 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.170.0"  # 0.170.0: the merge turn, the release step, the
+    assert plugin_json["version"] == "0.171.0"  # 0.171.0: the merge turn, the release step, the
     # lifecycle-boundary board interface and the allowed-submission enforcement (issue #1028).
-    # Bumped from 0.169.0, the saga version on origin/parent/1018 at 23959a80, not from this
-    # branch's own base of 0.168.0: two cards writing the same version string merge without a
-    # conflict, and the only signal left is two changelog sections under one number.
-    # Predecessor 0.169.0: every lifecycle skill ends by doing the next step in the same turn, a
-    # new SessionStart hook announces the run record's next_step for a live run and nothing for a
-    # done step, a closed run, or no record, and a local-only UserPromptSubmit hook names the
-    # command an operator's text is about (issue #1029).
-    # Predecessor 0.168.0: the run record reference documents the `units` rows as an extension
-    # point and names the three keys the orchestrate plugin adds to a unit row (issue #1025).
+    # Bumped from 0.170.0, the saga version on origin/parent/1018 at 25619cd1. This card and issue
+    # #1027 BOTH took 0.170.0 against 23959a80, and the collision merged silently: two cards
+    # writing an identical version string never conflict, so the manifest and the marketplace entry
+    # came through clean and the only signal was two bodies under one changelog heading.
+    # Predecessor 0.170.0 was issue #1027: /work becomes the build loop — the exit criterion is
+    # written in the run record at admission and read rather than judged, and build_loop.py runs it
+    # and records every result under the unit row's `build_loop` key. The five ship-ceremony
+    # modules are removed with their tests, the hook entry and their importers.
+    # Predecessor 0.169.0 was issue #1029: every lifecycle skill ends by doing the next step in the
+    # same turn, a SessionStart hook announces the run record's next_step for a live run and
+    # nothing for a done step, a closed run, or no record, and a local-only UserPromptSubmit hook
+    # names the command an operator's text is about.
+    # Predecessor 0.168.0: the run record reference documents the
+    # `units` rows as an extension point and names the three keys the orchestrate plugin adds to a
+    # unit row (issue #1025).
     # Predecessor 0.167.0: Work no longer offers an in-process external-engine second opinion; the
     # offer's prose and routing leave the work skill and its continuation reference, and
     # plugins/saga/scripts/second_opinion.py is deleted with no live consumer, while the
@@ -854,7 +860,13 @@ def test_work_engine_merge_contract() -> None:
     assert "deploy" in corpus  # deploy mutation is delegated, not owned
     assert "mission-control" in corpus  # issue comments routed out, not filed by /work
     assert "Parallel Safety Check" in corpus  # CE execution mechanics carried
-    assert "requires_hard_test_gate" in corpus  # the canonical change-kind gate is named
+    # The canonical change-kind gate was the floor here until issue #1027 removed it. What
+    # replaced it is the written exit criterion, so the floor moves with it: naming the runner and
+    # its record block is the same class of check -- a mechanism a vibes reskin could not satisfy --
+    # about the thing that now decides when the work is done.
+    assert "build_loop.py" in corpus  # the runner that executes the written criterion
+    assert "exit criterion" in corpus.lower()  # the criterion itself, read rather than judged
+    assert "requires_hard_test_gate" not in corpus  # the removed gate must not creep back
     assert "merge-base" in corpus.lower()  # gstack merge-base-before-tests carried
     # qa/resume routing is advisory and lifecycle does not advance past work.
     assert "advisor" in corpus.lower()  # advisory qa/resume routing
@@ -3961,13 +3973,17 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     # ABSENT: the non-canonical `pass|fail|skip` vocab would parse to *unknown* and silently drop the
     # verdict (the Tests card cell would render not-reached) — guard against that regression.
     assert "tests:<pass|fail|skip>" not in work_doc
-    # PRESENT (substantive): the card render LEADS §5.4 — proving the card is the operator status
-    # HEADER, not an afterthought. This used to pin the list NUMBERS (`1. ` and `4. `) as well;
-    # issue 1028 rewrote §5.4 from a numbered list into the merge turn, the release, the functional
-    # test and the close, so the numbering is formatting the contract never depended on. The two
-    # properties the numbers stood for are pinned directly instead: the header comes first, and the
-    # section continues into the next step rather than handing routing to the operator (issue 1029).
-    assert "**Render the operator status header**" in work_doc
+    # PRESENT (substantive): the card render is the LEAD status step of §5.4 — proving the card is
+    # the operator status HEADER, not an afterthought — and a fourth step still follows it, which
+    # proves a real reorder rather than a keyword sprinkle. THREE cards have now changed this
+    # section's wording: issue #1029 made the step continue the run rather than present routing,
+    # issue #1027 removed the ship ceremony it used to continue into, and issue #1028 replaced the
+    # hand-over with the merge turn, release, functional test and close it hands over TO. That is
+    # the argument for holding the POSITION and the property, not the prose.
+    assert "1. **Render the operator status header**" in work_doc
+    assert re.search(r"^4\. \*\*[^*]+\*\*", work_doc, flags=re.MULTILINE), (
+        "section 5.4 must still carry a fourth step after the status-card render"
+    )
     section = work_doc[work_doc.index("### 5.4 ") :]
     body = section[section.index("\n") :]  # past the heading, which names the steps too
     assert body.index("**Render the operator status header**") < body.index(

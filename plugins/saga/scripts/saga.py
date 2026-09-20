@@ -57,9 +57,12 @@ SAGAS_DIR = STATE_DIR / "sagas"
 LEGACY_CHECKPOINT_DIR = STATE_DIR / "checkpoints"
 
 # Default branch names a saved ``branch`` field must not be silently overwritten with once a real
-# work branch is already recorded (issue #480). ``ship_ceremony.py``'s ``_do_checkout_main`` runs
-# ``git checkout main`` before ``branch_delete``, so a live-git refresh on that progress-save would
-# otherwise erase the very branch ``branch_delete`` still needs to delete. Mirrors the ceremony's
+# work branch is already recorded (issue #480). The ship ceremony this guard was written against
+# checked ``main`` out before deleting the work branch, so a live-git refresh on that progress-save
+# would otherwise erase the very branch the delete still needed. That ceremony was removed with
+# issue #1027; the guard stays, because "a default branch name never overwrites a recorded work
+# branch" is true of every caller and not only of the one that made it visible. Mirrors the
+# ceremony's
 # own hard-coded ``main`` checkout (``master`` included for older repos).
 _DEFAULT_BRANCHES = frozenset({"main", "master"})
 
@@ -77,10 +80,12 @@ PHASE_STATUSES = ("pending", "in_progress", "complete")
 STATUSES = ("active", "blocked", "paused", "handed-off", "done", "abandoned")
 DESTINATIONS = ("plan-only", "pr", "merge", "nonprod-deploy")
 ORCHESTRATION_MODES = ("inline", "team-execution", "cc-workflows-ultracode")
-# ship_ceremony.py's reversibility-tier vocabulary (issue #345). saga.py only validates the
-# closed set here; the transition ORDER and index-derivation are ship_ceremony.py's own
-# domain (CeremonyTier), never saga.py's — keeps the generic engine decoupled from one
-# consumer's transition table.
+# The ship ceremony's reversibility-tier vocabulary (issue #345). saga.py only ever validated the
+# closed set here; the transition ORDER and its index-derivation belonged to the ceremony, never to
+# saga.py — which kept the generic engine decoupled from one consumer's transition table. The
+# ceremony module was removed with issue #1027, so these values now have no producer; they are
+# carried until issue #1030's removal pass, which owns the commands that still read them, so that
+# one card retires the vocabulary and its readers together rather than leaving a dangling half.
 CEREMONY_TIERS = ("reversible", "additive", "always_operator")
 
 # Display-label map (R8 / KTD5).  Maps the stored enum string to the human-readable
@@ -236,10 +241,11 @@ class Saga:
     adr_refs: ListOrAbsent = ABSENT
     journal_refs: ListOrAbsent = ABSENT
 
-    # ship_ceremony.py state (issue #345, KTD2): the last transition it ran and that
-    # transition's reversibility tier. No index is stored — ship_ceremony.py derives the
-    # index from `ceremony_transition` against its own canonical TRANSITIONS order each
-    # time, so there is never a stored index to drift out of sync with the name.
+    # Ship-ceremony state (issue #345, KTD2): the last transition run and that transition's
+    # reversibility tier. No index was ever stored — the ceremony derived the index from
+    # `ceremony_transition` against its own canonical order each time, so there was never a
+    # stored index to drift out of sync with the name. The ceremony was removed with issue
+    # #1027 and nothing writes these now; issue #1030 retires them with their readers.
     ceremony_transition: str = ""
     ceremony_tier: str = ""
 
@@ -819,8 +825,8 @@ def save(
     git = current_git_state(root, runner=runner)
     # ``branch`` refreshes from live git on EVERY save (issue #480), not just the first, so a saga
     # minted on ``main`` by ``/plan`` — before its work branch exists — starts tracking the real
-    # branch as soon as ``/work`` re-saves on it, and ship_ceremony's ``branch_delete`` guard then
-    # sees the actual branch instead of the mint-time ``main``. Two guards on the refresh: the
+    # branch as soon as ``/work`` re-saves on it, and any later reader sees the actual branch
+    # instead of the mint-time ``main``. Two guards on the refresh: the
     # empty ``git["branch"]`` read (detached HEAD / no git) never clobbers a stored value, and a
     # save made back on the default branch never overwrites an already-recorded real work branch
     # (else the ceremony's own ``checkout_main`` progress-save would erase what ``branch_delete``
@@ -1686,13 +1692,13 @@ def _add_save_parser(sub: Any) -> None:
     p.add_argument(
         "--ceremony-transition",
         default="",
-        help="ship_ceremony.py: last transition run (e.g. 'open_pr'); omit = carry forward",
+        help="ship ceremony (removed in #1027): last transition run; omit = carry forward",
     )
     p.add_argument(
         "--ceremony-tier",
         default="",
         choices=[*CEREMONY_TIERS, ""],
-        help="ship_ceremony.py: reversibility tier of that transition; omit = carry forward",
+        help="ship ceremony (removed in #1027): that transition's tier; omit = carry forward",
     )
     p.add_argument("--open-questions", default=None, help="pipe-separated; omit = carry forward")
     p.add_argument("--checks-run", default=None, help="pipe-separated; omit = carry forward")

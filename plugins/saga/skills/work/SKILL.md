@@ -1,16 +1,29 @@
 ---
 name: work
-description: Execute a settled Infiquetra plan to PR-ready, then own the round-N PR continuation loop. Restores and writes the work-thread saga (the primary writer), recommends an execution backend, runs risk-gated tests, calls /code-review programmatically and reads its typed outcome, blocks on repair, incomplete, or stale review state, and coordinates PR-open/review-request/merge under explicit confirmation — without owning deploy. Triggers on "build it", "work this plan", "execute the plan", "resume work on #N", or a plan-ready / resume-ready handoff issue.
+description: Run the build loop for a settled Infiquetra plan. One worktree and branch per unit, implement, then run the written exit criterion from the run record — the mechanical baseline, the plan's functional checks, the branch preview where the repository declares one, and the scenario smoke — repeating until green, and hand the exact revision to /code-review. Restores and writes the work-thread saga (the primary writer). Triggers on "build it", "work this plan", "execute the plan", "resume work on #N", or a plan-ready / resume-ready handoff issue.
 ---
 
 # Work
 
 `/work` answers **"Build it."** It takes a settled plan — from `/plan`, a `plan-ready` / `resume-ready`
-handoff issue, or an approved ad-hoc request — and executes it phase by phase to PR-ready, then **owns
-the round-N PR continuation loop** around the resulting PR. It does **not** invent product behavior
-(that came from `/brainstorm` and the issue), it does **not** re-run the plan interrogation (`/plan`
-settled the HOW), and it does **not** own deploy mutation (`deploy` does). It builds, tests,
-gates, records, and coordinates — under explicit confirmation for every outward mutation.
+handoff issue, or an approved ad-hoc request — and runs the **build loop**: implement, run the
+written exit criterion, repeat until green, hand the exact revision to `/code-review`. It does
+**not** invent product behavior (that came from `/brainstorm` and the issue), it does **not** re-run
+the plan interrogation (`/plan` settled the HOW), and it does **not** own deploy mutation (`deploy`
+does).
+
+**The finish line is written down before the first line of code, and it is read, not judged.** The
+exit criterion lives in the run record, put there at admission and by the plan: the mechanical
+baseline from the repository profile, the plan's child-scoped functional checks, a branch preview
+deployment where the repository declares one, and the plan's scenario smoke. `/work` runs it with
+`plugins/saga/scripts/build_loop.py` and repeats until every part is green. Its full contract — the
+check map, the three statuses, the record block and the exit codes — is in
+`plugins/saga/references/mechanical-baseline.md`.
+
+**A failing check is a loop iteration, not a refusal.** Nothing in the loop blocks, stops, or asks
+the operator. `build_loop.py` exits 4 to say "not green yet"; the answer is to implement again and
+run it again. There is no risk-gated test judgment any more, and there is no ship ceremony: the
+worker checks a fact rather than concluding one, and the merge turn belongs to the integrate step.
 
 `/work` is the saga's **primary writer**: it `restore`s on resume, mints/advances the work-thread saga
 to `lifecycle_phase=work`, writes a tick per phase, and — crucially — **mints the *findable* work-thread
@@ -46,10 +59,12 @@ legitimately sits at `work` from merge until `/qa` runs and passes (see Phase 5)
    write a tick per phase boundary; round-N is deterministic. `/work` is the **primary writer** and mints
    the saga with the identity keys (`issue_ref` / `plan_path` / branch) a standalone `/code-review` needs
    to find and append `review_paths` to. Never set `next_round` — it is derived (saga-spec §6.1).
-3. **Test as you go, gate hard on risk.** Test discovery + scenario completeness + a system-wide check
-   at execution time; before PR-ready, `requires_hard_test_gate` change-kinds (behavior/security/infra/
-   api/deployment/data) **block** unless overridden with a recorded rationale. Run tests against the
-   merge base, not stale local state.
+3. **The exit criterion is written, and the loop reads it.** What a unit must clear was settled at
+   admission and by the plan, and it sits in the run record where the worker can read it before
+   writing a line. `/work` runs it, records every result, and repeats until green. It does not
+   weigh whether the tests are adequate and it does not decide which change kinds deserve a gate —
+   that judgment was the thing the written criterion replaced. Run the criterion against the merge
+   base, not stale local state.
 4. **Recommend a Saga backend, the operator confirms.** Compute the cheapest-correct Saga execution
    backend (`inline` or `team-execution`) with `recommend_execution_backend()`, pre-select that Saga
    backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default
@@ -311,11 +326,11 @@ python3 plugins/saga/scripts/saga.py save \
   --rounds-seen "1"
 ```
 
-**Front-loaded ceremony start (R7, issue #345).** Immediately after this mint, when `issue_ref` is set,
-offer to run `ship_ceremony.py start --issue-ref <issue_ref>` — it pushes the working branch and opens a
-draft PR carrying the plan link, recording `pr_refs` on the saga right away. Reaching "ship" later then
-flips this same draft ready instead of opening a fresh PR. Skip this offer for `--kind task` work (no
-`issue_ref` to link) or when the operator declines.
+**No front-loaded ceremony start.** Issue #345's `start` transition pushed the working branch and
+opened a draft pull request right after this mint, so that reaching "ship" later flipped the draft
+ready rather than opening a fresh one. It went with the ship ceremony in issue #1027, and nothing
+replaces it: the build loop opens no pull request, because there is nothing to review until the
+criterion is green. The pull request is opened once, at Phase 5.4, under explicit confirmation.
 
 `--id` is the only strictly required flag (`--kind` defaults to `issue`); for ad-hoc `task` work pass
 `--kind task --id <slug>` and omit `--issue-ref` (then `--plan-path` + the on-branch save are the match
@@ -402,25 +417,58 @@ lease preflight retires with U6.
   - Absent any `pause_after`, only irreversible actions pause; reversible board/label/issue/branch/PR
     mutations proceed and are reported to the operator after the fact. They are **not** recoverable
     by a saga command — the undo ledger and `/undo` were removed in #666 (never wired to any
-    producer, never wrote a record). For ceremony rollback use `/ship --undo`.
+    producer, never wrote a record), and `/ship --undo` went with the ship ceremony in #1027.
+    There is no rollback command; a merge is undone with ordinary git.
 
 ---
 
-## Phase 3 — Test gates (hard on risk)
+## Phase 3 — The build loop: run the written exit criterion until it is green
 
-Apply `references/test-and-gates.md`:
+The criterion was written before the work started. Read it, run it, and repeat — that is the whole
+of this phase. Its contract, the check map with every divergence this repository has, the three
+statuses and the exit codes are in `plugins/saga/references/mechanical-baseline.md`.
 
-- **Test discovery** — find existing tests for each changed file before implementing; start from the
-  plan's named test scenarios, then check for coverage the plan did not enumerate.
-- **Scenario completeness** — confirm each feature-bearing unit covers the four categories (happy path,
-  edge cases, error/failure paths, integration); supplement gaps before writing tests.
-- **System-wide check** — trace two levels out (callbacks, middleware, observers) and write at least one
-  integration test through the real chain (no mocks for the interacting layers) when the change touches
-  callbacks, error handling, or multi-interface behavior.
-- **Hard gate** — `requires_hard_test_gate(change_kinds)` (behavior/security/infra/api/deployment/data)
-  **blocks** PR-ready without tests; docs/config/trivial may skip only with an explicit rationale.
-- **Merge-base before tests** — fetch the base and run against the merged state so tests reflect what
-  actually lands, not stale local state.
+**Read it first, before implementing.** A worker that has seen the finish line writes toward it:
+
+```bash
+uv run python plugins/saga/scripts/build_loop.py --issue <N> --dry-run
+```
+
+That prints the mechanical baseline with the lens-catalogue check each command answers, any
+catalogue check this repository's baseline does not cover and why, any named scanner it has not
+configured, the plan's functional checks, the plan's scenario smoke, and whether a branch preview
+is declared. It runs nothing and writes nothing.
+
+**Then run it, once per iteration:**
+
+```bash
+uv run python plugins/saga/scripts/build_loop.py --issue <N> --unit <unit-id>
+```
+
+One invocation is one iteration. It runs every part of the criterion, appends the results to the
+unit's `build_loop` block in the run record, and prints what passed and what did not.
+
+**Read the exit code, and nothing else:**
+
+- **0 — green.** Every check passed and the preview is either green or undeclared. The block now
+  carries `handed_to_code_review` with the full forty-character revision. Go to Phase 5.
+- **4 — not green yet.** At least one entry is `fail` or `could-not-execute`. **This is a loop
+  iteration, not a refusal and not a gate.** Fix what the results name, commit, and run it again.
+  Do not ask the operator, do not record an override, and do not proceed to code review: there is
+  nothing here to override, because nothing here is refusing.
+- **2 or 3 — a refusal.** The record could not be read, the unit was not named, or its version is
+  not one this saga writes. Say which and stop; these are the only stops in the loop.
+
+**Fetch the base before the first iteration** so the criterion runs against the merged state and
+reflects what actually lands, not stale local state.
+
+**What a failing entry means, by status.** `fail` is a defect in the work: the check ran and said
+no. `could-not-execute` is an environment problem — a missing program, a timeout, a command that
+does not parse — and is never reported as a pass and never as a defect, which is the lens
+catalogue's own rule. Fix the environment for the second; fix the code for the first.
+
+**The repository's own pre-push gate stays.** It is the repository's rule, not saga's, and the loop
+neither replaces nor suppresses it.
 
 ---
 
@@ -431,12 +479,18 @@ After each meaningful phase:
 ### 4.1 Work-session writeup
 
 Write a concise `docs/work-sessions/YYYY-MM-DD-<topic>.md` for the phase: what was built (by U-ID), the
-key decisions, files modified, `change_kinds` (the derived list that decides which tests the hard gate
-demands), checks run, and the single next step. Record the derived `change_kinds` value verbatim in the
-writeup and pass that same recorded list to `requires_hard_test_gate` at
-`plugins/saga/scripts/lifecycle_state.py:111` to decide whether the hard test gate applies — the writeup
-field and the gate input are the same list, not two separate derivations. This is the canonical, durable
-home (`handoff_envelope.py` classifies it resume-ready) — no new directory.
+key decisions, files modified, `change_kinds` (the derived list, recorded because a later reader wants
+to know what kind of change this was), the build loop's result, and the single next step.
+
+**Record the exit criterion the loop ran and the criterion the record holds as the same thing, not as
+two derivations.** The writeup names the iteration number, its revision, and each check's status
+verbatim from the unit's `build_loop` block — it never re-derives a criterion of its own, and it
+never summarises a `could-not-execute` as a pass or a fail. The block is the authority and the
+writeup is a rendering of it; two derivations of one criterion is exactly the drift the written
+criterion was introduced to remove.
+
+This is the canonical, durable home (`handoff_envelope.py` classifies it resume-ready) — no new
+directory.
 
 ### 4.2 Save a saga tick
 
@@ -679,11 +733,22 @@ already establish (#450 non-goal).
 
 Call `/code-review` in `programmatic` / `report-only` mode. In that mode `/code-review` returns its
 structured findings envelope to the caller and writes nothing durable — **the caller owns persistence**
-(its own contract). Capture the reviewed commit at call time:
+(its own contract).
+
+**The reviewed revision is the one the loop went green at, read from the record — not a fresh
+`git rev-parse`.** The build loop wrote it into the unit's `build_loop.handed_to_code_review` on the
+green iteration, and that is the whole point of recording it: the revision the review covers must be
+the revision the criterion passed at, and re-reading `HEAD` here would silently hand over a later
+commit that nothing has checked.
 
 ```bash
-REVIEWED_SHA=$(git rev-parse HEAD)
+REVIEWED_SHA=$(uv run python plugins/saga/scripts/run_record.py show <N> \
+  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["units"][0]["build_loop"]["handed_to_code_review"]["revision"])')
 ```
+
+It is a full forty-character commit identifier, which is the only shape `/code-review` accepts. If
+the block carries no `handed_to_code_review`, the loop never went green: go back to Phase 3 rather
+than reviewing unchecked work.
 
 The findable saga `/work` minted in Phase 1.4 (`issue_ref` / `plan_path` / branch) is what a *standalone*
 `/code-review` would later append `review_paths` to. For this in-loop gate, `/work` reads the envelope
@@ -739,14 +804,6 @@ work-session). Never a silent skip.
 
 ### 5.4 The merge turn, the release, the functional test, and the close
 
-**Render the operator status header** first, via the shared card renderer
-(`plugins/saga/scripts/status_card.py`, `project_work`) — the single emitter of operator-facing
-status for `/work`. Pass the restored saga object; the card derives its cells on-read from durable
-state (`gate_verdicts`, `review_paths`, `pr_refs`, `phase_status`, `destination`) and renders as a
-fixed-position glyph card with an indexed footer pointing at the evidence. The work-session notes,
-the review findings and the test output stay as drill-down detail below the card; they are what the
-cells reference, not what the card replaces.
-
 Review acceptance is not a board move. The lifecycle repository's allowed-submission list carries no
 row for it, so saga submits nothing at that boundary and records it in the run record only:
 
@@ -755,166 +812,153 @@ uv run python plugins/saga/scripts/board_progression.py \
   --record <run record path> --boundary review-accepted --dry-run
 ```
 
-That prints the honest absence rather than a move. What follows it are four real steps.
+That prints the honest absence rather than a move. What follows it are four steps.
 
-**Take the merge turn.** Exactly one worker merges at a time, and the turn is a field on the run
-record's `units` rows, not a lock. A row left at `merging` by a turn that died is released after
-being checked against git, never trusted:
+1. **Render the operator status header** via the shared card renderer
+   (`plugins/saga/scripts/status_card.py`, `project_work`) — the single emitter of operator-facing
+   status for `/work`. Pass the restored saga object; the card derives its cells on-read from
+   durable state (`gate_verdicts`, `review_paths`, `pr_refs`, `phase_status`, `destination`) and
+   renders as a fixed-position glyph card with an indexed footer pointing at the evidence. The
+   work-session notes, the review findings and the test output stay as drill-down detail below the
+   card; they are what the cells reference, not what the card replaces.
 
-```bash
-uv run python plugins/saga/scripts/merge_turn.py \
-  --record <run record path> --repo-root <repo> --parent-branch <parent branch> \
-  merge --unit <unit name>
-```
+2. **Take the merge turn.** Exactly one worker merges at a time, and the turn is a field on the run
+   record's `units` rows, not a lock. A row left at `merging` by a turn that died is released after
+   being checked against git, never trusted:
 
-The turn merges onto the parent issue branch or the default branch according to
-`admission.destination`, in a detached worktree created and removed inside the turn. It refuses, by
-name, a merge that would take any file backwards relative to a freshly fetched default branch — and
-it refuses when that fetch fails, because a guard read against a stale remote-tracking reference
-passes silently. After a merge it re-integrates twice and reports both: the advanced destination
-branch into every surviving unit branch, and the fetched default branch into the parent branch. A
-branch that needs a real merge is reported `pending` for the worker who owns it, never forced.
+   ```bash
+   uv run python plugins/saga/scripts/merge_turn.py \
+     --record <run record path> --repo-root <repo> --parent-branch <parent branch> \
+     merge --unit <unit name>
+   ```
 
-An ordinary conflict is the merging worker's own work. A conflict that is not mechanical is routed
-by kind and decided by nobody at the merge: a behaviour question that is technical under the
-recorded intent goes to the Architect, a product question the recorded intent already answers goes
-to Product, and a conflict that needs the plan changed returns to planning as that problem.
+   The turn merges onto the parent issue branch or the default branch according to
+   `admission.destination`, in a detached worktree created and removed inside the turn. It refuses,
+   by name, a merge that would take any file backwards relative to a freshly fetched default branch
+   — and it refuses when that fetch fails, because a guard read against a stale remote-tracking
+   reference passes silently. After a merge it re-integrates twice and reports both: the advanced
+   destination branch into every surviving unit branch, and the fetched default branch into the
+   parent branch. A branch that needs a real merge is reported `pending` for the worker who owns it,
+   never forced.
 
-**Release.** The Release Worker merges the parent pull request through the repository's configured
-merge method, bound to the exact head the required checks ran against:
+   An ordinary conflict is the merging worker's own work. A conflict that is not mechanical is
+   routed by kind and decided by nobody at the merge: a behaviour question that is technical under
+   the recorded intent goes to the Architect, a product question the recorded intent already answers
+   goes to Product, and a conflict that needs the plan changed returns to planning as that problem.
 
-```bash
-uv run python plugins/saga/scripts/release_step.py --record <run record path> \
-  release --pull-request <N> --merge-method <merge|squash|rebase>
-```
+3. **Release, then submit the one move the boundary allows.** The Release Worker merges the parent
+   pull request through the repository's configured merge method, bound to the exact head the
+   required checks ran against:
 
-It waits by reading GitHub's own verdict, never a watch command's exit status, and it records the
-reviewed head and the landed commit separately because a squash or a rebase produces a different
-commit. Then the destination:
+   ```bash
+   uv run python plugins/saga/scripts/release_step.py --record <run record path> \
+     release --pull-request <N> --merge-method <merge|squash|rebase>
+   ```
 
-```bash
-uv run python plugins/saga/scripts/release_step.py --record <run record path> deploy
-```
+   It waits by reading GitHub's own verdict, never a watch command's exit status, and it records the
+   reviewed head and the landed commit separately because a squash or a rebase produces a different
+   commit. Then the destination:
 
-Where the repository profile declares `nonproduction_destination: none` — as this repository does —
-that records the absence with its reason and deploys nothing. **That is a result, not an error**, and
-no environment or deployment record is ever fabricated to fill a closeout. Where a destination is
-declared, the deploy plugin's existing handoff carries the baton and the acknowledgement comes back
-before ownership is released. No production deployment exists on this path at all.
+   ```bash
+   uv run python plugins/saga/scripts/release_step.py --record <run record path> deploy
+   ```
 
-**Submit the merge-plus-deploy move**, once, and check both halves:
+   Where the repository profile declares `nonproduction_destination: none` — as this repository does
+   — that records the absence with its reason and deploys nothing. **That is a result, not an
+   error**, and no environment or deployment record is ever fabricated to fill a closeout. Where a
+   destination is declared, the deploy plugin's existing handoff carries the baton and the
+   acknowledgement comes back before ownership is released. No production deployment exists on this
+   path at all. Then the move, once, checking both halves:
 
-```bash
-uv run python plugins/saga/scripts/board_progression.py \
-  --record <run record path> --boundary merge-and-deploy
-```
+   ```bash
+   uv run python plugins/saga/scripts/board_progression.py \
+     --record <run record path> --boundary merge-and-deploy
+   ```
 
-A record whose `field` reads a bare `Status` is a half-write and is reported as a failure: the
-`Status` half alone looks like success while `Stage` stays where it was. A refused move is reported
-with the board's reason and **never retried silently**.
+   A record whose `field` reads a bare `Status` is a half-write and is reported as a failure: the
+   `Status` half alone looks like success while `Stage` stays where it was. A refused move is
+   reported with the board's reason and **never retried silently**.
 
-**Functional test.** The scenarios the plan prescribed run through `/qa` against the real
-environment, reading the run record rather than any ledger. **Run `/qa` in this turn** (issue
-#1029) — the acceptance evidence is the next step, and an operator who has to remember to ask for
-it is the transport for a step that already knows it should happen. Say in one line that you are
-running it. `/qa` still owns the advance of `lifecycle_phase` and still makes it only on a PASS:
-starting a step and deciding its verdict are different authorities, and only the first moved.
+4. **Run the functional test, then close.** The scenarios the plan prescribed run through `/qa`
+   against the real environment, reading the run record rather than any ledger.
+   **Run `/qa` in this turn** (issue #1029) — the acceptance evidence is the next step, and an
+   operator who has to
+   remember to ask for it is the transport for a step that already knows it should happen. Say in
+   one line that you are running it. `/qa` still owns the advance of `lifecycle_phase` and still
+   makes it only on a PASS: starting a step and deciding its verdict are different authorities, and
+   only the first moved. A failure re-enters the build loop and counts against the post-merge
+   allowance, which keeps its own counter of three standard and two escalated cycles plus exactly
+   one recorded extension that no role may grant twice. An unrun scenario is never folded into a
+   pass.
 
-When the run stops before the merge — a refused turn, a release still waiting on a check — report
-where it stopped and what would move it, and leave the run record's `next_step` naming that. Do not
-run `/qa` on an unmerged thread. A failure re-enters the build loop and
-counts against the post-merge allowance, which keeps its own counter of three standard and two
-escalated cycles plus exactly one recorded extension that no role may grant twice. An unrun scenario
-is never folded into a pass.
+   The closeout comment is then composed from the record, and refuses to state an environment, a
+   deployment or an acceptance result the record does not carry:
 
-**When the card opens its own pull request, the ceremony still runs, and every step of it is still
-confirmed.** The merge turn above is parent-branch integration: it is how a lane's work reaches a
-shared branch. A card that opens a pull request of its own instead takes the ceremony path, and
-nothing about its confirmations changes here:
+   ```bash
+   uv run python plugins/saga/scripts/release_step.py --record <run record path> \
+     close --disposition <delivered|duplicate|superseded|declined|canceled>
+   ```
 
-2. **Offer to open the PR + request review** by running `plugins/saga/scripts/ship_ceremony.py run`
-   through its `open_pr` and `request_review` transitions (issue #345) — outward-facing,
-   **offered/confirmed, never auto-fired**. If the operator declines, hand them the prepared PR body
-   (links the plan, work-sessions, and the code-review artifact) + branch and let them run
-   `ship_ceremony.py` themselves (or `git ship`, once installed).
-3. **Record `pr_refs`** — `ship_ceremony.py`'s `open_pr` transition writes this on the saga itself; set
-   `next_step="await review on PR #N"`; comment the PR status to the issue via the extended
-   `issue_progress.py` CLI (`--pr-url`, `--review-status`).
-4. **Continue, and pause only where a confirmation is owed.** On re-entry, Phase 0.4 reads the live PR state and runs the
-    transition table in `references/pr-continuation-loop.md`. When destination ⊇ merge and the PR is
-    approved + clean + fresh, **offer to run the rest of the ceremony** — five separate
-    `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
-    a bare `run` for `checkout_main`, a bare `run` for `pull`,
-    `run --operator-confirmed branch_delete:<target>` naming the resolved head branch (issue
-    #635/KTD6), then a bare `run` for `teardown` (issue #347 — the terminal reclamation gate that
-    closes the opened-resource manifest; `teardown` is `CeremonyTier.REVERSIBLE` and structurally
-    required) — each explicitly confirmed, never silent; merge is a
-    git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
-    On merge, set `phase_status=complete` and **run `/qa` in the same turn** (issue #1029) — the
-    acceptance evidence is the next step, and an operator who has to remember to ask for it is the
-    transport for a step that already knows it should happen. Say in one line that you are running
-    it. `/qa` still owns the advance of `lifecycle_phase` and still makes it only on a PASS, which
-    is unchanged: what changes is who starts `/qa`, not what `/qa` decides.
-   See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.
-   When the destination includes deploy, route the merged item's ownership transfer through the
-   offer step in `plugins/saga/skills/handoff/SKILL.md` ("Deploy edge") — `/work` does not accept
-   the handoff itself.
+   It is posted before the close, carries every link the lifecycle repository requires, and records
+   each inapplicable practice with a reason. The journal entries ship in the commit that ships the
+   change — not afterwards, and not in a separate pass. Then the close move:
 
+   ```bash
+   uv run python plugins/saga/scripts/board_progression.py --record <run record path> --boundary close
+   ```
 
-**Close.** The closeout comment is composed from the record and refuses to state an environment, a
-deployment or an acceptance result the record does not carry:
+   That resolves to `Verify` / `Ready to close` when no retro trigger fired and `Retro` /
+   `Ready to close` when one did, from the record's own retro state.
 
-```bash
-uv run python plugins/saga/scripts/release_step.py --record <run record path> \
-  close --disposition <delivered|duplicate|superseded|declined|canceled>
-```
+**When the card opens its own pull request, the pull request is opened and the review requested as
+ordinary `gh` operations.** The ship ceremony that used to carry them was removed in issue #1027:
+there is no ceremony, no transition table, no reversibility tier and no receipt. **Each of them, and
+the merge, stays explicitly confirmed** — that is the preservation contract issue #1029 declared, and
+removing the ceremony removed the mechanism, never the confirmation. They are
+**offered and confirmed, never auto-fired**. If the operator declines, hand them the prepared
+pull-request body (it links the plan, the work-sessions and the code-review artifact) and the
+branch. Then record `pr_refs` on the saga, set `next_step="await review on PR #N"`, and comment the
+pull request's status to the issue via the extended `issue_progress.py` CLI (`--pr-url`,
+`--review-status`).
 
-The comment is posted before the close, carries every link the lifecycle repository requires, and
-records each inapplicable practice with a reason. The journal entries ship in the commit that ships
-the change — not afterwards, and not in a separate pass. Then the close move:
+The merge turn in step 2 is parent-branch integration — how a lane's work reaches a shared branch —
+and it is this step's, which is where issue #1027's hand-over to "the integrate step" points.
 
-```bash
-uv run python plugins/saga/scripts/board_progression.py --record <run record path> --boundary close
-```
-
-That resolves to `Verify` / `Ready to close` when no retro trigger fired and `Retro` /
-`Ready to close` when one did, from the record's own retro state.
-
-**What continuation does not change.** Every confirmation on this path stays exactly where it is:
-the pull-request open, the review request, and each of the five ceremony transitions around merge
-are **offered and confirmed, never auto-fired**. Continuation moves the run from one step to the
-next; it never converts a confirmed action into a silent one. A continuation that would fire one of
-them without a confirmation is a stop, and you say so rather than proceeding.
-
-When the run stops before the merge — an unapproved, stale, or failing pull request — report where
-it stopped and what would move it, and leave the run record's `next_step` naming that. Do not run
-`/qa` on an unmerged thread.
+When the run stops before the merge — a refused turn, an unapproved or stale pull request, a release
+still waiting on a check — report where it stopped and what would move it, and leave the run
+record's `next_step` naming that. Do not run `/qa` on an unmerged thread.
 
 At thread completion set `status=done`.
 
 ### 5.5 Hard boundary
 
-`/work` builds, tests, records, takes the merge turn, releases, runs the functional test, and
-closes.
+`/work` builds, runs the written criterion until it is green, records, takes the merge turn,
+releases, runs the functional test, and closes.
+
+It does **NOT** silently mutate GitHub:
+PR-open, review-request, and merge are each explicitly confirmed, and merge is a git op `/work`
+owns only under confirmation — issue #1029's preservation contract, which outlived the ceremony
+that used to carry it. It does **NOT** refuse: the build loop's only non-green outcome is another
+iteration, and the only stops in it are an unreadable record or an unnamed unit. It does **NOT**
+judge whether the tests are adequate — the criterion was written at admission, and re-deciding it
+here would be the judgment the criterion replaced.
 
 It does **NOT** compose or execute a board write: every move above stops at mission-control's
 constrained lifecycle-field mutation, and this skill names the boundary and nothing else. It submits
 **no status the lifecycle repository's allowed list does not carry**, so `Ready to merge` and
 `Closeout` are never submitted even where a board offers them. It does **NOT** deploy to production,
-and no argument on this path produces a production deployment. It does **NOT** file SDLC issues
+and no argument on this path produces a production deployment. It does **NOT** own deploy or canary
+(`deploy` owns deployment mutation and production-health revert). It does **NOT** file SDLC issues
 (`mission-control` owns issue creation).
 
-It does **NOT** silently mutate GitHub:
-PR-open, review-request, and merge are each explicitly confirmed, and merge is a git op `/work`
-owns only under confirmation. It does **NOT** own deploy or canary (`deploy` owns deployment
-mutation and production-health revert). It does **NOT** advance
-`lifecycle_phase` past
-`work` — that advance is **`/qa`'s to make, and only on a PASS**; on a FAIL `/qa` keeps the phase at
-`work` and records the evidence. `/work` **runs** `/qa` after a merge (§5.4) and still does not make
-the advance only `/qa` can make: starting a step and deciding its verdict are different authorities,
-and only the first moved (issue #1029).
+It does **NOT** advance `lifecycle_phase` past `work` — the advance to `qa` is **`/qa`'s to make,
+and only on a PASS**; on a FAIL `/qa` keeps the phase at `work` and records the evidence. So the
+saga legitimately sits at `work` from merge until `/qa` runs and passes. `/work` **runs** `/qa`
+after a merge (§5.4) and still does not make the advance that `/qa` alone can make — starting a step
+and deciding its verdict are different authorities, and only the first moved (issue #1029). (This is
+not a deferral awaiting a rebuild: the `/qa` skill exists at `plugins/saga/skills/qa/`.)
 
-Build, test, merge, release, test again, close — then stop.
+Build, run the criterion, record, merge, release, test again, close — then stop.
 
 ---
 
@@ -924,10 +968,13 @@ Build, test, merge, release, test again, close — then stop.
   table, the Parallel Safety Check (overlap → worktree / shared-dir fallback / downgrade), subagent
   dispatch (U-ID preservation), the incremental-commit heuristic, already-shipped-verify, and the
   runnable `recommend_execution_backend()` integration. "How work gets executed."
-- `references/test-and-gates.md` — test discovery, scenario completeness, the system-wide check,
-  `requires_hard_test_gate` rules, merge-base-before-tests, the computed review-staleness mechanism,
-  override-with-recorded-rationale, and the gstack autonomy contract (stop-for / never-stop-for). "What
-  must pass before PR-ready."
+- `../../references/mechanical-baseline.md` — the build loop's contract: the check map from the lens
+  catalogue to this repository's commands with every divergence named, the three check statuses, the
+  branch-preview rule in all three of its cases, the `build_loop` record block, and the exit-code
+  table. "What green means, and where it is written down."
+- `references/test-and-gates.md` — merge-base-before-tests, the computed review-staleness mechanism,
+  override-with-recorded-rationale, and the gstack autonomy contract (stop-for / never-stop-for).
+  "What holds around the loop." The risk-gated hard test gate is gone; the criterion is written.
 - `references/pr-continuation-loop.md` — the total PR-state transition table (the `gh pr view --json`
   reads, the per-state actions, round-bump via `rounds_seen`, merge-under-confirmation, and the
   qa/resume advisory routing + the qa-deferral). "How the round-N loop runs after PR-ready."

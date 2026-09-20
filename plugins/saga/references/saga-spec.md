@@ -143,8 +143,8 @@ construct a `Saga` (no default); all others have the listed default.
 | `pr_refs` | list[str] | — | snapshot | Pointers to PRs. |
 | `adr_refs` | list[str] | — | snapshot | `ADR-NNNN` pointers into the journal. |
 | `journal_refs` | list[str] | — | snapshot | Pointers to journal entries. |
-| `ceremony_transition` | str | — | `""` | ship_ceremony.py (#345): last transition run (e.g. `open_pr`). Carry-forward scalar, not a snapshot list — one thread has one ceremony in flight. |
-| `ceremony_tier` | str | — | `""` | ship_ceremony.py (#345): reversibility tier of `ceremony_transition` (`reversible`/`additive`/`always_operator`). No index is stored; `ship_ceremony.py` derives it from the transition name against its own canonical order each read, so there is nothing to drift out of sync. |
+| `ceremony_transition` | str | — | `""` | The ship ceremony's last transition run (#345), e.g. `open_pr`. Carry-forward scalar, not a snapshot list — one thread had one ceremony in flight. The ceremony was removed in #1027 and nothing writes this now; #1030 retires it with the commands that read it. |
+| `ceremony_tier` | str | — | `""` | The reversibility tier of `ceremony_transition` (`reversible`/`additive`/`always_operator`), #345. No index was stored; the ceremony derived it from the transition name against its own canonical order each read, so there was nothing to drift out of sync. Removed with the ceremony in #1027; #1030 retires it. |
 | `blockers` | str | — | `""` | Free-text blockers. |
 | `open_questions` | list[str] | — | snapshot | Outstanding questions (snapshot — see §6). |
 | `checks_run` | list[str] | — | snapshot | Tests / gates run (snapshot). |

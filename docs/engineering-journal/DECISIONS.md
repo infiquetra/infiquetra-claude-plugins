@@ -2,6 +2,26 @@
 
 ## 2026-09-20
 
+### Orchestrate 6.0.0: removing a subcommand is a major bump, by this plugin's own precedent  {#1028-orchestrate-subcommand-removal-is-major}
+
+**Decision.** Removing the `announce` subcommand and retiring `merge`'s exit status 2 takes
+orchestrate to **6.0.0**, not the 5.1.0 this card first wrote.
+
+**Rationale.** The plugin already ruled on this. Version 5.0.0 was a major bump *because* it removed
+the `redrive`, `collect` and `land` subcommands, under a changelog heading that reads
+"Changed -- BREAKING". Removing `announce` is the same class of change to the same surface, and the
+exit code is worse: a caller that reads exit 2 from `merge` gets a different answer than before,
+silently, because a status that used to mean "the board write did not land" is now unreachable.
+A minor bump would tell a consumer that nothing they depend on moved.
+
+**Rejected alternative.** 5.1.0, on the reasoning that the removal is small and nothing in this
+repository calls `announce`. Size is not the test; what a released interface promises is. And "no
+caller in this repository" says nothing about an operator's shell history or another machine's
+installed copy.
+
+**Revisit when** the plugin adopts a written versioning policy; until then the precedent in its own
+changelog is the policy, and this entry is part of it.
+
 ### The release step is a module, because behaviour in a skill document has no test  {#1028-release-step-is-a-module}
 
 **Decision.** `plugins/saga/scripts/release_step.py` exists, although card 1028's file list names
@@ -92,6 +112,86 @@ importability guards issue 1030 brings with it.
 
 **Revisit when** issue 1030 lands; the deferral list is discharged there, and card 1028's own test
 asserts the two deferred modules are still importable so a premature removal fails loudly.
+### The exit criterion is read from the run record, never judged at the end of the work  {#1027-exit-criterion-is-read-not-judged}
+
+**Decision.** `/work` reads what a unit must clear from the run record — the mechanical baseline,
+the plan's child-scoped functional checks, the branch preview where the repository declares one,
+and the plan's scenario smoke — runs it with `build_loop.py`, and repeats until green. It no longer
+weighs test adequacy, and `requires_hard_test_gate` no longer decides anything.
+
+**Rationale.** The old Phase 3 asked a worker to discover tests, judge scenario completeness, and
+then apply a change-kind gate to a list it had derived itself — every input to the decision produced
+by the same party at the end of its own work. A criterion written at admission is checkable by the
+worker before it starts and by a reader afterwards, and it turns "working software" from a
+conclusion into a fact.
+
+**Rejected alternatives.** *Keep the gate and add the loop beside it* — two authorities on when work
+is done, and the one that blocks would win, so the written criterion would be decoration. *Let the
+script loop internally until green* — only the worker can change the code between iterations, so the
+script would either spin on an unchanged tree or have to invoke an implementer, and a check runner
+that implements is a different program.
+
+**Revisit when** a repository needs a criterion that cannot be expressed as a list of commands — an
+interactive check, or one whose pass condition is a measurement rather than an exit code.
+
+### An absent check list is recorded with a reason, not shown as nothing  {#1027-absent-reads-empty-with-a-reason}
+
+**Decision.** No step in saga yet writes the plan's child-scoped functional checks or its scenario
+smoke onto a unit's row. The build loop reads an absent key as an empty list and records the reason
+`none-prescribed`; the dry run prints `none prescribed in the run record`. This card does not build
+the writer, which is the Planner's step.
+
+**Rationale.** Without the reason, a reader of a green iteration cannot tell "the plan prescribed no
+functional checks" from "the plan prescribed three and the loop lost them". Those are very different
+facts about the same green, and the second is the kind of silent gap that makes a whole evidence
+trail untrustworthy once anyone notices it.
+
+**Rejected alternatives.** *Refuse when the keys are absent* — the loop would refuse on every run
+until another card lands, which is a gate, and the card forbids one. *Omit the empty lists* — absence
+in the record then means both "none" and "not yet implemented".
+
+**Revisit when** the Planner's run-record write lands and the keys always exist; the reason then
+tells a reader that a plan genuinely prescribed nothing.
+
+### Bandit is not promoted into this repository's blocking baseline  {#1027-bandit-stays-advisory-here}
+
+**Decision.** The card asked for the security and dependency scanners as baseline entries. Bandit —
+the only one of the four this repository has — stays out of `.saga-profile.json`'s
+`mechanical_tool_baseline`, exactly as continuous integration runs it. `build_loop.py --dry-run`
+reports it as an uncovered catalogue check with its reason, and reports `pip-audit`, `gitleaks` or
+`detect-secrets`, and `semgrep` as not configured here. The clause is honoured by reporting, not by
+promotion.
+
+**Rationale.** Measured on the base commit, bandit reports 145 medium-or-high findings and exits 1,
+so promoting it would make the loop unable to reach green — a refusal by the back door, which the
+card's own non-goal forbids. See LEARNINGS `{#1027-measure-before-promoting-an-advisory-scanner}`.
+
+**Rejected alternatives.** *Promote it and accept a red first iteration* — a loop that can never go
+green is not a loop. *Scope it to the unit's own diff* — needs a profile field
+`repository_profile.v1` does not have, which belongs to the card that owns that document.
+
+**Revisit when** the operator picks one of the three futures the plan named: leave it advisory,
+promote it after a clean-up card, or scope it to the diff.
+
+### `merge_watcher.py` and the hard-test-gate function are deferred to issue #1030  {#1027-orphans-deferred-to-the-removals-card}
+
+**Decision.** Removing the five ship-ceremony modules orphans `merge_watcher.py` — after this card
+nothing outside it and its own test file names it — and removing the risk-gated prose orphans
+`lifecycle_state.py`'s `requires_hard_test_gate` and `saga.py`'s `ceremony_transition` /
+`ceremony_tier` fields. None is deleted here. Each is recorded as orphaned and left to issue #1030.
+
+**Rationale.** The card names five modules and this card removes five modules. `requires_hard_test_gate`
+is still referenced by `/loop`, and `/loop` is one of the eleven commands issue #1030 removes, so
+deleting the function here would mean editing another command's skill to keep the tree importable —
+a widening with no boundary. Issue #1026 met the same shape with `execution_spec.py` and resolved it
+the same way; following the precedent keeps the removals card able to retire each vocabulary
+together with its readers.
+
+**Rejected alternatives.** *Delete them here and carry the cascade* — correct in the end state, wrong
+in sequencing, and it makes this card's diff span files no card authorised it to touch.
+
+**Revisit when** issue #1030 runs its removal pass; each orphan is named in this card's changelog
+under "Deferred to issue #1030".
 
 ### A run's step is done when its `next_step` is empty, and nothing is inferred  {#1029-empty-next-step-means-done}
 

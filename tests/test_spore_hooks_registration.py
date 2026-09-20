@@ -110,11 +110,16 @@ def test_validate_json_pretooluse_entry_unchanged() -> None:
 
 #: Every hook script registered before issue #1029 added its two. A registration that dropped one
 #: of these would be a silently disabled hook, which is the failure mode this list exists to catch.
+#:
+#: ``ship_teardown.py`` was a member until issue #1027 removed the ship ceremony: its SessionStart
+#: entry ran ``ship_teardown.py reclaim --if-idle 24h --quiet``, and the entry was deleted in the
+#: same change as the module it invoked. That is a DELIBERATE removal, not the silent displacement
+#: this list guards against, and the distinction is the reason the list is edited by hand: a guard
+#: that quietly followed the manifest could not tell one from the other.
 PRE_EXISTING_HOOK_SCRIPTS = (
     "stale_main_session_hook.py",
     "compact_spore_session_hook.py",
     "precompact_spore_hook.py",
-    "ship_teardown.py",
     "team_teardown_hook.py",
     "validate_json_hook.py",
     "pre_push_gate_hook.py",

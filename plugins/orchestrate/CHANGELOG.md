@@ -1,10 +1,16 @@
 # Changelog
 
-## [5.1.0] - 2026-09-20
+## [6.0.0] - 2026-09-20
 
-**Bumped from 5.0.0**, the orchestrate version on `origin/parent/1018` at commit `23959a80`.
+**Bumped from 5.0.0**, the orchestrate version on `origin/parent/1018` at commit `25619cd1`.
 
-### Removed
+**A major, not a minor.** This card first took 5.1.0 and that was wrong by the plugin's own
+precedent: 5.0.0 was a major bump *because* it removed the `redrive`, `collect` and `land`
+subcommands, under a heading that reads "Changed -- BREAKING". Removing `announce` from the command
+surface is the same class of change, and retiring `merge`'s exit status 2 changes the answer a
+caller already reads.
+
+### Removed -- BREAKING
 
 - The board-writeback path (issue #1028): about 850 lines covering the schema-vocabulary resolver,
   the rung mapping, the reconcile-controller shell-out, the announcement bodies, the writeback

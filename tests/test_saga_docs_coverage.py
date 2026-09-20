@@ -118,8 +118,9 @@ def test_docs_model_matches_command_surface() -> None:
     aliases = set(model["aliases"])
 
     # 24/23 after /undo was removed in #666 -- its ledger never held an entry, so the
-    # command could only ever report "nothing to undo". /ship --undo (ship_undo.py, 16 real
-    # rollback manifests) is the surviving, working undo path.
+    # command could only ever report "nothing to undo". /ship --undo, the surviving undo path
+    # and the producer of 16 real rollback manifests, went with the ship ceremony in #1027;
+    # there is no undo command now, and a merge is reversed with ordinary git.
     assert model["command_surface"]["command_files"] == 24
     assert model["command_surface"]["routable_commands"] == 23
     assert wrappers == commands | aliases

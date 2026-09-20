@@ -420,7 +420,8 @@ def test_ownership_not_released_without_ack_no_sidecar_reads_no_handoff_not_erro
 
 
 def test_ownership_not_released_without_ack_cli_exit_codes(tmp_path: Path) -> None:
-    # No handoff at all -> clean, exit 0 (ship_receipt.py read precedent: 0 = clean or no-handoff).
+    # No handoff at all -> clean, exit 0 (the ship-receipt read precedent, removed in #1027:
+    # 0 = clean or no-handoff).
     assert DH.main(["--repo-root", str(tmp_path), "reconcile", "--saga-id", SAGA_ID]) == 0
     # Offered, not acked -> unacknowledged, exit 1.
     DH.offer(tmp_path, SAGA_ID, offered_by="work")

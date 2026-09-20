@@ -2,6 +2,33 @@
 
 All notable changes to this plugin are documented here.
 
+## [4.0.0] - 2026-09-20
+
+### Archived -- FINAL RELEASE
+
+**This plugin is archived. It is removed from the marketplace in the next commit, and this is its
+last entry.** Issue #1030, under the saga simplification (parent #1018).
+
+**Where its content went.** The 25 reviewer, tester and scanner agent prompts live on as roles in
+[`plugins/agent-launcher/roles/`](../agent-launcher/roles/), which uses the lifecycle repository's
+own role vocabulary: the base and optional reviewers became Lens Reviewer prompts keyed to the
+review catalogue's lenses, the scenario, smoke, contract and UI-regression testers became Functional
+Tester variants, the monitors and the deploy watcher became the Release Worker's wait steps, and the
+scanners became entries in the build loop's mechanical baseline. The `appsec-audit` skill's content
+is the Investigator role's security variant.
+
+**Why.** The structure was the part that did not survive review, not the content. Reviewer consensus
+and validator gates are now the lensed code review that computes its verdict in code from the
+catalogue's strictness ladder, and roles are hosted as herdr sessions in their own worktrees rather
+than as a plugin's private agent roster. The September operating record shows the orchestration path
+here was not in use; the prompts were.
+
+**What a caller must change.** `team-execution` is no longer a saga execution backend. The
+orchestration enumeration is now `inline` and `cc-workflows-ultracode`; a saga tick that recorded
+`--orchestration-mode team-execution` still reads back, because the stored string is durable, but no
+new run can select it. Anything that resolved this plugin's root by path or through the shared
+plugin-resolution ladder will no longer find it.
+
 ---
 
 ## [3.2.0] - 2026-09-19

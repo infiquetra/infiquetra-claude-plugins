@@ -31,6 +31,25 @@
 **Rejected alternatives.** Leaving continuation to a driver command — `/loop`'s Drive mode was that, it had to be chosen, and issue #1030 removes it. Continuing `/plan` into `/work` unconditionally — the destination already records how far a run may go, and reading it costs nothing. Continuing `/doc-review` into `/work` from any document — a strategy or requirements document has no plan to execute, and an open `P0` or `P1` is the very finding `/work`'s gate enforces.
 
 **Revisit when** a repository wants a pause between planning and building that the destination cannot express. The answer is a value in the record, not a sentence in a skill.
+### The external seat's deferred claim lifecycle is moot, and is recorded rather than built  {#938-external-seat-claim-lifecycle-moot}
+
+**Decision.** The code-review parent deferred the external seat's claim lifecycle (its decision C-D10) behind two triggers: a first standalone use, and an observed duplicate launch. Issue 938 deleted the machinery both triggers depend on — `plugins/saga/scripts/second_opinion.py` and its `SecondOpinionClaimStore`, together with Work's offer, the only path that reached them. Neither trigger can now fire, so the lifecycle collapses to nothing. It is recorded here and not built.
+
+**Rationale.** The card's own instruction was to record it rather than build it if the removal made it moot, and the evidence package had already said it "collapses to nothing if the surrounding machinery is unused". Building a lifecycle for claims nothing can create would add a second, untested state machine for a state no code can enter — the kind of speculative machinery the deferral existed to avoid in the first place.
+
+**Rejected alternative.** Keeping the claim store alive so the lifecycle would still have something to govern. That inverts the card's boundary: retained code needs a live consumer, and a lifecycle waiting for a trigger is not one.
+
+**Revisit when.** An external reviewer seat is given an in-process claim of its own again — which today would mean Orchestrate's session-based path growing durable per-seat claim state, not this module returning.
+
+### `engine_recommend.py` is retained with only its own test as a caller, because issue 938 does not name it  {#938-engine-recommend-residual}
+
+**Decision.** After issue 938 deleted `second_opinion.py`, the engine capability recommender `plugins/saga/scripts/engine_recommend.py` has exactly one importer left: `tests/test_engine_recommend.py`. It is retained unchanged and recorded here as a residual for a card that names it.
+
+**Rationale.** Issue 938 names the offer and its feature-private dispatch, sidecar, streak and state machinery. The recommender is none of those; it is a separate module that the deleted one happened to consume. The repository's rule is that nothing goes unless a card names it, and that rule is load-bearing precisely on a removal card, where the temptation to sweep up one more neighbour is strongest.
+
+**Rejected alternative.** Deleting it in the same change on the grounds that a module whose only importer is its own test is dead. That reasoning is correct about the state and wrong about the authority: it is a removal decision, and removal decisions are made by cards.
+
+**Revisit when.** A card is filed for it, or a new caller appears — the second of which would close this residual without any removal at all. Note that it is not confusable with `lifecycle_state.py recommend-backend`, the execution-backend recommender the lifecycle skills actually call; that one has many live consumers and is untouched.
 
 ## 2026-09-19
 

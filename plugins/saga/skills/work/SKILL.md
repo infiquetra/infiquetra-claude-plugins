@@ -107,56 +107,7 @@ Orchestrate owns reviewer-session transport. Do not run `engine_offer.py`, do no
 launch `engine_session_runner.py`, and do not consult `engine-registry.yaml` as a
 launch authority — it is capability metadata only. If this `/work` unit needs an external reviewer and that reviewer
 is not already a named unit in the Orchestrate run record, HALT — do not invent a
-custom review and do not fall back to the retired runner. The second-opinion trigger
-below never replaces `/work`'s backend choice and never satisfies a gate.
-
-## Second-opinion triggers
-
-Issue-specific or plan-specific work may add an advisory second-opinion trigger, but it never becomes a
-generic offload path or a substitute for Orchestrate-owned reviewer sessions. For a repeated-test-failure trigger, create the Markdown
-work-session and its adjacent `saga.work-second-opinion.v1` sidecar together:
-
-```text
-docs/work-sessions/YYYY-MM-DD-<topic>.md
-docs/work-sessions/YYYY-MM-DD-<topic>-second-opinion.json
-```
-
-Use `second_opinion.WorkAttempt`, `load_work_second_opinion_state`,
-`record_work_attempt`, and `save_work_second_opinion_state`. Record an attempt only after one applied fix
-and its following test run; a rerun must reuse its `attempt_id` and is a no-op. Normalize pytest node IDs to
-their repo-relative `.py` file target. Absolute paths, traversal, unparseable targets, malformed sidecars,
-and over-cap history are visible fail-closed conditions: do not offer or dispatch.
-
-The detector tracks each target independently. A pass resets every streak; a target missing from a failed run
-resets only that target; unrelated extra failures do not reset a persistent target. On the first three-fix
-streak, print exactly this one line and persist its offer key before asking:
-
-```text
-Second opinion available: {target} failed after 3 fix attempts; dispatch an advisory second opinion?
-```
-
-There is no persisted `.saga/engine-prefs.json` preference that suppresses this offer.
-Decline records `declined` on the sidecar; no answer or unattended mode records
-`unattended`. Both proceed through the existing work gates with zero runner calls.
-If acceptance would require launching a reviewer session, that session must already
-be represented in the Orchestrate run record; otherwise HALT.
-
-For explicit acceptance, pass the trusted runtime session id (`session_id = CLAUDE_CODE_SESSION_ID`,
-the same configured Saga session used by direct Agent/Task hooks) to `prepare_second_opinion`; a
-missing, empty, or control-character-bearing session id halts before the wrapper (#677/U3 retired
-the lease admission the session once resolved — the session id now arms the delegation tripwire and
-keys the integrity counter directly). Then use `accept_work_offer` and atomically save the sidecar before invoking
-`dispatch_second_opinion`. The U1 claim store takes its own durable
-`requested` reservation immediately before the wrapper; only that owner can call the runner. An unavailable,
-halted, timeout, empty, or malformed response calls `record_work_dispatch_outcome` and atomically saves
-`unavailable` before the current work verdict and next fix decision proceed unchanged. Never auto-dispatch.
-
-When `/code-review` returns a selected finding with
-`external_opinion.state=recommended`, treat it as a typed advisory recommendation, not prose to parse. In
-attended mode, ask the same confirmation before acceptance. `/work` owns the full durable completion:
-Claude validates every returned typed finding, records `keep`, `downgrade`, or `dismiss`, atomically writes
-the enriched consumer artifact, then calls `complete_second_opinion` for the matching `available` and
-`apply` transitions. Only Claude-owned final status/severity feeds the existing next-fix and verdict logic.
+custom review and do not fall back to the retired runner.
 
 ---
 

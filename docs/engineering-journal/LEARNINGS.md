@@ -2,6 +2,14 @@
 
 ## 2026-09-20
 
+### A sibling taking the same version number produces no conflict, because both sides write the identical string  {#1029-same-version-collision-merges-silently}
+
+**Evidence.** Issue 1029 bumped saga to 0.167.0 against `origin/parent/1018` at `b98e94ea`, where saga read 0.166.0, and the release-surface diff guard passed at that head. Issue 938 took the same number and merged first, as `54a526b1`. Merging it in produced exactly two conflicts — `plugins/saga/CHANGELOG.md` and the version literal in `tests/test_saga_plugin.py` — and **none** in `plugins/saga/.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json`, which git merged clean to a single `"version": "0.168.0"`-shaped line that both sides had written as `0.167.0`.
+
+**Mechanism.** A version bump is a one-line replacement to a specific literal. When two branches replace it with the *same* literal, that is not a conflict in git's terms — it is agreement — so the merge succeeds and the tree carries one plugin at one version with two changelog sections claiming it. The only reason the merge stopped at all is that the two cards wrote *different prose* beside the number: the changelog body and the trailing comment on the test assertion. Prose is what made the collision visible; the machine-read fields did not.
+
+**Generalizable rule.** After merging a sibling that touched the same plugin, re-read the version literal rather than trusting that a clean merge means no collision. The signal to look for is two changelog sections under one heading number, not a conflict marker. Two guards that would have caught it late: `check_release_surface_parity.py` compares the manifest to the marketplace, and both were wrong in the same way, so it stays green; `release_surface_diff_guard.py` asks only whether a changed plugin bumped at all, not whether it bumped above its base.
+
 ### The plugin had no session-start reader of the run record, and a "stale next step" looked like one that had leaked  {#1029-no-session-start-reader-of-the-record}
 
 **Evidence.** Issue 1029. `plugins/saga/hooks/hooks.json` before this change registered the spore reader under `"matcher": "compact"` alone; the three `startup|resume` entries were the stale-default-branch warning, the teardown reclaim, and the team teardown. Issue 1023 had already made the run record authoritative over the saga envelope log for `next_step` (`plugins/saga/scripts/saga.py:1043`) and had taught the compaction spore to freeze and re-inject it (`saga_spore.py:253`). Nothing read it at a cold start.
@@ -17,6 +25,21 @@
 **Mechanism.** A path in a fenced command reads as verified because it is shaped like one — and pytest's failure for a missing file is a collection error, which an implementer in a hurry repairs by *creating* the file. An empty `tests/test_spore_hooks.py` would then pass, and the criterion would report green having proved nothing. The card's plausible-looking command was the danger, not its absence.
 
 **Generalizable rule.** Resolve every path a card's verification names against the tree before planning from it, and when one does not exist, say so in the plan and name the real one. Never create a file to make a criterion's literal text runnable: that converts a documentation error into a false green.
+### A trust boundary held as a document plus a scanning guard survives losing one of its scanned call sites  {#938-trust-boundary-is-a-document-not-a-module}
+
+**Evidence.** Issue 938 deleted `plugins/saga/scripts/second_opinion.py` (2,076 lines). The card's stated risk was that the external-content trust boundary would go with it and break three consumers. It did not, and the reason is visible in two files: the boundary is `plugins/saga/references/engine-output-trust-boundary.md`, a contract document, enforced by `tests/test_engine_output_trust_boundary.py`, whose `PYTHON_CALL_SITES` tuple named exactly two modules — `engine_dispatch.py` and the deleted one. Removing the module narrowed that tuple to one entry and changed nothing else: the contract anchors, the three seeded-unsafe fixtures, the adversarial-payload test, and the two team-execution references all passed untouched.
+
+**Mechanism.** A boundary implemented as a shared *module* dies with its last caller, because deleting the caller eventually makes the module look dead too. A boundary implemented as a *document plus a guard that scans a list of call sites* does not, because the list is data: removing a site shortens the list, and the rule the document states is unaffected. The one thing that did need care was the document's own source table, which named the deleted script in a row the guard asserts by field name. Deleting that row would have removed part of the boundary; correcting only its Source cell kept the anchor and the rule intact.
+
+**Generalizable rule.** When a rule must outlive the code that first needed it, write the rule down and make the guard enumerate its call sites, rather than putting the rule in a module every call site imports. Then check what the guard asserts about the document before editing the document: a row that looks like stale bookkeeping may be the anchor the guard checks.
+
+### The admission questionnaire refuses a card filed before the card template grew its Risk section  {#938-admission-refuses-pre-template-cards}
+
+**Evidence.** `uv run python plugins/saga/scripts/admission.py --issue 938` and the same command with `--dry-run` both exited 2 and wrote nothing, with one line: `admission: the card is not ready and admission writes nothing: Missing required H3 sections: ['Risk']`. Issue 938's body carries eight level-three headings and no `Risk`. Its sibling, issue 1001, carries eleven including `Risk`, `Failure modes / pre-mortem` and `Stop conditions`, and admission ran for it.
+
+**Mechanism.** `admission.py` runs the card validator first by design — its own docstring says planning against a half-formed card is the failure the lifecycle's Shaping exit exists to prevent — so a card that fails the validator produces no run record at all. Cards filed before the template gained its three late sections therefore fail admission for a reason that is about the card's age, not its readiness: issue 938 named its risk in prose inside its Intent section ("its risk is removing one component too many") while having no heading the validator could see.
+
+**Generalizable rule.** When a validator gates a step, a card's filing date is part of its readiness. The repair is to amend the card, which is board authority and belongs to the operator; the wrong repairs are to hand-write the record the refused step would have written, or to edit the card yourself to make the tool pass. Record the refusal verbatim, answer the questions in the plan with their sources, and carry the amendment question to the operator.
 
 ## 2026-09-19
 

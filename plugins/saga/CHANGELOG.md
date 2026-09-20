@@ -1,11 +1,14 @@
 # Changelog
 
-## [0.167.0] - 2026-09-20
+## [0.168.0] - 2026-09-20
 
-**Bumped from 0.166.0**, the saga version on `origin/parent/1018` at commit `b98e94ea`, read
-immediately before the bump. Issue #1025 and issue #938 were running on saga in parallel; whichever
-of the three landed first took this number, and the others renumber above it at their merge turn
-rather than shipping a colliding version.
+**Bumped from 0.167.0**, the saga version on `origin/parent/1018` at commit `54a526b1`, the merge
+of issue #938. This card first took 0.167.0 against `b98e94ea`, where saga read 0.166.0; issue #938
+took the same number and landed first, so this card renumbered above it at the merge turn rather
+than shipping a colliding version. The collision produced no conflict of its own — both sides wrote
+the identical string into `plugin.json` and `marketplace.json`, so git merged them silently, and
+only the changelog's prose and the version literal in `tests/test_saga_plugin.py` differed enough
+to stop the merge.
 
 ### Added
 
@@ -56,6 +59,44 @@ rather than shipping a colliding version.
 
 - `/loop`, `/resume`, `/handoff` and the handoff and intent envelope machinery are all still here.
   Issue #1030 removes them; this card removes nothing.
+
+## [0.167.0] - 2026-09-20
+
+**Bumped from 0.166.0**, the saga version on `origin/parent/1018` at commit `b98e94ea`.
+
+### Removed
+
+- **Work's in-process external-engine second-opinion offer, and the machinery private to it
+  (issue #938).** `/work` no longer tells an agent to print an offer when a target fails three fix
+  attempts, and no longer routes an acceptance into a dispatch. The offer's section leaves
+  `skills/work/SKILL.md`, its sidecar section leaves `skills/work/references/pr-continuation-loop.md`,
+  and `scripts/second_opinion.py` (2,076 lines) is deleted whole: the dispatch functions, the
+  `SecondOpinionClaimStore` and its claim state, the `saga.work-second-opinion.v1` sidecar, the
+  per-target failure-streak detector, and the typed projections. Every one of them was checked for a
+  caller first — thirteen exported names across `plugins/`, `tests/`, `scripts/` and `tools/`, of
+  which ten had no outside reference at all and the other three appeared only in the prose and the
+  test file this change removes.
+
+  This is a narrower path than the operator's session-based reviewer model, which Orchestrate owns;
+  issue #776 retired the transport it once launched through and kept Saga's ownership of review
+  policy, and issue #1001 removed the review side. This removes what those two left.
+
+### Changed
+
+- **The external-content trust boundary is retained, and its guard is narrowed rather than
+  weakened.** `references/engine-output-trust-boundary.md` keeps every row, every forbidden sink and
+  every rule; only the Source cell of the `external_opinion.findings[].content` row changes, because
+  it named the deleted script. `tests/test_engine_output_trust_boundary.py` scanned two Python call
+  sites and now scans the one that remains, with its contract anchors, its seeded-unsafe fixtures and
+  its adversarial-payload test unchanged. Its three consumers — the review panel's gate surface in
+  `scripts/engine_dispatch.py`, the Orchestrate seats, and the team-execution advisory validator —
+  all still pass.
+- **`tests/test_saga_second_opinion.py` keeps what outlived two removals.** The two tests about the
+  deleted module go; the three about surviving contracts stay, and its tombstone test now names all
+  four deleted modules so none can return unnoticed.
+- Work's merge confirmation, its typed review outcomes and the rule that a programmatic code review
+  writes nothing durable are unchanged, and are now pinned by a test, because this release edits the
+  file that carries them.
 
 ## [0.166.0] - 2026-09-20
 

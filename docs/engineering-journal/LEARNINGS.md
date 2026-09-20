@@ -2,6 +2,43 @@
 
 ## 2026-09-20
 
+### A function that validates three result states can still compute its status from one of them  {#1039-record-functional-test-counts-only-failures}
+
+**Evidence.** `plugins/saga/scripts/release_step.py:316-381`, read at commit `61da4b1c` while
+planning issue 1039. `record_functional_test` refuses any scenario whose state is not one of
+`passed`, `failed`, `blocked`, and separately refuses a `blocked` scenario that names no cause — so
+the three-state vocabulary is enforced carefully at the door. It then computes its answer from
+`failed = [s for s in scenarios if s.get("state") == "failed"]` and returns
+`{"status": "passed"}` when that list is empty. A scenario list holding nothing but `blocked`
+entries therefore reports a passed functional test.
+
+**Mechanism.** The validation and the arithmetic were written against different questions. The
+validation asks "is this a legal result?", which needs all three states. The arithmetic asks "did
+anything fail?", which needs only one. Nothing was wrong at the time it was written, because the
+only caller then could not produce a blocked scenario; the gap opens the moment a caller can. That
+is why it does not read as a bug on the page — every line is individually correct.
+
+**Generalizable rule.** When a function accepts an enumeration, check that its arithmetic mentions
+every member of that enumeration. A member that appears in the validation and nowhere in the
+computation is a state the function silently folds into its default answer.
+
+### A removal's blast radius includes every test that pins the removed name into a document  {#1039-corpus-tests-pin-removed-names}
+
+**Evidence.** `tests/test_saga_plugin.py:1281-1290`, found while reviewing the issue 1039 plan. It
+asserts that the qa skill document and its report reference each contain the literal string
+`qa_health_score.py`, and counts the score blocks across the corpus. Issue 1039's card names two
+files to delete and does not name this test, so a plan built from the card alone would have met a
+red gate after the deletion with nothing to explain it.
+
+**Mechanism.** A documentation-corpus test asserts on the *content* of files the card lists only as
+"rewritten", so it never appears in a diff-shaped reading of the card's file list. Grepping for the
+deleted module's name inside `plugins/` finds the callers; the test that pins the name lives in
+`tests/` and is only found by grepping there too.
+
+**Generalizable rule.** Before planning a deletion, grep the deleted name across `tests/` as well as
+the source tree, and name every test that mentions it in the plan's file list. A corpus test is a
+caller.
+
 ### Two cards taking the same version merge silently; the changelog is the only place it shows  {#1028-identical-version-strings-merge-silently}
 
 **Evidence.** Issues 1027 and 1028 both bumped saga to `0.170.0` against the same integration head,

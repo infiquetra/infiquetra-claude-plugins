@@ -357,6 +357,24 @@ def test_agreeing_operator_tier_logs_no_override(tmp_path: Path) -> None:
     assert [record.get("kind") for record in records] == ["verdict"]
 
 
+def test_minimal_fake_client_is_enough(tmp_path: Path) -> None:
+    """Only the answer helpers matter when ``ask`` is injected: a fake client without
+    ``STATUS_OK`` still shapes an ok result rather than raising."""
+    minimal = SimpleNamespace(answer_value=tc.answer_value, answer_confidence=tc.answer_confidence)
+    answers = _tier_answers("judgment", "opus", 0.90, "high", 0.85)
+    outcome = staffing.consult_tier_suggestions(
+        {"judgment": _unit()},
+        ask=_fake_ask(_ok(answers)),
+        client=minimal,
+        verbs=jev_verbs,
+        log_module=jev_log,
+        log_dir=tmp_path,
+    )
+
+    assert outcome["status"] == "ok"
+    assert outcome["suggestions"]["judgment"]["suggested"] == {"model": "opus", "effort": "high"}
+
+
 def test_unloadable_client_falls_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def _raises(name: str) -> Any:
         raise RuntimeError(f"no module {name}")

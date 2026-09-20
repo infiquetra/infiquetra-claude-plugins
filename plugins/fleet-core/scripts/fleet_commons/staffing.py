@@ -894,7 +894,6 @@ def consult_tier_suggestions(
         )
 
     state = {"tasks": {key: unit["task"] for key, unit in normalized.items()}}
-    caller = ask if ask is not None else client.ask
     options: dict[str, Any] = {}
     if timeout is not None:
         options["timeout"] = timeout
@@ -903,6 +902,7 @@ def consult_tier_suggestions(
     if total_deadline is not None:
         options["total_deadline"] = total_deadline
     try:
+        caller = ask if ask is not None else client.ask
         result = caller(state, questions, **options)
     except Exception as exc:  # noqa: BLE001 - a caller's defaults must survive any failure
         return _consult_failure(
@@ -910,7 +910,7 @@ def consult_tier_suggestions(
         )
 
     status = getattr(result, "status", "error")
-    if status != client.STATUS_OK:
+    if status != getattr(client, "STATUS_OK", "ok"):
         note = getattr(result, "note", "") or f"the request returned status {status}"
         return _consult_failure(normalized, status, note, floor)
 

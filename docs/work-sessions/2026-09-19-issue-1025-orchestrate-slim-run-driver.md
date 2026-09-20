@@ -177,7 +177,7 @@ card — moves board writes into saga and removes the path then. Unit U8's inven
 | Move | Result |
 |---|---|
 | `Active` / `Implementing`, at the start of the work | `written`, `field: Stage+Status`, 1 attempt |
-| `Active` / `Code review`, at the end | recorded in the return; the suite was green first |
+| `Active` / `Code review`, at the end | `written`, `field: Stage+Status`, 1 attempt — submitted only after the whole-repository suite came back 8,772 passed, 34 skipped, 1 xfailed, 0 failed at the merged head |
 
 ## What the whole-repository suite caught that the card's own inner loop did not
 

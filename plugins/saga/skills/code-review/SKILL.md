@@ -145,6 +145,19 @@ record with no lens declaration.
 which one it used. When none resolves, the review **refuses by name** and writes `review_incomplete`.
 There is no fallback roster: a fallback policy is still a policy.
 
+**The conditional-lens proposal is advisory.** Before resolving, the Planner may ask whether any
+excluded conditional lens applies after all:
+
+```bash
+uv run python plugins/saga/scripts/review_roster.py --declaration decl.json --propose
+```
+
+prints the proposed additions with their probabilities and leaves the declaration's lenses intact.
+The proposal can only add lenses, never remove them, and it never questions the four always-on
+lenses. The Planner applies additions explicitly, amending the declaration before the roster
+resolves. A missing key or a failed call degrades to an empty proposal with a note — never a
+refusal, and never a reason to delay the review.
+
 **A refused report is expected today.** The lifecycle repository's executor-verification ledger,
 `config/executor-verifications.json`, is empty on purpose. No executor has been qualified against
 any lens's fixtures, so the generator assigns no scoring executor and no lens establishes a
@@ -278,6 +291,16 @@ Two lenses reporting the same defect produce **one** finding with the agreement 
 is `duplicate-of` the first — visible, and counted once. Similar wording is not evidence of the same
 defect.
 
+**Two advisory overlays travel beside the findings, and both are shown, never applied.**
+`dedupe_findings` groups findings that describe the same defect: code finds the candidate pairs
+(same path and category), one yes/no judgment per pair confirms or declines, and confirmed pairs
+are grouped with both findings kept — never merged, never dropped, and the fingerprint merge still
+owns counting. `flag_severity` scores each finding against the catalogue's severity anchors and
+attaches a flag only when the suggestion is strictly more severe than the stated severity, beside
+it on `severity_flag` — the reviewer's severity always stands. Both log their suggestion and their
+outcome to the verdict log; both fail open to ungrouped and unflagged. Present both beside the
+findings they annotate.
+
 **One review history per unit.** A request to start a fresh history for a unit that already has one
 is refused, because a fresh history resets the cycle counter and puts incomparable scores side by
 side. Scores are compared only within the declared lens set.
@@ -375,11 +398,13 @@ It publishes one comment and never a review approval.
 ## Reference files
 
 - `../../scripts/review_roster.py` — builds the declaration from the run record and invokes the
-  lifecycle repository's generator; named refusal when the checkout is absent.
+  lifecycle repository's generator; named refusal when the checkout is absent. `--propose` prints
+  the advisory conditional-lens proposal without resolving a roster.
 - `../../scripts/review_consensus.py` — the scorer, the cycle state machine, and the verdict computed
   from the catalogue's strictness ladder.
 - `../../scripts/review_result.py` — the `review_result.v2` writer, finding fingerprints, one history
-  per unit, the residual preparation, and publication.
+  per unit, the residual preparation, and publication. `dedupe_findings` and `flag_severity` are its
+  two advisory overlays: groups and flags, shown beside the findings, never applied.
 - `../../../agent-launcher/roles/lens-reviewer.md` — the prompt each lens session receives.
 - `references/lens-execution.md` — how to execute a resolved roster. The catalogue itself lives in the
   lifecycle repository; this plugin holds no copy of it.

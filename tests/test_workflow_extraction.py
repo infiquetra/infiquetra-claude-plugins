@@ -40,13 +40,14 @@ EXECUTION_STRATEGY = (
     ROOT / "plugins" / "saga" / "skills" / "work" / "references" / "execution-strategy.md"
 )
 EXECUTION_SPEC_DOC = ROOT / "plugins" / "saga" / "references" / "execution-spec.md"
+WORKFLOW_BACKEND_REF = ROOT / "plugins" / "saga" / "references" / "workflow-backend.md"
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
     """Load by path, reusing the canonical sys.modules entry when one exists.
 
     Several suites load execution_spec instances into one process; reusing the registered
-    module (the team_emitter.py convention) keeps the spec classes one set.
+    module keeps the spec classes one set.
     """
     cached = sys.modules.get(name)
     if cached is not None:
@@ -271,13 +272,22 @@ def test_saga_keeps_the_integration_contract_and_not_the_detailed_protocol() -> 
     plan_skill = PLAN_SKILL.read_text(encoding="utf-8")
     work_skill = WORK_SKILL.read_text(encoding="utf-8")
 
-    # Recognise the backend, record the explicit selection, gate availability, consume
-    # the structured result.
+    backend_ref = WORKFLOW_BACKEND_REF.read_text(encoding="utf-8")
+
+    # Recognise the backend and record the explicit selection: that contract stays in the
+    # two skills, because a reader has to know the backend exists before deciding to go
+    # looking for it.
     assert "cc-workflows-ultracode" in plan_skill
     assert "--orchestration-mode cc-workflows-ultracode" in plan_skill
     assert "cc-workflows-ultracode" in work_skill
-    assert "spec-check" in work_skill
-    assert "execution_spec.py settlement" in work_skill
+
+    # Issue 1026 moved the driver-side seam itself -- the freshness gate and the settlement
+    # step -- out of the two skills and into the reference file. Both must be in exactly one
+    # place: present in the reference and absent from the skills.
+    assert "spec-check" in backend_ref
+    assert "execution_spec.py settlement" in backend_ref
+    assert "spec-check" not in work_skill
+    assert "execution_spec.py settlement" not in work_skill
 
     # The detailed authoring protocol and the lease-retirement commentary live with the
     # capability now, not in Saga's skill files.
@@ -289,12 +299,13 @@ def test_saga_keeps_the_integration_contract_and_not_the_detailed_protocol() -> 
     assert "retired admission" in protocol
 
 
-def test_team_and_outcome_paths_still_resolve_the_spec_schema_from_saga() -> None:
-    team_emitter = _load_module("team_emitter", SAGA_SCRIPTS / "team_emitter.py")
-    spec = ES.ExecutionSpec.from_dict(_spec_dict())
-    markdown = team_emitter.emit_team_structure(spec)
-    assert "## Team Structure" in markdown
+def test_the_outcome_path_still_resolves_the_spec_schema_from_saga() -> None:
+    """Issue 1026 removed ``team_emitter.py``; the outcome half of this pin survives.
 
+    The team-execution structure emitter had one caller, ``execution_spec.recompile_for_tier``,
+    which now falls to the inline baseline for that tier. What is still worth pinning is that
+    the outcome house mirrors execution_spec's sandbox vocabulary.
+    """
     outcome_spec = _load_module("outcome_spec", SAGA_SCRIPTS / "outcome_spec.py")
     # The outcome house mirrors the sandbox vocabulary from execution_spec; the mirror
     # still matches after the extraction.
@@ -307,7 +318,15 @@ def test_team_and_outcome_paths_still_resolve_the_spec_schema_from_saga() -> Non
 
 
 def _work_skill_bash_blocks() -> list[str]:
-    return re.findall(r"```bash\n(.*?)```", WORK_SKILL.read_text(encoding="utf-8"), re.DOTALL)
+    """The fenced blocks of /work's Claude Code Workflow step.
+
+    Issue 1026 moved that step out of ``skills/work/SKILL.md`` and into
+    ``references/workflow-backend.md``; the blocks and the fresh-shell contract they carry are
+    unchanged, so this reader follows them rather than scanning a file that no longer holds them.
+    """
+    return re.findall(
+        r"```bash\n(.*?)```", WORKFLOW_BACKEND_REF.read_text(encoding="utf-8"), re.DOTALL
+    )
 
 
 def test_every_scripts_dir_consumer_block_assigns_the_scripts_dir() -> None:

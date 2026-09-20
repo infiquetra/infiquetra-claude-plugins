@@ -21,7 +21,7 @@ The reusable capability behind the `cc-workflows-ultracode` execution backend:
 
 The seam is the **typed execution spec**, not a clean separation: this plugin reads Saga's
 spec shape (`plugins/saga/scripts/execution_spec.py`) and never copies it. Saga keeps the
-spec schema, validation, tier resolution, and `team_emitter.py`, plus the typed integration
+spec schema, validation, and tier resolution, plus the typed integration
 contract that recognises the backend, records the explicit selection, validates availability,
 invokes this emitter, and consumes its structured result.
 

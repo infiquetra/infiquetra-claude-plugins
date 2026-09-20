@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.165.0",
+      "version": "0.166.0",
       "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
       "author": {
         "name": "Infiquetra",
@@ -200,7 +200,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.28.0",
+      "version": "0.28.1",
       "description": "Fleet-commons library: the one staffing component (work shape, role and lens to vendor, model and effort), shared primitives, liveness decisions, execution-class routing, and the delegation audit.",
       "author": {
         "name": "Infiquetra",
@@ -327,7 +327,7 @@
     {
       "name": "cc-workflows",
       "source": "./plugins/cc-workflows",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Claude Code Workflow execution for Infiquetra plans: the workflow-script emitter, the driver-owned lease and settlement contracts, and the Workflow protocol, extracted from Saga (#925).",
       "author": {
         "name": "Infiquetra",

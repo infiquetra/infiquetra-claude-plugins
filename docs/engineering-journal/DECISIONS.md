@@ -2,6 +2,47 @@
 
 ## 2026-09-19
 
+### The plan-review loop's bound lives in the run record, and the only override is the operator's word  {#1026-review-loop-bound-and-override}
+
+**Decision.** `/plan` Phase 5.4 dispatches the plan review and loops on repair. Its bound is the run record's `standard_cycle_allowance` and `escalated_cycle_allowance`; no cycle count is written into the skill. It exits on exactly three conditions — a pass, the operator's one-word override with a recorded rationale, or exhausted allowances, which stops and reports rather than passing. No finding count, cycle count, unattended mode, or sentence in any skill produces an override.
+
+**Rationale.** Making the review automatic is the point of the card, and an automatic loop with an automatic escape is not a gate. Keeping the numbers in the record rather than the prose means a run can lower its allowance without editing a skill, and the lifecycle repository at revision `5efc869f` already settles them (three standard, two escalated), so a literal in the skill would have been a second copy of a decided number in the place nobody thinks to look.
+
+**Alternatives rejected.** A literal cycle count in the skill — rejected as a second copy of settled state. Passing on exhaustion, so the loop cannot wedge a run — rejected: that is an automatic override wearing a different name, and it fires exactly when the plan is worst. An escape after N findings — same objection.
+
+**Revisit when.** An operator has had to type the override word more than a couple of times on runs whose plans were in fact ready; that would be evidence the review's severities, not the loop, need changing.
+
+### `/plan`'s reviewer is chosen from the run record, not probed from the session  {#1026-reviewer-chosen-from-the-record}
+
+**Decision.** The Plan Reviewer is resolved by reading `<primary checkout>/.claude/saga/runs/issue-<N>.json`: a live `plan-reviewer` row in `roster`, else a staffing plan that names the role and a roster helper that can run here, else this session in review-only mode. Which branch was taken is said out loud and recorded.
+
+**Rationale.** The run continues in other sessions and on other machines, and a rule that reads the environment answers differently in each of them — the same run would review one way under a herdr pane and another way in a background driver, with nothing recording which. Reading the record makes the choice reproducible and auditable; the environment still decides whether branch 2 is *reachable*, but not what the run is supposed to do.
+
+**Live evidence for the fall-through, 2026-09-19.** The acceptance run for issue #1026 took branch 3 for a reason worth recording: the installed agent-launcher on this host is 1.5.2, whose `skills/agent-launcher/scripts/` contains only `composer.py` and `launcher.py`. The roster helper ships at 1.7.0 (issue #1024), which is on `parent/1018` and not installed. Branch 2 globs the **installed** plugin cache, so the roster-pane branch cannot hold on any host whose installed agent-launcher predates 1.7.0, however the record is staffed. The fall-through behaved as designed; the rollout note for this release has to say the roster-pane branch becomes reachable only once 1.7.0 is installed in both plugin trees.
+
+**Alternatives rejected.** Probing for a herdr pane and deciding from that — rejected above. Halting when no pane exists — rejected: it would make the review unreachable in exactly the unattended runs the card exists to serve.
+
+### `execution_spec.py` is deleted by issue #1030, not by issue #1026  {#1026-execution-spec-deferred-to-1030}
+
+**Decision.** Issue #1026 removes `team_emitter.py` and `spec_table.py` and leaves `plugins/saga/scripts/execution_spec.py` in place, although its own second acceptance criterion asks for that file to be gone. Operator decision, 2026-09-19: the criterion is judged at the parent pull request, where the end state is identical.
+
+**Rationale.** On `parent/1018` that file has seven live importers inside saga — `spend_receipt.py:38`, `spend_estimate.py:44`, `spend_retro.py:37`, `manifest_store.py:54`, `tier_efficacy.py:29`, `engine_dispatch.py:27`, `outcome_dispatcher.py:39` — plus roughly thirty test modules. Every one of those seven is already on issue #1030's removal list. Deleting the file in #1026 therefore means deleting those seven modules and the commands that call them: issue #1030's work, pulled into a card scoped as three skills and two scripts, for an end state #1030 reaches anyway.
+
+**Alternatives rejected.** Deleting it here with the cascade — rejected for sequencing, and it would have moved this card from medium risk to high. Making the seven importers tolerate its absence — rejected: that leaves seven dead code paths and a module nobody can tell is unused.
+
+**Revisit when.** Issue #1030's plan keeps any of the seven importers; that module's sequencing argument then has to be made on its own.
+
+### The relocated backend prose moves verbatim, and its guards follow it  {#1026-relocated-prose-and-guards}
+
+**Decision.** `/plan` Phase 5.2, the Workflow-specific half of 5.2a, `/work` §1.4's offer and §1.5 move into `plugins/saga/references/workflow-backend.md` unedited. The guards pinned to their old location are retargeted at the new one rather than deleted: `tests/test_workflow_extraction.py`'s settlement and fresh-shell cases, `tests/test_saga_plugin.py`'s ordered settlement contract and its #693 run-handle guard, and `tests/test_operator_choice_drift.py`'s `/plan` offer surface. The two skills keep a pointer paragraph, not a summary.
+
+**One part of 5.2a stayed, and the generators are why.** The per-unit tier derivation — Step 1, with the generated tier table and the generated effort-honoring note inside it — remains in `skills/plan/SKILL.md` as §5.2a, no longer gated on the Workflow backend. Neither region is Workflow instruction: the effort note covers the `agent`, `external-engine` and `workflow` spawn kinds alike, and the tier table is the staffing heuristic for any backend that spawns per-unit agents. Mechanically it also could not move cheaply: `plan_save_contract.py` renders the effort note *and* the save examples that stay in §5.3, against a single `SKILL` target, so moving the note would have obliged that generator to learn a second target file — machinery this card does not own. Only the spend guards (Steps 1b and 1c), the authoring steps (2 to 5) and the spec-naming convention went to the reference file.
+
+**Rationale.** A guard deleted with the section it guarded removes the protection along with the location, and each of these encodes a real contract — that the driving session owns settlement, that each fenced block is fresh-shell self-contained, that both §3.2 purposes stay named and the fork stays framed on governance. A summary in the skill would have been a second source of a contract whose first source is one file away, which is how the two drift.
+
+**Alternatives rejected.** Moving the generated regions too and teaching `plan_save_contract.py` a second target document — rejected: a generator contract this card does not own, with three tests and a proof script keyed to its single-target shape. Deleting the guards as belonging to removed prose — rejected as above.
+
+**How the second and third relocation misses were found.** Neither `tests/test_operator_choice_drift.py` nor `tests/test_saga_spec_consumer_row.py` was in the targeted test set; both surfaced only in the full suite, the first because the §3.2 purposes travelled with the offer and the second because a generated region's renderer could not follow it. The rule that falls out: after moving a section that contains a generated region or a marker pair, run the full suite before believing the move is finished — a targeted run over the files you edited cannot see a guard that names the file you edited *from somewhere else*.
 ### The lifecycle repository's roster generator is invoked, never reimplemented and never vendored  {#1001-invoke-the-generator}
 
 **Decision.** `plugins/saga/scripts/review_roster.py` runs `python3 <sdlc-checkout>/tools/docs/gen_review_roster.py --declaration <file>` as a subprocess and carries the document it prints through unchanged. This plugin holds no copy of that generator and reimplements no part of the resolution.

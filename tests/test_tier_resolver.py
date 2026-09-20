@@ -276,6 +276,9 @@ def test_cli_resolve_unknown_work_shape_errors(capsys: pytest.CaptureFixture[str
 from fleet_commons import render_tier_table  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
+# Issue 1026 relocated most of /plan's Phase 5.2a to references/workflow-backend.md but kept
+# the per-unit tier derivation, and this generated block with it: the tier table is the
+# staffing heuristic for any backend that spawns per-unit agents, not Workflow instruction.
 PLAN_SKILL_MD = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
 
 

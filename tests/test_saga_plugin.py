@@ -46,8 +46,15 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.165.0"  # 0.165.0: code review becomes a policy-free
-    # executor — it reads the lens declaration from the run record, resolves review_roster.v1 with
+    assert plugin_json["version"] == "0.166.0"  # 0.166.0: /plan ends by dispatching the plan
+    # review to the Plan Reviewer and looping on repair until no P0 or P1 remains, the /work floor
+    # gate stays blocking on the operator's one-word override alone, the Workflow-backend and
+    # team-execution prose moves to references/workflow-backend.md, and team_emitter.py and
+    # spec_table.py are removed (issue #1026). Bumped from 0.165.0, the saga version on
+    # origin/parent/1018 at 542e9810: issue #1001 took 0.165.0 while this card's suite ran, so this
+    # card renumbered above it rather than shipping a colliding version.
+    # Predecessor 0.165.0: code review becomes a policy-free
+    # executor -- it reads the lens declaration from the run record, resolves review_roster.v1 with
     # the lifecycle repository's own generator, computes the verdict from that catalogue's
     # strictness ladder, writes review_result.v2 into the run record, and publishes exactly one
     # pull-request comment and never an approving review. The plugin's private fourteen-lens
@@ -124,11 +131,17 @@ def test_fleet_lease_runtime_adapters_are_retired_from_the_package() -> None:
     assert not any("lease" in command for command in commands)
 
 
-def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
+def test_workflow_backend_reference_wires_driver_owned_workflow_settlement() -> None:
+    # Issue 1026 moved /work's Claude Code Workflow step out of skills/work/SKILL.md and into
+    # references/workflow-backend.md. The contract this case guards -- that the driving session
+    # owns settlement, and that reserve, attest, launch and release happen in that order -- is
+    # unchanged; only its location moved, so the test follows the seam rather than being deleted
+    # with the section.
+    #
     # The "$CC_WORKFLOWS_SCRIPTS_DIR/..." expansions are quoted in the command blocks
     # (review A01/S05), so match quote-tolerantly: strip double quotes from both the
-    # skill text and the needles. Presence and ordering stay the pinned contract.
-    work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md").replace('"', "")
+    # text and the needles. Presence and ordering stay the pinned contract.
+    work_skill = _read(PLUGIN_ROOT / "references" / "workflow-backend.md").replace('"', "")
     for required in (
         "execution_spec.py settlement",
         "execution_spec.py lease",
@@ -149,6 +162,11 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
     )
     release = work_skill.index("workflow_emitter.py release", launch)
     assert reserve < attest < launch < release
+
+    # And the seam is in exactly one place: the skill keeps the entry contract and points here.
+    skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    assert "execution_spec.py settlement" not in skill
+    assert "references/workflow-backend.md" in skill
 
 
 def test_provider_onboarding_contract_is_packaged_and_documented() -> None:
@@ -919,6 +937,30 @@ def test_work_second_opinion_trigger_contract_is_operator_confirmed_and_non_gati
         "There is no persisted `.saga/engine-prefs.json` preference",
     ):
         assert boundary in corpus
+
+
+def test_document_review_second_opinion_contract_is_intact() -> None:
+    """Issue #394 gave each review surface its own advisory block, never a shared schema.
+
+    Issue #1001's rewrite removed Code Review's half along with the prose it pinned -- none of
+    its seven tokens survives the rewrite -- so only Document Review's half is asserted here.
+    The negative at the end is issue #1026's card-931 repair: the reference that used to be
+    asserted as a *path string* pointed at a file defining neither name it cited.
+    """
+    doc_skill = _read(PLUGIN_ROOT / "skills" / "doc-review" / "SKILL.md")
+
+    for token in (
+        "stable `D1..Dn`",
+        "`D<N>`",
+        "external_opinion.state=recommended",
+        "Never auto-dispatch",
+        "late-result ingestion",
+        "Claude-owned final priority/status",
+    ):
+        assert token in doc_skill
+    assert "../code-review/references/findings-schema.md" not in doc_skill, (
+        "the dangling cross-reference came back; see card 931"
+    )
 
 
 def test_loop_engine_merge_contract() -> None:
@@ -3889,8 +3931,12 @@ def test_spec_check_ok_and_file_missing_verdicts(tmp_path, monkeypatch) -> None:
 
 
 def test_work_skill_records_run_handle_in_its_own_field() -> None:
-    """#693 drift guard: /work no longer overloads orchestration_ref with the workflow id."""
-    work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    """#693 drift guard: /work no longer overloads orchestration_ref with the workflow id.
+
+    Issue 1026 moved /work's Claude Code Workflow step into references/workflow-backend.md, so
+    the guard reads the seam where it now lives. The contract is unchanged.
+    """
+    work_doc = _read(PLUGIN_ROOT / "references" / "workflow-backend.md")
     # The retired overload must be gone in BOTH grep forms the issue's acceptance used.
     assert "orchestration-ref <workflow-id>" not in work_doc
     assert "--orchestration-ref <workflow-id>" not in work_doc

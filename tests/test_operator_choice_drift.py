@@ -28,8 +28,13 @@ SAGA_ROOT = REPO_ROOT / "plugins" / "saga"
 OPERATOR_CHOICE = SAGA_ROOT / "references" / "operator-choice.md"
 
 # Offer surfaces that must each name BOTH §3.2 purposes (R5).
+#
+# Issue 1026 moved /plan's backend-offer section out of skills/plan/SKILL.md and into
+# references/workflow-backend.md. The offer itself is unchanged, so this guard follows it to the
+# file that now carries it rather than being deleted with the section: the two purposes and the
+# governance framing are the contract, and where they live is not.
 OFFER_SURFACES = {
-    "plan": SAGA_ROOT / "skills" / "plan" / "SKILL.md",
+    "plan": SAGA_ROOT / "references" / "workflow-backend.md",
     "code-review": SAGA_ROOT / "skills" / "code-review" / "SKILL.md",
 }
 

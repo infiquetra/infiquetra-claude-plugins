@@ -2,6 +2,59 @@
 
 ## 2026-09-20
 
+### The ruff specifier pins the locked minor instead of declaring an open floor  {#ruff-minor-pin-1043}
+
+**Decision.** `pyproject.toml` declares `ruff>=0.15,<0.16` rather than `ruff>=0.4`, matching the
+minor `uv.lock` already resolves (0.15.12). No rule configuration changes and no other dependency
+moves; the lock diff is the single requirement line.
+
+**Rationale.** An open floor with no ceiling lets the lint gate's verdict depend on whichever
+environment resolved last. The issue 1020 review proved the failure mode concretely: the project's
+synced 0.15.12 environment passed `ruff check .` and `ruff format --check .` clean while a reviewer
+environment that independently resolved 0.16.5 flagged pre-existing issues in `plugins/home-lab-ops`
+and some `docs/analysis` code blocks — files outside that diff. Both observations were true; only
+the versions differed. A ceiling on the declared specifier means a future `uv sync` or a fresh
+contributor environment cannot silently move the gate to a minor nobody triaged.
+
+**Rejected alternative.** *Leave the open `>=0.4` floor and rely on `uv.lock`.* The lock does pin
+what a synced environment installs, but the declared specifier is the contract every fresh
+resolution reads — and the gap between floor and reality is exactly what let two true-but-different
+lint results coexist. Keeping it trades one line of ceiling for repeat drift incidents.
+
+**Revisit when** the lock moves ruff to a new minor deliberately: bump the ceiling with it (for
+example `>=0.16,<0.17`) after triaging that minor's findings, rather than widening back to an open
+floor.
+
+### Tier suggestions stay advisory: floor, fall-open, and one verdict per role  {#tier-suggest-advisory-1033}
+
+**Decision.** Issue 1033 wires the `tier` judgment verb into the staffing component as
+`consult_tier_suggestions`, and into admission as an opt-in `--suggest` flag. Three rules govern
+it. The verb registry owns the questions, the policy text, and the confidence floor -- the
+consumer carries none of those as literals. A suggestion below the floor, or one that fails
+palette validation, is reported with its reason and never carried onto a decision; a failed
+request falls open to the defaults with its reason in the result. Each suggested unit logs
+exactly one verdict, whose answer is the combined `model/effort` choice against the chosen tier
+as label, plus an override record only where an operator-set tier differs from a suggestion that
+cleared the floor.
+
+**Rationale.** The floor and the fall-open keep the advisory promise mechanical rather than
+conventional: there is no code path from a model answer to a tier anyone runs. One verdict per
+role keeps the log joinable 1:1 with the units admission suggested, which per-question verdicts
+would not. The override narrowness follows mission-control's rule that the author's value is the
+decision and only a difference is an override -- a policy default standing over a suggestion is
+the standing rule, not an override, and logging it as one would drown the real overrides. The
+first live call of the new flag proved a related point: the verb answers effort `max`, which is
+not a Claude-palette rung, so the consumer maps it onto the palette top `xhigh` explicitly rather
+than dropping the most emphatic suggestion the verb can make.
+
+**Rejected alternative.** Consulting per role instead of once per run. Rejected because the batch
+is one request where the loop is N, and the tier probe's measured 388 milliseconds for ten units
+is the batch. A second rejected alternative: hiding below-floor suggestions from output. The
+values print with their below-floor marker, following mission-control's `low_confidence` display,
+because an operator who cannot see what the model said cannot judge whether the floor is right.
+
+**Revisit when** the harness has about thirty verdicts per tier at varied confidences and the
+floor can be set from measurement rather than from the registry default.
 ### `operator-choice.md` keeps its removed sections, marked historical, and a guard enforces the marking  {#operator-choice-historical-sections-1030}
 
 **Decision.** `plugins/saga/references/operator-choice.md` is corrected rather than deleted or

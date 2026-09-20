@@ -2,6 +2,47 @@
 
 ## 2026-09-20
 
+### A plugin's version moves when its files move, not when a card names it  {#version-moves-with-files-1030}
+
+**Decision.** Issue 1030's card asks for a bump on orchestrate and agent-launcher as part of the
+saga 1.0.0 release. Neither is bumped, because this card changes no file in either plugin. The only
+saga script orchestrate names is `admission.py`, which survives, and agent-launcher's only mention of
+anything removed is a historical line in its own changelog.
+
+**Rationale.** A version bump is a claim that something a consumer depends on moved. Bumping an
+untouched plugin because it appeared in a card's prose makes the changelog a worse signal than
+silence, and it makes the two installed plugin trees harder to compare after a release, which is
+exactly the comparison the release's own acceptance criterion rests on.
+
+**Rejected alternative.** Bump everything the card names, so the release is one coherent set of
+version numbers. Rejected because coherence of numbers is not a property anyone reads for; the
+question a reader asks is "did this plugin change", and a bump that answers yes when the answer is no
+costs more than an uneven set of versions.
+
+**Revisit when** a release genuinely needs a coordinated floor across plugins — a shared schema
+change, say — at which point the bump carries real information and the rule bends for a stated reason.
+
+### Removing a module that another plugin imports is a move, not a deletion  {#rehome-rather-than-break-1030}
+
+**Decision.** `execution_spec.py`, `concurrency_governor.py` and `dispatch_settlement.py` leave
+`plugins/saga/scripts/` but are not deleted: they move into
+`plugins/cc-workflows/skills/cc-workflows/scripts/` as that plugin's own modules, and the
+cross-plugin shim that reached for them goes. Recorded as a recommendation with the operator's
+alternative named, because the card does not name the cc-workflows plugin at all.
+
+**Rationale.** The cc-workflows emitter loads saga's `execution_spec.py` at import time and imports
+the other two. Deleting them from saga would make that plugin unloadable. The simplification review
+says to remove the execution spec and issue 808 ruled the Workflow backend is narrowed but not
+retired; both hold only if the modules stop being saga's.
+
+**Rejected alternatives.** Delete them and let the emitter break — rejected because the card names no
+cc-workflows work and a driver does not delete what its card did not name. Archive cc-workflows
+alongside team-execution — a legitimate choice, but it is the operator's to make, so it is recorded
+as the open question rather than taken.
+
+**Revisit when** the operator answers that question, or when the Workflow backend is invoked again
+and the move's import path is exercised for real.
+
 ### Orchestrate 6.0.0: removing a subcommand is a major bump, by this plugin's own precedent  {#1028-orchestrate-subcommand-removal-is-major}
 
 **Decision.** Removing the `announce` subcommand and retiring `merge`'s exit status 2 takes

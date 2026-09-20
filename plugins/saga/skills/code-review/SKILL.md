@@ -58,6 +58,22 @@ complete delivery.
    under the run's recovery rules. A missing result can never establish consensus, and acceptance is
    never invented from absence.
 
+## Interaction method
+
+<!-- gate-record: id=code-review-interaction absence=HALT transport=ask-user-question -->
+**Operator-absence contract.** Every choice this skill puts to the operator from a known set goes
+through `AskUserQuestion`, one question per turn, and the declaration above this line is the
+contract. `HALT` here: stop and wait. A timeout, a widget error, or a dropped session is **never
+consent** — do not proceed on a default and do not invent an answer. Read the decision from the
+operator's actual answer, never from a widget's raw return value.
+
+In a channel session `AskUserQuestion` cannot be called; inline the choices in the reply text
+instead, following the convention in `saga/skills/brainstorm/SKILL.md`.
+
+The rewrite of 2026-09-19 left this skill **one** such gate, down from three. The conditional-lens
+approval gate is gone, because the lens set is settled at admission; the publication consent
+machinery collapsed to a single confirmation. What remains is the required-lens gate in Phase 2.
+
 ## Reviewer-session transport
 
 Orchestrate owns every reviewer session. **Do not launch or collect a reviewer through any saga
@@ -151,6 +167,13 @@ R=$(ls -d ~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scrip
     | sort -V | tail -1)
 python3 "$R" up --issue <N> --dry-run    # inspect the panes before creating any
 ```
+
+**Every lens spawned as a subagent names `subagent_type: saga:readonly-verifier` (a read-only
+toolset) and `isolation: "worktree"` (a disposable worktree).** A lens reviewer reads; it never
+writes, and a subagent sharing this session's filesystem could clobber the tree it is reviewing. The
+full spawn-site inventory and the fallback ladder for when `saga:readonly-verifier` is unavailable
+are in `plugins/saga/references/sandbox-spawn-sites.md` — never fail the spawn outright, and never
+fall back to an unsandboxed one.
 
 **Each dispatch carries exactly five things**: the issue, the one lens identifier, the frozen
 revision, the roster hash, and the vendor, model, effort and prompt hash the roster names for that

@@ -27,7 +27,7 @@ Quick reference for Infiquetra board-flow metrics. Source of truth:
 > census and the prose describing it.
 
 
-Legacy (read-only history): the retired `Mount Olympus` board used `Assigned` as start with
+Legacy (read-only history): the retired `Mount Olympus` board used its own start status with
 `Done`/`Closed`/`Cancelled` terminals; its history may include `In Progress`, `In Development`,
 or `Deployed`. Tooling reads those for historical calculations only and creates no new movement
 with those names.
@@ -93,7 +93,7 @@ Target: greater than 50%.
 
 1. Run `metrics column-time` on slow items.
 2. Check WIP age for active or review bottlenecks.
-3. Look for `Blocked`, `Needs Question`, or missing Jeff decision signals.
+3. Look for `Blocked`, `Needs clarification`, or missing Jeff decision signals.
 4. Confirm deployment delay is not being misread as workflow delay.
 5. Use a longer `--days` window to separate noise from a trend.
 
@@ -108,7 +108,7 @@ Target: greater than 50%.
 ### When WIP Age Is High
 
 1. Identify the specific cards and discuss them in board review.
-2. Add or confirm `blocked` / `Needs Question` state where appropriate.
+2. Add or confirm `blocked` / `Needs clarification` state where appropriate.
 3. Swarm, split, or move the card back to shaping if the issue is not actually ready.
 
 ---

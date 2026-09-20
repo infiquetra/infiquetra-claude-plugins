@@ -38,10 +38,23 @@ BOARD_SCHEMA_PATH = CONFIG_DIR / "board-schema.json"
 SDLC_SCHEMA_PATH = CONFIG_DIR / "sdlc-schema.json"
 PROJECT_MAPPINGS_PATH = CONFIG_DIR / "project-mappings.json"
 
-# Status names the board-stage migration (W13) renamed out of existence. None
-# may appear as a Status option on any live board; `sdlc-schema.json`'s own
-# stage_flow note says so in as many words.
-RETIRED_STATUS_NAMES = frozenset({"Idea", "Ready", "Active", "Done", "Todo", "Committed", "Parked"})
+# Status names the board-stage migration (W13) renamed out of existence, plus the
+# older Mount Olympus set (#1042). None may appear as a Status option on any live
+# board; `sdlc-schema.json`'s own stage_flow note says so in as many words.
+RETIRED_STATUS_NAMES = frozenset(
+    {
+        "Idea",
+        "Ready",
+        "Active",
+        "Done",
+        "Todo",
+        "Committed",
+        "Parked",
+        "Assigned",
+        "In Review",
+        "Needs Question",
+    }
+)
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -271,9 +284,15 @@ STATUS_OPTION_PATTERN = re.compile(
 # not a Stage, not a Status, and not a field name -- so a bare mention of it
 # is always either an instruction to write a dead value or a historical note,
 # and the history exemption below separates those two.
+# The Mount Olympus set (#1042) joins on the same terms: none of `Assigned`,
+# `In Review`, or `Needs Question` is a live Stage, Status, or field name, so a
+# bare mention outside a history-marked paragraph is an instruction to write a
+# value every board rejects. Multi-word names need no special handling -- the
+# scan is per line and the space is literal.
 BARE_RETIRED_NAME = re.compile(
     r"\b(?:Idea|Todo|Committed|Parked|Done)\b"
     r"|\bReady\b(?!\s+(?:for\s+Active|for\s+Planning|to\s+close|to\s+merge))"
+    r"|\b(?:Assigned|In Review|Needs Question)\b"
 )
 
 # A bullet or numbered list item begins a new exemption unit.
@@ -488,6 +507,54 @@ def test_no_prose_surface_tells_an_agent_to_use_a_retired_status_name(
 
 
 # ---------------------------------------------------------------------------
+# CLI help strings, not just prose (#1042).
+#
+# `board move --status`'s help names example statuses, and argparse prints it on
+# a parse error -- so a stale example hands an agent whose Status write was just
+# rejected three more rejected values. The prose guard above cannot see it: it
+# sweeps `*.md` instruction surfaces, not Python sources. This case pins the
+# examples to the committed census instead. Operations is the reference board;
+# every active board carries the same stage_flow Status set, so an example the
+# operations census records is valid on all three.
+# ---------------------------------------------------------------------------
+
+SDLC_MANAGER_PATH = MISSION_CONTROL / "scripts" / "sdlc_manager.py"
+
+TARGET_STATUS_HELP_PATTERN = re.compile(r'help="Target status \(e\.g\. ([^"]+)\)"')
+HELP_EXAMPLE_PATTERN = re.compile(r"'([^']+)'")
+
+
+def test_board_move_help_examples_are_statuses_the_census_records(
+    board_schema: dict[str, Any],
+) -> None:
+    """Every example in the `board move --status` help must be a Status option
+    the committed census records (#1042)."""
+    text = SDLC_MANAGER_PATH.read_text(encoding="utf-8")
+    match = TARGET_STATUS_HELP_PATTERN.search(text)
+    assert match, (
+        "board move --status help string not found in sdlc_manager.py; if the help "
+        "text moved, move this guard with it"
+    )
+    examples = HELP_EXAMPLE_PATTERN.findall(match.group(1))
+    assert examples, "no quoted examples found in the --status help string"
+    valid = _option_names(board_schema["boards"]["operations"]["fields"]["Status"])
+    unknown = [example for example in examples if example not in valid]
+    assert not unknown, (
+        "board move --status help names example statuses no live board accepts: "
+        + ", ".join(sorted(unknown))
+    )
+
+
+def test_the_help_example_extraction_sees_multi_word_names() -> None:
+    """Pins the extraction against the shape it must handle: examples are
+    single-quoted and may contain a space (`Code review`)."""
+    sample = '''help="Target status (e.g. 'Implementing', 'Code review')"'''
+    match = TARGET_STATUS_HELP_PATTERN.search(sample)
+    assert match, "the help pattern must match the --status help shape"
+    assert HELP_EXAMPLE_PATTERN.findall(match.group(1)) == ["Implementing", "Code review"]
+
+
+# ---------------------------------------------------------------------------
 # The guard's own logic, driven directly.
 #
 # Everything above exercises these helpers only against this repository's real
@@ -574,7 +641,17 @@ class TestBareRetiredNamePattern:
             assert not BARE_RETIRED_NAME.search(live), f"{live} is a live Status"
 
     def test_the_bare_retired_names_are_flagged(self) -> None:
-        for retired in ("Idea", "Todo", "Committed", "Parked", "Done", "Ready"):
+        for retired in (
+            "Idea",
+            "Todo",
+            "Committed",
+            "Parked",
+            "Done",
+            "Ready",
+            "Assigned",
+            "In Review",
+            "Needs Question",
+        ):
             assert BARE_RETIRED_NAME.search(f"move it to {retired} when done"), retired
 
     def test_active_is_not_matched_bare(self) -> None:

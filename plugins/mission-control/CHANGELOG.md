@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.21.0] - 2026-09-20
+
+### Fixed
+
+- **The retired Mount Olympus status vocabulary is gone from agent-facing prose and the
+  `board move` help (issue #1042).** The milestones and metrics skills still named `Assigned`,
+  `In Review`, and `Needs Question` as live states -- none is a Status option on any active
+  board, so each of those instructions failed at runtime with no migration hint. The prose now
+  names the live statuses (`Implementing`, `Code review`, `Needs clarification`), the history
+  notes no longer spell the retired active-start name, and the `board move --status` help
+  examples -- `Assigned`, `In Review`, and `Active`, the last a Stage rather than a Status --
+  are replaced with statuses the committed census records. The board-schema drift guard now
+  scans prose for the Mount Olympus names and pins the help examples to the census.
+
 ## [2.20.0] - 2026-09-20
 
 ### Changed

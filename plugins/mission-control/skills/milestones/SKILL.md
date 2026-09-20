@@ -119,8 +119,8 @@ Flag Objectives as at-risk when:
 
 - Due date is less than 7 days away and milestone completion is below 80%.
 - Any linked work item is blocked.
-- Linked work is aging in `Assigned`, `In Review`, `Active`, or `Verify`.
-- A required Jeff decision is still in `Needs Question` or equivalent state.
+- Linked work is aging in `Implementing`, `Code review`, `Active`, or `Verify`.
+- A required Jeff decision is still in `Needs clarification` or equivalent state.
 
 Check progress:
 

@@ -22,8 +22,6 @@
 
 **Revisit when.** A card is filed for it, or a new caller appears — the second of which would close this residual without any removal at all. Note that it is not confusable with `lifecycle_state.py recommend-backend`, the execution-backend recommender the lifecycle skills actually call; that one has many live consumers and is untouched.
 
-## 2026-09-19
-
 ### The plan-review loop's bound lives in the run record, and the only override is the operator's word  {#1026-review-loop-bound-and-override}
 
 **Decision.** `/plan` Phase 5.4 dispatches the plan review and loops on repair. Its bound is the run record's `standard_cycle_allowance` and `escalated_cycle_allowance`; no cycle count is written into the skill. It exits on exactly three conditions — a pass, the operator's one-word override with a recorded rationale, or exhausted allowances, which stops and reports rather than passing. No finding count, cycle count, unattended mode, or sentence in any skill produces an override.
@@ -65,6 +63,7 @@
 **Alternatives rejected.** Moving the generated regions too and teaching `plan_save_contract.py` a second target document — rejected: a generator contract this card does not own, with three tests and a proof script keyed to its single-target shape. Deleting the guards as belonging to removed prose — rejected as above.
 
 **How the second and third relocation misses were found.** Neither `tests/test_operator_choice_drift.py` nor `tests/test_saga_spec_consumer_row.py` was in the targeted test set; both surfaced only in the full suite, the first because the §3.2 purposes travelled with the offer and the second because a generated region's renderer could not follow it. The rule that falls out: after moving a section that contains a generated region or a marker pair, run the full suite before believing the move is finished — a targeted run over the files you edited cannot see a guard that names the file you edited *from somewhere else*.
+
 ### The lifecycle repository's roster generator is invoked, never reimplemented and never vendored  {#1001-invoke-the-generator}
 
 **Decision.** `plugins/saga/scripts/review_roster.py` runs `python3 <sdlc-checkout>/tools/docs/gen_review_roster.py --declaration <file>` as a subprocess and carries the document it prints through unchanged. This plugin holds no copy of that generator and reimplements no part of the resolution.
@@ -288,6 +287,7 @@ An abbreviated identifier or a symbolic reference such as `HEAD` is refused at c
 **Revisit when.** A second consumer appears that does not go through the session layer, or the plugin's manifest description has to stretch further than one sentence to cover both jobs. Either is the signal to move it.
 
 **Refs.** Issue #1022; a code-review finding that this was the one load-bearing placement choice with no journal entry.
+
 ### One staffing component in fleet-core: one data file, one resolver, the loaders repointed  {#1021-staffing-component}
 
 **Decision.** `staffing.json` becomes the single authoring source for the model palette, the effort vocabulary, the work-shape tier policy, the per-vendor palette, the capability ratings and trust tiers, and the per-role staffing defaults; `models.json` and `tier_policy.json` are deleted. `staffing.py` is the one resolver and composes `tier_palette` and `tier_resolver` rather than replacing them, so their public Python surface is frozen and the 61 files that reference the tier vocabulary do not move. The authoritative vendor kind list is agent-launcher's code-level `VENDOR_FLAGS` (seven vendors); `hermes` is excluded because it reconciles a profile workspace and owns its own routing, and a test pins that exclusion. The per-vendor effort-collapse table and model translation move from Python literals into the data file. Capability ratings are copied from `engine-registry.yaml` with a parity test holding them together until issue #1030 deletes the YAML. The executor-verification ledger is read from the sibling `infiquetra-sdlc` checkout through the `INFIQUETRA_SDLC_PATH` ladder, and an absent, unreadable, or empty ledger yields the lens catalogue's documented-policy outcome rather than an error. Roles map to rated capabilities: planner and plan-reviewer to long-form-writing, worker, release-worker and merging-worker to code-generation, lens-reviewer to adversarial-review, functional-tester to debug. `opencode` gets a palette row carrying `runtime_supported: false`, because `tier_resolver` knows six runtimes and nobody has verified opencode's launch-time model and effort arguments; `SUPPORTED_RUNTIMES` derives from the rows whose flag is true, so launch behavior is unchanged. Deleting `effort-convention.md` is a runtime change, not a documentation change: `plan_save_contract.py` holds its path in a constant and checks the file exists, so the constant is repointed at `staffing.md` in the same commit as the deletion.
@@ -299,6 +299,7 @@ An abbreviated identifier or a symbolic reference such as `HEAD` is refused at c
 **Revisit when.** Issue #1030 removes `/tier`, `/engines`, and `engine-registry.yaml`; issue #1022 lands the roles library and becomes the role vocabulary's authority; or `hermes` gains a model and effort and enters `VENDOR_FLAGS`.
 
 **Refs.** Issue #1021; plan `docs/plans/2026-09-19-issue-1021-staffing-component-plan.md` KTD1 through KTD11; `docs/analysis/2026-09-19-saga-simplification-review.md` section 6G recommendation R29.
+
 ### The board census keys `fields` by field name; a duplicate name raises rather than overwriting  {#1020-census-keyed-by-field-name}
 
 **Decision.** `plugins/mission-control/config/board-schema.json` records each board's `fields` as a
@@ -387,6 +388,9 @@ in `sdlc-schema.json` first and in the reference only as a transcription of it.
 
 **Refs.** Issue #1020 unit 4; `sdlc-schema.json` migration note `2026-09-07.1` decision E6;
 `sdlc_manager.py:1227-1228`, `:1409`.
+
+## 2026-09-19
+
 ### Saga owns its shaping question sets; fleet-core owns the client  {#shaping-judgments-live-in-saga-1037}
 
 **Context.** `docs/plans/2026-09-19-shaping-judgments-plan.md` (issue #1037). Issue #1032 shipped a

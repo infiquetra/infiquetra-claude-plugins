@@ -18,8 +18,6 @@
 
 **Generalizable rule.** When a validator gates a step, a card's filing date is part of its readiness. The repair is to amend the card, which is board authority and belongs to the operator; the wrong repairs are to hand-write the record the refused step would have written, or to edit the card yourself to make the tool pass. Record the refusal verbatim, answer the questions in the plan with their sources, and carry the amendment question to the operator.
 
-## 2026-09-19
-
 ### Removing a module breaks tests that never import it, because they assert the *shape of its output*  {#1026-tests-assert-output-shape-not-imports}
 
 **Evidence.** Issue 1026 removed `plugins/saga/scripts/team_emitter.py`. A four-syntax scan for anything that *reached* it — imports, `spec_from_file_location`, path expressions, command lines — came back clean, and the targeted test run was green. The full suite then failed three cases that never name the module: `tests/test_outcome_dispatcher.py::test_team_execution_artifact_wires_team_emitter`, `tests/test_capability_degrade.py::test_recompile_to_team_tier_emits_team_structure`, and (in a different way) `tests/test_work_review_contract.py::test_priority_and_confidence_never_form_an_acceptance_gate`. The first two assert `"Team Structure" in out` — the heading the removed emitter rendered — reached through `execution_spec.recompile_for_tier`, two call layers away.
@@ -51,6 +49,7 @@
 **Mechanism.** In a plugin repository a script has two kinds of caller: Python that imports it, and a skill or command whose Markdown instructs an agent to execute it. Only the first appears in an import grep, and the second fails later and less legibly — the agent runs a command that is not there, mid-run, with no import error to read.
 
 **Generalizable rule.** Before removing a script from a plugin, scan for every syntax that reaches it — the import, the `spec_from_file_location`, the path expression, and the command line in Markdown — and make the guard that proves the removal scan all four, with a case proving the scanner fires on each.
+
 ### An empty verification ledger means the gate reports `review_incomplete` for every review, and that is the designed state  {#1001-empty-ledger-review-incomplete}
 
 **Context.** Issue #1001 made Saga's code review consume the lens roster that `infiquetra/infiquetra-sdlc` — the lifecycle repository — generates, instead of a policy file shipped inside the plugin. The expectation going in was that reviews would start producing catalogue-backed scores.
@@ -236,6 +235,7 @@ The repair pins the real function's shape directly (`test_real_lens_catalogue_re
 **Generalizable rule.** A hand-rolled frontmatter parser has to handle both spellings of an empty collection, or the one case that is semantically empty becomes indistinguishable from a syntax error — and it will be the case that is rarest and therefore least tested.
 
 **Refs.** Issue #1022; `tests/test_roles_library.py::parse_frontmatter`, `::test_seeded_inline_empty_list_parses`.
+
 ### A reference document can be load-bearing at runtime, and deleting one is a code change  {#1021-reference-documents-are-runtime}
 
 **Evidence.** Issue #1021, commit for U6. `plugins/saga/scripts/plan_save_contract.py:36` held
@@ -377,6 +377,7 @@ did, or silently stops exercising anything the day the data changes.
 **Generalizable rule.** When the property under test is a code path the shipped data cannot reach,
 construct the input instead of asserting the data has a gap. Monkeypatching the one lookup is
 cheaper than a fixture registry and does not rot when the real data moves.
+
 ### A grep for the retired ladder cannot find a retired name used alone  {#1020-sweep-names-not-ladders}
 
 **Context.** Issue #1020 replaced the retired board vocabulary across the mission-control plugin's
@@ -550,6 +551,9 @@ property, and prove the new guard red before you accept it green.
 
 **Refs.** Issue #1020 unit 3; DECISIONS [[#board-census-shape-only-live-skip-424]],
 [[#1020-census-keyed-by-field-name]].
+
+## 2026-09-19
+
 ### A guard in a file your change never touches is invisible to every diff-scoped check  {#full-suite-catches-untouched-guards-1037}
 
 **Evidence.** Issue #1037, commit `4c0a2ac7`. The inner loop was green — `ruff check`, `ruff format --check`, `mypy plugins/ scripts/ tests/`, the whole new test file, both brainstorm guard files, release-surface parity, the release-surface diff guard, the marketplace sync check and the marketplace validator. The full suite across both pytest roots then failed one test: `tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module`.

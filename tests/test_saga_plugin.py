@@ -3970,9 +3970,9 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     assert "**Render the operator status header**" in work_doc
     section = work_doc[work_doc.index("### 5.4 ") :]
     body = section[section.index("\n") :]  # past the heading, which names the steps too
-    assert body.index("**Render the operator status header**") < body.index("Take the merge turn"), (
-        "the status card must lead §5.4, not trail the steps it heads"
-    )
+    assert body.index("**Render the operator status header**") < body.index(
+        "Take the merge turn"
+    ), "the status card must lead §5.4, not trail the steps it heads"
     assert "Run `/qa` in this turn" in work_doc, (
         "issue 1029's continuation contract: the functional test is run, not recommended"
     )

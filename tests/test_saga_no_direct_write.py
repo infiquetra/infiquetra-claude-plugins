@@ -567,9 +567,9 @@ def test_saga_every_submission_carries_the_live_pair() -> None:
                 f"{skill.name}: a submission names the wrong fields: {assignments}"
             )
         pairs = [(a[0][1], a[1][1]) for a in found]
-        assert pairs == [pair for pair in expected if pair in pairs] and set(pairs) <= set(expected), (
-            f"{skill.name}: submitted pairs {pairs} are not a prefix of R1's {expected}"
-        )
+        assert pairs == [pair for pair in expected if pair in pairs] and set(pairs) <= set(
+            expected
+        ), f"{skill.name}: submitted pairs {pairs} are not a prefix of R1's {expected}"
 
 
 def test_saga_every_submitted_pair_is_live_on_the_board() -> None:

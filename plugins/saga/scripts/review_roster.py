@@ -766,9 +766,7 @@ def propose_lenses(
     }
 
 
-def apply_proposal(
-    declaration: Mapping[str, Any], proposal: Mapping[str, Any]
-) -> dict[str, Any]:
+def apply_proposal(declaration: Mapping[str, Any], proposal: Mapping[str, Any]) -> dict[str, Any]:
     """A new declaration with the proposed additions flipped to applies.
 
     The input is never mutated. Only lenses the proposal names *and* the
@@ -843,9 +841,7 @@ def _load_declaration(args: argparse.Namespace) -> dict[str, Any]:
     if args.declaration is not None:
         payload = json.loads(args.declaration.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
-            raise RosterError(
-                "review_roster: the declaration file does not hold a JSON object"
-            )
+            raise RosterError("review_roster: the declaration file does not hold a JSON object")
         return payload
     store_root = (
         Path(args.store_root).resolve() if args.store_root else run_record.resolve_store_root()

@@ -118,9 +118,7 @@ SEVERITY_ANCHORS: tuple[tuple[str, str], ...] = (
     ("P0", "The revision is unsafe to merge as written."),
 )
 SEVERITY_LEVELS: tuple[str, ...] = tuple(level for level, _ in SEVERITY_ANCHORS)
-SEVERITY_RANK: dict[str, int] = {
-    level: rank for rank, level in enumerate(SEVERITY_LEVELS)
-}
+SEVERITY_RANK: dict[str, int] = {level: rank for rank, level in enumerate(SEVERITY_LEVELS)}
 
 #: The probability at or above which two candidate findings are grouped as one defect.
 DEDUPE_THRESHOLD = 0.5
@@ -241,9 +239,7 @@ class Finding:
             "classification": self.classification,
             "duplicate_of": self.duplicate_of,
             "agreed_by": list(self.agreed_by),
-            "severity_flag": (
-                dict(self.severity_flag) if self.severity_flag is not None else None
-            ),
+            "severity_flag": (dict(self.severity_flag) if self.severity_flag is not None else None),
             "path": self.path,
             "line": self.line,
             "category": self.category,
@@ -344,8 +340,7 @@ def _ask_or_fail_open(
     client, _ = _judgment_modules()
     if client is None:
         return None, (
-            "fleet-core's TypeSafe client is unreachable; judged nothing and "
-            "changed nothing"
+            "fleet-core's TypeSafe client is unreachable; judged nothing and changed nothing"
         )
     return client.ask, ""
 
@@ -541,9 +536,7 @@ def dedupe_findings(
                 state=state,
                 questions=questions,
                 answers=answers,
-                answered_keys={
-                    key: f"{left}-{right}" for key, (left, right) in index_of.items()
-                },
+                answered_keys={key: f"{left}-{right}" for key, (left, right) in index_of.items()},
                 threshold=threshold,
                 model=model,
                 log_dir=log_dir,
@@ -696,7 +689,9 @@ def flag_severity(
             state=state,
             questions=questions,
             answers=answers,
-            answered_keys={f"finding_{index}": f"finding_{index}" for index in range(len(findings))},
+            answered_keys={
+                f"finding_{index}": f"finding_{index}" for index in range(len(findings))
+            },
             threshold=None,
             model=model,
             log_dir=log_dir,
@@ -712,9 +707,7 @@ def flag_severity(
     }
 
 
-def attach_severity_flags(
-    findings: Sequence[Finding], outcome: Mapping[str, Any]
-) -> int:
+def attach_severity_flags(findings: Sequence[Finding], outcome: Mapping[str, Any]) -> int:
     """Attach the outcome's upward flags beside the findings' severities.
 
     Returns how many flags were attached. A flag is written onto
@@ -739,9 +732,7 @@ def attach_severity_flags(
             "suggested": flag.get("suggested"),
             "score": flag.get("score"),
             "confidence": flag.get("confidence"),
-            "note": (
-                "advisory: attached for a second look; the stated severity is unchanged"
-            ),
+            "note": ("advisory: attached for a second look; the stated severity is unchanged"),
         }
         attached += 1
     return attached

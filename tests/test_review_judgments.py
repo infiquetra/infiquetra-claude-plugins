@@ -156,9 +156,7 @@ def _finding(rr: ModuleType, **overrides: Any) -> Any:
 
 def test_proposal_asks_one_yes_no_question_per_excluded_lens() -> None:
     calls: list[dict[str, Any]] = []
-    ask = _fake_ask(
-        {"privacy": _noul_answer(0.9), "performance": _noul_answer(0.2)}, calls=calls
-    )
+    ask = _fake_ask({"privacy": _noul_answer(0.9), "performance": _noul_answer(0.2)}, calls=calls)
     proposal = roster.propose_lenses(_declaration(), ask=ask, log=False)
 
     assert proposal["ok"] is True
@@ -181,9 +179,7 @@ def test_proposal_adds_a_lens_and_never_removes_one() -> None:
 
 
 def test_proposal_asks_nothing_when_every_lens_already_applies() -> None:
-    declaration = _declaration(
-        privacy={"applies": True}, performance={"applies": True}
-    )
+    declaration = _declaration(privacy={"applies": True}, performance={"applies": True})
     proposal = roster.propose_lenses(declaration, ask=_exploding_ask, log=False)
 
     assert proposal["ok"] is True
@@ -316,9 +312,7 @@ def test_dedupe_never_drops_a_finding_whatever_the_model_answers() -> None:
 def test_dedupe_only_asks_about_pairs_code_found() -> None:
     """Same path and category is a candidacy; anything else is never asked."""
     same_spot = _finding(results, lens="correctness", line=42)
-    same_file_other_category = _finding(
-        results, lens="security", line=42, category="missing-guard"
-    )
+    same_file_other_category = _finding(results, lens="security", line=42, category="missing-guard")
     other_file = _finding(results, lens="testing", path="plugins/saga/scripts/run_record.py")
 
     pairs = results.dedupe_candidates([same_spot, same_file_other_category, other_file])
@@ -454,9 +448,7 @@ def test_always_on_lens_ids_match_the_lifecycle_catalogue() -> None:
     catalogue = _lifecycle_catalogue()
     if catalogue is None:
         pytest.skip("no lifecycle checkout on this machine")
-    expected = sorted(
-        lens["id"] for lens in catalogue["lenses"] if lens.get("always_on") is True
-    )
+    expected = sorted(lens["id"] for lens in catalogue["lenses"] if lens.get("always_on") is True)
     assert sorted(roster.ALWAYS_ON_LENS_IDS) == expected
 
 
@@ -473,5 +465,7 @@ def _lifecycle_catalogue() -> dict[str, Any] | None:
     for checkout in candidates:
         catalogue_path = checkout / "config" / "lens-catalogue.json"
         if catalogue_path.is_file():
-            return json.loads(catalogue_path.read_text(encoding="utf-8"))
+            data = json.loads(catalogue_path.read_text(encoding="utf-8"))
+            assert isinstance(data, dict)
+            return data
     return None

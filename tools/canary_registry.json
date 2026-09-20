@@ -1,17 +1,5 @@
 [
   {
-    "id": "agent-registration-drift",
-    "guard": "tests/test_agent_registration_drift.py::test_agent_frontmatter_name_matches_stem",
-    "invariant": "Every saga agent file's frontmatter `name:` matches its filename stem, so `saga:<name>` spawn references resolve to a real agent file (#325 R4).",
-    "mutation": {
-      "kind": "replace_text",
-      "file": "plugins/saga/agents/readonly-verifier.md",
-      "find": "name: readonly-verifier",
-      "replace": "name: readonly-verifier-canary-mutant"
-    },
-    "mutation_description": "Rename readonly-verifier's frontmatter `name:` so it no longer matches its file stem."
-  },
-  {
     "id": "release-triad",
     "guard": "tests/test_release_triad.py::test_release_triad_in_sync",
     "invariant": "plugin.json, marketplace.json, and CHANGELOG.md agree on each plugin's version in lockstep (CLAUDE.md step 6, U15/R17).",

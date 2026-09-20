@@ -1,83 +1,54 @@
-"""Surviving-hook contracts for Saga after the lease retirement (#356, #677/U5).
+"""Hook-manifest contracts for Saga: what is registered, and what must never come back.
 
-The lease lifecycle hook and the saga broker wrapper are deleted by campaign #677 unit U5;
-this module now pins what REMAINS: the team teardown hook still fires on its session seams,
-and the hook manifest carries no lease registration — with the registrations that shared the
-lease hook's matcher blocks still armed.
+This module was written after the lease retirement (#356, #677/U5) to pin two things: that no lease
+registration survives anywhere in `hooks.json`, and that the hooks sharing the deleted hook's matcher
+blocks were still armed afterwards -- the guard against a manifest edit taking a neighbour with it.
+
+Issue 1030 removed four more hooks (the delegation tripwire, the delegation stop audit, the
+team-spawn residency check, and the team teardown), and the five teardown-behaviour cases that lived
+here retired with the hook whose behaviour they described. Both original contracts survive, with the
+neighbour list updated to hooks that still exist: a manifest edit that removes four registrations is
+exactly the moment the neighbour guard earns its keep.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
-ROOT = Path(__file__).parent.parent
-SAGA = ROOT / "plugins" / "saga"
-POLICY_PATH = (
-    ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "concurrency_policy.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+HOOKS_JSON = REPO_ROOT / "plugins" / "saga" / "hooks" / "hooks.json"
+
+#: The eight hook files that survive issue 1030, by filename.
+SURVIVING_HOOKS: frozenset[str] = frozenset(
+    {
+        "compact_spore_session_hook.py",
+        "journal_nudge_hook.py",
+        "next_step_session_hook.py",
+        "pre_push_gate_hook.py",
+        "precompact_spore_hook.py",
+        "prompt_suggestion_hook.py",
+        "stale_main_session_hook.py",
+        "validate_json_hook.py",
+    }
 )
-HOOKS_JSON = SAGA / "hooks" / "hooks.json"
+
+#: Every hook issue 1030 removed, plus the two lease hooks removed before it. None may return.
+RETIRED_HOOKS: frozenset[str] = frozenset(
+    {
+        "lease_lifecycle_hook.py",
+        "lease_mutation_hook.py",
+        "delegation_tripwire_hook.py",
+        "delegation_stop_audit_hook.py",
+        "team_spawn_residency_hook.py",
+        "team_teardown_hook.py",
+    }
+)
 
 
-def _load(path: Path, name: str) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-P = _load(POLICY_PATH, "saga_hook_policy_under_test")
-
-
-def _environment(authority: Path, **overrides: str) -> dict[str, str]:
-    result = dict(os.environ)
-    result.update(
-        {
-            "INFIQUETRA_FLEET_STATE_DIR": str(authority),
-            "INFIQUETRA_FLEET_SESSION_LIMIT": "3",
-            "INFIQUETRA_FLEET_AGGREGATE_LIMIT": "7",
-            "INFIQUETRA_FLEET_POLICY_SHA256": P.AdmissionLimits().policy_sha256(),
-            "INFIQUETRA_FLEET_MUTATION": "read-write",
-            "INFIQUETRA_FLEET_CLAIM_TTL_SECONDS": "30",
-            "INFIQUETRA_FLEET_TTL_SECONDS": "300",
-        }
-    )
-    result.update(overrides)
-    return result
-
-
-def _run_hook(
-    path: Path,
-    payload: dict[str, Any] | bytes,
-    *,
-    cwd: Path,
-    environment: dict[str, str],
-) -> subprocess.CompletedProcess[str]:
-    encoded = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-    return _run_hook_text(path, encoded, cwd=cwd, environment=environment)
-
-
-def _run_hook_text(
-    path: Path, payload: bytes, *, cwd: Path, environment: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(path)],
-        cwd=cwd,
-        env=environment,
-        input=payload.decode("utf-8", errors="replace"),
-        capture_output=True,
-        check=False,
-        text=True,
-    )
+def _events() -> dict[str, Any]:
+    return json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
 
 
 def _commands(entries: list[dict[str, Any]], matcher: str | None = None) -> list[str]:
@@ -89,261 +60,76 @@ def _commands(entries: list[dict[str, Any]], matcher: str | None = None) -> list
     return result
 
 
-# The three write-fence tests that lived here were removed with `lease_mutation_hook.py` (#671),
-# and the lease lifecycle tests beside them were removed with `lease_lifecycle_hook.py`
-# (#677/U5). The broker-level behavior they incidentally covered stays pinned directly:
-# supersede-becomes-head at `test_fleet_lease_broker.py:862`
-# (`test_retry_supersedes_at_full_capacity`) and the fence's own two branches at `:1958`/`:1990`
-# — until campaign #677 unit U7 deletes that module too.
+def _all_commands() -> list[str]:
+    return [command for entries in _events().values() for command in _commands(entries)]
 
 
-def test_hooks_json_retires_the_lease_lifecycle_hook_and_keeps_its_neighbours() -> None:
-    """#677/U5: no lease registration survives anywhere in the manifest, and the hooks that
-    shared the lease hook's matcher blocks are still armed — the guard against the manifest
-    edit taking a neighbouring registration with it."""
+def test_no_retired_hook_is_registered_anywhere_in_the_manifest() -> None:
+    """The re-add guard. It names each retired hook by filename, so a restored registration fails
+    on the name rather than on a count that a differently-named replacement would satisfy."""
+    commands = _all_commands()
+    for retired in sorted(RETIRED_HOOKS):
+        offenders = [command for command in commands if retired in command]
+        assert not offenders, f"{retired} is registered again: {offenders}"
 
-    events = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
+
+def test_the_manifest_registers_exactly_the_surviving_hooks() -> None:
+    """The other half: a manifest edit that removes four registrations must not take a fifth.
+
+    Asserting the set rather than a count is the point -- an edit that dropped the journal nudge
+    and added something else would keep any count intact.
+    """
+    registered = {
+        command.rsplit("/", 1)[-1].rstrip('"') for command in _all_commands() if ".py" in command
+    }
+    assert registered == SURVIVING_HOOKS
+
+
+def test_every_registered_hook_file_exists_on_disk() -> None:
+    """A registration pointing at a deleted file fails silently at session start, which is the
+    failure mode that makes hook removal worth guarding at all."""
+    hooks_dir = HOOKS_JSON.parent
+    for name in sorted(SURVIVING_HOOKS):
+        assert (hooks_dir / name).is_file(), f"{name} is registered but not on disk"
+
+
+def test_no_hook_file_on_disk_is_left_unregistered() -> None:
+    """The inverse: a surviving file nobody registers is dead code that reads as live."""
+    on_disk = {p.name for p in HOOKS_JSON.parent.glob("*.py")}
+    assert on_disk == SURVIVING_HOOKS
+
+
+def test_the_events_that_lost_their_only_hook_are_gone_from_the_manifest() -> None:
+    """`SessionEnd`, `Stop` and `SubagentStop` each carried exactly one hook, all removed by issue
+    1030. An event key left behind with an empty list is a manifest that claims a seam it no longer
+    uses."""
+    events = _events()
+    for event in ("SessionEnd", "Stop", "SubagentStop"):
+        assert event not in events, f"{event} is still declared with no hook behind it"
     for event, entries in events.items():
-        assert not any("lease_lifecycle_hook.py" in command for command in _commands(entries)), (
-            f"lease lifecycle hook still registered on {event}"
-        )
+        assert _commands(entries), f"{event} is declared with no command behind it"
 
-    # No mutation fence on the write path since #671; the lease lifecycle hook that shared its
-    # kill switch is gone with #677/U5, and U7's re-add guard is the only path that could
-    # restore either — see DECISIONS {#fence-carried-batch-renewal-671}.
-    assert not any(
-        "lease_mutation_hook.py" in command
-        for matcher in (None, "Bash|Write|Edit|MultiEdit|NotebookEdit")
-        for command in _commands(events["PreToolUse"], matcher)
-    )
 
-    # Surviving neighbours of the edited blocks:
+def test_the_surviving_neighbours_of_the_edited_blocks_are_still_armed() -> None:
+    """The original contract of this module, retargeted. The four removals touched `PreToolUse`
+    (two matcher blocks), `SessionStart` (one), and three whole events; these are the registrations
+    that shared those blocks and had to come through unharmed."""
+    events = _events()
     assert any(
-        "team_spawn_residency_hook.py" in command
-        for command in _commands(events["PreToolUse"], "Agent|Task")
+        "validate_json_hook.py" in command
+        for command in _commands(events["PreToolUse"], "Edit|Write|MultiEdit")
     )
     assert any(
-        "delegation_stop_audit_hook.py" in command for command in _commands(events["SubagentStop"])
+        "pre_push_gate_hook.py" in command for command in _commands(events["PreToolUse"], "Bash")
     )
     assert any(
         "journal_nudge_hook.py" in command for command in _commands(events["PostToolUse"], "Bash")
     )
-
-    # The two events whose ONLY registrant was the lease hook are gone entirely — an empty
-    # event block would be a dead entry, not a retirement.
-    assert "SubagentStart" not in events
-    assert "PostToolUseFailure" not in events
-
-
-# --------------------------------------------------------------- team teardown hook (#358)
-
-TEAM_TEARDOWN_HOOK = SAGA / "hooks" / "team_teardown_hook.py"
-
-
-def _teardown_modules() -> tuple[ModuleType, ModuleType]:
-    scripts = SAGA / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    ledger_module = _load(scripts / "run_ledger.py", "run_ledger_for_teardown_hook_tests")
-    teardown_module = _load(scripts / "team_teardown.py", "team_teardown_for_hook_tests")
-    return ledger_module, teardown_module
-
-
-def _git_repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(
-        ["git", "init", "--quiet", str(repo)], check=True, capture_output=True, timeout=30
+    assert any(
+        "next_step_session_hook.py" in command
+        for command in _commands(events["SessionStart"], "startup|resume")
     )
-    return repo
-
-
-def test_session_end_records_request_only_for_this_sessions_open_runs(tmp_path: Path) -> None:
-    ledger_module, teardown_module = _teardown_modules()
-    repo = _git_repo(tmp_path)
-    ledger = ledger_module.RunLedger.resolve(repo)
-    teardown_module.open_run(
-        ledger,
-        subplot_id="hook-test",
-        session_id="session-mine",
-        at="2026-07-18T14:00:00Z",
-        team_run_id="team-run-mine",
+    assert any(
+        "stale_main_session_hook.py" in command
+        for command in _commands(events["SessionStart"], "startup|resume")
     )
-    teardown_module.open_run(
-        ledger,
-        subplot_id="hook-test",
-        session_id="session-other",
-        at="2026-07-18T14:00:00Z",
-        team_run_id="team-run-other",
-    )
-
-    result = _run_hook(
-        TEAM_TEARDOWN_HOOK,
-        {"hook_event_name": "SessionEnd", "session_id": "session-mine", "cwd": str(repo)},
-        cwd=repo,
-        environment=_environment(tmp_path / "authority"),
-    )
-    assert result.returncode == 0
-    assert "request evidence only" in result.stderr
-    facts = ledger_module.read_facts(ledger)
-    intents = {f["team_run_id"] for f in facts if f.get("event") == "teardown-intent"}
-    assert intents == {"team-run-mine"}
-
-
-def _seed_registry(repo: Path, outcome_id: str, subplot_id: str, path: Path) -> None:
-    store_dir = repo / ".git" / "saga-outcomes" / outcome_id
-    store_dir.mkdir(parents=True, exist_ok=True)
-    registry = store_dir / "worktrees.json"
-    data = json.loads(registry.read_text(encoding="utf-8")) if registry.exists() else {}
-    entries = data.get("worktrees", {})
-    entries[subplot_id] = {"path": str(path), "outcome_id": outcome_id, "repo_root": str(repo)}
-    registry.write_text(
-        json.dumps({"worktrees": entries}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
-
-def test_session_start_recovers_run_whose_worktrees_are_all_absent(tmp_path: Path) -> None:
-    ledger_module, teardown_module = _teardown_modules()
-    repo = _git_repo(tmp_path)
-    ledger = ledger_module.RunLedger.resolve(repo)
-    teardown_module.open_run(
-        ledger,
-        subplot_id="hook-test",
-        session_id="session-crashed",
-        at="2026-07-18T14:00:00Z",
-        team_run_id="team-run-crashed",
-    )
-    # The crashed run's worktree is registered but git no longer lists it — the
-    # broker-free liveness signal recovery acts on (#677/U2).
-    _seed_registry(
-        repo,
-        "hook-outcome",
-        "crashed-sub",
-        repo / ".saga-worktrees" / "hook-outcome" / "crashed-sub",
-    )
-
-    result = _run_hook(
-        TEAM_TEARDOWN_HOOK,
-        {
-            "hook_event_name": "SessionStart",
-            "source": "startup",
-            "session_id": "session-new",
-            "cwd": str(repo),
-        },
-        cwd=repo,
-        environment=_environment(tmp_path / "authority"),
-    )
-    assert result.returncode == 0
-    facts = ledger_module.read_facts(ledger)
-    events = {f["event"] for f in facts if f.get("team_run_id") == "team-run-crashed"}
-    assert "teardown-complete" in events
-    assert "recovery-observation" in events
-    # Teardown removed nothing from disk: the registry entry is untouched evidence.
-    assert (repo / ".git" / "saga-outcomes" / "hook-outcome" / "worktrees.json").exists()
-
-
-def test_session_start_skips_runs_with_git_listed_worktrees(tmp_path: Path) -> None:
-    ledger_module, teardown_module = _teardown_modules()
-    repo = _git_repo(tmp_path)
-    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
-    subprocess.run(
-        ["git", "-C", str(repo), "add", "seed.txt"],
-        check=True,
-        capture_output=True,
-        timeout=30,
-    )
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "-c",
-            "user.email=hook@test",
-            "-c",
-            "user.name=Hook",
-            "commit",
-            "-q",
-            "-m",
-            "seed",
-        ],
-        check=True,
-        capture_output=True,
-        timeout=30,
-    )
-    ledger = ledger_module.RunLedger.resolve(repo)
-    teardown_module.open_run(
-        ledger,
-        subplot_id="hook-test",
-        session_id="session-live",
-        at="2026-07-18T14:00:00Z",
-        team_run_id="team-run-live",
-    )
-    live_path = repo / ".saga-worktrees" / "hook-outcome" / "live-sub"
-    live_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "worktree", "add", "--quiet", "--detach", str(live_path)],
-        check=True,
-        capture_output=True,
-        timeout=60,
-    )
-    _seed_registry(repo, "hook-outcome", "live-sub", live_path)
-
-    result = _run_hook(
-        TEAM_TEARDOWN_HOOK,
-        {
-            "hook_event_name": "SessionStart",
-            "source": "resume",
-            "session_id": "session-new",
-            "cwd": str(repo),
-        },
-        cwd=repo,
-        environment=_environment(tmp_path / "authority"),
-    )
-    assert result.returncode == 0
-    facts = ledger_module.read_facts(ledger)
-    events = {f["event"] for f in facts if f.get("team_run_id") == "team-run-live"}
-    assert "teardown-complete" not in events
-    assert "recovery-observation" in events  # honesty: observed, nothing safe to reclaim
-    assert live_path.exists()
-
-
-def test_teardown_hook_is_visible_and_nonblocking_on_bad_input(tmp_path: Path) -> None:
-    repo = _git_repo(tmp_path)
-    malformed = _run_hook_text(
-        TEAM_TEARDOWN_HOOK,
-        b"not json at all",
-        cwd=repo,
-        environment=_environment(tmp_path / "authority"),
-    )
-    assert malformed.returncode == 0
-    assert "malformed hook payload" in malformed.stderr
-
-    plain_dir = tmp_path / "not-a-repo"
-    plain_dir.mkdir()
-    non_git = _run_hook(
-        TEAM_TEARDOWN_HOOK,
-        {"hook_event_name": "SessionEnd", "session_id": "s", "cwd": str(plain_dir)},
-        cwd=plain_dir,
-        environment=_environment(tmp_path / "authority"),
-    )
-    assert non_git.returncode == 0
-    assert "teardown-complete" not in non_git.stdout
-
-
-def test_hooks_json_arms_bounded_teardown_recovery_seams() -> None:
-    events = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
-    session_end = [
-        hook
-        for group in events["SessionEnd"]
-        for hook in group["hooks"]
-        if "team_teardown_hook.py" in hook["command"]
-    ]
-    assert session_end and session_end[0]["timeout"] == 5
-    session_start = [
-        hook
-        for group in events["SessionStart"]
-        if group.get("matcher") == "startup|resume"
-        for hook in group["hooks"]
-        if "team_teardown_hook.py" in hook["command"]
-    ]
-    assert session_start and session_start[0]["timeout"] == 15

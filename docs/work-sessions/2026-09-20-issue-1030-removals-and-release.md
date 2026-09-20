@@ -96,7 +96,7 @@ Four of the plan's units, each a complete removal in its own right, plus two sma
 |---|---|---|
 | U1 | Ten command files and nine skill directories | `plugins/saga/commands` holds **14** files; `plugins/saga/skills` holds **13** directories |
 | U4 | Four hooks with their registrations, the `SessionEnd`, `Stop` and `SubagentStop` event keys, and both saga agents | `plugins/saga/hooks` holds **8** hook files; `plugins/saga/agents` no longer exists |
-| U5 | Nineteen reference documents, four generated SVGs, the documentation model and its renderer, and the visuals page | — |
+| U5 | Four generated SVGs, the documentation model and its renderer, and the visuals page | `plugins/saga/references` holds **34** files — unchanged but for the spawn-site inventory |
 | U7 | The sandbox-spawn instruction in `CLAUDE.md`, the spawn-site inventory, and the prose in four surviving skills | `grep -c readonly-verifier CLAUDE.md` prints **0** |
 
 Test files went from 302 to **296**: nine whole files retired with their subjects, and one new file,
@@ -105,8 +105,23 @@ gate's coverage contract against `ci.yml` is untouched.
 
 **The script line count is the measure that did not move**: 60,133 to **59,671**, against a target of
 under 15,000. Every remaining line is behind the blocker described above. This is the honest state of
-the card: the command surface, the hooks, the agents, the references and the project instruction are
-done; the script families, which are the line count, are not.
+the card: the command surface, the hooks, the agents and the project instruction are done; the script
+families, which are the line count, are not.
+
+**One correction worth recording, because it is a rule and not an accident.** The references commit
+first deleted nineteen reference documents on the grounds that they describe removed families. They
+do — but the families are the script removal, and the script removal is blocked, so fifteen of the
+nineteen were verified one by one to document a module still on disk. Deleting the documentation of
+live code is strictly worse than leaving both: the next reader hits a module with no contract and has
+to reconstruct what it guarantees. All nineteen were restored, with the two prose edits and the
+baseline entry premised on their absence. **A reference document is deleted in the same commit as the
+code it documents, never ahead of it.** A check for dangling paths from every surviving skill,
+command, hook and reference is what caught it, and that check is worth running after any deletion
+pass.
+
+What genuinely had no subject left stayed deleted: the documentation model, the four SVGs, the
+visuals page and their renderer, which described a 24-command surface that is now 14, and the
+spawn-site inventory, whose two agents are gone.
 
 ## Inner-loop results at this branch head
 

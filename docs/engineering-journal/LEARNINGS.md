@@ -2,6 +2,29 @@
 
 ## 2026-09-20
 
+### Documentation is deleted in the same commit as the code it documents, never ahead of it  {#docs-go-with-their-code-1030}
+
+**Evidence.** Issue 1030, commits `bc05521b` (the mistake) and `00e38cd1` (the correction), caught by
+a check for dangling paths from every surviving saga skill, command, hook and reference.
+
+**Mechanism.** The card removes eleven command families, so a commit deleted the nineteen reference
+documents describing them. But the families *are* the script removal, and the script removal was
+blocked on a separate finding. Fifteen of the nineteen were then verified one by one to document a
+module still on disk — `adjustment-envelope.md` and `adjustment_envelope.py`, `run-fact-ledger.md`
+and `run_ledger.py`, `fleet-doctor-sources.md` and `fleet_doctor.py`, and so on. The failure is
+asymmetric and that is what makes it worth a rule: code with stale documentation is a known hazard a
+reader can see, while live code whose contract was deleted looks like code that never had one, and
+the next person to touch it reconstructs the guarantees by guessing.
+
+It surfaced as a test failure three steps away — a case reading a deleted reference — rather than as
+anything that looked like a documentation problem, which is the other half of the lesson: nothing in
+a deletion pass tells you that you removed a description of something that still exists.
+
+**Generalizable rule.** A document that describes a module is deleted in the same commit as the
+module. When a removal is split across commits, the documentation waits for the code, not the other
+way round — and after any deletion pass, grep every surviving surface for paths that no longer
+resolve.
+
 ### A count is the weakest half of a surface guard  {#count-is-the-weak-half-1030}
 
 **Evidence.** `tests/test_command_surface.py`, added in issue 1030's first unit; the card's own

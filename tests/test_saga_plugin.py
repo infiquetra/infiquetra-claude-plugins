@@ -46,7 +46,12 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.161.0"  # 0.161.0: the per-repository tier overlay
+    assert plugin_json["version"] == "0.163.0"  # 0.163.0: one JSON run record per issue,
+    # outside every worktree and addressed by an absolute path, plus the admission questionnaire
+    # asked once at the front of /plan issue (issue #1023). Bumped from 0.161.0, the version on
+    # origin/parent/1018 at 550ae6ce; the coordinator's fold of main takes that branch to 0.162.0,
+    # so 0.163.0 is the next free minor either way.
+    # Predecessor 0.161.0: the per-repository tier overlay
     # reads through one implementation in fleet-core (issue #1021).
     # Predecessor 0.160.0: parse_issue.py gains --flags and
     # --issue, which widen the five keyword flags with a model judgment (widen-only: a keyword

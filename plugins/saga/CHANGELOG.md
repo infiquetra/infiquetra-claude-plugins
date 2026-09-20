@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.163.0] - 2026-09-19
+
+**Bumped from 0.161.0, the saga version on `origin/parent/1018` at commit `550ae6ce` when this card
+was built.** The coordinator's fold of `main` into that integration branch sets saga to 0.162.0, so
+0.163.0 is the next free minor whether or not the fold has landed — the two cannot collide.
+
+- **One JSON run record per issue, and an admission questionnaire asked once (#1023).**
+  `scripts/run_record.py` and `scripts/admission.py` are new. The record holds the admission
+  answers, the thirteen run-configuration parameters, the seven approval boundaries, the roster with
+  its pane identifiers, the units with their worktree, branch and merge-turn state, the review
+  results by cycle, and `next_step`. Its schema is a reference document,
+  `references/run-record.md`, with a test that fails when the document and the code disagree.
+
+- **The record lives outside every worktree and is addressed by an absolute path.** The store root
+  is the git *common* directory's parent plus `.claude/saga/runs`, so a process in a linked worktree
+  resolves the same file as one in the primary checkout. A repository-relative path resolves inside
+  the worktree, where the git-ignored directory does not exist — the failure issue 886's fifth
+  finding reported against the orchestrate plugin's `.orchestrate/`.
+
+- **An unknown record version is one line and exit 3, never a traceback (#975).** Every loader call
+  sits inside the command line's single catch, which is the arrangement finding F124 said was
+  missing. An unknown *top-level field* round-trips unchanged and is reported by name (#989), rather
+  than being dropped silently on the next save.
+
+- **The run record is authoritative over the saga envelope for `next_step`.**
+  `saga.authoritative_next_step()` prefers the record and falls back to the envelope only when there
+  is no record; `saga.mirror_next_step_to_record()` is the one write in the other direction. The
+  spore hooks now freeze and re-inject the record across the compaction boundary.
+
+- **`/plan issue` runs admission first.** The card validator gates it, every defaultable parameter is
+  filled from the new `.saga-profile.json`, fleet-core's staffing component and the lifecycle
+  repository's decided defaults, and only what is left is put to the operator — once, in one message.
+  An answer already in the record is never re-asked.
+
+- **Nothing is removed.** The six stores the record replaces — the run-fact, evidence-custody,
+  dispatch-settlement and effort ledgers, the envelope tokens and the ship receipts — stay in place;
+  the removals card (#1030) deletes them once every reader has moved. The replacement map is in
+  `references/run-record.md`.
+
 ## [0.161.0] - 2026-09-19
 
 **Requires fleet-core 0.28.0 or later.** `scripts/tier_defaults.py` loads

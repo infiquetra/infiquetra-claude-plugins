@@ -2,6 +2,48 @@
 
 ## 2026-09-19
 
+### Two different sets of thirteen sit in the lifecycle repository, and a count check passes on the wrong one  {#1023-two-sets-of-thirteen}
+
+**Context.** Issue #1023 asked for "the thirteen sdlc run-configuration parameters" in the new run record, citing `docs/lifecycle/run-model.md` lines 129 to 156.
+
+**Evidence.** At the pinned revision `5efc869f` the lifecycle repository holds two sets of thirteen. One is the run model's run-configuration table: staffing and efforts, concurrency, the two cycle allowances, the escalation trigger, the non-production destination, the unfinished-testing response, the applicable lenses, the per-lens threshold, the mechanical tool baseline, the recovery rules, repair custody, and the preflight checks. The other is the `required_fields` list of the `orchestrator-to-controller` contract, vendored in this repository at `plugins/agent-launcher/roles/lifecycle-snapshot.json`, which carries `roster_hash`, `executors_and_topology`, `session_reset_authority`, `exception_decisions` and `investigator_triggers` — none of which appear in the run model's table. Two of the thirteen names (`concurrency_allocation`, `unfinished_testing_response`) are common to both, which is what makes the confusion easy.
+
+**Mechanism.** They are the same size, they live in the same repository at the same revision, they describe the same run, and both read as "the thirteen". A guard written as `len(PARAMETERS) == 13` passes on either, so the one check an implementer naturally writes is the one that cannot tell them apart. The sets differ in kind: the run model's is what a run *decides*, the contract's is what one role *hands to another*.
+
+**Fix.** `tests/test_run_record.py::test_run_configuration_holds_the_run_model_thirteen_not_the_run_setup_contract_thirteen` reads the contract's field list out of the vendored snapshot and asserts that no contract-only name has been swapped into the record's parameters. Reverting one name into the record makes fifteen tests fail; a count check would have made none.
+
+**Generalizable rule.** When two vocabularies in one source have the same cardinality, guard them by name against the source, never by count — a cardinality check is satisfied by the wrong answer.
+
+### A guard that pins a document to code has to be watched failing, because the natural way to write it passes on an empty document  {#1023-document-guards-watched-failing}
+
+**Context.** The run record's schema is a reference document, `plugins/saga/references/run-record.md`, and six tests assert the document and `run_record.py` agree about the key set, the parameters, the version token and the refusal line.
+
+**Evidence.** All six were written before the document existed and were watched failing on a missing file. Eight further mutations — swapping in a contract field name, dropping a top-level key from the write order, disabling the version refusal, dropping unknown fields instead of preserving them, letting a stale envelope win over the record, replacing the atomic move with a plain write, rewording the refusal, and resolving the store from the worktree instead of the git common directory — each killed at least one test, and the tree returned green after every restore.
+
+**Mechanism.** A document-versus-code guard is easy to write in a shape that never fails: a regular expression that finds nothing in a document returns an empty list, and an empty list compared against an empty list passes. Anchoring the extraction between explicit `<!-- BEGIN … -->` markers and comparing against the code's own tuple makes the empty case a failure rather than a pass.
+
+**Generalizable rule.** A guard is not evidence until it has been seen red. Mutate the thing it guards and watch it die before trusting it — especially a guard whose failure mode is finding nothing.
+
+### A test suite run from a linked worktree wrote its saga state into the worktree, which is the bug the card was about  {#1023-worktree-store-observed-live}
+
+**Context.** While planning #1023, the plan's own saga tick was written from a linked worktree.
+
+**Evidence.** The tick landed at `<worktree>/.claude/saga/sagas/issue-1023/…`, not in the primary checkout's store, because `plugins/saga/scripts/saga.py:45` sets `STATE_DIR = Path(".claude/saga")` — a path relative to the process's working directory. `run_record.resolve_store_root()`, run from the same worktree, returns the primary checkout's `.claude/saga/runs`, because it asks git for the *common* directory instead.
+
+**Mechanism.** `git rev-parse --git-common-dir` returns the main repository's `.git` from every linked worktree, so its parent is the primary checkout from anywhere. A relative path cannot express that, and the failure is silent: the worktree read returns "no state", which is indistinguishable from "no run".
+
+**Generalizable rule.** State that several worktrees must share is addressed from the git common directory, never by a repository-relative path. The relative form fails as absence, and absence looks like a legitimate answer.
+
+### A test that reverts the fix it covers is the cheapest way to catch a wrong call signature  {#1023-tuple-return-caught-by-real-call}
+
+**Context.** `admission.py` locates the mission-control plugin through `fleet_commons.plugin_resolution.resolve_plugin_root`, following `board_progression.py`.
+
+**Evidence.** The first version wrote `resolve_plugin_root(...) / "scripts" / "sdlc_manager.py"`. That helper returns `(root, rung)`, not a path, so the expression raised `TypeError: unsupported operand type(s) for /: 'tuple' and 'str'`. Every test that injected a fake validator passed; only `test_the_real_validator_accepts_a_well_formed_card`, which calls the real resolution once, failed.
+
+**Mechanism.** A module whose collaborators are all injected for testability is tested entirely against the injected shapes, so a mistake about the *real* collaborator's signature has nowhere to surface. One test that exercises the real path costs a fraction of a second and is the only thing standing between that mistake and a run-time failure at the front of every run.
+
+**Generalizable rule.** When every collaborator is injectable, keep exactly one test that uses the real one. Injection makes tests fast; it also makes them agree with a fiction unless something checks.
+
 ### A test that demands a sibling checkout is green on a developer machine and red on the runner  {#1022-sibling-checkout-asymmetry}
 
 **Context.** `tests/test_roles_library.py` checks fourteen role prompts against lifecycle data owned by the sibling repository `infiquetra-sdlc`. An earlier repair made the suite fail when that data came from a copy vendored in this repository rather than from a live checkout, on the reasoning that comparing the prompts to this repository's own copy proves little.

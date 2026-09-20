@@ -70,6 +70,50 @@ The input is an issue reference, a requirements doc path, or an ad-hoc request. 
 arguments or the active artifact. If empty, ask: "What would you like to plan? Point me at the
 requirements doc, the issue, or describe the work." Do not proceed without one.
 
+### 0.1b Admission — the first thing `/plan issue` does
+
+When the input is an issue, run admission before anything else. It is where "answer the questions up
+front" lives: the card validator runs, every defaultable run-configuration parameter is filled from
+the per-repository profile, fleet-core's staffing component and the lifecycle repository's decided
+defaults, and only what is left over is put to you — once, in one message.
+
+```bash
+python3 plugins/saga/scripts/admission.py --issue <N> --dry-run
+```
+
+Read what it prints. It names the defaults it filled with the source of each, and the questions that
+remain. Then:
+
+1. **A card that fails the validator stops here.** Admission exits 2 and names the missing fields.
+   The repair belongs on the card, through `mission-control`, not in the plan — planning against a
+   half-formed card is what the lifecycle repository's Shaping exit exists to prevent.
+2. **Put the printed questions to the operator as one message** (`AskUserQuestion`, or
+   channel-inline). One message, not one question at a time: the whole point is that the operator
+   answers the run's shape once. Never invent an answer to any of them — the approval boundaries in
+   particular are the operator's grant and nobody else's.
+3. **Record the answers**, which writes the run record and clears the questions:
+
+   ```bash
+   printf '%s' "$ANSWERS_JSON" > /tmp/admission-answers.json
+   python3 plugins/saga/scripts/admission.py --issue <N> --answers /tmp/admission-answers.json
+   ```
+
+The record lands at `<primary checkout>/.claude/saga/runs/issue-<N>.json` — an absolute path outside
+any worktree, so every later role reads the same file. Say that path in your first message; later
+steps and other sessions are told to read it.
+
+An answer already in the record is never re-asked, so re-running `/plan` on an admitted issue prints
+an empty question set and costs nothing. The schema is
+`plugins/saga/references/run-record.md`; the profile is
+`plugins/saga/references/repository-profile.md`.
+
+The questions admission asks are the run's shape, not the plan's content: Risk tier and its
+justification, the seven approval-boundary scopes, the destination, staffing overrides, the lens
+declaration, the repair allowances, the response to unfinished functional testing, whether the
+repository has a branch preview, whether `main` is consumed directly, and whether the change is
+code, docs, or mixed. Phase 5's own questions (destination, backend) are separate and stay where
+they are; where admission has already recorded the destination, do not ask it again.
+
 ### 0.2 Issue handoff routing
 
 If the input is a GitHub issue, run `scripts/parse_issue.py` and inspect the `handoff` object. Pass

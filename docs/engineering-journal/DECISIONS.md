@@ -2,6 +2,54 @@
 
 ## 2026-09-19
 
+### The run record's version field is `schema`, holding a family token, not a bare version number  {#1023-schema-field-convention}
+
+**Decision.** The run record carries its version in a top-level `schema` field whose value is `run_record.v1`. Reading a record with any other value prints one line to standard error and exits 3.
+
+**Rationale.** This repository's machine-readable artifacts already use exactly that shape: `plan_pre_answers.v1` in saga, `roles_index.v1` and `lifecycle_snapshot.v1` in agent-launcher, `run_fact.v1` in the run-fact ledger, and `review_result.v2` in the simplification review. The family token says *which* artifact a file is as well as which version, so a reader handed a stray JSON file can tell what it is — a bare `"version": "1.0"` cannot. Every later child of #1018 reads this record, so the convention is worth being consistent about rather than novel.
+
+**Alternatives rejected.** `schema_version: "1.0"`, the shape `saga.py` itself uses — rejected because it names no family, and because the newer artifacts in this repository have already moved. A `contract` string, the shape the orchestrate run file uses — rejected for the same reason, and because #975 and #989 are both defects in that file's handling of it.
+
+**Revisit when.** A second version exists. `run_record.v2` is the point at which the refusal has to become a migration, and the refusal text already names the version it writes so the upgrade path is legible from the error.
+
+**Refs.** Issue #1023; plan KTD2; issues #975 (finding F124) and #989 (finding F138); `plugins/saga/references/run-record.md`.
+
+### The run record is written with an atomic replace and takes no lock  {#1023-no-lock-atomic-write}
+
+**Decision.** A write to the run record goes to a sibling temporary file and is moved into place with `os.replace`. There is no lock, no lease, no reservation, and no receipt. A reader that needs to know it holds the newest copy re-reads and compares `updated_at`.
+
+**Rationale.** The parent issue #1018 lists "no new lease, reservation, receipt, or ledger mechanism, whatever a child finds" among its non-goals, and its stop conditions say to stop and report if a child would need a lock to pass its own tests. This one does not: one coordinator owns one run record and the roles it dispatches report back to it, so simultaneous writers are not the normal case, and `os.replace` is atomic on every platform this runs on — a concurrent reader sees either the old file or the new one, never a half-written one. The machinery this record replaces is roughly 4,565 lines of hash-chained, lock-bearing ledgers; reintroducing a lock in the file that replaces them would defeat the exercise.
+
+**Alternatives rejected.** An advisory `flock`, as `run_ledger.py` uses — rejected as the forbidden mechanism, and unnecessary given single ownership. Append-only ticks with derived state, as the saga envelope log does — rejected because the record's value is that it is *one file a reader can read*, and the envelope log already keeps the history.
+
+**Revisit when.** A run legitimately has two concurrent writers — the first candidate is issue #1024's roster helper writing pane identifiers while the coordinator writes `next_step`. The cheap repair is a read-modify-write on a narrow field rather than a lock; the expensive one is a lock, and it needs the operator, because it crosses the parent's non-goal.
+
+**Refs.** Issue #1023; plan KTD4b; parent issue #1018's non-goals and stop conditions.
+
+### The run record wins over the saga envelope for `next_step`  {#1023-record-wins-for-next-step}
+
+**Decision.** Both the run record and saga's envelope log carry a field called `next_step`. The record is authoritative. `saga.authoritative_next_step()` prefers the record and falls back to the envelope only when there is no record; `saga.mirror_next_step_to_record()` is the single write in the other direction, from a tick that sets a step onto the record.
+
+**Rationale.** The two artifacts have different natures. The envelope log is append-only history, and its older ticks are *meant* to hold values that are now stale — that is what makes it a history. The record is one mutable file that every role reads. Reconciling from the envelope onto the record would let a stale tick move a live run backwards, which is the one failure mode this pair can produce and the reason the direction has to be written down rather than left to whichever call site runs last.
+
+**Alternatives rejected.** Newest-timestamp-wins — rejected because the envelope's newest tick and the record's `updated_at` come from different writers at different moments, so "newest" is not a fact about which is correct. Removing `next_step` from the envelope — rejected as out of scope here; the envelope is deleted or reshaped by later children, and this card is additive by design.
+
+**Revisit when.** The removals card (#1030) reshapes the envelope. If `next_step` leaves the envelope entirely, the fallback becomes dead code and the rule becomes trivially true.
+
+**Refs.** Issue #1023; plan KTD8a; `tests/test_run_record.py::test_the_record_is_authoritative_over_a_stale_saga_envelope_next_step`.
+
+### The per-repository profile is a tracked file at the repository root, not under the git-ignored `.saga/`  {#1023-profile-at-repo-root}
+
+**Decision.** The admission step reads its per-repository defaults from `.saga-profile.json` at the repository root, tracked in git.
+
+**Rationale.** The obvious home was `.saga/repository-profile.json`, beside the existing tier overlay that `scripts/tier_defaults.py` reads. `.gitignore:70` excludes `.saga/` in this repository, so a fresh clone or a fresh worktree would see no profile, and admission would ask questions whose answers were settled long ago. That is the same class of failure the run record itself exists to fix, and reintroducing it in the file whose entire job is to stop questions being re-asked would be perverse. A missing profile is not an error — every parameter it would have filled stays unset and joins the question set — so the cost of the decision being wrong is bounded.
+
+**Alternatives rejected.** `.saga/repository-profile.json` — rejected for the reason above. A profile inside the saga plugin — rejected because it is per-repository data and the plugin is shared across repositories. Two files with a precedence ladder, tracked plus local override — rejected as unearned complexity until someone wants a local override.
+
+**Revisit when.** Someone needs a machine-local override of a repository-wide default. The tracked file stays; a `.saga/` overlay reading over it is the addition, and it is additive.
+
+**Refs.** Issue #1023; plan KTD5; `plugins/saga/references/repository-profile.md`.
+
 ### The roles library ships fourteen prompts, not the card's thirteen  {#1022-fourteen-roles}
 
 **Decision.** `plugins/agent-launcher/roles/` holds one prompt for each of the fourteen lifecycle roles that can be staffed as an agent session — the catalogue's fifteen minus the Human Operator, who is a person. Issue #1022 enumerates thirteen; the one it omits is the Initial Implementation Worker, role identifier `implementer`.

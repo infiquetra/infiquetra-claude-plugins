@@ -18,7 +18,7 @@ Eight, all supported by the document itself or by code read in this worktree.
 
 | Key | Priority | What was wrong | Fix |
 |---|---|---|---|
-| D1 | P1 | The record's top-level key set was never stated, so an implementer and every later child would each invent one — on the card whose whole point is a fixed schema. | Added KTD4a naming eleven top-level keys, what each holds, and the missing-key rule. |
+| D1 | P1 | The record's top-level key set was never stated, so an implementer and every later child would each invent one — on the card whose whole point is a fixed schema. | Added KTD4a naming the top-level keys, what each holds, and the missing-key rule. |
 | D2 | P1 | Both the run record and the saga envelope carry `next_step` and the plan did not say which wins on a disagreement. | Added KTD8a: the record is authoritative, the envelope mirrors it, nothing reconciles backwards. |
 | D3 | P1 | Nothing said how two writers are handled, and the parent's stop conditions say to stop if a child needs a lock — so silence invited an implementer to add one. | Added KTD4b: atomic write then replace, no lock, no lease, `updated_at` is what a reader compares. |
 | D4 | P1 | Two different things are called "destination" — saga's four-value routing intent and the lifecycle repository's lower-environment parameter — and the schema held both without distinguishing them. | Added the "Two things called destination" paragraph under KTD4a, citing `saga.py:78`. |

@@ -197,15 +197,18 @@ Each value is an object `{"value": …, "chosen_by": "delivery_manager"|"planner
 operator gave from one a default filled. The run setup contract's shape is what issue 1024's roster
 helper and issue 1028's close step will *emit* from this block; it is not the block's own key set.
 
-**KTD4a — the record's top-level key set, fixed here so no later child invents one.** Eleven keys,
-in this order, and nothing else at the top level except an unknown key preserved under KTD3:
+**KTD4a — the record's top-level key set, fixed here so no later child invents one.** Twelve keys,
+in this order, and nothing else at the top level except an unknown key preserved under KTD3. (The
+first draft of this plan said eleven because the table below put `created_at` and `updated_at` on
+one row; the code writes twelve and the guard test pins twelve.)
 
 | Key | Holds |
 |---|---|
 | `schema` | the version token, `run_record.v1` (KTD2) |
 | `issue` | the issue number, an integer |
 | `repo` | `owner/name` of the repository the issue belongs to |
-| `created_at` / `updated_at` | ISO-8601 timestamps in UTC |
+| `created_at` | ISO-8601 timestamp in UTC, set once at the first write |
+| `updated_at` | ISO-8601 timestamp in UTC, refreshed on every write |
 | `admission` | the questionnaire: `card_validation`, `answers` (each with its question id, value, source and timestamp), `pending_questions`, and the answers R8 names that are not run-configuration parameters — the Risk tier with its justification, the branch-preview fact, whether `main` is consumed directly, and the code/docs/mixed shape |
 | `run_configuration` | KTD4's thirteen parameters, each `{value, chosen_by, source}` |
 | `approval_scope` | the seven categories of the lifecycle repository's escalations chapter, each with the scope the operator granted or `none` |
@@ -323,9 +326,9 @@ error and maps it to exit 3.
   checkout, proved in a temporary repository built with `git init` plus `git worktree add`, never
   against this repository.
 - A common directory not named `.git` refuses with one line naming it.
-- A round trip of a fully populated record — every one of KTD4a's eleven top-level keys, with all
+- A round trip of a fully populated record — every one of KTD4a's twelve top-level keys, with all
   thirteen parameters of KTD4's table filled — is byte-identical on the second write.
-- The module's top-level key set is exactly KTD4a's eleven, failing with the differing names
+- The module's top-level key set is exactly KTD4a's twelve, failing with the differing names
   printed.
 - A record missing an optional key reads back with that key's empty default and no refusal.
 - Two writes in sequence leave no `.tmp` sibling behind and the second write's content wins.
@@ -344,7 +347,7 @@ the contract has to be readable before a consumer exists. The card's Risk sectio
 
 - The thirteen parameter keys named in `plugins/saga/references/run-record.md` are exactly the
   thirteen the module writes — same names, same count, failing with the differing names printed.
-- The eleven top-level keys named in the document are exactly the eleven the module writes.
+- The twelve top-level keys named in the document are exactly the twelve the module writes.
 - The version token in the document is the module's `SCHEMA` constant.
 - The refusal line in the document is the string the module prints, character for character.
 

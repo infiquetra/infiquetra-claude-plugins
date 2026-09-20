@@ -1040,6 +1040,59 @@ def read_ticks(root: Path, saga_id: str) -> list[Saga]:
     return [parse_envelope(p.read_text(encoding="utf-8")) for p in files]
 
 
+def authoritative_next_step(
+    root: Path,
+    saga_id: str,
+    *,
+    store_root: Path | None = None,
+) -> str:
+    """Return the run's ``next_step``, preferring the run record over this envelope log (#1023).
+
+    Both this engine and the run record carry a field of that name, so something has to say which
+    wins. The RECORD wins (plan KTD8a): it is the one file every role reads, and the envelope log
+    is append-only history whose older ticks are *meant* to hold stale values, so reconciling in
+    the other direction would let a stale tick move a live run backwards.
+
+    Falls back to the envelope's value when there is no record for the issue, when the saga is not
+    issue-shaped, or when the record module is unavailable — a missing record means "no run record
+    yet", never "no next step".
+    """
+    saga = restore(root, saga_id)
+    envelope_value = saga.next_step if saga is not None else ""
+    if saga is None or saga.kind != "issue" or not saga.id.isdigit():
+        return envelope_value
+    try:
+        import run_record  # noqa: PLC0415  (optional at call time, by design)
+
+        resolved = Path(store_root) if store_root is not None else run_record.resolve_store_root()
+        recorded = run_record.get_next_step(resolved, int(saga.id))
+    except Exception:
+        return envelope_value
+    return recorded or envelope_value
+
+
+def mirror_next_step_to_record(
+    saga: Saga,
+    *,
+    store_root: Path | None = None,
+) -> Path | None:
+    """Write *saga*'s ``next_step`` onto the issue's run record; return the path, or ``None``.
+
+    The write direction that KTD8a allows: a tick that sets a next step updates the authority.
+    Silent on every failure a caller cannot act on — a saga tick must not fail because the run
+    record's store is unreachable, since the tick is the older and more fundamental artifact.
+    """
+    if saga.kind != "issue" or not saga.id.isdigit() or not saga.next_step:
+        return None
+    try:
+        import run_record  # noqa: PLC0415  (optional at call time, by design)
+
+        resolved = Path(store_root) if store_root is not None else run_record.resolve_store_root()
+        return run_record.set_next_step(resolved, int(saga.id), saga.next_step)
+    except Exception:
+        return None
+
+
 def _normalized_plan_path(root: Path, plan_path: str) -> Path:
     """Return a lexical absolute path for comparing recorded plan references."""
     path = Path(plan_path)

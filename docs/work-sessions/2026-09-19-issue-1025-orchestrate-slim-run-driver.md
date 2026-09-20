@@ -178,3 +178,32 @@ card — moves board writes into saga and removes the path then. Unit U8's inven
 |---|---|
 | `Active` / `Implementing`, at the start of the work | `written`, `field: Stage+Status`, 1 attempt |
 | `Active` / `Code review`, at the end | recorded in the return; the suite was green first |
+
+## What the whole-repository suite caught that the card's own inner loop did not
+
+The inner loop this card ran was `pytest tests/test_orchestrate*.py`. Three suites outside that
+glob also drive the driver, and all three were red at the first whole-repository run — 3 failed,
+8,778 passed. None of the three is a flake; each is a real consequence of this card's changes.
+
+| Suite | What was wrong | Repair |
+|---|---|---|
+| `tests/test_lint_test_shape.py` | The fake-only test-shape lint flagged five of this card's new modules. Each imports a fake from the shared helper but crossed into the real driver only inside `load_orchestrate`, which is a helper the static lint cannot follow | `load_orchestrate` now takes the driver path and every module constructs its own, so a module that drives production code names the file it drives on its own face. That is the lint's contract, not a way around it |
+| `tests/test_review_loop_end_to_end.py` | It built a `Run` by hand and called `save()`, `Run.load()` and `cmd_land` — all three moved in this card | Migrated, not removed. The flow it proves — a failing review requests a repair, the repair lands, the controller is resubmitted, the next cycle accepts — is exactly what this card must not break. It now writes a record under `tmp_path` and calls `merge` |
+| `plugins/agent-launcher/tests/test_launcher_contract.py` | It asserted the driver cites DECISIONS `{#907-staged-input-redeliver}`. The driver no longer can: the automatic redelivery went with the persisted launch receipt | The decision is superseded in part by `{#1025-staged-stop-does-not-auto-redeliver}`; the driver cites the successor at the staged-stop site; the guard asserts the successor and the supersession note rather than dropping the assertion |
+
+**The generalizable rule.** A card-scoped inner loop proves the card and nothing else. When a card
+changes a module other suites import, the whole-repository run is not a formality at the end — it
+is the first honest read, and it should come before the merge rather than after it.
+
+## The second merge
+
+`origin/parent/1018` advanced again while the first whole-repository suite ran, to **`54a526b1`**,
+carrying issue 938 (Work's in-process second-opinion offer and its private machinery removed, saga
+0.167.0). Two files conflicted:
+
+- The saga changelog keeps both sections. Issue 938's 0.167.0 stands as it merged; this card
+  renumbers to **0.168.0** above it. That is the third renumber on this branch: 0.165.0 went to
+  issue 1001, 0.166.0 to issue 1026, 0.167.0 to issue 938, each taken while this card's suite ran.
+- The saga version guard names 0.168.0 and records what each of the three predecessors shipped.
+
+Orchestrate stays at 5.0.0; only a comment changed in the driver after the first merge.

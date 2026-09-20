@@ -2,6 +2,25 @@
 
 ## 2026-09-20
 
+### A card-scoped inner loop proves the card and nothing else  {#1025-card-scoped-inner-loop-is-not-the-suite}
+
+**Evidence.** Issue #1025, commit `d2f9c0b4`. The card's inner loop was
+`pytest tests/test_orchestrate*.py`, which was green at 896 passed. The first whole-repository run
+was 3 failed, 8,778 passed, and all three failures were real consequences of the card:
+`tests/test_lint_test_shape.py` (five new modules read as fake-only because the real driver was
+loaded inside a helper the static lint cannot follow), `tests/test_review_loop_end_to_end.py` (a
+hand-built `Run` calling `save()`, `Run.load()` and `cmd_land`, all three moved by the card), and
+`plugins/agent-launcher/tests/test_launcher_contract.py` (a cross-plugin guard asserting the driver
+cites a decision whose behaviour the card removed).
+
+**Mechanism.** The glob a card uses to iterate is named after the card, not after the blast radius
+of the module it edits. Every suite that imports the changed module is outside that glob by
+construction, and a cross-plugin guard is outside it twice over — different plugin, different
+pytest root. Three separate classes of breakage all hid in the same place for the same reason.
+
+**Generalizable rule.** When a card changes a module other suites import, run the whole repository
+before the merge, not after it — the card-scoped loop is the fast loop, never the proof.
+
 ### Updating the existing tests was the larger half of the work, and the plan called it incidental  {#1025-updating-in-place-was-the-larger-half}
 
 **Evidence.** Issue 1025's plan, unit U8 (`docs/plans/2026-09-19-issue-1025-orchestrate-slim-run-driver-plan.md`), said four test modules would be deleted and named the rule for deleting them; everything else it called "updated in place where the record replaces the run file", in one clause, with no unit of its own. The driver rewrite was 6,450 lines going to 6,237. The test migration that followed touched 26 modules, needed ten mechanical passes plus per-test work, and ran from 276 failing tests to zero. It was reported honestly as unfinished once, mid-flight, because it could not be finished in the session that started it.

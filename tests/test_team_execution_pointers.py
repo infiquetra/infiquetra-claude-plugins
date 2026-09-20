@@ -1038,17 +1038,6 @@ def test_snapshot_rejects_sparse_checkout_worktree(tmp_path: Path) -> None:
         raise AssertionError("expected GitError for a sparse-checkout worktree")
 
 
-def test_resume_skill_references_valid_artifact_pointer_script_path() -> None:
-    """Architecture P3: /resume's consumer instruction hardcodes the artifact_pointer.py path; guard
-    that the referenced script exists so a future move cannot silently break the consumer."""
-    repo_root = Path(__file__).resolve().parent.parent
-    resume_skill = repo_root / "plugins" / "saga" / "skills" / "resume" / "SKILL.md"
-    text = resume_skill.read_text(encoding="utf-8")
-    script_rel = "plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py"
-    assert script_rel in text, "resume SKILL must reference the artifact_pointer.py deref path"
-    assert (repo_root / script_rel).is_file(), f"{script_rel} referenced by resume SKILL is missing"
-
-
 def test_liveness_baseline_and_unchanged_observation_create_no_pointer_ref(tmp_path: Path) -> None:
     ap = _load()
     repo = _init_repo(tmp_path / "repo")

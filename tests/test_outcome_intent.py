@@ -1472,28 +1472,3 @@ def test_tightening_attach_cannot_gate_crash_window_leaf(repo: Path) -> None:
 # Release-surface drift guard (CLAUDE.md step 6): installed-plugin metadata must tell the
 # same story as this diff — the verb exists AND the release surfaces mention it.
 # ---------------------------------------------------------------------------
-
-
-def test_release_surfaces_tell_the_repost_story() -> None:
-    plugin = json.loads(
-        (ROOT / "plugins" / "saga" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
-    )
-    changelog = (ROOT / "plugins" / "saga" / "CHANGELOG.md").read_text(encoding="utf-8")
-    top_heading = next(line for line in changelog.splitlines() if line.startswith("## ["))
-    top_version = top_heading.split("[", 1)[1].split("]", 1)[0]
-    # The CHANGELOG's newest entry and plugin.json agree on the version...
-    assert top_version == plugin["version"]
-    # The release that introduced the verb retains its historical contract even when newer
-    # legitimate releases are prepended to the changelog.
-    repost_heading = "## [0.99.0]"
-    assert repost_heading in changelog
-    repost_entry = changelog.split(repost_heading, 1)[1].split("\n## [", 1)[0]
-    assert "repost" in repost_entry and "#433" in repost_entry
-    # The operator-facing surfaces document the verb too.
-    skill = (ROOT / "plugins" / "saga" / "skills" / "outcome" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    reference = (ROOT / "plugins" / "saga" / "references" / "outcome-spec.md").read_text(
-        encoding="utf-8"
-    )
-    assert "repost" in skill and "repost" in reference and "intent_revision" in reference

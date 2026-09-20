@@ -96,7 +96,7 @@ both are verified to report the same versions as the repository.
 **R12.** The lines in `plugins/saga/scripts/` fall below 15,000 and the full gate exits 0 at the
 release commit.
 
-## Key technical decisions
+## Key Technical Decisions
 
 **KTD1 — The card's "orchestrate 5.0.0" is stale twice over, and orchestrate takes no bump at all.**
 The card was written when orchestrate was 4.5.0; issue 1025 has since taken it to 5.0.0 and issue
@@ -194,7 +194,7 @@ merge` and `Closeout` are live Operations options absent from `allowed_submissio
 acceptance has no row at all. That is the operator's to settle. This card submits only moves the
 allowed list permits and records any move it could not submit.
 
-## Implementation units
+## Implementation Units
 
 Each unit is independently landable on the branch `issue/1030` and runs the repository's mechanical
 baseline before the next unit starts. Units U1 through U9 land in this worktree; U10 through U13 are

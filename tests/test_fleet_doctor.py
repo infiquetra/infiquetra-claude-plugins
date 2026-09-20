@@ -1361,16 +1361,6 @@ def test_cli_has_no_repair_or_fixture_surface(repo: Path) -> None:
         assert "unrecognized arguments" in result.stderr, forbidden
 
 
-def test_command_doc_loads_exact_skill_and_script() -> None:
-    command = (SAGA_PLUGIN / "commands" / "fleet-doctor.md").read_text(encoding="utf-8")
-    assert "saga/skills/fleet-doctor/SKILL.md" in command
-    assert "plugins/saga/scripts/fleet_doctor.py" in command
-    skill = (SAGA_PLUGIN / "skills" / "fleet-doctor" / "SKILL.md").read_text(encoding="utf-8")
-    assert "references/fleet-doctor-sources.md" in skill
-    assert (SAGA_PLUGIN / "skills" / "fleet-doctor" / "SKILL.md").exists()
-    assert FLEET_DOCTOR.exists()
-
-
 def test_cli_full_fixture_no_write_with_findings(repo: Path, stores: dict[str, Path]) -> None:
     # A findings-bearing scan (exit 1) writes nothing either — not just the clean path.
     _managed_worktree(repo, "out-z", "sub-z")

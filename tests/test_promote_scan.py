@@ -387,40 +387,6 @@ def test_parse_journal_without_headers():
 # --- SKILL.md contract (the /ideate-mirrored discovery tokens) -------------
 
 
-def test_skill_mirrors_ideate_discovery():
-    """U3 contract: promote/SKILL.md grounds on the /ideate cross-repo pattern."""
-    assert SKILL.exists(), "promote/SKILL.md must exist"
-    text = SKILL.read_text(encoding="utf-8")
-    # discovery + grounding tokens mirrored from /ideate
-    assert "workspace" in text.lower()
-    assert "promote_scan.py" in text
-    assert "infiquetra-context-library" in text
-    # judgment-layer + gate tokens
-    assert "propose-diff-and-wait" in text or "propose a diff" in text.lower()
-    # quotes the frozen contract rather than redefining it
-    assert "promotion-contract.md" in text
-
-
-def test_skill_does_not_redefine_the_key_recipe():
-    """Single source of truth: SKILL.md points at the contract for §2, not a copy."""
-    text = SKILL.read_text(encoding="utf-8")
-    # the SKILL must not embed a second sha256 recipe — that lives only in the contract
-    assert "sha256" not in text.lower(), "key recipe must live only in promotion-contract.md"
-
-
-def test_skill_states_gate_and_context_library_boundary():
-    """U4 contract: SKILL.md states the Tier-2 gate and the write-surface boundary."""
-    text = SKILL.read_text(encoding="utf-8")
-    assert "propose-diff-and-wait" in text
-    # writes only to context-library; never back to a source repo; SDLC read-only
-    assert "infiquetra-context-library" in text
-    assert "READ-ONLY on the SDLC" in text or "read-only on the sdlc" in text.lower()
-    assert "never writes back" in text.lower() or "never write" in text.lower()
-
-
-# --- U4: the gated upsert (write half) -------------------------------------
-
-
 def _promotion(origins, title="A declared-but-unexecuted check is not a gate"):
     return promote_scan.Promotion(
         date="2026-06-20",

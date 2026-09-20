@@ -36,7 +36,6 @@ PLUGIN_ROOT = ROOT / "plugins" / "saga"
 SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
 PLAN_SKILL = PLUGIN_ROOT / "skills" / "plan" / "SKILL.md"
 SAGA_SPEC = PLUGIN_ROOT / "references" / "saga-spec.md"
-DISPATCH_TABLE = PLUGIN_ROOT / "skills" / "loop" / "references" / "dispatch-table.md"
 
 
 def _load_module(script_name: str) -> ModuleType:
@@ -397,34 +396,6 @@ def test_successful_plan_save_tick_resolves_to_the_written_document(
 # ---------------------------------------------------------------------------
 
 
-def _dispatch_status_for_finished_plan() -> str:
-    """Read the ``phase_status`` the dispatch table requires to route ``plan`` onward.
-
-    Read-only on loop's dispatch table (correct as filed; this run never edits it):
-    the single row whose lifecycle phase is ``plan`` and whose next command is
-    ``/doc-review`` is the router's definition of a finished plan phase.
-    """
-    rows: list[list[str]] = []
-    for line in DISPATCH_TABLE.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in stripped.split("|")[1:-1]]
-        if all(set(cell) <= {"-", ":", " "} for cell in cells):
-            continue  # separator row
-        rows.append(cells)
-    matches = [
-        row
-        for row in rows
-        if len(row) >= 4 and row[0] == "`plan`" and row[3].startswith("`/doc-review`")
-    ]
-    assert len(matches) == 1, (
-        f"expected exactly one dispatch row routing a finished plan onward to /doc-review, "
-        f"found {len(matches)}"
-    )
-    return matches[0][1].strip("`").strip()
-
-
 def _spec_plan_write_phase_status() -> str:
     """Read ``phase_status`` from the ``/plan`` writes column of saga-spec.md §11."""
     for line in SAGA_SPEC.read_text(encoding="utf-8").splitlines():
@@ -436,12 +407,13 @@ def _spec_plan_write_phase_status() -> str:
 
 
 def test_plan_phase_status_agrees_end_to_end() -> None:
-    """The producer, the spec row, and the router agree on a finished plan phase.
+    """The producer and the spec row agree on a finished plan phase.
 
     Mutation proof (KTD1): removing ``--phase-status complete`` from Phase 5.3 fails this
-    test, and the dispatch row is the router's side of the same contract — so the two can
-    never drift apart again in silence. Only the runnable command blocks are pinned: the
-    prose around them stays free.
+    test. A third party used to be checked here — the router row in the /loop skill's
+    dispatch table — and issue 1030 removed that skill with the command; the producer and
+    the spec row are the two that remain, and they are the pair that can still drift. Only
+    the runnable command blocks are pinned: the prose around them stays free.
     """
     blocks = save_blocks(_plan_phase_53())
     per_block = [save_options(block).get("phase_status", []) for block in blocks]
@@ -450,11 +422,10 @@ def test_plan_phase_status_agrees_end_to_end() -> None:
         f"counts per variant: {[len(values) for values in per_block]}"
     )
     values = [values[0] for values in per_block]
-    dispatch = _dispatch_status_for_finished_plan()
     spec = _spec_plan_write_phase_status()
-    assert set(values) == {dispatch} == {spec}, (
+    assert set(values) == {spec}, (
         f"the finished-plan phase_status disagrees: Phase 5.3 writes {sorted(set(values))}, "
-        f"saga-spec /plan writes {spec!r}, the /loop dispatch row requires {dispatch!r}"
+        f"saga-spec /plan writes {spec!r}"
     )
 
 

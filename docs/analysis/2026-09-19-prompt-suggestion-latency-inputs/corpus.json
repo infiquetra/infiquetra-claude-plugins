@@ -58,9 +58,9 @@
     },
     {
       "id": "p10",
-      "text": "Show me the live state of everything running in the fleet right now",
-      "expected": "pulse",
-      "why": "Read-only live telemetry."
+      "text": "Where should this repository be heading over the next quarter",
+      "expected": "strategy",
+      "why": "Sets the durable direction anchor; /strategy owns STRATEGY.md."
     },
     {
       "id": "p11",
@@ -70,15 +70,15 @@
     },
     {
       "id": "p12",
-      "text": "Hand this finished plan over as an SDLC issue",
-      "expected": "handoff",
-      "why": "Preparing a lifecycle artifact for issue handoff."
+      "text": "Is the scope of this ambitious enough, or are we playing it too safe",
+      "expected": "founder-review",
+      "why": "Strategy, ambition and positioning judged from a founder's seat."
     },
     {
       "id": "p13",
       "text": "Cap the model tier for the rest of this run without re-planning it",
-      "expected": "tier",
-      "why": "A run-scoped tier ceiling set mid-run."
+      "expected": "none",
+      "why": "There is no command for this any more. Issue 1030 removed /tier; the run record's staffing answers, set once at admission, are where a run's tiers live."
     },
     {
       "id": "p14",
@@ -89,8 +89,8 @@
     {
       "id": "p15",
       "text": "Coordinate this whole multi-card outcome as one dependency graph",
-      "expected": "outcome",
-      "why": "A whole outcome as a durable graph of leaf sagas."
+      "expected": "none",
+      "why": "There is no command for this any more. Issue 1030 removed /outcome; a parent issue with children gets a parent branch, and the children merge onto it by merge turn."
     },
     {
       "id": "p16",

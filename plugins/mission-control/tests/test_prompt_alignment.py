@@ -233,18 +233,6 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
             assert phrase not in text, f"{path.relative_to(ROOT)} contains stale phrase {phrase!r}"
 
 
-def test_saga_handoff_routes_without_copying_issue_templates() -> None:
-    handoff = _read(ROOT / "plugins/saga/skills/handoff/SKILL.md")
-    issue_command = _read(PLUGIN_ROOT / "commands/issue.md")
-
-    assert "Do not copy SDLC issue templates into this skill." in handoff
-    assert "/issue --prepare --from <source> --maturity <maturity>" in handoff
-    assert "issue prepare" in issue_command
-    assert "do not copy\n   SDLC issue template sections into Saga" in issue_command
-    assert "### Objective" not in handoff
-    assert "### Acceptance criteria" not in handoff
-
-
 def test_find_package_root_resolves_plugin_root() -> None:
     root = _find_package_root()
     assert (root / ".claude-plugin" / "plugin.json").is_file()

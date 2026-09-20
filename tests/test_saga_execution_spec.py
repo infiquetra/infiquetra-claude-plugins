@@ -1393,7 +1393,6 @@ def test_sandbox_coexists_with_engine_selector_without_interference() -> None:
 
 AGENTS_DIR = ROOT / "plugins" / "saga" / "agents"
 READONLY_VERIFIER_AGENT = AGENTS_DIR / "readonly-verifier.md"
-SANDBOX_SPAWN_SITES_REFERENCE = ROOT / "plugins" / "saga" / "references" / "sandbox-spawn-sites.md"
 
 # Harness-owned globals: the reservation set minus the JS runtime builtins, which are already
 # covered behaviorally by test_workflow_unit_id_rejects_harness_global_shadowing. These are the
@@ -1489,41 +1488,6 @@ def _verifier_schema_fragment() -> str:
         "additionalProperties": True,
     }
     return "schema: " + json.dumps(schema, sort_keys=True)
-
-
-def test_readonly_verifier_agent_definition_exists_with_readonly_toolset() -> None:
-    assert READONLY_VERIFIER_AGENT.exists()
-    text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
-    assert _frontmatter_scalar(text, "name") == "readonly-verifier"
-    tools = [t.strip() for t in _frontmatter_scalar(text, "tools").split(",")]
-    assert tools == ["Bash", "Read", "Grep", "Glob"]
-    # The read-only contract IS tool omission at spawn: Edit/Write must be absent.
-    assert "Edit" not in tools and "Write" not in tools
-
-
-def test_readonly_verifier_agent_definition_carries_the_split_verdict_shape() -> None:
-    # #686: the agent definition is the THIRD verdict-shape prompt surface, alongside the two
-    # the emitter renders (`_verifier_prompt` and `_JS_VERIFIER_PROMPT_HELPER`). It is the
-    # verifier's own system prompt, so a stale legacy shape here is not cosmetic: a verifier
-    # that follows its definition over the per-call prompt emits `{refuted, upheld}`, which the
-    # attached StructuredOutput schema REJECTS -- the verdict then classifies as runtime-missing
-    # and pushes the panel toward the quorum floor. That failure disarms a merge-blocking gate
-    # silently, so R2 ("the legacy shape must not survive anywhere") is pinned here too.
-    text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
-    assert "{refuted: [...], upheld: [...]}" not in text
-    assert "refuted_deliverable" in text
-    assert "advisory_corrections" in text
-
-
-def test_verifier_agenttype_literal_matches_agent_definition_name() -> None:
-    # Literal-consistency guard (#287 U2, saga-side half of the registry-drift risk): the
-    # agentType string the emitter bakes into every verifier call MUST equal the agent
-    # definition's `name:` plus the `saga:` plugin prefix. A rename on either side fails HERE
-    # rather than silently spawning verifiers with an unknown (=> unrestricted) agent type.
-    text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
-    name = _frontmatter_scalar(text, "name")
-    assert f"saga:{name}" == EMITTER.READONLY_VERIFIER_AGENT_TYPE
-    assert EMITTER.READONLY_VERIFIER_ISOLATION == "worktree"
 
 
 def test_verifier_panel_emits_readonly_agenttype_and_isolation() -> None:
@@ -2665,19 +2629,6 @@ def test_reserved_harness_identifiers_are_rejected_as_unit_ids(unit_id: str) -> 
 
     with pytest.raises(ES.SpecError, match="reserved JavaScript identifier"):
         ES.emit_workflow_script(spec)
-
-
-def test_sandbox_spawn_sites_reference_carries_the_split_verdict_shape() -> None:
-    # The FOURTH verdict-shape surface. This repo's CLAUDE.md routes every verify-class agent
-    # spawn made outside a saga skill through this file's fallback ladder, and that ladder tells
-    # a caller to restate the verdict contract in its own dispatch prompt when the verifier
-    # agent type cannot be resolved. Left naming the legacy single-bucket shape, the documented
-    # fallback reproduces the exact severity-blind gate #686 exists to remove.
-    text = SANDBOX_SPAWN_SITES_REFERENCE.read_text(encoding="utf-8")
-
-    assert "{refuted, upheld}" not in text
-    assert "refuted_deliverable" in text
-    assert "advisory_corrections" in text
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

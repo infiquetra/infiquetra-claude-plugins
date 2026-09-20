@@ -621,17 +621,6 @@ def test_saga_the_non_field_operations_survive() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_saga_no_direct_write_loop_reconcile_path_is_read_only_detect() -> None:
-    """W-D1 keeps /loop correction-only: its driven command is the READ-ONLY ``detect`` tick."""
-    loop_skill = (SAGA_ROOT / "skills" / "loop" / "SKILL.md").read_text(encoding="utf-8")
-    assert "reconcile_controller.py detect" in loop_skill, "/loop drives the read-only detect tick"
-    fenced = "\n".join(_fenced_blocks(loop_skill))
-    assert "set-field-status" in fenced, "the detect block names its op explicitly"
-    assert not re.search(r"reconcile_controller\.py\s+reconcile", fenced), (
-        "no fenced WRITING reconcile invocation survives in /loop's skill (R33)"
-    )
-
-
 def test_saga_no_direct_write_outcome_issue_writes_resolve_to_mission_control() -> None:
     """/outcome's surviving issue writes resolve to Mission Control — the tick delegates every
     candidate op to ``board_progression.authorize_and_write`` and composes NO lifecycle-field op."""

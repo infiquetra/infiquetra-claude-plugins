@@ -22,8 +22,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORK_SKILL = ROOT / "plugins" / "saga" / "skills" / "work" / "SKILL.md"
-LOOP_SKILL = ROOT / "plugins" / "saga" / "skills" / "loop" / "SKILL.md"
-RESUME_SKILL = ROOT / "plugins" / "saga" / "skills" / "resume" / "SKILL.md"
 
 
 def _read(path: Path) -> str:
@@ -59,60 +57,6 @@ def test_section_54_carries_no_ship_ceremony_transition_and_keeps_the_confirmati
     assert "explicitly confirmed" in collapsed, (
         "section 5.4 must still say the pull-request open, review request and merge are "
         "explicitly confirmed -- issue #1029's preservation contract"
-    )
-
-
-def test_no_saga_file_claims_first_board_move_belongs_to_work() -> None:
-    # Negative: no file under plugins/saga/ claims a first board move belongs to /work.
-    # Use the same grep the issue prescribes, scoped to skills.
-    for path in (WORK_SKILL, LOOP_SKILL, RESUME_SKILL):
-        text = _read(path)
-        # The stale sentence is "first-time forward move belongs to `/work`"
-        assert not re.search(
-            r"first-time forward move belongs to.*\/work", text, flags=re.IGNORECASE
-        ), f"{path} still claims first-time move belongs to /work"
-        assert not re.search(r"first board move belongs to.*\/work", text, flags=re.IGNORECASE), (
-            f"{path} still claims first board move belongs to /work"
-        )
-    # Also ensure /loop now describes the submission path.
-    loop_text = _read(LOOP_SKILL)
-    assert "reconcile controller" in loop_text.lower() and "mission control" in loop_text.lower()
-    assert "0.151.0" in loop_text or "submission path" in loop_text.lower()
-
-
-def test_artifact_pointer_is_referenced_by_full_path_in_saga_prose() -> None:
-    """Every bare `artifact_pointer.py` in saga's prose must carry the full path.
-
-    Scoped to `plugins/saga/skills` before, which is narrower than the requirement and missed a
-    live reference in `plugins/saga/references/`: the module is not saga's -- it lives in
-    team-execution -- so a bare filename in saga prose points a reader at a file that is not there,
-    wherever in saga it appears. team-execution's own prose is untouched: a bare filename inside
-    the plugin that OWNS the script is correct. The CHANGELOG stays out of scope because a
-    historical note records what was written at the time.
-    """
-    saga_root = ROOT / "plugins" / "saga"
-    bare: list[str] = []
-    for path in saga_root.rglob("*.md"):
-        if path.name == "CHANGELOG.md":
-            continue
-        content = path.read_text(encoding="utf-8")
-        for lineno, line in enumerate(content.splitlines(), start=1):
-            if (
-                "artifact_pointer.py" in line
-                and "plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py"
-                not in line
-            ):
-                bare.append(f"{path.relative_to(ROOT)}:{lineno}:{line.strip()}")
-    assert not bare, "bare artifact_pointer.py references remain:\n" + "\n".join(bare)
-    # Also ensure the four expected full-path occurrences exist.
-    work = _read(WORK_SKILL)
-    resume = _read(RESUME_SKILL)
-    assert (
-        work.count("plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py") >= 1
-    )
-    assert (
-        resume.count("plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py")
-        >= 2
     )
 
 

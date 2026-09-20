@@ -204,7 +204,7 @@ once built." Without writing the artifact and naming its path, expanding scope t
 
 Write `docs/founder-reviews/YYYY-MM-DD-<topic>-founder-review.md` — its **own** scope-decision
 directory (**NOT** `docs/reviews/` = readiness, **NOT** `docs/code-reviews/` = code, and deliberately
-**not** a `/handoff` artifact source). Format (full template in `references/review-modes.md`):
+**not** a `mission-control` artifact source). Format (full template in `references/review-modes.md`):
 
 - **Frontmatter** — `status`, `type: founder-review`, `date`, `origin` (the target path/identity).
 - **Mode** + target (type + path).
@@ -230,12 +230,10 @@ directory (**NOT** `docs/reviews/` = readiness, **NOT** `docs/code-reviews/` = c
   "run /doc-review".
 - Direction shifts -> **`/strategy`** (record the chosen direction).
 
-**Operator-choice.** On a scope-expansion or scrap-and-rethink verdict, **OFFER** routing the accepted
-changes through an execution backend per `../../references/operator-choice.md` (the plugin-root
-decision contract, as narrowed by issue #808). The default offer presents `inline` ("inline") and
-`team-execution` ("team execution"); `cc-workflows-ultracode` ("dynamic workflows") is available only on
-explicit invocation or when an already-approved plan records that choice. Read the work shape, recommend
-the cheapest-correct Saga backend and pre-select it. The offer is never auto-run.
+**Operator-choice.** On a scope-expansion or scrap-and-rethink verdict, say that the accepted changes
+should be routed into the lifecycle, and stop there. There is no backend to offer: issue #1030
+archived every value above `inline`, and `../../references/operator-choice.md` §1 is the contract.
+Starting the work is still never automatic — it is the operator's pick.
 
 **No saga write.** `/founder-review` runs upstream of the work thread and does **not** touch the saga
 — no `saga.py` invocation, no `--review-paths`. Persistence is the `docs/founder-reviews/` artifact +

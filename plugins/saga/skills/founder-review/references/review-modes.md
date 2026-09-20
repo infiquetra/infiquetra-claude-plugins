@@ -222,7 +222,7 @@ Accepted items become plan scope for the rest of the review. Rejected items go t
 
 Write to `docs/founder-reviews/YYYY-MM-DD-<topic>-founder-review.md` — its **own** scope-decision
 directory (NOT `docs/reviews/` = readiness, NOT `docs/code-reviews/` = code, and deliberately **not a
-`/handoff` artifact source**). Adapted from gstack's CEO-plan format. Use repo-relative paths.
+`mission-control` artifact source**). Adapted from gstack's CEO-plan format. Use repo-relative paths.
 
 ```markdown
 ---

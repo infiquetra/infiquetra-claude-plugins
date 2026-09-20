@@ -3,7 +3,7 @@
 `/work` does not dead-end at PR-ready. It **owns the round-N continuation loop** around the PR, driven by
 the saga's round spine and the `destination` field. Every outward mutation is offered/confirmed, never
 silent. Deploy and canary belong to `deploy`. `/work` owns its own re-entry — it does **not**
-depend on `/resume` being rebuilt.
+depend on any other command.
 
 ## Re-entry detection (SKILL Phase 0.4)
 
@@ -56,21 +56,21 @@ work is how rounds loop. When it is, **propose** climbing exactly one rung via
 
 ```
 Round N failed at sonnet/medium. Propose re-running the affected unit(s) at
-sonnet/high (+1 effort rung). Confirm to apply via /tier patch + re-emit, or
+sonnet/high (+1 effort rung). Confirm to apply by re-deriving the unit's tier and re-emitting, or
 decline to re-run at the same tier.
 ```
 
 Rules (all load-bearing):
 
 - **Gated, never silent** — this is a documented affordance the operator confirms; the ask rides
-  the same `is_escalation` → confirm-before-re-emit pattern as the `/tier` mid-run lever (#365).
+  the same `is_escalation` → confirm-before-re-emit pattern the mid-run tier lever used (#365; the `/tier` command that carried it was removed by issue 1030).
   A silent between-rounds climb is never permitted in the attended `/work` loop.
 - **One rung per proposal** (`escalate_tier` — effort-first, then model), never a multi-rung jump.
 - **End-clamp** — when `escalate_tier` returns `None` (top of ladder, or blocked by the #365
   session ceiling), state that plainly ("at top of ladder — no escalation available; this is now
   a defect-shaped problem, not a depth-shaped one") and propose nothing.
 - **The cost delta is ordinal** (`<old> → <new> (+1 <axis> rung)`) — the cost-weighted spend-delta
-  classifier is #367's; this mirrors the same deferral recorded in `commands/tier.md`.
+  classifier is #367's; this mirrors the same deferral the removed `/tier` command recorded.
 - **Consult the run's `spend_envelope` first (#366).** When the spec carries a `spend_envelope`, fold
   the climb's added spend through `SpendEnvelope.consider(delta)` (`delta = to_spend(new) - to_spend(old)`)
   before surfacing the proposal. If the climb *crosses* the envelope, that crossing IS the "ask once"
@@ -118,11 +118,11 @@ this rebuild deferred to it). `/work`'s own behavior on merge is unchanged: it s
 `phase_status=complete` and `next_step="run /qa (ship-readiness)"` and routes to `/qa` **advisorily**,
 but **leaves `lifecycle_phase=work`** — it does **not** claim "/qa owns/advances the qa slot" from inside
 `/work`; the advance happens when `/qa` actually runs and passes. The saga legitimately sits at `work`
-post-merge until `/qa` lands the advance; `/handoff` deriving `resume-ready` for that state is correct
+post-merge until `/qa` lands the advance; deriving `resume-ready` for that state is correct
 (the thread *is* resume-ready-into-qa).
 
-Likewise **`/resume` routing is advisory**. `/work`'s own Phase-0.4 re-entry (this file) is the
-load-bearing "come back later" mechanism — it does not depend on the `/resume` stub being rebuilt. A
+`/work`'s own Phase-0.4 re-entry (this file) is the
+load-bearing "come back later" mechanism, and since issue 1030 removed `/resume` it is the only one. A
 re-invocation of `/work` on a saga with `pr_refs` re-runs this transition table; that is the durable loop.
 
 ## Saga writes summary (this loop)

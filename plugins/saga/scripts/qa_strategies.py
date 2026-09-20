@@ -46,6 +46,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import subprocess  # nosec B404
 import sys
 import time
@@ -845,10 +846,24 @@ def _run_commands(context: DriverContext) -> tuple[list[dict[str, Any]], bool]:
     for declared in context.entry.get("commands") or []:
         command = str(declared.get("command", ""))
         name = str(declared.get("name") or command)
+        # ``shlex.split``, not ``str.split``: the profile's commands are written the way a person
+        # writes them in a shell, so a quoted argument holding a space (``-k "not slow"``) is one
+        # argument. ``str.split`` cut it into three and handed the program something it was never
+        # asked to run, silently. ``build_loop.run_check`` has always parsed its baseline this way;
+        # this is the same parsing for the same kind of value.
         try:
-            argv = command.split()
-        except ValueError:  # pragma: no cover - split never raises; kept for shape parity
-            argv = []
+            argv = shlex.split(command)
+        except ValueError as exc:
+            results.append(
+                {
+                    "name": name,
+                    "command": command,
+                    "exit_code": None,
+                    "detail": redact(f"the command does not parse into an argument vector: {exc}"),
+                }
+            )
+            ok = False
+            continue
         started = time.monotonic()
         try:
             code, output = context.runner(argv, context.timeout, context.repo_root)
@@ -1173,8 +1188,21 @@ def driver_delegated_canary(context: DriverContext) -> dict[str, Any]:
     scenarios = [str(item) for item in context.entry.get("scenarios") or []]
     scenario = scenarios[0] if scenarios else "default"
     environment = str(context.environment.get("name") or context.environment.get("base_url") or "")
+    # Same parsing as the declared commands above, and the same refusal when it does not parse: an
+    # entrypoint with an unbalanced quote is a profile the operator has to fix, not a traceback.
+    try:
+        entrypoint_argv = shlex.split(entrypoint)
+    except ValueError as exc:
+        return {
+            "result": RESULT_BLOCKED,
+            "status_reason": (
+                f"the declared executor {entrypoint!r} does not parse into an argument vector: "
+                f"{redact(str(exc))}"
+            ),
+            "evidence": {"entrypoint": entrypoint},
+        }
     argv = [
-        *entrypoint.split(),
+        *entrypoint_argv,
         "run-scenario",
         "--scenario",
         scenario,

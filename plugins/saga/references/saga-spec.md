@@ -2,7 +2,13 @@
 
 **Status:** canonical contract · **schema_version:** `1.0` · **plugin version:** 0.24.0
 **Engine:** [`scripts/saga.py`](../scripts/saga.py)
-**Audience:** the four execution-loop commands (`/plan`, `/work`, `/resume`, `/loop`) implement against this
+
+> **Issue 1030 removed `/resume`, `/loop` and `/handoff`.** This file is the storage contract and it
+> is current: the fields, their types and their invariants are unchanged. Where it names one of
+> those commands as a writer or a consumer, read it as the record of which command wrote a field,
+> never as a command to run. `/plan` and `/work` are the writers that remain.
+
+**Audience:** the execution-loop commands (`/plan`, `/work`) implement against this
 file when they are rebuilt. They MUST treat the field names, enum values, and operation semantics below as
 the single source of truth. If code and this document disagree, that is a bug in one of them — fix it, do
 not work around it.
@@ -10,8 +16,9 @@ not work around it.
 > The engine shipped as a primitive in 0.4.0 (unit tests + manual smoke) and is now **consumed**: `/plan`
 > (0.7.0) writes a plan saga via `save`, `/code-review` (0.8.0) is the first review-track consumer
 > (append-only/never-mint to an existing thread's `review_paths`), and `/work` (0.10.0) is the **primary
-> writer** — it `scan`s/`restore`s on re-entry and writes a tick per phase. `/resume` + `/loop` wiring
-> remains queued. This spec is the single source of truth those consumers implement against.
+> writer** — it `scan`s/`restore`s on re-entry and writes a tick per phase. The `/resume` and `/loop`
+> wiring that was queued here never shipped; issue 1030 removed both commands instead, and `/work`
+> owns re-entry. This spec is the single source of truth those consumers implement against.
 
 ---
 

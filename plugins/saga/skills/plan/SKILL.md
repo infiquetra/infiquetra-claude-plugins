@@ -424,26 +424,16 @@ document travels with the work because the executor commits it alongside the cha
 it the place a decision made here can reliably be read later. `/work` honours that field and does
 not ask again.
 
-The recorded enum has two values — `inline` ("inline") |
-`cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
-`ORCHESTRATION_MODES`. **The default Saga offer is `inline` only**, since issue #1030
-archived team-execution and ruling C5 forbids recommending a Workflow; there is no longer an offer
-to render or a choice to put to the operator. Still call `lifecycle_state.py recommend-backend` and
+The recorded enum has one value: `inline`. It matches `ORCHESTRATION_MODES` in `saga.py` and
+§1 of [`references/operator-choice.md`](../../references/operator-choice.md). Issue #1030 archived
+the `team-execution` plugin and removed the `cc-workflows` plugin, so there is no offer to render
+and no choice to put to the operator. Still call `lifecycle_state.py recommend-backend` and
 still record both `--orchestration-recommended` and `--orchestration-mode` (R12 telemetry), so a
-tick continues to carry recommended-and-chosen rather than going silent on the decision.
+tick continues to carry recommended-and-chosen rather than going silent on the decision — the
+recommender now returns `inline` with a work-shape rationale rather than a different backend.
 
-**Claude Code Workflows (`cc-workflows-ultracode`) are reachable only by explicit operator
-invocation** (DECISIONS `{#cc-workflows-backend-narrow-808}`, issue #808's NARROW ruling).
-They are **never a default** or automatic Saga backend, and never a generic interchangeable
-execution backend. **Never pre-select** one. Never launch one because
-`recommend_execution_backend()` returned it. Never
-silently substitute one for `inline`. Do not build a mechanism-neutral
-backend-switching abstraction around it.
-
-Everything about the two non-`inline` backends — the availability probe, the per-unit tier table,
-the spend guards, authoring the specification, and the naming convention for the generated
-artifacts — is in [`references/workflow-backend.md`](../../references/workflow-backend.md). Go
-there only after an explicit invocation; nothing in this skill needs it otherwise.
+A saga written before that release may still carry `team-execution` or `cc-workflows-ultracode`.
+Either reads back and renders its label; neither can be written again.
 
 #### 5.2a Derive the per-unit tiers
 
@@ -483,21 +473,21 @@ and the `VERIFY_N_CAP` mechanics are unchanged, and no per-unit posture question
 **The Estimate column (#402) is retired.** It rendered an ordinal, index-weighted spend per unit from `spend_estimate.py`, which issue 1030 removed with the spend readers; the tier table is U-ID, label, tier and rationale.
 
 
-**The `/plan`-authored tier table is not the only lever (#365).** The operator can adjust tier
-**mid-run** without aborting and re-planning via `/tier`: a run-scoped ceiling
-(`.claude/saga/tier-session-override.json`) that the emitters clamp every unit down to, or a mid-run
-patch of a not-yet-run unit's tier that re-validates and re-emits the spec. The authored table is the
-starting point; `/tier` is the live adjustment. A ceiling only ever clamps down, and an up-ladder
-mid-run change is gated (asks) before it re-emits.
+**The mid-run tier lever is gone (#365, removed by issue 1030).** The `/tier` command and its
+run-scoped ceiling file are removed, so the table this skill authors is the tier a unit runs at. An
+operator who wants a different tier mid-run re-plans the unit; there is no longer a lever that
+clamps an already-emitted spec.
 
 **Persisted tier preferences (#368).** Before deriving cold from the registry table above, resolve
-each work-shape through `scripts/tier_defaults.py` — precedence is **repo overlay > issue band >
-shared registry**:
+each work-shape through fleet-core's staffing component
+(`fleet_commons/staffing.py`, `load_overlay` and `resolve_shape`) — precedence is **repo overlay >
+issue band > shared registry**. Issue 1030 removed saga's own `tier_defaults.py`; the component it
+delegated to is the one implementation and is now read directly:
 
 1. **Repo overlay** — a committed `.saga/tier-defaults.json` (`{"<work-shape>": {"model", "effort"}}`)
-   pins repo-tuned defaults. `resolve_tier_with_overlay(work_shape)` returns the pinned tier when
-   present. Missing file → clean registry fallback; malformed (bad JSON, unknown shape, off-palette or
-   unrunnable tier) → `TierDefaultsError`, halt and surface (never degrade silently).
+   pins repo-tuned defaults. `staffing.load_overlay(root)` returns them. Missing file → clean registry
+   fallback; malformed (bad JSON, unknown shape, off-palette or unrunnable tier) → `StaffingError`, halt
+   and surface (never degrade silently).
 2. **Issue band** — when the driving issue carries a `### Recommended Tier Band` section
    (auto-stamped by `mission-control:issue` at creation), parse it with `parse_tier_band(body)` and
    pass it to `resolve_tier_for_plan(work_shape, issue_band=band)`. The band seeds the proposed tier
@@ -583,7 +573,7 @@ auto-derives from `--orchestration-mode`, so the only added burden is naming the
 in `references/saga-spec.md` §11 are rendered from the same `references/plan-save-contract.yaml`
 contract. The [maintainer runbook](../../references/plan-save-contract.md) documents editing,
 the runnable recommender call, and recovery from a failed render.
-`--phase-status complete` is what the `/loop`
+`--phase-status complete` is what the chain
 dispatch table routes on: a finished plan goes onward to `/doc-review`, and omitting it leaves the
 tick at the `pending` default, which routes the already-finished plan right back into `/plan`.
 When resuming (Phase 0.3 matched), this appends a tick to the existing saga directory rather than
@@ -592,7 +582,7 @@ minting a new one.
 **Check the save's exit status.** A non-zero exit means the save failed, and the error message
 names which write did. If the tick envelope was never written and the full tick chain contains no
 reference to the same normalized plan path, the plan document named in the error is on disk with
-no saga state referencing it, so `/work` and `/loop` cannot see it; when any earlier tick already
+no saga state referencing it, so `/work` cannot see it; when any earlier tick already
 records the plan path, the document is tracked and only this save's tick is missing. If the envelope
 landed but the `state.json` index rewrite failed, the tick IS tracked — `restore` reads the envelope
 directly —
@@ -706,7 +696,7 @@ passes, so it never continues either.
 as they are today. A continuation that would fire one of those without a confirmation is a stop,
 not a shortcut.
 
-Two exits remain the operator's to take, and neither is automatic: `/handoff` hands the plan to an
+Two exits remain the operator's to take, and neither is automatic: `mission-control` hands the plan to an
 SDLC issue through `mission-control`, and `/brainstorm` steps back when the review found the WHAT
 was not actually settled. Name them in one line; do not run them.
 

@@ -32,6 +32,64 @@ because an operator who cannot see what the model said cannot judge whether the 
 
 **Revisit when** the harness has about thirty verdicts per tier at varied confidences and the
 floor can be set from measurement rather than from the registry default.
+### `operator-choice.md` keeps its removed sections, marked historical, and a guard enforces the marking  {#operator-choice-historical-sections-1030}
+
+**Decision.** `plugins/saga/references/operator-choice.md` is corrected rather than deleted or
+rewritten whole. Sections 1, 2, 5, 6 and 7 are restated for the one selectable backend. Sections 3
+(escalation triggers), 4 (the Workflow capability gate) and 8 (the OutcomeOrchestrator menu) keep
+their bodies and gain a heading suffix `— historical` plus a blockquote saying what removed them.
+`tests/test_operator_choice_drift.py` — which issue 1030 had emptied to zero test functions — is
+rewritten to enforce three things: the document names every value `ORCHESTRATION_MODES` accepts,
+`team-execution` and `cc-workflows-ultracode` are each shown in §1's availability table as *never
+selectable*, and each historical section says so in its own text.
+
+**Rationale.** Two real readers pull in opposite directions. Someone opening a saga tick recorded
+before the 1.0.0 release needs to know what `orchestration_mode: team-execution` meant and why it
+still loads; that is what sections 3, 4 and 8 explain, and nothing else in the repository does.
+Someone deciding how to run work today needs to be told there is one value, immediately, before
+they read a menu. Marking rather than deleting serves both, and the guard is what stops the marking
+from rotting: a section can be edited back into the present tense by accident, and then the document
+is offering a menu again.
+
+**Rejected alternatives.** *Delete sections 3, 4 and 8.* Cheapest to read, and it destroys the only
+written explanation of two strings that are still a frozen wire contract in persisted state — the
+next reader who finds one in a tick has nothing to consult. *Rewrite the file as a short one-backend
+contract.* Attractive, but the file carries four baselined gate sites and is cited by eight surviving
+skills; a wholesale rewrite in a review cycle is a larger blast radius than the defect warrants, and
+it would have thrown away the same history. *Leave the historical sections unmarked and rely on the
+banner in §1.* Rejected because readers arrive mid-document from a search result, and the section
+they land in has to tell them itself.
+
+**Revisit when** a later card removes the ability to read a pre-1.0.0 saga tick at all, or when
+`ORCHESTRATION_MODES` grows a second value again. Either event makes the historical sections either
+pointless or wrong, and the guard will not catch the first.
+
+### One backend means no offer, not an offer with one option  {#one-backend-means-no-offer-1030}
+
+**Decision.** Every surviving saga surface that used to render an execution-backend offer now states
+the backend instead of asking for it: `/work` (SKILL.md §1.4 and
+`references/execution-strategy.md`), `/plan` (SKILL.md §5.2 and `references/plan-sections.md`),
+`/code-review`, `/founder-review`, `/retro` (SKILL.md and `references/self-edit-safety.md`) and
+`/investigate` (SKILL.md and `references/methodology.md`). `/work`'s Phase 1.5, the Claude Code
+Workflow run, is reduced to a note saying the step cannot be entered. The recommender call survives
+everywhere it was, because the run still records a rationale.
+
+**Rationale.** Issue 1030 archived the `team-execution` plugin and removed the `cc-workflows`
+plugin, leaving `ORCHESTRATION_MODES = ("inline",)`. A question whose only answer is the default is
+not a safeguard; it is a turn spent, and under `/orchestrate` it is a background tab waiting on an
+answer nobody will give. The signals that used to pick a backend are still computed and still
+worth recording, so they were repointed at the `rationale` field rather than deleted — which is also
+what `lifecycle_state.recommend_execution_backend` already does internally.
+
+**Rejected alternatives.** *Leave the offers in place and let them render a single-option question.*
+Rejected: the prose named `team-execution` as an installed plugin that is not installed, which is a
+false statement an agent acts on. *Delete the recommender and its signals.* Rejected: the work-shape
+computation is the only thing that makes a run's recorded rationale non-trivial, the cards did not
+name it, and deleting it would have widened this review's repair well past the defect.
+
+**Revisit when** a second backend is introduced — at which point the offer prose has to come back,
+and `{#operator-choice-historical-sections-1030}`'s sections 3 and 4 become current again rather
+than historical.
 
 ### The closed op allowlist outlives the reversibility certificate  {#op-allowlist-survives-certificate-1030}
 

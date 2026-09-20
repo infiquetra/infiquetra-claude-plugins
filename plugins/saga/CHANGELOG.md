@@ -15,6 +15,55 @@
 **The removals.** Issue #1030, the closing child of parent #1018. Eleven commands, their skills and
 the machinery behind them are gone; thirteen commands remain.
 
+### Fixed -- the parent's code review
+
+The one code review on the parent pull request found that the removals had been carried through the
+code but not through the prose the plugin ships, and that narrowing the backend list had left one
+crash behind.
+
+- **`lifecycle_state.recommend_execution_backend` no longer raises when the Workflow tool is
+  absent.** The reachable-backend list was narrowed to `["inline"]` while the line removing
+  `cc-workflows-ultracode` from it stayed, so every call passing `workflow_available=False` --
+  including `recommend-backend --no-workflow`, which
+  `skills/work/references/execution-strategy.md` instructs `/work` to produce -- died with
+  `ValueError: list.remove(x): x not in list`. A regression case in
+  `tests/test_saga_plugin.py` now takes that branch.
+- **The manual describes the surface that exists.** `README.md` no longer routes the reader to
+  `/handoff`, `/resume`, `/pulse`, `/fleet-doctor` or `/outcome`, and its command count is the real
+  one. `docs/commands.md` drops the eleven removed commands' cards and `/undo`'s. `docs/README.md`,
+  `docs/lifecycle.md`, `docs/boundaries.md`, `docs/scenarios.md` and `docs/state-readiness.md` lose
+  their routes to removed commands and their links to the four deleted diagrams.
+- **`references/operator-choice.md` states one selectable backend**, marks its escalation,
+  capability-gate and OutcomeOrchestrator sections historical, and no longer links two deleted
+  scripts or carries a fenced command whose command line had been deleted out from under its flags.
+- **Eight skill surfaces stop offering an archived backend.** `/work`, `/plan`, `/code-review`,
+  `/founder-review`, `/retro` and `/investigate`, with their reference documents, state `inline`
+  rather than rendering a choice; `/work`'s Phase 1.5 Claude Code Workflow step says it cannot be
+  entered; `/qa` no longer cites the deleted dispatch table.
+- **The suite no longer decides two verdicts from the ambient environment.** `tests/conftest.py`
+  scrubs `CLAUDE_PLUGIN_ROOT` and `AGENT_LAUNCHER_ROOT`, as it already did for the saga concurrency
+  override and the `INFIQUETRA_FLEET_` family. Without that, two tests passed from a shell and
+  failed from the pre-push gate — whose pytest child inherits the variable every plugin hook is
+  given — because the launcher ingest and the mutation canary both resolved installed plugins
+  instead of the roots the tests had built. The behaviour predates this release.
+- **The surviving skills stop routing to removed commands.** `/handoff` becomes `mission-control`,
+  which is what it always meant, across `/brainstorm`, `/spec`, `/investigate`, `/office-hours`,
+  `/ideate`, `/founder-review`, `/retro` and their reference documents. `/loop`, `/resume`, `/tier`
+  and `/outcome report` are restated per sentence, because each meant something different where it
+  stood. `/plan` no longer tells the agent to resolve tiers through the removed
+  `scripts/tier_defaults.py`; it reads fleet-core's staffing component directly, as that module
+  already did.
+- **`qa_strategies` parses a declared command the way its sibling does.** The strategy runner built
+  its argument vector with `str.split`, so a profile command holding a quoted argument with a space
+  (`pytest -k "not slow"`) ran as a different command with no error anywhere; `build_loop` has
+  always used `shlex.split` for the same kind of value. Both call sites in `qa_strategies` now do
+  too, and an unparseable command is refused by name rather than raised.
+- **Two guards were repaired rather than removed.** The `archived-orchestration-mode` canary in
+  `tools/canary_registry.json` quoted an enum literal that no longer existed, so it reported `error`
+  instead of proving anything; it now reports `caught`. `tests/test_operator_choice_drift.py` had
+  been emptied to zero test functions and collected nothing; it is rewritten to pin the document's
+  enum claim against `saga.py`.
+
 ### The thirteen commands that remain
 
 `/plan`, `/doc-review`, `/work`, `/code-review`, `/qa`, `/retro`, `/office-hours`, `/ideate`,

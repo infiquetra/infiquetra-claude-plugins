@@ -151,9 +151,9 @@ Phase 2's numeric gate, counting hypotheses) and diagnose **why**:
 
 ### Parallel read-only sub-agent dispatch (offer)
 
-When hypotheses are **evidence-bottlenecked across clearly independent subsystems**, OFFER a backend per
-`../../../references/operator-choice.md` (narrow default offer: `inline` / `team-execution`;
-`cc-workflows-ultracode` only on explicit invocation) to run read-only probes in parallel — each with one
+When hypotheses are **evidence-bottlenecked across clearly independent subsystems**, run read-only
+probes in parallel — `inline` is the only backend since issue #1030 archived the others, so there
+is nothing to offer — each with one
 explicit hypothesis and a structured evidence-return format, **no code edits**. Never auto-spawn. Skip
 when hypotheses depend on each other's outcomes — parallelism is a latency optimization, not a
 correctness requirement; run sequentially in ranked order otherwise. Sub-agents are **generic**

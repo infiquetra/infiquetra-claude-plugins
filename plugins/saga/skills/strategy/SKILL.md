@@ -117,7 +117,7 @@ After writing, note in one line that the file lives at the repo root as `STRATEG
 `/ideate`, `/brainstorm`, and `/plan` will pick it up as grounding on their next run.
 
 If the strategy implies concrete implementation work, route it onward — to `/plan` (settle the HOW) or
-`/loop` (route it through the lifecycle). Resolve any cross-command route through the lifecycle routing
+`/plan` (route it through the lifecycle). Resolve any cross-command route through the lifecycle routing
 routing each command's own skill states (do not
 copy the routing table here). If no downstream skill has run yet on this repo, suggest `/ideate` or
 `/brainstorm` as the next step.

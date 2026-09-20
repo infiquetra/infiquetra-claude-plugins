@@ -186,27 +186,29 @@ def test_the_work_gate_reads_the_durable_record_before_chat_memory() -> None:
 # --------------------------------------------------------------------------- U1
 
 
-#: The four clauses a reader needs in order to decide whether to open the reference file at all.
-#: Issue #808's NARROW ruling is what each one encodes.
-EXPLICIT_INVOCATION_CONTRACT = (
-    "explicit invocation",
-    "never a default",
-    "interchangeable",
-    ("never pre-select", "do not pre-select"),
+#: What a reader arriving at the backend decision must be told, now that there is only one value.
+#: Until issue 1030 this tuple held issue #808's NARROW clauses -- "explicit invocation", "never a
+#: default", "interchangeable", "never pre-select" -- and the section had to point at
+#: ``references/workflow-backend.md``. Both backends those clauses gated are gone and that
+#: reference file went with them, so the guard had come to REQUIRE a dangling pointer: the skills
+#: kept citing a deleted file because this case failed if they stopped. What survives is the
+#: reader's actual need, which is to learn the backend without opening anything.
+ONE_BACKEND_CONTRACT = (
+    "`inline`",
+    "1030",
 )
 
 
-def _offer_section(skill: Path) -> str:
-    """The one ``###`` section where the backend is chosen.
+def _backend_section(skill: Path) -> str:
+    """The one ``###`` section where the backend is stated.
 
     Scoped to that section on purpose. A guard that searched the whole file would pass on a
-    contract sentence left behind somewhere else while the section that actually makes the
-    decision said only "see the reference file" -- and the section that makes the decision is
-    the only one whose reader is deciding.
+    sentence left behind somewhere else while the section a reader actually lands in said
+    nothing -- and that section is the only one whose reader is deciding.
     """
     text = skill.read_text(encoding="utf-8")
-    match = re.search(r"The default (?:Saga )?offer is", text)
-    assert match is not None, f"{skill.name} no longer states a default backend offer"
+    match = re.search(r"(?:There is one backend|The recorded enum has one value)", text)
+    assert match is not None, f"{skill.name} no longer states which backend a run uses"
     anchor = match.start()
     start = text.rindex("\n### ", 0, anchor)
     end = re.search(r"\n#{1,3} ", text[anchor:])
@@ -214,28 +216,24 @@ def _offer_section(skill: Path) -> str:
     return text[start:stop].lower()
 
 
-def test_the_skills_keep_the_explicit_invocation_contract_where_the_choice_is_made() -> None:
-    """A reader must be able to decide whether to go to the reference file without going."""
+def test_the_skills_name_the_one_backend_where_the_choice_used_to_be_made() -> None:
+    """A reader must learn the backend from the section they land in, without following a link."""
     for skill in (PLAN_SKILL, WORK_SKILL):
-        section = _offer_section(skill)
-        for clause in EXPLICIT_INVOCATION_CONTRACT:
-            options = clause if isinstance(clause, tuple) else (clause,)
-            assert any(o in section for o in options), (
-                f"{skill.name}'s backend-offer section drops the {options[0]!r} clause, so a "
-                "reader choosing a backend cannot tell from the skill that one is gated"
+        section = _backend_section(skill)
+        for clause in ONE_BACKEND_CONTRACT:
+            assert clause.lower() in section, (
+                f"{skill.name}'s backend section drops {clause!r}, so a reader cannot tell from "
+                "the skill which backend runs the work or why there is only one"
             )
-        assert "references/workflow-backend.md" in section, (
-            f"{skill.name}'s backend-offer section does not point at the reference file"
+
+
+def test_no_skill_points_at_the_reference_file_that_was_deleted() -> None:
+    """The reference file left with the `cc-workflows` plugin; a pointer to it resolves nowhere."""
+    assert not WORKFLOW_BACKEND_REF.exists(), (
+        "references/workflow-backend.md is back; this guard and its siblings assume it is gone"
+    )
+    for skill in (PLAN_SKILL, WORK_SKILL):
+        text = skill.read_text(encoding="utf-8")
+        assert "references/workflow-backend.md" not in text, (
+            f"{skill.name} still sends the reader to a reference file that does not exist"
         )
-
-
-def test_every_other_pointer_still_names_the_explicit_invocation_gate() -> None:
-    """The offer is not the only place a reader arrives from, so each remaining pointer keeps
-    at least the gate itself."""
-    for skill in (PLAN_SKILL, WORK_SKILL):
-        text = skill.read_text(encoding="utf-8").lower()
-        for match in re.finditer(r"references/workflow-backend\.md", text):
-            window = text[max(0, match.start() - 900) : match.end() + 300]
-            assert "explicit invocation" in window or "explicitly invoke" in window, (
-                f"a pointer in {skill.name} sends the reader on without naming the gate"
-            )

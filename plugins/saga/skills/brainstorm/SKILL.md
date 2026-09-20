@@ -435,7 +435,7 @@ the file on disk is left exactly as found.
 ## Phase 4 — Handoff
 
 The brainstorm artifact carries handoff maturity **`requirements-ready`** when its frontmatter declares
-`maturity: requirements-ready`, which feeds `/handoff` → `mission-control` and is consumed by
+`maturity: requirements-ready`, which feeds `mission-control` and is consumed by
 `/plan`. A `pending-confirmation` artifact declares no durable route. The route-gating is tied to declared maturity, not to file existence.
 
 Present next-step options and execute the operator's selection. Hide options that do not apply and
@@ -451,7 +451,7 @@ Options:
 2. **Sharpen with `/spec`** — hand the requirements doc to `/spec` for a relentless WHAT-rigor pass
    (five-Why, scope/MVP/out-of-scope/failure-mode lock, read-code-first grounding) before planning or
    handoff. Pass the requirements doc path. Shown only when the artifact on disk declares `maturity: requirements-ready`.
-3. **Hand off via `/handoff`** — route the `requirements-ready` artifact to `mission-control` as a
+3. **Hand off through `mission-control`** — route the `requirements-ready` artifact to it as a
    prepared issue draft for another team or a later session. Shown only when the artifact on disk declares `maturity: requirements-ready`.
 4. **Review with `/doc-review`** — dispatch a readiness review of the requirements doc before
    planning. Shown only when the artifact on disk declares `maturity: requirements-ready`.

@@ -46,11 +46,17 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "1.0.0"  # 1.0.0: the removals of issue
+    assert plugin_json["version"] == "1.1.0"  # 1.1.0: the three advisory review
+    # judgments of issue #1034 — the conditional-lens proposal at declaration time
+    # (review_roster.py --propose, additive only), finding dedupe groups and the severity
+    # flag over results (review_result.py, grouped and attached, never applied). Bumped over
+    # 1.0.0, the saga version on parent/1018 at 994443ea.
+    #
+    # Predecessor 1.0.0 was the removals of issue
     # #1030 — eleven commands and nine skills gone, four hooks deregistered and deleted, both saga
     # agents gone, and the sandbox-spawn project instruction replaced. Bumped over 0.172.0, the saga
-    # version on origin/parent/1018 at b264f154, re-read at this merge turn. 0.172.0 was chosen from
-    # the same base by issue #1039, which is why this card skipped it rather than colliding: two
+    # version on origin/parent/1018 at b264f154, re-read at that merge turn. 0.172.0 was chosen from
+    # the same base by issue #1039, which is why that card skipped it rather than colliding: two
     # cards writing an identical version string never conflict, and the collision merges silently.
     #
     # NOT 1.0.0, which the card names. 1.0.0 is that card's name for the complete release, and this

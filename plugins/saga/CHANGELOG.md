@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.0] - 2026-09-20
+
+**Advisory review judgments.** Issue #1034. Three typed judgments inside the roster-based code
+review, all advisory — none scores a lens, none removes anything, and every one logs its suggestion
+and its outcome to the verdict log:
+
+- **Conditional-lens proposal.** `review_roster.py --propose` asks one yes/no question per excluded
+  conditional lens and prints the proposed additions with their probabilities. The Planner's
+  declaration is the floor: the proposal can only add lenses, never remove them, it never questions
+  the four always-on lenses, and the declaration's lenses are left intact for the Planner to amend
+  explicitly before the roster resolves.
+- **Finding dedupe.** `dedupe_findings` groups findings that describe the same defect. Code finds the
+  candidate pairs (same path and category); one yes/no judgment per pair confirms or declines; every
+  finding lands in exactly one group, so nothing is ever dropped. The fingerprint merge still owns
+  counting — the groups are shown beside it.
+- **Severity flag.** `flag_severity` scores each finding against the catalogue's severity anchors and
+  attaches a flag only when the suggestion is strictly more severe than the stated severity. Attached
+  on `severity_flag`, never applied: the reviewer's severity always stands.
+
 ## [1.0.0] - 2026-09-20
 
 **The removals.** Issue #1030, the closing child of parent #1018. Eleven commands, their skills and

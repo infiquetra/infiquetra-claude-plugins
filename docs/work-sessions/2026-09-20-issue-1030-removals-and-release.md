@@ -96,7 +96,7 @@ Four of the plan's units, each a complete removal in its own right, plus two sma
 |---|---|---|
 | U1 | Ten command files and nine skill directories | `plugins/saga/commands` holds **14** files; `plugins/saga/skills` holds **13** directories |
 | U4 | Four hooks with their registrations, the `SessionEnd`, `Stop` and `SubagentStop` event keys, and both saga agents | `plugins/saga/hooks` holds **8** hook files; `plugins/saga/agents` no longer exists |
-| U5 | Four generated SVGs, the documentation model and its renderer, and the visuals page | `plugins/saga/references` holds **34** files — unchanged but for the spawn-site inventory |
+| U5 | Four generated SVGs, the documentation model and its renderer, and the visuals page | `plugins/saga/references` holds **33** files plus the `rubrics/` directory — unchanged but for the spawn-site inventory |
 | U7 | The sandbox-spawn instruction in `CLAUDE.md`, the spawn-site inventory, and the prose in four surviving skills | `grep -c readonly-verifier CLAUDE.md` prints **0** |
 
 Test files went from 302 to **296**: nine whole files retired with their subjects, and one new file,
@@ -145,9 +145,25 @@ sites in four deleted skill files and in the deleted gate-divergence reference. 
 drift the lint fails on by design, and its documented repair is to remove the entry — the direction
 the ratchet allows. The check itself is unchanged.
 
-No version was bumped. Bumping saga to 1.0.0 on a release whose defining removal has not happened
-would make the changelog and both installed plugin trees assert something untrue, so the release
-surfaces wait for the blocker's resolution.
+## The version, and the one instruction deliberately not followed
+
+**saga goes to 0.173.0, not the 1.0.0 the card and the stage instruction both name.** The release
+surfaces move together: `plugin.json`, the marketplace entry, the changelog, and the version literal
+in the drift guard. `tools/release_surface_diff_guard.py --base-ref origin/parent/1018` passes after
+that commit, and it fails without it, which is why a bump was not optional.
+
+0.172.0 is skipped on purpose: issue 1039 takes that number from the same base, and two cards writing
+an identical version string never conflict — the manifest and the marketplace entry come through a
+merge clean and the only signal is two bodies under one changelog heading. This repository has been
+caught by that twice.
+
+**Why not 1.0.0.** That is the card's name for a release that removes eleven commands *and* the
+script families behind them. The command surface is gone; the script families are not. Taking 1.0.0
+here would tell both installed plugin trees that the 1.0 release had landed when its defining removal
+had not, and would leave the complete release with no number left to be. The reasoning is written
+into the changelog entry and the drift-guard comment, where someone would look for it, and 1.0.0
+remains available for the release that earns it. **If the operator wants 1.0.0 shipped anyway, it is
+a one-line change in four places and this note is the objection, not a veto.**
 
 ## Residuals for the merge turn
 

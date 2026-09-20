@@ -899,6 +899,38 @@ class TestDrivers:
         )
         assert QA.driver_cli_smoke(context)["result"] != QA.RESULT_PASSED
 
+    def test_a_quoted_argument_holding_a_space_stays_one_argument(self) -> None:
+        """The profile's commands are written the way a person writes them in a shell.
+
+        ``str.split`` cut ``-k "not slow"`` into three arguments and handed the program something
+        the operator never asked it to run, with no error anywhere — the run simply tested the
+        wrong thing. ``shlex.split`` is the same parsing ``build_loop.run_check`` has always used
+        for the mechanical baseline, which is the same kind of value.
+        """
+        seen: list[list[str]] = []
+
+        def capture(argv: Any, timeout: int, cwd: Any) -> tuple[int, str]:
+            seen.append(list(argv))
+            return 0, ""
+
+        context = self._context(
+            "cli-smoke",
+            {"commands": [{"name": "a", "command": 'pytest -k "not slow" tests/'}]},
+            runner=capture,
+        )
+        assert QA.driver_cli_smoke(context)["result"] == QA.RESULT_PASSED
+        assert seen == [["pytest", "-k", "not slow", "tests/"]]
+
+    def test_a_command_that_does_not_parse_is_reported_rather_than_raised(self) -> None:
+        """An unbalanced quote is a profile the operator fixes, not a traceback out of the driver."""
+        context = self._context(
+            "cli-smoke",
+            {"commands": [{"name": "a", "command": 'pytest -k "not slow'}]},
+            runner=_runner(),
+        )
+        envelope = QA.driver_cli_smoke(context)
+        assert envelope["result"] != QA.RESULT_PASSED
+
 
 # ---------------------------------------------------------------------------
 # U5 — the verdict, the route and the run record.

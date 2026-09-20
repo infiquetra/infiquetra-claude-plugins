@@ -1,8 +1,6 @@
 # Saga Lifecycle
 
-Saga routes a work thread from early framing to reviewed work, PR/merge coordination, QA evidence, handoff, and learning.
-
-![Saga Lifecycle Atlas](assets/lifecycle-atlas.svg)
+Saga routes a work thread from early framing to reviewed work, PR/merge coordination, QA evidence, and learning.
 
 ## Main Chain
 
@@ -15,9 +13,9 @@ The main chain is designed around readiness gates.
 | Reviewed plan | `/work` | work session, commits, PR | tests and fresh code review |
 | PR boundary | `/code-review` | `docs/code-reviews/` | unresolved P0/P1 blocks PR-ready |
 | Merged or acceptance boundary | `/qa` | `docs/qa/` | verdict: ship, ship-with-deferred, or no-ship |
-| Complete or routed follow-up | `/handoff` or `/retro` | issue envelope or learning | owner-specific review |
+| Complete or routed follow-up | `/retro` | journal entry or retro artifact | owner-specific review |
 
-`/loop` can route into this chain, but it does not own the phase work. The routed command owns its phase, gates, and backend choice.
+Each command owns its own phase, its gates, and its backend choice. Issue 1030 removed the router that used to sit in front of them, so a command is entered directly.
 
 ## Off-Chain Commands
 
@@ -25,13 +23,12 @@ Off-chain commands are deliberate exits from the linear path.
 
 | Command | State behavior | Routes back through |
 |---------|----------------|---------------------|
-| `/spec` | saga-untouched | `/handoff`, `/plan`, optional `/doc-review` |
-| `/investigate` | saga read-only | `/work`, `/handoff`, `/brainstorm`, `/code-review` |
-| `/optimize` | saga-untouched | `/work` for the winning change |
+| `/spec` | saga-untouched | `/plan`, optional `/doc-review` |
+| `/investigate` | saga read-only | `/work`, `/brainstorm`, `/code-review` |
 | `/strategy` | saga-untouched | `/ideate`, `/brainstorm`, `/plan`, `/founder-review` |
-| `/retro` | saga read-only terminal | `/handoff` only when learning should become work |
+| `/retro` | saga read-only terminal | `mission-control` only when a learning should become an SDLC issue |
 
-Do not add off-chain commands as stored `lifecycle_phase` values. Their artifacts can still become handoff sources.
+Do not add off-chain commands as stored `lifecycle_phase` values. Their artifacts can still become the source for an SDLC issue prepared through `mission-control`.
 
 ## Destination Horizon
 
@@ -52,4 +49,4 @@ The hard readiness gate before implementation is `/doc-review`: unresolved P0/P1
 
 The hard PR gate belongs to `/work` through programmatic `/code-review`: unresolved P0/P1 findings or a stale review block PR-ready unless explicitly overridden with a recorded rationale.
 
-QA is acceptance evidence. It can route repairs, defects, investigation, handoff, or retro, but it does not fix bugs or deploy.
+QA is acceptance evidence. It can route repairs, defects, investigation, or retro, but it does not fix bugs or deploy.

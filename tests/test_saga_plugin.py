@@ -538,14 +538,23 @@ def test_qa_functional_test_step_contract() -> None:
             "any `git add` mention must be inside a 'Never git add' negation"
         )
 
-    # --- MECHANISM FLOOR 12: dispatch-table is REFERENCED, never restated. ---
-    assert "loop/references/dispatch-table.md" in skill_doc, (
-        "outbound routing must REFERENCE the dispatch-table by path"
+    # --- MECHANISM FLOOR 12: outbound routing is DEFERRED, never restated. ---
+    # Until issue 1030 this floor required the skill to cite
+    # `loop/references/dispatch-table.md` by path. That table left with `/loop`, and the floor
+    # outlived it pinned to a path that no longer resolves: a guard that requires a dangling
+    # reference is why the rewritten skill kept pointing at a deleted file. The floor's real
+    # subject is that `/qa` does not carry its own copy of the routing map, so that is what is
+    # checked now, plus the positive half — the skill still says where the next step comes from.
+    assert "loop/references/dispatch-table.md" not in corpus, (
+        "the dispatch table left with /loop; a reference to it no longer resolves"
     )
     assert "# Dispatch Table" not in corpus, (
         "the dispatch-table H1 title must not be restated in /qa"
     )
     assert "The designed routing map for `/loop`" not in corpus
+    assert "run record" in skill_doc.lower(), (
+        "outbound routing must name where the next step is read from"
+    )
 
     # --- MECHANISM FLOOR 13: the two strategies declared WITHOUT a driver say so, with the
     # condition that reopens each. A narrowing declared openly is not the same as a silent gap. ---
@@ -1117,6 +1126,32 @@ def test_recommend_backend_release_surface_subtraction() -> None:
         )
     with pytest.raises(ValueError, match="release_surface_file_count"):
         rec(file_count=3, release_surface_file_count=-10)
+
+
+def test_recommend_backend_survives_an_unavailable_workflow_tool() -> None:
+    """A host without the Workflow tool gets a recommendation, not a ValueError.
+
+    Issue 1030 narrowed the reachable-backend list to ``["inline"]`` and left behind the line
+    that removed ``cc-workflows-ultracode`` from it when the tool was absent. ``list.remove``
+    raises on a value that is not there, so every call passing ``workflow_available=False`` --
+    which is every call from a host that actually probed -- died with
+    ``ValueError: list.remove(x): x not in list``. The full suite stayed green because no case
+    passed the flag.
+
+    Both provenance values are exercised, because the crash was in the branch the flag selects
+    and not in the note the source chooses.
+    """
+
+    lifecycle = _load_module("lifecycle_state.py")
+    for source in ("probed", "asserted"):
+        result = lifecycle.recommend_execution_backend(
+            workflow_available=False,
+            workflow_availability_source=source,
+        )
+        assert result["recommended"] == "inline"
+        assert result["alternatives"] == []
+        assert [entry["backend"] for entry in result["backends"]] == ["inline"]
+        assert [entry["status"] for entry in result["backends"]] == ["recommended"]
 
 
 def test_issue_progress_comments_include_required_evidence() -> None:

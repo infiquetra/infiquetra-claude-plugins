@@ -49,8 +49,9 @@ After the task list, pick how to execute from task count and dependency structur
 | **Parallel subagents** | 3+ tasks that pass the Parallel Safety Check below. Dispatch independent units simultaneously; run dependent units after their prerequisites complete. Requires plan-unit metadata. |
 
 This strategy choice (inline / serial / parallel **subagent dispatch**) is the *mechanical* "how do I run
-the units" decision and is independent of the **backend** choice below (`inline` / `team-execution` /
-`cc-workflows-ultracode`), which is the operator-choice contract for *which runtime owns the work*.
+the units" decision and is independent of the recorded **backend** below, which is the
+operator-choice contract for *which runtime owns the work*. Since issue #1030 that contract has one
+value, `inline`, so the only live decision here is the mechanical one above.
 
 ## Parallel Safety Check (required before parallel dispatch)
 
@@ -139,15 +140,10 @@ already landed some units.
 
 ## Backend recommendation — `recommend_execution_backend()` (Phase 1.4)
 
-`/work` lands the deferred operator-choice helper (operator-choice §7), **narrowed by issue #808**.
-Compute the cheapest-correct **Saga** backend (`inline` or `team-execution`), pre-select that Saga
-backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default or
-automatic backend and never a generic interchangeable execution backend; **do not pre-select** it —
-the recommender never returns it (issue #840 C5). Enter a Claude Code Workflow only by **explicit
-invocation**. Before calling the CLI, **probe Workflow-tool availability with `ToolSearch`** (needed
-if the operator later invokes a Workflow) and pass the result as `--workflow-availability-source
-probed`; fall back to the `asserted` default only when a live probe isn't possible on this host. Call
-the CLI:
+`/work` lands the deferred operator-choice helper (operator-choice §7). Since issue #1030 archived
+the `team-execution` plugin and removed the `cc-workflows` plugin there is one backend, `inline`, so
+the helper's job is no longer to choose between backends — it is to compute the work shape and
+return the rationale the run records. Call the CLI:
 
 ```bash
 python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
@@ -161,24 +157,24 @@ python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
 ```
 
 It returns JSON: `{recommended, rationale, alternatives, backends, workflow_availability}`.
-`recommended` / `rationale` / `alternatives` are unchanged. `backends` is the full-enumeration payload —
-always exactly three ordered `{backend, status, note}` entries (`inline`, `team-execution`,
-`cc-workflows-ultracode`) with `status` in `{recommended, alternative, unavailable}`; there is no
-`omit_ultracode` key. `workflow_availability` echoes `{available, source}`, where `source` is `probed`
-or `asserted` (KTD3) — the provenance of the availability check.
+`recommended` is always `inline` and `alternatives` is always empty, because issue #1030 archived
+every other backend. `backends` is the full-enumeration payload — one ordered `{backend, status,
+note}` entry for `inline` with `status` in `{recommended, alternative, unavailable}`; the enumeration
+contract is that no backend is ever silently dropped, not that the list has a particular length.
+`workflow_availability` echoes `{available, source}`, where `source` is `probed` or `asserted`
+(KTD3) — kept because a caller that probed the host is entitled to see what the probe said, even
+though nothing now turns on it.
 
-The recommendation reuses `should_offer_team_execution`'s thresholds (functional file count — raw
-`--file-count` minus `--release-surface-file-count` — ≥ 8, phase_count ≥ 4, security, infra, cross-repo,
-deployment-sensitive) **or** a gated needs-consensus signal for `team-execution`; broad-independent-fanout,
-an adversarial-confidence pass (prove-by-refutation / judge-panel), advisory consensus, or any of the five
-`--workflow-shape` entries (`understand` / `design` / `research` / `review` / `migrate`) without elevated
-risk for `cc-workflows-ultracode`; `inline` otherwise. An unknown `--workflow-shape` value raises loud
-(`ValueError`) — never a silent downgrade to inline. Pass `--release-surface-file-count` for the count of
+The same signals are still computed — `should_offer_team_execution`'s thresholds (functional file
+count — raw `--file-count` minus `--release-surface-file-count` — ≥ 8, phase_count ≥ 4, security,
+infra, cross-repo, deployment-sensitive) or a gated needs-consensus signal — but since issue #1030
+they select the `rationale` the run records rather than a different backend. An unknown
+`--workflow-shape` value still raises loud (`ValueError`) — never a silent downgrade. Pass `--release-surface-file-count` for the count of
 release-bookkeeping files (plugin.json, marketplace.json, CHANGELOGs, version drift pins) inside
 `--file-count` — they carry no functional risk and must not trip the size trigger on their own. Pass
 `--no-code-surface` for pure docs/spec/research output: it voids the code-shaped proxies (size, and the
 `has_infra` / `has_security` keyword flags that false-positive on docs) so a big docs change isn't
-conscripted into team-execution — only `--cross-repo` and gated `--needs-consensus` keep it there. Set
+counted as escalating on its size alone — only `--cross-repo` and gated `--needs-consensus` do that. Set
 `--adversarial-confidence` ONLY on an explicit operator request for many-independent-attempt verification
 (refute-N, a judge panel, perspective-diverse lenses) — not inferred from generic "make me more confident"
 phrasing, and not when 1-3 review lenses would do; that bar keeps confidence work from over-routing to
@@ -186,16 +182,12 @@ ultracode. `alternatives` lists every reachable backend **independent of which o
 an overlap job (consensus AND fan-out) still offers both — escalation stays one step (operator-choice
 §3.3).
 
-Surface the recommendation with `AskUserQuestion` (or channel-inline), rendering the **two Saga
-backends** (`inline` and `team-execution`): pre-select `team-execution` when a gated size/risk/
-consensus trigger fired, otherwise `inline`. Do not add `cc-workflows-ultracode` as a third
-interchangeable choice. If the
-operator **explicitly invokes** `cc-workflows-ultracode` but it turns out unavailable, HALT with a
-recovery line pointing at `team-execution` or `inline` — never silently substitute. Record the
-operator's pick via the saga's `--orchestration-mode` (Phase 1.4) — that is the durable home for the
-choice (operator-choice §6). Pass the helper's `recommended` value — the bare enum string, since
-`--orchestration-recommended` takes `choices=ORCHESTRATION_MODES`, not the JSON object — even when
-the pre-select differs, so R12 telemetry still sees recommended-vs-chosen.
+**Do not surface a question.** With one backend there is nothing to ask and nothing to pre-select;
+an offer whose only option is the default is ceremony. Record `inline` via the saga's
+`--orchestration-mode` (Phase 1.4) — that is the durable home for the choice (operator-choice §6) —
+and pass the helper's `recommended` value to `--orchestration-recommended` as the bare enum string,
+since that flag takes `choices=ORCHESTRATION_MODES` rather than the JSON object. R12 telemetry still
+sees recommended-vs-chosen, which is the point of writing both even when they agree.
 
 ## Build-unit tier resolution — `resolve_build_unit_tier()` (Phase 2)
 

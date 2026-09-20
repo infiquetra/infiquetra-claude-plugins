@@ -295,21 +295,15 @@ to move, so this step is a no-op (not a silent skip of a required write).
 which backend the plan chose, record it exactly as though the operator had picked it, and continue.
 The decision was already made — at plan time, by this operator — and asking again is not a second
 confirmation, it is the same question in a place where the answer may no longer be reachable: under
-`/orchestrate` this runs in a background tab where an unanswered offer waits forever. Honouring
-`backend: cc-workflows-ultracode` is honouring an **explicit invocation** already recorded on the
-plan, not a default or automatic selection.
+`/orchestrate` this runs in a background tab where an unanswered offer waits forever.
 
-Offer only when the field is absent, which is every plan written before this contract existed.
-The offer renders from `references/operator-choice.md` as narrowed by issue #808; the offer itself,
-the runnable recommender call, and the rules that keep a Claude Code Workflow behind an explicit
-invocation are in [`references/workflow-backend.md`](../../references/workflow-backend.md).
-
-**The default offer is `inline`, and it is the only recommended backend.** The offer was `inline` or
-`team-execution` until issue #1030 archived that plugin; what it provided -- reviewer consensus and
-named scanners -- is now the lensed code review and the build loop's mechanical baseline, which an
-inline run already performs. `cc-workflows-ultracode` is never a default or automatic backend and
-never a generic interchangeable execution backend; **do not pre-select** it, and never silently
-substitute it for `inline`.
+**There is one backend, and it is `inline`.** Issue #1030 archived the `team-execution` plugin
+and removed the `cc-workflows` plugin, so `ORCHESTRATION_MODES` is `("inline",)` and there is no
+offer to render — see §1 of [`references/operator-choice.md`](../../references/operator-choice.md).
+What the archived backend provided — reviewer consensus and named scanners — is now the lensed
+code review and the build loop's mechanical baseline, which an inline run already performs. A
+plan whose `backend:` field records one of the archived strings is honoured as history: say so in
+one line, record `inline`, and continue.
 
 Then mint/advance the work-thread saga to `lifecycle_phase=work`. Set `--issue-ref` (the issue case — the
 saga-spec §11 `issue_ref`-adoption write), `--plan-path` whenever a plan exists, and save **on the work
@@ -325,7 +319,7 @@ python3 plugins/saga/scripts/saga.py save \
   --phase-status in_progress \
   --plan-path docs/plans/YYYY-MM-DD-<topic>-plan.md \
   --destination <plan-only|pr|merge|nonprod-deploy> \
-  --orchestration-mode <inline|cc-workflows-ultracode> \
+  --orchestration-mode inline \
   --orchestration-recommended <recommend_execution_backend() output> \
   --rounds-seen "1"
 ```
@@ -342,18 +336,13 @@ keys). `save` mints unconditionally (correct here — `/work` is the minter), an
 appends a tick to the existing directory rather than forking. Never `git add` the tick (saga state is
 git-ignored, machine-local). Never set `next_round` — it is derived from `rounds_seen` (saga-spec §6.1).
 
-### 1.5 A Claude Code Workflow run, after an explicit invocation
+### 1.5 The Claude Code Workflow step — removed
 
-Enter this step only when `orchestration_mode == cc-workflows-ultracode` — which happens only when
-the plan's `backend:` field recorded an explicit invocation, or the operator names it in this
-session. Never enter it because the recommender suggested it, and never as a silent substitute for
-`inline`. `/work` does not hand-roll sequential subagents as a substitute
-either: it runs the real Workflow tool or halts visibly.
-
-The whole of this step — the freshness re-emission, the invocation identity, the reservation
-contract, the halt conditions, the launch, the post-run settlement, and the retry derivation — is
-in [`references/workflow-backend.md`](../../references/workflow-backend.md). For every other
-backend, continue to Phase 2.
+This step ran when `orchestration_mode == cc-workflows-ultracode`. Issue #1030 removed the
+`cc-workflows` plugin and narrowed `ORCHESTRATION_MODES` to `("inline",)`, so the mode cannot be
+written and the step cannot be entered. Its reference document went with the plugin. A plan whose
+`backend:` field still records the string is read as history (§1.4), not as an instruction to enter
+a run that has nowhere to go. Continue to Phase 2.
 
 ---
 

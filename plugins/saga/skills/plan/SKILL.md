@@ -424,26 +424,16 @@ document travels with the work because the executor commits it alongside the cha
 it the place a decision made here can reliably be read later. `/work` honours that field and does
 not ask again.
 
-The recorded enum has two values — `inline` ("inline") |
-`cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
-`ORCHESTRATION_MODES`. **The default Saga offer is `inline` only**, since issue #1030
-archived team-execution and ruling C5 forbids recommending a Workflow; there is no longer an offer
-to render or a choice to put to the operator. Still call `lifecycle_state.py recommend-backend` and
+The recorded enum has one value: `inline`. It matches `ORCHESTRATION_MODES` in `saga.py` and
+§1 of [`references/operator-choice.md`](../../references/operator-choice.md). Issue #1030 archived
+the `team-execution` plugin and removed the `cc-workflows` plugin, so there is no offer to render
+and no choice to put to the operator. Still call `lifecycle_state.py recommend-backend` and
 still record both `--orchestration-recommended` and `--orchestration-mode` (R12 telemetry), so a
-tick continues to carry recommended-and-chosen rather than going silent on the decision.
+tick continues to carry recommended-and-chosen rather than going silent on the decision — the
+recommender now returns `inline` with a work-shape rationale rather than a different backend.
 
-**Claude Code Workflows (`cc-workflows-ultracode`) are reachable only by explicit operator
-invocation** (DECISIONS `{#cc-workflows-backend-narrow-808}`, issue #808's NARROW ruling).
-They are **never a default** or automatic Saga backend, and never a generic interchangeable
-execution backend. **Never pre-select** one. Never launch one because
-`recommend_execution_backend()` returned it. Never
-silently substitute one for `inline`. Do not build a mechanism-neutral
-backend-switching abstraction around it.
-
-Everything about the two non-`inline` backends — the availability probe, the per-unit tier table,
-the spend guards, authoring the specification, and the naming convention for the generated
-artifacts — is in [`references/workflow-backend.md`](../../references/workflow-backend.md). Go
-there only after an explicit invocation; nothing in this skill needs it otherwise.
+A saga written before that release may still carry `team-execution` or `cc-workflows-ultracode`.
+Either reads back and renders its label; neither can be written again.
 
 #### 5.2a Derive the per-unit tiers
 

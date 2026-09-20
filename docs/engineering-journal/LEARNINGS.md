@@ -2,6 +2,142 @@
 
 ## 2026-09-20
 
+### Two parsers for one kind of value, and only one of them is right  {#two-command-parsers-1030}
+
+**Evidence.** In the same release, `plugins/saga/scripts/build_loop.py:379` turns an
+operator-declared command string into an argument vector with `shlex.split` plus a glob expansion,
+while `plugins/saga/scripts/qa_strategies.py:849` did it with `command.split()`. Both run the result
+with `shell=False`, both read their strings from the same repository profile
+(`.saga-profile.json` carries `mechanical_tool_baseline` for one and `qa.strategies[].commands` for
+the other), and both were written for the same release. `str.split` cuts `pytest -k "not slow"` into
+four arguments and hands the program `'"not'` and `'slow"'`.
+
+**Mechanism.** The failure is silent in the worst way: the command runs, the exit code is real, and
+the run reports on something nobody asked for. The give-away was already in the file — a `try` /
+`except ValueError` around `command.split()` carrying `# pragma: no cover - split never raises;
+kept for shape parity`. The author had `shlex.split`'s error contract in mind and wrote the handler
+for it without writing the call. A comment that explains why a branch is unreachable is worth
+reading as a question about whether the surrounding line is the one that was meant.
+
+**Generalizable rule.** A command string that will be executed without a shell is parsed with
+`shlex.split`, everywhere, and a repository that has two such call sites should have one helper.
+When you find dead error handling whose comment names an exception the call cannot raise, check
+whether the call is the one the handler was written for.
+
+### Narrowing a list is not done until every line that reached into it is gone  {#narrowed-list-left-a-remove-1030}
+
+**Evidence.** `plugins/saga/scripts/lifecycle_state.py:305-307` at `c5e8129d` (pull request 1050,
+the issue 1018 integration branch). Issue 1030 narrowed the reachable-backend list from three
+entries to one:
+
+```python
+reachable = ["inline"]
+if not workflow_available:
+    reachable.remove("cc-workflows-ultracode")
+```
+
+`list.remove` raises on a value that is not present, so **every** call to
+`recommend_execution_backend(..., workflow_available=False)` died with
+`ValueError: list.remove(x): x not in list`. That is every call from a host that actually probed
+for the Workflow tool and did not find one, which is the case
+`plugins/saga/skills/work/references/execution-strategy.md` instructs `/work` to produce: probe
+with `ToolSearch`, then pass the result. The command line reached it through
+`lifecycle_state.py recommend-backend --no-workflow`.
+
+**Mechanism.** The full test suite was green at that commit and stayed green, because no case in it
+passed `workflow_available=False`. The flag had never needed a case of its own while the list had
+three entries and the removal always succeeded; narrowing the list turned an always-safe line into
+an always-fatal one, and the coverage gap that had been harmless became the reason nothing noticed.
+Ruff and mypy cannot see it either: the line is valid Python over a correctly typed list.
+
+**Generalizable rule.** When you shrink a collection literal, grep for every mutation of that
+collection by name and re-read each one against the new contents — and if a boolean parameter
+selects a branch you just changed, add the case that takes it, because a parameter with no test
+case is a branch nobody runs.
+
+### A test file with no test functions is not a guard, and nothing in the toolchain says so  {#zero-test-guard-husk-1030}
+
+**Evidence.** `tests/test_operator_choice_drift.py` at `c5e8129d`: 72 lines of module docstring,
+two constants and two private helpers, and **zero** test functions. The issue 1030 sweeps deleted
+all four of its assertions (55 lines) because their subject — the two dynamic-workflow purposes the
+`cc-workflows` plugin offered — left with the plugin. `uv run pytest
+tests/test_operator_choice_drift.py` prints `no tests ran` and exits 0. Ruff does not flag
+module-level constants that nothing reads, coverage does not fall because the file adds no
+production lines, and `scripts/lint_test_shape.py` checks the shape of tests that exist rather than
+whether any do.
+
+**Mechanism.** Deleting a guard is a visible act; emptying one is not. The file keeps its name, its
+docstring still describes an invariant, and a reader grepping for the guard finds it and believes
+the invariant is covered. An audit for this across the whole tree — parse each `test_*.py` and ask
+whether any `test*` function or `Test*` class survives — found exactly this one file, so the check
+is cheap and the answer is short.
+
+**Generalizable rule.** When a sweep removes assertions, it must either remove the file or leave the
+file collecting at least one test; and a repository that runs sweeps should own a guard that parses
+every `test_*.py` for at least one collected test, because "no tests ran" is reported as success by
+every runner.
+
+### A mutation canary's anchor is a copy of the code and drifts like one  {#canary-anchor-drift-1030}
+
+**Evidence.** The `archived-orchestration-mode` entry added to `tools/canary_registry.json` in this
+release named `ORCHESTRATION_MODES = ("inline", "cc-workflows-ultracode")` as its `find` text, while
+`plugins/saga/scripts/saga.py:85` reads `ORCHESTRATION_MODES = ("inline",)`.
+`tools/wiring_canary.py:146-150` raises `CanaryError` when the anchor is absent and
+`run_entry` records `error`, so the entry proved nothing and the scheduled
+`.github/workflows/mutation-canary.yml` run would have reported an error for it. After correcting
+the anchor, `uv run python tools/wiring_canary.py --target archived-orchestration-mode` prints
+`archived-orchestration-mode: caught`.
+
+**Mechanism.** The canary is the repository's answer to "is this guard hollow?", and the entry was
+written in the same card that changed the line it quotes — the author had the old literal in mind
+from the sentence they were deleting. Nothing runs the registry on a pull request; the canary is a
+scheduled workflow, so the mismatch would have surfaced hours later in a run nobody was watching.
+
+**Generalizable rule.** A registry entry that quotes source text is a second copy of that text:
+run the entry you just wrote (`--target <id>`) before committing it, and treat `caught` as the
+receipt. `error` and `toothless` are both failures, and only one of them looks like one.
+
+### Removing a command surface leaves its manual behind, and the manual is the product  {#removed-commands-left-the-manual-1030}
+
+**Evidence.** At `c5e8129d`, issue 1030 had removed eleven commands and `tests/test_command_surface.py`
+pinned the surviving fourteen files — while `plugins/saga/README.md` still opened with a "Start
+Here" table routing the reader to `/handoff`, `/resume`, `/pulse` and `/fleet-doctor`, still said
+"25 command files and 24 routable commands", and still described `/outcome` across a backend menu
+naming two archived plugins. `plugins/saga/docs/commands.md` — which the README calls "the
+maintained user-facing reference" — still carried a full command card for each of the eleven, plus
+`/undo`. Four manual pages embedded `assets/*.svg` files the same diff deleted.
+`plugins/saga/references/operator-choice.md` still asserted "there are exactly three recorded enum
+values ... they match `ORCHESTRATION_MODES`", which had become one. Eight surviving skills told the
+reader the default offer presents `inline` and `team-execution`.
+
+**Mechanism.** The removal was driven by the code surface: the guard counts command files and skill
+directories, and it passed. Prose has no such guard, so every sentence describing the removed
+surface survived the card that removed it. For a skills-based plugin this is not documentation lag —
+the prose *is* what the agent executes, so a skill that says "route this through `/handoff`" is a
+broken call, not a stale sentence.
+
+**Generalizable rule.** When a card removes a command, the same card removes the command from every
+routing table, manual card, scenario row and reference list in the plugin, and the removal test
+names the prose surfaces as well as the file count. A count guard proves the files are gone; it
+proves nothing about whether anything still tells a reader to use them.
+
+### A guard can pin a dangling reference, and then it enforces the breakage  {#guard-pinned-a-dangling-path-1030}
+
+**Evidence.** `tests/test_saga_plugin.py::test_qa_functional_test_step_contract` asserted
+`"loop/references/dispatch-table.md" in skill_doc`. `/loop` and its dispatch table were removed by
+issue 1030, so the guard required `plugins/saga/skills/qa/SKILL.md` to keep citing a path that no
+longer resolves — and the rewritten `/qa` skill duly did, at line 223.
+
+**Mechanism.** The floor's real subject was that `/qa` does not restate the routing map, and the
+author encoded it as "cites the map by path", which is a proxy that stops being equivalent the
+moment the map is deleted. Retargeting it to the negative (`not in`) plus the positive half (the
+skill names where the next step is read from) keeps the floor and drops the dependency on a file.
+
+**Generalizable rule.** When a guard asserts that a document cites a path, the guard now depends on
+that path existing. Prefer asserting the property (the map is not restated here, and the source is
+named) over asserting a specific citation, or the guard becomes the reason a dangling reference
+cannot be fixed.
+
 ### A name-based check is only as good as the set of names you hand it  {#name-checks-need-checked-inputs-1030}
 
 **Evidence.** Issue 1030's removal of 73 script modules and the test sweeps that followed. Four

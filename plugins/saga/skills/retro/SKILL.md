@@ -107,10 +107,10 @@ presentation format; the gate itself is:
   carries an **EXPLICIT warning in the diff header**:
   > **WARNING: this changes your GLOBAL Claude config and affects ALL projects, not just this repo.**
 
-**Never auto-launch** a destructive self-edit or an execution backend. A backend (`inline` ("inline") /
-`team-execution` ("team execution"); `cc-workflows-ultracode` only on explicit invocation) for a big
-refactor is **offered** per `../../references/operator-choice.md`, never started without the
-operator's pick.
+**Never auto-launch** a destructive self-edit or a big refactor. The backend is `inline` — the only
+value since issue #1030, per `../../references/operator-choice.md` §1 — so what is put to the
+operator is whether to start the work at all, never which backend runs it. Nothing starts without
+the operator's pick.
 
 ---
 
@@ -380,9 +380,9 @@ The passes neither source had, all gated (`references/retro-passes.md`):
 - **(d) memory pruning** — propose curation of the `.claude` auto-memory (`MEMORY.md` + topic files) per
   the journal-rule + staleness + contradiction sweeps.
 
-A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`inline` ("inline") /
-`team-execution` ("team execution"); `cc-workflows-ultracode` only on explicit invocation) per
-`../../references/operator-choice.md`. **Never auto-run** it.
+A **big multi-file refactor** surfaced by any pass → **OFFER to start it**, and nothing more: the
+backend is `inline`, the only value since issue #1030 (`../../references/operator-choice.md` §1).
+**Never auto-run** it.
 
 ---
 
@@ -428,8 +428,8 @@ It never blocks the router.
   directive disambiguation with the cross-project warning, and never-auto-launch.
 - `references/retro-report.md` — the `docs/retros/` writeup shape (agent-consumable structured findings,
   links + diff-vs-last) and the journal-promotion entry templates (LEARNINGS / DECISIONS / QUEUED / ARCHIVE).
-- `../../references/operator-choice.md` — the decision contract for offering a refactor backend
-  (narrow default offer: inline / team-execution).
+- `../../references/operator-choice.md` — the execution-backend contract; one value, `inline`,
+  since issue #1030 archived the others.
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).
 - `../../references/saga-spec.md` — the saga contract (`restore` / `ticks`; `/retro` is read-only).
 - `../../scripts/manifest_reader.py` — R7/R16/R18 telemetry reader: scans the provenance-manifest

@@ -522,13 +522,14 @@ def test_evidence_ledger_qa_and_code_review_write_through_cli_full_lifecycle(tmp
 
 
 def test_evidence_ledger_qa_and_code_review_write_through_skill_sections_call_the_ledger():
-    """`/qa` still writes through the ledger. `/code-review` deliberately no longer does.
+    """Neither skill writes through the ledger any more; both write to the run record.
 
-    Issue 1001 moved the code review's durable evidence into the run record's
-    `review_cycles`, which is where every later step of the run already reads, and
-    removed this skill's ledger call site. The module itself stays — it has other
-    callers, `/qa` among them — so the guard is retargeted rather than dropped: `/qa`
-    must still call it, and `/code-review` must not.
+    Retargeted twice, in the same direction both times. Issue 1001 moved the code review's durable
+    evidence into the run record's `review_cycles`; issue 1028 moved `/qa`'s frozen criteria and
+    scenario results there too. The module itself stays — its removal is deferred to issue 1030
+    because its sole production importer, `closure_gate.py`, is that card's to delete — so what is
+    pinned is the direction of travel: no skill calls the ledger, and each names the run record
+    instead.
     """
     qa_skill = (ROOT / "plugins" / "saga" / "skills" / "qa" / "SKILL.md").read_text(
         encoding="utf-8"
@@ -536,7 +537,11 @@ def test_evidence_ledger_qa_and_code_review_write_through_skill_sections_call_th
     cr_skill = (ROOT / "plugins" / "saga" / "skills" / "code-review" / "SKILL.md").read_text(
         encoding="utf-8"
     )
-    assert "evidence_ledger.py" in qa_skill
+    assert "evidence_ledger.py" not in qa_skill, (
+        "the QA gate's ledger write was removed by issue 1028; its evidence is the scenario state "
+        "in the run record"
+    )
+    assert "run_record" in qa_skill or "run record" in qa_skill
     assert "evidence_ledger.py" not in cr_skill, (
         "the code review's ledger write was removed by issue 1001; its evidence is the "
         "review_result.v2 entry in the run record's review_cycles"

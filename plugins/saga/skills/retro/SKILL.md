@@ -281,6 +281,12 @@ tier-efficacy readers that used to sit here are **gone** (issue 1028). They read
 engine registry that the simplification removes, and each one produced a proposal nobody applied.
 What replaced them is narrower and true: one file per run, written by the run, plus the journal.
 
+This pass is derive-on-read: it writes nothing back to the record and applies no change. Carry what
+it finds into the interview and the retro doc as **PROPOSE-DIFF-AND-WAIT** input. `/retro` remains
+terminal and advisory: it writes no saga tick, and even an approved proposal must be handed to a
+separate authorized implementation path — a proposal is never an authorization to edit, which is
+what the retired readers' `approval_required` flag said and what still holds without them.
+
 **Zero-data contract** (same as 1.6/1.7): a run with no record — work done before the record
 existed, or outside a saga run — contributes nothing here. Carry that as "no run record for this
 work," never a reconstruction.

@@ -371,10 +371,26 @@ def test_run_memo_differentiates_calibration_fingerprints(
 # --------------------------------------------------------------------------- SKILL drift guards
 
 
-def test_retro_skill_carries_the_calibration_passes() -> None:
+def test_the_retro_skill_no_longer_carries_the_calibration_passes() -> None:
+    """Issue 1028 removed the readers from the skill; issue 1030 removes the modules.
+
+    This guard pinned that `/retro` ran the engine-registry calibration pass. The pass is gone —
+    it read an engine registry and a run-fact ledger the simplification removes, and it produced a
+    proposal nobody applied — so the guard is turned around rather than deleted: the skill must NOT
+    name the retired readers, and the module must still be here for the card that owns its removal.
+    A test that simply vanished would leave both halves unwatched.
+    """
     skill = RETRO_SKILL.read_text(encoding="utf-8")
-    assert "1.11" in skill
-    assert "5(f)" in skill
-    assert "{#external-engines-never-gatekeepers}" in skill
-    assert "engine_calibration.py" in skill
-    assert "never writes `engine-registry.yaml`" in skill
+    for retired in (
+        "engine_calibration.py",
+        "engine_benchmark.py",
+        "engine_stale_report.py",
+        "capability_elo.py",
+        "provider_control_chart.py",
+        "tier_efficacy.py",
+        "spend_retro.py",
+    ):
+        assert retired not in skill, f"/retro still invokes the retired reader {retired}"
+    assert (SCRIPTS / "engine_calibration.py").is_file(), (
+        "engine_calibration.py is issue 1030's to remove; its tests below still exercise it"
+    )

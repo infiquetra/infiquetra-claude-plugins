@@ -131,7 +131,11 @@ def test_proposal_read_does_not_mutate_ledger_or_recipe_registry(tmp_path: Path)
 def test_retro_documents_approval_gate_and_terminal_read_only_boundary() -> None:
     text = RETRO_SKILL.read_text(encoding="utf-8")
 
-    assert "reconcile.derive_recipe_update_proposal(ledger)" in text
-    assert "approval_required" in text
+    # The reconciliation-recipe reader and its `approval_required` flag went with the run-fact
+    # ledger they read (issue 1028). What they carried — that a proposal is never an authorization
+    # to edit, and that the phase is terminal and advisory — is the boundary this test is for, and
+    # it is asserted directly rather than through a reader that no longer exists.
+    assert "a proposal is never an authorization to edit" in text
     assert "PROPOSE-DIFF-AND-WAIT" in text
     assert "writes no saga tick" in text
+    assert "terminal and advisory" in text

@@ -7,7 +7,7 @@ date: 2026-09-20
 cycles: 2
 outcome: accepted
 derived_overall: 9.3
-cycle2_revision: 9946952c00c6d47fbb393a15763f37e5dfea763b
+cycle2_revision: d133cb3720bc02a286a483f1c0cfe6d267d6d825
 ---
 
 # Code review — the saga simplification parent (issue 1018), pull request 1050
@@ -100,10 +100,10 @@ Advisory lenses: `documentation-clarity` and `agent-usability` both well below t
 
 Numbered once, stable across cycles. Every finding cites evidence on the reviewed revision.
 
-Two repair commits carry them. `f8b1d28e` (*repair the P0 and P1 findings from the parent's code
+Three repair commits carry them. `f8b1d28e` (*repair the P0 and P1 findings from the parent's code
 review*) carries findings 1 through 19; `9946952c` (*retire the removed commands from the skills'
-own routing prose*) carries 20, 21 and 22. Neither commit carries an attribution trailer of any
-kind.
+own routing prose*) carries 20, 21 and 22; `d133cb37` (*scrub the installed-plugin root so the suite
+stops reading the environment*) carries 23. No commit carries an attribution trailer of any kind.
 
 ### P0
 
@@ -287,10 +287,12 @@ record of what a real envelope held.
 
 ## Cycle 2 — `accepted`
 
-Reviewed revision `9946952c00c6d47fbb393a15763f37e5dfea763b`, the head of `parent/1018` after two
+Reviewed revision `d133cb3720bc02a286a483f1c0cfe6d267d6d825`, the head of `parent/1018` after three
 repair commits and a merge of the branch tip that had moved under the review
 (`994443ea` dropped two continuous-integration steps whose scripts issue 1030 removed; `61a08b10`
-pinned a herdr-pane environment variable in one roster test). The repairs were made by this
+pinned a herdr-pane environment variable in one roster test). The scoring below was taken at
+`9946952c`, before the third commit, which carries only finding 23's conftest fixture, its journal
+entry and its changelog line; the full suite is green at both. The repairs were made by this
 reviewer, which the operator directed for this run; the ordinary custody rule — the reviewer hands
 findings back and does not author the fix — did not apply here, and that is the largest deviation in
 this document.

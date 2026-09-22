@@ -1,0 +1,38 @@
+{
+  "approval_state": "needs_operator_approval",
+  "draft_path": "docs/sdlc-issue-drafts/2026-09-19-instructions-and-runbooks-after-the-release.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "context-update",
+  "labels": [
+    "context-update",
+    "documentation"
+  ],
+  "mode": "execute",
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "context-update",
+    "Lifecycle Origin": "requirements-ready"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created",
+      "Missing Asgard constraints"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": [
+      "Risk is UNKNOWN: the Architect blast-radius assessment is missing; the card may be created but stays in Planning until the Planning-to-Active Risk gate receives a real tier."
+    ]
+  },
+  "repo": "infiquetra-agent-operations",
+  "risk": "UNKNOWN",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-09-19-instructions-and-runbooks-after-the-release.json",
+  "source_artifact": null,
+  "stage": null,
+  "state": "ready_to_create",
+  "status": "Ready for Planning",
+  "team": "asgard",
+  "title": "Instructions and runbooks after the release",
+  "updated_at": "2026-09-19T14:53:53.927265+00:00"
+}

@@ -1,0 +1,48 @@
+{
+  "approval_state": "needs_operator_approval",
+  "draft_path": "docs/sdlc-issue-drafts/2026-09-19-amend-the-sdlc-for-the-run-working-software-exit.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mode": "execute",
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created",
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "repo": "infiquetra-sdlc",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-09-19-amend-the-sdlc-for-the-run-working-software-exit.json",
+  "source_artifact": null,
+  "stage": null,
+  "state": "ready_to_create",
+  "status": "Ready for Planning",
+  "team": "asgard",
+  "title": "Amend the sdlc for the run: working-software exit criterion, role hosting, element count, crosswalk, and pin",
+  "updated_at": "2026-09-19T14:52:20.088789+00:00"
+}

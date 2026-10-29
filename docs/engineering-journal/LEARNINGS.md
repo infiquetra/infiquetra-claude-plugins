@@ -1,5 +1,43 @@
 # Learnings — Infiquetra Claude Plugins
 
+## 2026-10-29
+
+### Retiring CLI machinery can strand a scheduled regression entrypoint  {#lifecycle-schedule-stranded-t08}
+
+**Author.** Codex (T08).
+**Evidence.** At `acc99fe71e25ad8a898eace7033051a7f1c3079e`, the daily
+`lifecycle-regression.yml` still targeted `tests/test_lifecycle_regression_harness.py` after
+`0351415948b9ae70519f12605ea188a85169f8d7` removed that harness and its fixtures in the #1030
+Saga cleanup. A locked Python 3.12 run reproduced exit 4, zero collected tests, and a missing-path
+error. The original four scenarios used execution-spec, outcome, and managed-worktree machinery
+that the simplification deliberately retired, alongside Saga persistence that remains supported.
+
+**Mechanism.** Deleting the obsolete tests removed the local regression signal without removing
+the workflow's reference. Restoring the old harness verbatim would depend on removed production
+APIs. A similarly named unit test would hide the missing CLI artifact obligation.
+
+**Fix.** This repair supplies three independent production-CLI scenarios in temporary Git
+repositories: plan-to-work immutable ticks, review-result/run-record/gate persistence, and
+pause/resume recovery through a corrupt derived index. Failure controls cover invalid plans,
+missing ticks/gates, and refused review inputs. The fixture README maps every original scenario
+to retained coverage or an explicitly retired seam. The job is bounded and retains JUnit output.
+
+**Validation.** The replacement entrypoint passes 11 checks on Python 3.12, including seven
+failure controls. CLI output exposed details the independent assertions must accommodate:
+`head_sha` is short while `last_commit_sha` is full, and implicit YAML coercion can turn
+unquoted schema values and digit-only SHAs into numbers. The oracle uses `BaseLoader` to preserve
+scalar text (including leading zeroes) and keep Git assertions deterministic. No hosted schedule
+success is claimed by local proof.
+The related Saga/plan/review/run-record suite passes 434 tests, with nine existing skips requiring
+the external SDLC checkout's review-roster generator and lens catalogue.
+
+**Generalizable rule.** When deleting a test harness or production CLI, trace scheduled callers
+as well as imports. Preserve useful obligations through real producer/reader artifact checks,
+and explicitly document retired contracts rather than claiming replacement equivalence.
+
+**Refs.** [Coverage decision](DECISIONS.md#lifecycle-cli-regression-t08),
+[fixture runbook](../../tests/lifecycle-fixture/README.md).
+
 ## 2026-09-20
 
 ### A score answer is a position, not a verdict — map it to the nearest anchor  {#score-position-nearest-anchor-1034}

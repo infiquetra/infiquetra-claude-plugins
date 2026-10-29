@@ -199,7 +199,7 @@ step "marketplace.json matches plugin.json (generator --check)" \
 step "Tri-lock release-surface parity (plugin.json == marketplace == CHANGELOG)" \
   uv run python scripts/check_release_surface_parity.py
 step "CHANGELOG heading grammar lint (fleet baseline)" \
-  uv run python -m pytest tests/test_changelog_heading_lint.py -k fleet_baseline -q
+  uv run python scripts/changelog_heading_lint.py
 step "Diff-aware release-surface bump guard" \
   uv run python tools/release_surface_diff_guard.py --base-ref "$RELEASE_BASE_REF"
 step "Journal newest-first guard (new entries)" \

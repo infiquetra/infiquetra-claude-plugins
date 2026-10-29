@@ -32,11 +32,24 @@ def _rewrite_fixture_paths(tmp_path: Path, fixture_name: str, bundle: Path) -> P
     fixture = FIXTURES / fixture_name
     rewritten = tmp_path / fixture_name
     text = fixture.read_text(encoding="utf-8")
-    old_bundle = (
-        f"/tmp/agy-harness/{'reviewer' if 'reviewer' in fixture_name else 'coder'}"
-        f"/.claude/agy/runs/{'live-reviewer' if 'reviewer' in fixture_name else 'live-coder'}"
-    )
-    rewritten.write_text(text.replace(old_bundle, str(bundle)), encoding="utf-8")
+    rows = [json.loads(line) for line in text.splitlines()]
+    bundle_fields = [
+        line.removeprefix("Bundle: ").strip()
+        for row in rows
+        for block in row.get("message", {}).get("content", [])
+        if block.get("type") == "tool_result"
+        for line in block["content"].splitlines()
+        if line.startswith("Bundle: ")
+    ]
+    assert len(bundle_fields) == 1
+    old_bundle = bundle_fields[0]
+    role = "reviewer" if "reviewer" in fixture_name else "coder"
+    assert Path(old_bundle).parts[-5:] == (role, ".claude", "agy", "runs", f"live-{role}")
+    updated = text.replace(old_bundle, str(bundle))
+    rewritten.write_text(updated, encoding="utf-8")
+    assert [
+        json.loads(line) for line in updated.replace(str(bundle), old_bundle).splitlines()
+    ] == rows
     return rewritten
 
 

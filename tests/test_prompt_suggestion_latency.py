@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import socket
 import stat
@@ -627,11 +628,16 @@ def test_the_resident_process_refuses_a_socket_it_cannot_make_owner_only(
     instance.socket_path.unlink(missing_ok=True)
 
 
-def test_a_socket_path_the_platform_cannot_bind_is_refused_with_an_explanation() -> None:
+def test_a_socket_path_the_platform_cannot_bind_is_refused_with_an_explanation(
+    *, tmp_path: Path
+) -> None:
     """The scratch directory this harness writes into is itself over the limit."""
-    too_long = Path("/tmp") / ("x" * 200) / "s.sock"
+    too_long = tmp_path / ("x" * 200) / "s.sock"
+    assert len(os.fsencode(too_long)) > 108
+    assert not too_long.parent.exists()
     with pytest.raises(harness.HarnessError, match="Unix domain socket"):
         harness.check_socket_path(too_long)
+    assert not too_long.exists()
 
 
 def test_a_short_socket_path_is_accepted(short_dir: Path) -> None:

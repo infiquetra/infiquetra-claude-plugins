@@ -73,11 +73,11 @@ def test_outbound_defaults_voice_false() -> None:
     assert msg.voice is False
 
 
-def test_registry_entry_serializes_capabilities() -> None:
+def test_registry_entry_serializes_capabilities(*, tmp_path: Path) -> None:
     entry = RegistryEntry(
         session_name="s",
         host="h",
-        cwd="/tmp",
+        cwd=str(tmp_path),
         pid=1,
         started_at=0.0,
         capabilities=["reply", "permission"],

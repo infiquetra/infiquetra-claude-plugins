@@ -2,6 +2,32 @@
 
 ## 2026-10-29
 
+### Keep ordinary security qualification separate from a proposed runtime disposition  {#bandit-runtime-proposal-t08}
+
+**Author.** Codex (T08).
+**Decision.** Use one repository-local fail-closed Bandit helper in CI and the local gate,
+with no blanket findings baseline, rule skip, root exclusion or confidence change.
+Keep the unaccepted Orchestrate launcher-ingest B102 in the ordinary candidate. Prepare
+its exact single-site annotation, installed trust guidance, 6.0.1 release surfaces and
+rollback as a separate local proposal. Saga's explicit noncryptographic filename hash
+ships with 1.2.1 metadata despite preserving digest and ledger bytes.
+
+**Rationale.** Test-only false positives do not authorize production execution. Module
+namespace restoration preserves bindings after failure; it cannot contain import-time
+host effects. Replacing the import mechanism or migrating filename hashes would require
+separate supported-interface and legacy-ledger designs. The existing five named mandatory
+checks and release parity retain their independent authority at publication.
+
+**Alternatives.** Transferring Mimir's exception, hiding execution behind another loader,
+using a blanket scanner baseline, or changing SHA1 filenames would conceal or expand the
+approved scope. The owner may accept the precise proposal after critical reviews, or
+leave the gate red and scope a trust-interface redesign.
+
+**Revisit when.** The owner decides CLAUDE-B102-INGEST or a separately approved source
+provenance/ledger migration design is available. This is an uncommitted implementation;
+no source commit or acceptance is implied.
+
+
 ### Keep the daily lifecycle obligation on supported CLI artifact contracts  {#lifecycle-cli-regression-t08}
 
 **Author.** Codex (T08).

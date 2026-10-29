@@ -101,7 +101,7 @@ def tick_artifact(repo: FixtureRepo, saved: dict[str, Any]) -> tuple[Path, dict[
     assert text.startswith("---\n"), f"tick frontmatter missing: {path}"
     # Preserve the engine's unquoted scalar text, including digit-only or zero-prefixed
     # Git SHAs. YAML's implicit numeric coercion would make this oracle flaky.
-    fields = yaml.load(text.split("---", 2)[1], Loader=yaml.BaseLoader)
+    fields = yaml.load(text.split("---", 2)[1], Loader=yaml.BaseLoader)  # nosec B506 - BaseLoader constructs inert strings/collections only; SHA text must survive.
     assert fields["schema_version"] == "1.0", f"tick schema invalid: {path}"
     assert fields["saga_id"] == SAGA_ID, f"tick identity invalid: {path}"
     return path, fields
@@ -370,3 +370,14 @@ def test_scheduled_entrypoint_retains_context_and_reports() -> None:
     assert upload["with"]["path"] == "lifecycle-regression-report.xml"
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["retention-days"] == 7
+
+
+def test_base_loader_preserves_scalars_and_keeps_python_tags_inert(tmp_path: Path) -> None:
+    path = tmp_path / "tick.md"
+    path.write_text(
+        "---\nschema_version: 1.0\nsaga_id: issue-101\nsha: 0000000000000000000000000000000000000123\nflag: yes\nvalue: !!python/object/apply:builtins.eval ['1 + 1']\n---\n"
+    )
+    _, fields = tick_artifact(FixtureRepo(tmp_path, {}), {"envelope_path": str(path)})
+    assert fields["sha"] == "0000000000000000000000000000000000000123"
+    assert fields["flag"] == "yes"
+    assert fields["value"] == ["1 + 1"]

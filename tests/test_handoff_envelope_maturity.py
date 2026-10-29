@@ -940,8 +940,9 @@ def test_resolve_source_is_the_single_owner(
 def test_infer_and_envelope_agree_on_every_out_of_root_shape(shape: str) -> None:
     # Keep the fixture source below the separately tested 120-character sentinel bound,
     # so exact equality measures resolution rather than intentional publication truncation.
-    with tempfile.TemporaryDirectory(prefix="912-", dir="/tmp") as fixture_dir:
+    with tempfile.TemporaryDirectory(prefix="912-", dir="/tmp") as fixture_dir:  # nosec B108 - secure unique 0700 directory; short root preserves 120-character oracle.
         base = Path(fixture_dir).resolve()
+        assert base.stat().st_mode & 0o777 == 0o700
         root = base / "root"
         root.mkdir()
         source_path = base / "elsewhere/docs/brainstorms/x.md"
@@ -955,6 +956,7 @@ def test_infer_and_envelope_agree_on_every_out_of_root_shape(shape: str) -> None
             source_path = base / "notes.md"
             _write_file(source_path, "plan-ready")
         source = str(source_path)
+        assert len(source) < 120
         if shape == "backslash":
             source = source.replace("/", "\\")
         expected = HE.infer_maturity(source, root)
@@ -962,6 +964,7 @@ def test_infer_and_envelope_agree_on_every_out_of_root_shape(shape: str) -> None
         assert envelope["handoff_maturity"] == expected
         if shape == "backslash":
             assert envelope["source"] == "docs/brainstorms/x.md"
+    assert not base.exists()
 
 
 _CARRIER_CASES = [

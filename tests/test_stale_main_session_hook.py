@@ -98,9 +98,11 @@ def _advance_origin(origin: Path, clone: Path, default_branch: str = "main") -> 
 
 def _run_hook(cwd: Path) -> subprocess.CompletedProcess[str]:
     """Run the hook from ``cwd`` with a SessionStart payload on stdin."""
+    transcript = cwd.parent / f"{cwd.name}-transcript.jsonl"
+    transcript.write_text("", encoding="utf-8")
     payload = {
         "session_id": "test-session",
-        "transcript_path": "/tmp/transcript.jsonl",
+        "transcript_path": str(transcript),
         "cwd": str(cwd),
         "hook_event_name": "SessionStart",
         "source": "startup",

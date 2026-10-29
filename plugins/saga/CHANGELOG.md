@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.1] - 2026-10-29
+
+### Changed
+- Explicitly designate the legacy SHA1 ledger filename fallback as noncryptographic. Digest bytes, readable names, authorization, idempotency and attribution remain unchanged.
+
 ## [1.2.0] - 2026-09-20
 
 **Advisory review judgments.** Issue #1034. Three typed judgments inside the roster-based code

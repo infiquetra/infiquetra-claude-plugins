@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import Any
 
 import fakeredis
@@ -22,19 +23,19 @@ def fr() -> Any:
     return fakeredis.FakeRedis(decode_responses=True)
 
 
-def make_meta(name: str = "test-abc") -> presence.SessionMetadata:
+def make_meta(name: str = "test-abc", *, tmp_path: Path) -> presence.SessionMetadata:
     return presence.build_metadata(
         session_name=name,
         endpoint="mimir",
-        cwd="/tmp/proj",
+        cwd=str(tmp_path / "proj"),
         host="testhost",
         git_branch="main",
         started_at=1000.0,
     )
 
 
-def test_session_metadata_round_trip() -> None:
-    meta = make_meta()
+def test_session_metadata_round_trip(*, tmp_path: Path) -> None:
+    meta = make_meta(tmp_path=tmp_path)
     body = meta.to_json()
     restored = presence.SessionMetadata.from_json(body)
     assert restored == meta
@@ -277,8 +278,8 @@ def test_disambiguate_corrupt_registry_entry_returns_base(fr: Any) -> None:
     assert name == "broken"
 
 
-def test_presence_start_writes_registry_and_hb(fr: Any) -> None:
-    meta = make_meta()
+def test_presence_start_writes_registry_and_hb(fr: Any, *, tmp_path: Path) -> None:
+    meta = make_meta(tmp_path=tmp_path)
     p = presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=10)
     p.start()
     try:
@@ -292,8 +293,8 @@ def test_presence_start_writes_registry_and_hb(fr: Any) -> None:
         p.stop()
 
 
-def test_presence_stop_cleans_up(fr: Any) -> None:
-    meta = make_meta()
+def test_presence_stop_cleans_up(fr: Any, *, tmp_path: Path) -> None:
+    meta = make_meta(tmp_path=tmp_path)
     p = presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=10)
     p.start()
     p.stop()
@@ -301,10 +302,10 @@ def test_presence_stop_cleans_up(fr: Any) -> None:
     assert fr.exists(presence.hb_key(meta.session_name)) == 0
 
 
-def test_presence_stop_drops_session_streams(fr: Any) -> None:
+def test_presence_stop_drops_session_streams(fr: Any, *, tmp_path: Path) -> None:
     """Graceful disconnect must DEL inbound + outbound streams so they don't
     accumulate one pair per ever-disconnected session."""
-    meta = make_meta("with-streams")
+    meta = make_meta("with-streams", tmp_path=tmp_path)
     p = presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=10)
     p.start()
     fr.xadd("cc-sessions:with-streams:inbound", {"payload": "{}"})
@@ -325,16 +326,16 @@ def test_session_stream_keys_layout() -> None:
     ]
 
 
-def test_presence_is_idempotent_on_double_stop(fr: Any) -> None:
-    meta = make_meta()
+def test_presence_is_idempotent_on_double_stop(fr: Any, *, tmp_path: Path) -> None:
+    meta = make_meta(tmp_path=tmp_path)
     p = presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=10)
     p.start()
     p.stop()
     p.stop()  # must not raise
 
 
-def test_presence_rejects_double_start(fr: Any) -> None:
-    p = presence.Presence(fr, make_meta(), heartbeat_seconds=1, ttl_seconds=10)
+def test_presence_rejects_double_start(fr: Any, *, tmp_path: Path) -> None:
+    p = presence.Presence(fr, make_meta(tmp_path=tmp_path), heartbeat_seconds=1, ttl_seconds=10)
     p.start()
     try:
         with pytest.raises(RuntimeError, match="already started"):
@@ -343,24 +344,24 @@ def test_presence_rejects_double_start(fr: Any) -> None:
         p.stop()
 
 
-def test_presence_rejects_ttl_le_heartbeat(fr: Any) -> None:
+def test_presence_rejects_ttl_le_heartbeat(fr: Any, *, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="ttl_seconds"):
-        presence.Presence(fr, make_meta(), heartbeat_seconds=10, ttl_seconds=10)
+        presence.Presence(fr, make_meta(tmp_path=tmp_path), heartbeat_seconds=10, ttl_seconds=10)
     with pytest.raises(ValueError):
-        presence.Presence(fr, make_meta(), heartbeat_seconds=10, ttl_seconds=5)
+        presence.Presence(fr, make_meta(tmp_path=tmp_path), heartbeat_seconds=10, ttl_seconds=5)
 
 
-def test_presence_context_manager(fr: Any) -> None:
-    meta = make_meta()
+def test_presence_context_manager(fr: Any, *, tmp_path: Path) -> None:
+    meta = make_meta(tmp_path=tmp_path)
     with presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=10):
         assert fr.exists(presence.hb_key(meta.session_name)) == 1
     assert fr.exists(presence.hb_key(meta.session_name)) == 0
 
 
-def test_heartbeat_refreshes_ttl(fr: Any) -> None:
+def test_heartbeat_refreshes_ttl(fr: Any, *, tmp_path: Path) -> None:
     """After more than one heartbeat tick, the hb key must still exist
     (heartbeat re-set it before the previous expiry)."""
-    meta = make_meta()
+    meta = make_meta(tmp_path=tmp_path)
     # ttl just barely above heartbeat to force the test to depend on refresh
     p = presence.Presence(fr, meta, heartbeat_seconds=1, ttl_seconds=2)
     p.start()
@@ -373,9 +374,9 @@ def test_heartbeat_refreshes_ttl(fr: Any) -> None:
         p.stop()
 
 
-def test_list_live_sessions_filters_by_hb(fr: Any) -> None:
-    meta1 = make_meta("live-1")
-    meta2 = make_meta("live-2")
+def test_list_live_sessions_filters_by_hb(fr: Any, *, tmp_path: Path) -> None:
+    meta1 = make_meta("live-1", tmp_path=tmp_path)
+    meta2 = make_meta("live-2", tmp_path=tmp_path)
     p1 = presence.Presence(fr, meta1, heartbeat_seconds=1, ttl_seconds=10)
     p2 = presence.Presence(fr, meta2, heartbeat_seconds=1, ttl_seconds=10)
     p1.start()
@@ -388,9 +389,9 @@ def test_list_live_sessions_filters_by_hb(fr: Any) -> None:
         p2.stop()
 
 
-def test_list_live_sessions_skips_stale(fr: Any) -> None:
-    meta_live = make_meta("live")
-    meta_stale = make_meta("stale")
+def test_list_live_sessions_skips_stale(fr: Any, *, tmp_path: Path) -> None:
+    meta_live = make_meta("live", tmp_path=tmp_path)
+    meta_stale = make_meta("stale", tmp_path=tmp_path)
     fr.hset(presence.REGISTRY_KEY, "live", meta_live.to_json())
     fr.hset(presence.REGISTRY_KEY, "stale", meta_stale.to_json())
     fr.set(presence.hb_key("live"), str(time.time()), ex=60)
@@ -399,9 +400,9 @@ def test_list_live_sessions_skips_stale(fr: Any) -> None:
     assert set(live) == {"live"}
 
 
-def test_list_live_sessions_gc_stale(fr: Any) -> None:
-    meta_live = make_meta("live")
-    meta_stale = make_meta("stale")
+def test_list_live_sessions_gc_stale(fr: Any, *, tmp_path: Path) -> None:
+    meta_live = make_meta("live", tmp_path=tmp_path)
+    meta_stale = make_meta("stale", tmp_path=tmp_path)
     fr.hset(presence.REGISTRY_KEY, "live", meta_live.to_json())
     fr.hset(presence.REGISTRY_KEY, "stale", meta_stale.to_json())
     fr.set(presence.hb_key("live"), str(time.time()), ex=60)
@@ -410,15 +411,15 @@ def test_list_live_sessions_gc_stale(fr: Any) -> None:
     assert fr.hget(presence.REGISTRY_KEY, "live") is not None
 
 
-def test_list_live_sessions_gc_drops_stale_streams(fr: Any) -> None:
+def test_list_live_sessions_gc_drops_stale_streams(fr: Any, *, tmp_path: Path) -> None:
     """Stale-entry GC must also DEL the per-session inbound/outbound streams
     that a crashed-mid-session would otherwise leave behind."""
-    fr.hset(presence.REGISTRY_KEY, "ghost", make_meta("ghost").to_json())
+    fr.hset(presence.REGISTRY_KEY, "ghost", make_meta("ghost", tmp_path=tmp_path).to_json())
     fr.xadd("cc-sessions:ghost:inbound", {"payload": "{}"})
     fr.xadd("cc-sessions:ghost:outbound", {"payload": "{}"})
     # no hb key for ghost → it's stale
 
-    fr.hset(presence.REGISTRY_KEY, "live", make_meta("live").to_json())
+    fr.hset(presence.REGISTRY_KEY, "live", make_meta("live", tmp_path=tmp_path).to_json())
     fr.set(presence.hb_key("live"), str(time.time()), ex=60)
     fr.xadd("cc-sessions:live:inbound", {"payload": "{}"})
 
@@ -432,9 +433,9 @@ def test_list_live_sessions_gc_drops_stale_streams(fr: Any) -> None:
     assert fr.exists("cc-sessions:live:inbound") == 1
 
 
-def test_list_live_sessions_no_gc_when_disabled(fr: Any) -> None:
+def test_list_live_sessions_no_gc_when_disabled(fr: Any, *, tmp_path: Path) -> None:
     """Default gc_stale=False must NOT touch streams (or registry)."""
-    fr.hset(presence.REGISTRY_KEY, "ghost", make_meta("ghost").to_json())
+    fr.hset(presence.REGISTRY_KEY, "ghost", make_meta("ghost", tmp_path=tmp_path).to_json())
     fr.xadd("cc-sessions:ghost:inbound", {"payload": "{}"})
     presence.list_live_sessions(fr)  # gc_stale defaults to False
     assert fr.hget(presence.REGISTRY_KEY, "ghost") is not None
@@ -448,8 +449,8 @@ def test_list_live_sessions_handles_corrupt_entry(fr: Any) -> None:
     assert live == {}
 
 
-def test_lifecycle_events_published(fr: Any) -> None:
-    meta = make_meta("pub-test")
+def test_lifecycle_events_published(fr: Any, *, tmp_path: Path) -> None:
+    meta = make_meta("pub-test", tmp_path=tmp_path)
     pubsub = fr.pubsub()
     pubsub.subscribe(presence.events_channel(meta.session_name))
     pubsub.get_message(timeout=0.1)  # subscribe ack

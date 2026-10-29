@@ -121,6 +121,28 @@ def test_orchestrate_ingests_this_script() -> None:
     assert orch.agent_argv is not None
 
 
+def test_launcher_override_selection_is_existing_file_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolver compatibility checks do not authenticate the selected local code."""
+
+    def no_host_calls(*args: object, **kwargs: object) -> None:
+        raise AssertionError("override selection must not call a host service")
+
+    monkeypatch.setattr(subprocess, "run", no_host_calls)
+    monkeypatch.delenv("AGENT_LAUNCHER_ROOT", raising=False)
+    orch = _load(ORCHESTRATE, "_orchestrate_override_authority")
+    override = tmp_path / "override"
+    candidate = override / "skills/agent-launcher/scripts/launcher.py"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("# selected by location, not authenticated by its contents\n")
+    monkeypatch.setenv("AGENT_LAUNCHER_ROOT", str(override))
+    assert orch._agent_launcher_script() == candidate
+    candidate.unlink()
+    with pytest.raises(SystemExit, match="does not contain"):
+        orch._agent_launcher_script()
+
+
 def test_orchestrate_sorts_launcher_cache_versions_numerically() -> None:
     orch = _load(ORCHESTRATE, "_orchestrate_version_sort_proof")
     older = Path("/cache/agent-launcher/1.9.0/skills/agent-launcher/scripts/launcher.py")
@@ -171,6 +193,8 @@ def test_ingested_launcher_resolves_composer_from_its_own_compile_path() -> None
     assert "wrong-dir" in message
     namespace = _exec_launcher_source(source, str(LAUNCHER))
     assert namespace["COMPOSER_GLYPH_BY_VENDOR"]["claude"] == "❯"
+    assert namespace["launch"].__code__.co_filename == str(LAUNCHER)
+    assert "_agent_launcher_compile_probe" not in sys.modules
 
 
 def _exec_launcher_source(source: str, compile_filename: str) -> dict[str, Any]:
@@ -179,7 +203,7 @@ def _exec_launcher_source(source: str, compile_filename: str) -> dict[str, Any]:
     probe = ModuleType("_agent_launcher_compile_probe")
     sys.modules["_agent_launcher_compile_probe"] = probe
     try:
-        exec(compile(source, compile_filename, "exec"), probe.__dict__)
+        exec(compile(source, compile_filename, "exec"), probe.__dict__)  # nosec B102 - fixed checked-in LAUNCHER, real compile-filename/composer contract; finally unregisters probe.
     finally:
         sys.modules.pop("_agent_launcher_compile_probe", None)
     return probe.__dict__
@@ -221,23 +245,27 @@ def test_composer_module_name_is_a_stable_digest_of_the_resolved_path() -> None:
 
 @pytest.mark.usefixtures("launcher_on_path")
 @pytest.mark.parametrize("vendor", ["claude", "codex", "grok", "muse", "agy", "qwen", "opencode"])
-def test_argv_locks_background_flags_before_vendor(launcher: ModuleType, vendor: str) -> None:
-    unit = launcher.LaunchRequest(name="reviewer", vendor=vendor, worktree="/tmp/wt")
+def test_argv_locks_background_flags_before_vendor(
+    launcher: ModuleType, vendor: str, *, launch_worktree: str
+) -> None:
+    unit = launcher.LaunchRequest(name="reviewer", vendor=vendor, worktree=launch_worktree)
     argv = launcher.agent_argv(unit)
     vendor_idx = argv.index(vendor)
     for flag in BACKGROUND_FLAGS:
         assert flag in argv
         assert argv.index(flag) < vendor_idx
-    assert argv[argv.index("--cwd") + 1] == "/tmp/wt"
+    assert argv[argv.index("--cwd") + 1] == launch_worktree
     assert argv[argv.index("--task") + 1] == "reviewer"
 
 
 @pytest.mark.usefixtures("launcher_on_path")
-def test_preview_argv_puts_dry_run_in_launcher_position(launcher: ModuleType) -> None:
+def test_preview_argv_puts_dry_run_in_launcher_position(
+    launcher: ModuleType, *, launch_worktree: str
+) -> None:
     unit = launcher.LaunchRequest(
         name="reviewer",
         vendor="codex",
-        worktree="/tmp/wt",
+        worktree=launch_worktree,
         model="gpt-5.4",
         effort="xhigh",
         permission="auto",
@@ -256,7 +284,9 @@ def test_preview_argv_puts_dry_run_in_launcher_position(launcher: ModuleType) ->
 
 
 @pytest.mark.usefixtures("launcher_on_path")
-def test_cli_argv_does_not_import_orchestrate(launcher_on_path: Path) -> None:
+def test_cli_argv_does_not_import_orchestrate(
+    launcher_on_path: Path, *, launch_worktree: str
+) -> None:
     proc = subprocess.run(
         [
             sys.executable,
@@ -267,7 +297,7 @@ def test_cli_argv_does_not_import_orchestrate(launcher_on_path: Path) -> None:
             "--task",
             "plain-session",
             "--cwd",
-            "/tmp/plain",
+            str(Path(launch_worktree).with_name("plain")),
             "--model",
             "gpt-5.4",
             "--effort",
@@ -286,7 +316,9 @@ def test_cli_argv_does_not_import_orchestrate(launcher_on_path: Path) -> None:
     assert "codex" in argv
     assert "--no-focus" in argv
     assert "--herdr-control-only" in argv
-    assert argv[argv.index("--cwd") + 1] == str(Path("/tmp/plain").resolve())
+    assert argv[argv.index("--cwd") + 1] == str(
+        Path(str(Path(launch_worktree).with_name("plain"))).resolve()
+    )
 
 
 def test_cli_refuses_skip_preview(launcher_on_path: Path) -> None:
@@ -446,7 +478,7 @@ def test_create_within_the_deadline_is_unaffected(
 
 
 def test_ownership_snapshot_uses_the_unit_target_workspace(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     listed: list[str | None] = []
     receipt = {
@@ -475,7 +507,7 @@ def test_ownership_snapshot_uses_the_unit_target_workspace(
         lambda *a, **k: (_ for _ in ()).throw(SystemExit("stop after snapshot")),
     )
     unit = launcher.LaunchRequest(
-        name="reviewer", vendor="codex", workspace="target", worktree="/tmp/wt"
+        name="reviewer", vendor="codex", workspace="target", worktree=launch_worktree
     )
     with pytest.raises(SystemExit, match="stop after snapshot"):
         launcher.launch(unit)
@@ -545,6 +577,7 @@ def _prepare_guard_launch(
     receipt_tab: str,
     existing_tabs: tuple[str, ...],
     vendor: str = "claude",
+    launch_worktree: str,
 ) -> tuple[Any, list[list[str]], list[tuple[Any, ...]]]:
     recorded: list[list[str]] = []
     sends: list[tuple[Any, ...]] = []
@@ -577,14 +610,14 @@ def _prepare_guard_launch(
         "agent_row",
         lambda unit, agents=None: {
             "pane_id": "w80:p9",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w80",
             "interactive_ready": True,
             "agent": vendor,
         },
     )
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
-    unit = launcher.LaunchRequest(name="reviewer", vendor=vendor, worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="reviewer", vendor=vendor, worktree=launch_worktree)
     return unit, recorded, sends
 
 
@@ -626,7 +659,7 @@ def test_documented_input_box_receipt_schema_is_complete(launcher: ModuleType) -
 
 
 def test_input_box_text_chars_is_the_visible_length_of_the_absorbed_block(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """DOCC-01 / SEC-08: the count is the visible length of the whole absorbed block, bound
     through the real guard so the documented number cannot drift from the recorded one."""
@@ -638,6 +671,7 @@ def test_input_box_text_chars_is_the_visible_length_of_the_absorbed_block(
         pane_dump=f"❯ {row_one}\n  {row_two}",
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.launch(unit)
@@ -645,7 +679,7 @@ def test_input_box_text_chars_is_the_visible_length_of_the_absorbed_block(
 
 
 def test_input_box_text_chars_counts_a_styled_remainder_not_only_the_unstyled_part(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """DOCC-01: the count is the visible length, never the count of positively recognized
     (unstyled) characters -- only `ok` is unstyled here, but the whole draft is withheld."""
@@ -659,6 +693,7 @@ def test_input_box_text_chars_counts_a_styled_remainder_not_only_the_unstyled_pa
         pane_dump=dump,
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.launch(unit)
@@ -737,7 +772,7 @@ def test_codex_placeholder_is_distinct_from_no_composer(launcher: ModuleType) ->
 
 
 def test_reused_pane_holding_a_slash_command_is_not_prompted(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     unit, _recorded, sends = _prepare_guard_launch(
         launcher,
@@ -745,6 +780,7 @@ def test_reused_pane_holding_a_slash_command_is_not_prompted(
         pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(SystemExit, match="already holds staged input"):
         launcher.launch(unit)
@@ -754,7 +790,7 @@ def test_reused_pane_holding_a_slash_command_is_not_prompted(
 
 
 def test_staged_text_is_recorded_not_discarded(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     unit, _recorded, sends = _prepare_guard_launch(
         launcher,
@@ -762,6 +798,7 @@ def test_staged_text_is_recorded_not_discarded(
         pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(SystemExit, match="already holds staged input"):
         launcher.launch(unit)
@@ -773,7 +810,7 @@ def test_staged_text_is_recorded_not_discarded(
 
 
 def test_empty_reused_box_is_prompted_exactly_as_today(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     unit, recorded, sends = _prepare_guard_launch(
         launcher,
@@ -781,6 +818,7 @@ def test_empty_reused_box_is_prompted_exactly_as_today(
         pane_dump=_claude_pane("❯ "),
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert len(sends) == 1
@@ -790,7 +828,7 @@ def test_empty_reused_box_is_prompted_exactly_as_today(
 
 
 def test_freshly_created_pane_takes_no_inspection_path(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     unit, recorded, sends = _prepare_guard_launch(
         launcher,
@@ -798,6 +836,7 @@ def test_freshly_created_pane_takes_no_inspection_path(
         pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
         receipt_tab="w80:t9",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert len(sends) == 1
@@ -935,6 +974,8 @@ def test_ambiguous_composer_geometry_never_records_affirmative_empty(
     monkeypatch: pytest.MonkeyPatch,
     vendor: str,
     dump: str,
+    *,
+    launch_worktree: str,
 ) -> None:
     """Ambiguous geometry never claims `empty` -- and the `len(sends) == 1` assertion below is
     the fail-open pin the accepted ambiguity trade requires: an inconclusive inspection still
@@ -946,6 +987,7 @@ def test_ambiguous_composer_geometry_never_records_affirmative_empty(
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
         vendor=vendor,
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert len(sends) == 1
@@ -1184,7 +1226,7 @@ def test_unstyled_text_joins_rows_without_a_separator() -> None:
 
 @pytest.mark.parametrize("key", LIVE_CLAUDE_IDLE_KEYS)
 def test_a_live_idle_claude_pane_is_prompted_through_the_real_guard(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, key: str
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, key: str, *, launch_worktree: str
 ) -> None:
     """R3: the live captures are the horizontal-rule clause's real-pane regression fixtures."""
     unit, _recorded, sends = _prepare_guard_launch(
@@ -1193,6 +1235,7 @@ def test_a_live_idle_claude_pane_is_prompted_through_the_real_guard(
         pane_dump=CAPTURED_COMPOSERS[key],
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert len(sends) == 1
@@ -1215,7 +1258,7 @@ def _corrp02_pane() -> str:
 
 @pytest.mark.parametrize("pane", [_corrp01_pane, _corrp02_pane], ids=["corrp01", "corrp02"])
 def test_corrp01_and_corrp02_panes_stop_the_prompt_through_the_real_guard(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, pane: Any
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, pane: Any, *, launch_worktree: str
 ) -> None:
     """CORR-01 and CORR-02 end to end: the guard refuses to write behind a real draft shape."""
     unit, _recorded, sends = _prepare_guard_launch(
@@ -1224,6 +1267,7 @@ def test_corrp01_and_corrp02_panes_stop_the_prompt_through_the_real_guard(
         pane_dump=pane(),
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.launch(unit)
@@ -1232,7 +1276,7 @@ def test_corrp01_and_corrp02_panes_stop_the_prompt_through_the_real_guard(
 
 
 def test_unreadable_box_is_marked_and_the_prompt_still_goes(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Issue 1002 F114: a genuine nonzero pane read is the absence of an observation.
     The box is marked, noted, and the launch refuses to prompt."""
@@ -1272,14 +1316,14 @@ def test_unreadable_box_is_marked_and_the_prompt_still_goes(
         "agent_row",
         lambda unit, agents=None: {
             "pane_id": "w80:p9",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w80",
             "interactive_ready": True,
             "agent": "codex",
         },
     )
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
-    unit = launcher.LaunchRequest(name="reader", vendor="codex", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="reader", vendor="codex", worktree=launch_worktree)
     with pytest.raises(SystemExit, match="refusing to prompt"):
         launcher.launch(unit)
     assert unit.launch_receipt["input_box"] == "read_failed"
@@ -1304,7 +1348,7 @@ def test_pane_read_timeout_is_distinct_from_a_failed_read(
 
 
 def test_staged_text_reaches_no_sink_verbatim(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """The operator's draft reaches none of the durable sinks: not the receipt, not the unit
     note, not the stop message -- and therefore not the run record the note and message feed.
@@ -1315,6 +1359,7 @@ def test_staged_text_reaches_no_sink_verbatim(
         pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(SystemExit) as exc_info:
         launcher.launch(unit)
@@ -1327,7 +1372,7 @@ def test_staged_text_reaches_no_sink_verbatim(
 
 
 def test_the_send_inspection_is_taken_after_the_preflight(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """REL-08: the read that authorises the send is taken immediately before the send, after
     the preflight, so a person typing during the preflight's declared bounds cannot defeat
@@ -1338,6 +1383,7 @@ def test_the_send_inspection_is_taken_after_the_preflight(
         pane_dump=_claude_pane("❯ "),
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     order: list[str] = []
     real_guard = launcher.guard_pane_before_write
@@ -1361,7 +1407,7 @@ def test_the_send_inspection_is_taken_after_the_preflight(
 
 
 def test_a_reused_pane_with_an_empty_box_below_an_echo_is_not_stopped(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """B4 end to end: a reused pane whose live box is empty below an earlier prompt echo is a
     normal pane. The launch must prompt, not refuse, and the receipt must say empty."""
@@ -1371,6 +1417,7 @@ def test_a_reused_pane_with_an_empty_box_below_an_echo_is_not_stopped(
         pane_dump="❯ earlier submitted prompt\npane output line\n❯ ",
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert len(sends) == 1
@@ -1383,6 +1430,8 @@ def test_non_claude_guard_stops_on_the_vendor_composer_draft(
     monkeypatch: pytest.MonkeyPatch,
     vendor: str,
     glyph: str,
+    *,
+    launch_worktree: str,
 ) -> None:
     unit, _recorded, sends = _prepare_guard_launch(
         launcher,
@@ -1391,6 +1440,7 @@ def test_non_claude_guard_stops_on_the_vendor_composer_draft(
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
         vendor=vendor,
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.launch(unit)
@@ -1399,7 +1449,7 @@ def test_non_claude_guard_stops_on_the_vendor_composer_draft(
 
 
 def test_echo_above_a_closed_span_placeholder_does_not_false_stop(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """A closed-span live box wins over a classified scrollback echo positionally."""
     unit, _recorded, sends = _prepare_guard_launch(
@@ -1408,6 +1458,7 @@ def test_echo_above_a_closed_span_placeholder_does_not_false_stop(
         pane_dump=CAPTURED_COMPOSERS["claude_echo_above_empty"],
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert len(sends) == 1
@@ -1415,7 +1466,7 @@ def test_echo_above_a_closed_span_placeholder_does_not_false_stop(
 
 
 def test_echo_above_closed_span_hint_does_not_fall_back_to_the_echo(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     unit, _recorded, sends = _prepare_guard_launch(
         launcher,
@@ -1423,6 +1474,7 @@ def test_echo_above_closed_span_hint_does_not_fall_back_to_the_echo(
         pane_dump='❯ earlier submitted prompt\noutput\n\x1b[2m❯ Try "fix it"\x1b[0m',
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert len(sends) == 1
@@ -1430,7 +1482,7 @@ def test_echo_above_closed_span_hint_does_not_fall_back_to_the_echo(
 
 
 def test_closed_styled_operator_draft_is_knowingly_unclassifiable_and_prompted(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Accepted trade: a fully styled operator draft is unclassifiable and prompts fail-open."""
     unit, _recorded, sends = _prepare_guard_launch(
@@ -1439,6 +1491,7 @@ def test_closed_styled_operator_draft_is_knowingly_unclassifiable_and_prompted(
         pane_dump='❯ \x1b[2mTry "fix it"\x1b[0m',
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert len(sends) == 1
@@ -1446,7 +1499,11 @@ def test_closed_styled_operator_draft_is_knowingly_unclassifiable_and_prompted(
 
 
 def _preflight_stubs(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, vendor: str = "claude"
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    vendor: str = "claude",
+    launch_worktree: str,
 ) -> list[str]:
     closed: list[str] = []
     monkeypatch.setattr(
@@ -1454,7 +1511,7 @@ def _preflight_stubs(
         "agent_row",
         lambda unit, agents=None: {
             "pane_id": "pane-1",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w1",
             "interactive_ready": True,
             "agent": vendor,
@@ -1468,34 +1525,35 @@ def _preflight_stubs(
     return closed
 
 
-def _bypass_unit(launcher: ModuleType) -> Any:
+def _bypass_unit(launcher: ModuleType, *, launch_worktree: str) -> Any:
     return launcher.LaunchRequest(
         name="reviewer",
         vendor="claude",
-        worktree="/tmp/wt",
+        worktree=launch_worktree,
         permission="bypass",
         pane_id="pane-1",
         tab_id="tab-1",
     )
 
 
-LAUNCH_ARGV_HEAD = [
-    "agents",
-    "--no-focus",
-    "--current",
-    "--task",
-    "reviewer",
-    "--cwd",
-    "/tmp/wt",
-]
+def _launch_argv_head(launch_worktree: str) -> list[str]:
+    return [
+        "agents",
+        "--no-focus",
+        "--current",
+        "--task",
+        "reviewer",
+        "--cwd",
+        launch_worktree,
+    ]
 
 
 def test_declared_bypass_missing_from_argv_is_a_named_stop(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
-    closed = _preflight_stubs(launcher, monkeypatch)
-    unit = _bypass_unit(launcher)
-    argv = [*LAUNCH_ARGV_HEAD, "claude"]
+    closed = _preflight_stubs(launcher, monkeypatch, launch_worktree=launch_worktree)
+    unit = _bypass_unit(launcher, launch_worktree=launch_worktree)
+    argv = [*_launch_argv_head(launch_worktree), "claude"]
     with pytest.raises(SystemExit) as exc_info:
         launcher.verify_unit_preflight(unit, "pane-1", ready=True, argv=argv)
     message = str(exc_info.value)
@@ -1506,11 +1564,11 @@ def test_declared_bypass_missing_from_argv_is_a_named_stop(
 
 
 def test_receipt_records_resolved_posture_distinctly(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
-    _preflight_stubs(launcher, monkeypatch)
-    unit = _bypass_unit(launcher)
-    argv = [*LAUNCH_ARGV_HEAD, "claude", "--permission-mode", "bypassPermissions"]
+    _preflight_stubs(launcher, monkeypatch, launch_worktree=launch_worktree)
+    unit = _bypass_unit(launcher, launch_worktree=launch_worktree)
+    argv = [*_launch_argv_head(launch_worktree), "claude", "--permission-mode", "bypassPermissions"]
     receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True, argv=argv)
     assert receipt["permission"] == "bypass"
     assert receipt["permission_resolved"]["mode"] == "bypass"
@@ -1524,10 +1582,10 @@ def test_receipt_records_resolved_posture_distinctly(
 
 
 def test_no_argv_leaves_permission_unconfirmed(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
-    _preflight_stubs(launcher, monkeypatch)
-    unit = _bypass_unit(launcher)
+    _preflight_stubs(launcher, monkeypatch, launch_worktree=launch_worktree)
+    unit = _bypass_unit(launcher, launch_worktree=launch_worktree)
     receipt = launcher.verify_unit_preflight(unit, "pane-1", ready=True)
     assert receipt["permission_resolved"]["confirmed_from"] is None
     assert "permission" in receipt["requested_only"]
@@ -1535,14 +1593,14 @@ def test_no_argv_leaves_permission_unconfirmed(
 
 @pytest.mark.parametrize("vendor", ["agy", "qwen"])
 def test_empty_permission_token_list_never_claims_an_argv_confirmation(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, vendor: str
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, vendor: str, *, launch_worktree: str
 ) -> None:
-    _preflight_stubs(launcher, monkeypatch, vendor=vendor)
+    _preflight_stubs(launcher, monkeypatch, vendor=vendor, launch_worktree=launch_worktree)
     unit = launcher.LaunchRequest(
-        name="worker", vendor=vendor, worktree="/tmp/wt", pane_id="pane-1", tab_id="tab-1"
+        name="worker", vendor=vendor, worktree=launch_worktree, pane_id="pane-1", tab_id="tab-1"
     )
     receipt = launcher.verify_unit_preflight(
-        unit, "pane-1", ready=True, argv=[*LAUNCH_ARGV_HEAD, vendor]
+        unit, "pane-1", ready=True, argv=[*_launch_argv_head(launch_worktree), vendor]
     )
     assert receipt["permission_resolved"]["tokens"] == []
     assert receipt["permission_resolved"]["confirmed_from"] is None
@@ -1610,8 +1668,10 @@ def _account_unit(launcher: ModuleType, worktree: str) -> Any:
 def test_stale_transcript_does_not_confirm_a_silent_statusline(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
     worktree = tmp_path / "wt"
     worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
     since = time.time()
     _plant_transcript(
         launcher, monkeypatch, tmp_path, str(worktree), label="company", mtime=since - 60
@@ -1625,20 +1685,22 @@ def test_stale_transcript_does_not_confirm_a_silent_statusline(
 
 
 def test_vanished_transcript_between_glob_and_stat_is_skipped(
-    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     vanished = tmp_path / "vanished.jsonl"
     monkeypatch.setattr(launcher, "claude_transcript_roots", lambda: (tmp_path, tmp_path))
     monkeypatch.setattr(launcher, "find_claude_transcripts", lambda *_a: [vanished])
-    unit = launcher.LaunchRequest(name="acct", vendor="claude", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="acct", vendor="claude", worktree=launch_worktree)
     assert launcher.transcript_account(unit, since=time.time()) is None
 
 
 def test_fresh_transcript_confirms_when_recency_is_provable(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
     worktree = tmp_path / "wt"
     worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
     since = time.time()
     _plant_transcript(
         launcher, monkeypatch, tmp_path, str(worktree), label="company", mtime=since + 5
@@ -1656,8 +1718,10 @@ def test_fresh_transcript_confirms_when_recency_is_provable(
 def test_transcript_written_during_the_create_still_confirms(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
     worktree = tmp_path / "wt"
     worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
     since = time.time()
     # The same-instant write the cmd_go account test produces: the wrapper plants the transcript
     # during the create, and filesystems quantise mtimes, so what lands can sit below the captured
@@ -1674,8 +1738,10 @@ def test_transcript_written_during_the_create_still_confirms(
 def test_statusline_evidence_still_confirms_exactly_as_today(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
     worktree = tmp_path / "wt"
     worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
     # A contradicting transcript the statusline must outrank: a proof chain reordered to consult
     # transcripts first would mismatch this launch instead of confirming it.
     _plant_transcript(
@@ -1692,8 +1758,10 @@ def test_statusline_evidence_still_confirms_exactly_as_today(
 def test_omitted_since_keeps_the_existing_fallback(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
     worktree = tmp_path / "wt"
     worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
     # Deliberately old: with no floor the fallback behaves exactly as it did before the floor
     # existed. That is the compatibility decision, recorded here so it cannot be tightened by
     # accident.
@@ -1712,8 +1780,10 @@ def test_omitted_since_keeps_the_existing_fallback(
 def test_launch_passes_a_recency_floor(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
     worktree = tmp_path / "wt"
     worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
     _plant_transcript(
         launcher, monkeypatch, tmp_path, str(worktree), label="company", mtime=time.time() - 3600
     )
@@ -1764,8 +1834,10 @@ def test_launch_passes_a_recency_floor(
 def test_account_mismatch_still_raises_unchanged(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
     worktree = tmp_path / "wt"
     worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
     monkeypatch.setattr(launcher, "pane_account_label", lambda pane_id: "personal")
     monkeypatch.setattr(launcher, "close_run_session", lambda unit: None)
     unit = _account_unit(launcher, str(worktree))
@@ -1828,7 +1900,7 @@ def test_prompt_delivery_failure_records_undelivered(
 
 
 def test_pane_fallback_resend_rechecks_for_staged_input(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     receipt = {
         "tab_id": "w1:t-new",
@@ -1862,7 +1934,7 @@ def test_pane_fallback_resend_rechecks_for_staged_input(
         lambda *_a, **_k: {
             "agent_status": "idle",
             "pane_id": "w1:p1",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w1",
             "interactive_ready": True,
             "agent": "codex",
@@ -1877,7 +1949,7 @@ def test_pane_fallback_resend_rechecks_for_staged_input(
             raise launcher.StagedInputError("resend target now contains staged input")
 
     monkeypatch.setattr(launcher, "guard_pane_before_write", stop_resend)
-    unit = launcher.LaunchRequest(name="worker", vendor="codex", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", worktree=launch_worktree)
     with pytest.raises(launcher.StagedInputError, match="resend target"):
         launcher.launch(unit)
     assert sends == ["send"]
@@ -1885,7 +1957,7 @@ def test_pane_fallback_resend_rechecks_for_staged_input(
 
 
 def test_agent_prompt_resend_rechecks_before_it_can_fall_back_to_the_pane(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     unit, _recorded, _sends = _prepare_guard_launch(
         launcher,
@@ -1893,6 +1965,7 @@ def test_agent_prompt_resend_rechecks_before_it_can_fall_back_to_the_pane(
         pane_dump=_claude_pane("❯ "),
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     inspections: list[str] = []
     accepted = iter([False, True])
@@ -1908,7 +1981,7 @@ def test_agent_prompt_resend_rechecks_before_it_can_fall_back_to_the_pane(
         lambda *_a, **_k: {
             "agent_status": "idle",
             "pane_id": "w80:p9",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w80",
             "interactive_ready": True,
             "agent": "claude",
@@ -1928,6 +2001,7 @@ def _prepare_resend_launch(
     agent_prompt_ok: bool,
     pane_dump: str,
     preexisting_tabs: frozenset[str],
+    launch_worktree: str,
 ) -> tuple[Any, list[list[str]], list[str], list[str]]:
     """Drive the real PaneWriter send and the resend loop with only the Herdr boundary stubbed.
 
@@ -1973,18 +2047,18 @@ def _prepare_resend_launch(
         lambda *_a, **_k: {
             "agent_status": "idle",
             "pane_id": "w1:p1",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w1",
             "interactive_ready": True,
             "agent": "claude",
         },
     )
-    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree=launch_worktree)
     return unit, recorded, pane_writes, guard_calls
 
 
 def test_pane_fallback_resend_into_an_owned_pane_rechecks_for_staged_input(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """SEC-01: an owned session whose first send typed into the pane is re-inspected on the
     resend. At the frozen revision this shape makes three pane writes and zero guard calls
@@ -1995,6 +2069,7 @@ def test_pane_fallback_resend_into_an_owned_pane_rechecks_for_staged_input(
         agent_prompt_ok=False,
         pane_dump=_claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
         preexisting_tabs=frozenset(),
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.launch(unit)
@@ -2008,7 +2083,7 @@ def test_pane_fallback_resend_into_an_owned_pane_rechecks_for_staged_input(
 
 
 def test_agent_prompt_resend_into_an_owned_pane_is_inspected_before_each_resend(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """The write half of the predicate tracks every door, not only the pane-typing fallback
     (terminal review F03). An owned session delivered through `herdr agent prompt` has been
@@ -2021,6 +2096,7 @@ def test_agent_prompt_resend_into_an_owned_pane_is_inspected_before_each_resend(
         agent_prompt_ok=True,
         pane_dump=_claude_pane("❯ "),
         preexisting_tabs=frozenset(),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert guard_calls == ["w1:p1", "w1:p1"]
@@ -2031,7 +2107,7 @@ def test_agent_prompt_resend_into_an_owned_pane_is_inspected_before_each_resend(
 
 
 def test_agent_prompt_resend_into_an_owned_pane_stops_on_a_draft_staged_since(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """The consequence F03 names: text the operator staged after the first prompt is found
     by the resend inspection and the resend is withheld, rather than concatenated onto it."""
@@ -2042,6 +2118,7 @@ def test_agent_prompt_resend_into_an_owned_pane_stops_on_a_draft_staged_since(
         agent_prompt_ok=True,
         pane_dump="",
         preexisting_tabs=frozenset(),
+        launch_worktree=launch_worktree,
     )
     real_run = launcher.run
 
@@ -2063,7 +2140,7 @@ def test_agent_prompt_resend_into_an_owned_pane_stops_on_a_draft_staged_since(
 
 
 def test_each_resend_after_a_pane_fallback_is_inspected_once(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """The fixed side, counted: an owned pane-fallback launch makes zero guard calls before
     its first send and exactly one per resend while the session stays idle."""
@@ -2073,6 +2150,7 @@ def test_each_resend_after_a_pane_fallback_is_inspected_once(
         agent_prompt_ok=False,
         pane_dump=_claude_pane("❯ "),
         preexisting_tabs=frozenset(),
+        launch_worktree=launch_worktree,
     )
     launcher.launch(unit)
     assert guard_calls == ["w1:p1", "w1:p1"]
@@ -2088,6 +2166,7 @@ def _prepare_redeliver_real_send(
     pane_dumps: list[str],
     agent_status: str | None = "idle",
     accepted: bool = False,
+    launch_worktree: str,
 ) -> tuple[Any, list[list[str]], list[str], list[str]]:
     """A redelivery driven through the real send/say and the real guard, with only the
     Herdr boundary stubbed (terminal review F02: the stubbed-send harness above could not
@@ -2126,7 +2205,7 @@ def _prepare_redeliver_real_send(
         lambda *_a, **_k: {
             "agent_status": agent_status,
             "pane_id": "w1:p1",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w1",
             "interactive_ready": True,
             "agent": "claude",
@@ -2135,7 +2214,7 @@ def _prepare_redeliver_real_send(
     unit = launcher.LaunchRequest(
         name="worker",
         vendor="claude",
-        worktree="/tmp/wt",
+        worktree=launch_worktree,
         task="do the thing",
         pane_id="w1:p1",
         tab_id="w1:t1",
@@ -2152,13 +2231,18 @@ def _prepare_redeliver_real_send(
 
 
 def test_redeliver_records_no_wrapper_create_and_keeps_the_tab(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """The retry never runs the wrapper create: calling launch() again would create a second
     session and overwrite the first owned tab (the prior validation artifact's REL-03,
     rebuilt through the retry door)."""
     unit, recorded, _pane_writes, guard_calls = _prepare_redeliver_real_send(
-        launcher, monkeypatch, owned=False, pane_dumps=[_claude_pane("❯ ")], accepted=True
+        launcher,
+        monkeypatch,
+        owned=False,
+        pane_dumps=[_claude_pane("❯ ")],
+        accepted=True,
+        launch_worktree=launch_worktree,
     )
     launcher.redeliver(unit)
     assert not any(cmd[0] == "agents" for cmd in recorded)
@@ -2171,7 +2255,7 @@ def test_redeliver_records_no_wrapper_create_and_keeps_the_tab(
 
 
 def test_redeliver_inspects_before_the_first_write_on_an_owned_unit(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """The wrote_before half of should_guard_pane_write, observable only here: a redelivery
     into a pane this launcher owns still inspects before its first write, because the stop
@@ -2182,6 +2266,7 @@ def test_redeliver_inspects_before_the_first_write_on_an_owned_unit(
         monkeypatch,
         owned=True,
         pane_dumps=[_claude_pane(f"❯ {STAGED_SLASH_COMMAND}")],
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.redeliver(unit)
@@ -2190,15 +2275,17 @@ def test_redeliver_inspects_before_the_first_write_on_an_owned_unit(
     assert unit.launch_receipt["input_box"] == "staged"
 
 
-def test_redeliver_without_a_pane_id_is_a_named_stop(launcher: ModuleType) -> None:
+def test_redeliver_without_a_pane_id_is_a_named_stop(
+    launcher: ModuleType, *, launch_worktree: str
+) -> None:
     """A unit that lost its pane id cannot be redelivered; the stop names the recovery."""
-    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree=launch_worktree)
     with pytest.raises(SystemExit, match="cannot redeliver"):
         launcher.redeliver(unit)
 
 
 def test_redeliver_with_the_real_send_inspects_before_every_write(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Terminal review F02, the executed probe rebuilt: a redelivery into an owned pane
     whose first prompt goes through `herdr agent prompt` and is never taken. At the frozen
@@ -2207,7 +2294,11 @@ def test_redeliver_with_the_real_send_inspects_before_every_write(
     write of a redelivery is inspected, because the stop that made it necessary was an
     inspection that found text."""
     unit, recorded, pane_writes, guard_calls = _prepare_redeliver_real_send(
-        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")]
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ ")],
+        launch_worktree=launch_worktree,
     )
     launcher.redeliver(unit)
     prompt_calls = [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]
@@ -2218,7 +2309,7 @@ def test_redeliver_with_the_real_send_inspects_before_every_write(
 
 
 def test_redeliver_resend_stops_on_a_draft_staged_after_the_first_prompt(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """The consequence F02/F03 name on the retry door: an empty box at the first write, a
     draft typed during the fifteen-second delivery window, and the resend is withheld."""
@@ -2227,6 +2318,7 @@ def test_redeliver_resend_stops_on_a_draft_staged_after_the_first_prompt(
         monkeypatch,
         owned=True,
         pane_dumps=[_claude_pane("❯ "), _claude_pane(f"❯ {STAGED_SLASH_COMMAND}")],
+        launch_worktree=launch_worktree,
     )
     with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.redeliver(unit)
@@ -2237,7 +2329,7 @@ def test_redeliver_resend_stops_on_a_draft_staged_after_the_first_prompt(
 
 
 def test_redeliver_refuses_when_the_session_has_left_idle(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Terminal review F04/F30: the resend loop refuses to resend into a session that has
     left idle, because it may already hold the task. A staged-input stop raised from inside
@@ -2250,6 +2342,7 @@ def test_redeliver_refuses_when_the_session_has_left_idle(
         owned=True,
         pane_dumps=[_claude_pane("❯ ")],
         agent_status="working",
+        launch_worktree=launch_worktree,
     )
     launcher.redeliver(unit)
     assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
@@ -2263,14 +2356,18 @@ def test_redeliver_refuses_when_the_session_has_left_idle(
 
 
 def test_redeliver_of_a_gone_session_is_the_preflights_named_stop(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Cycle 2, F48/F49: a missing Herdr row is not evidence the session started, so the
     retry gate does not close the route over it; the real preflight then stops by name
     because Herdr does not list the session. No prompt goes out either way."""
     real_preflight = launcher.verify_unit_preflight
     unit, recorded, pane_writes, _guard_calls = _prepare_redeliver_real_send(
-        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")]
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ ")],
+        launch_worktree=launch_worktree,
     )
     monkeypatch.setattr(launcher, "verify_unit_preflight", real_preflight)
     monkeypatch.setattr(launcher, "agent_row", lambda *_a, **_k: None)
@@ -2283,7 +2380,11 @@ def test_redeliver_of_a_gone_session_is_the_preflights_named_stop(
 
 @pytest.mark.parametrize("status", ["unknown", None])
 def test_redeliver_treats_unknown_as_never_started(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, status: str | None
+    launcher: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str | None,
+    *,
+    launch_worktree: str,
 ) -> None:
     """A row reporting unknown or no status at all has not started, so the retry proceeds."""
     unit, recorded, _pane_writes, guard_calls = _prepare_redeliver_real_send(
@@ -2292,7 +2393,8 @@ def test_redeliver_treats_unknown_as_never_started(
         owned=True,
         pane_dumps=[_claude_pane("❯ ")],
         accepted=True,
-        agent_status=status,  # type: ignore[arg-type]
+        agent_status=status,
+        launch_worktree=launch_worktree,  # type: ignore[arg-type]
     )
     launcher.redeliver(unit)
     assert len([c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]) == 1
@@ -2303,10 +2405,15 @@ def test_redeliver_treats_unknown_as_never_started(
 
 @pytest.mark.parametrize("status", ["working", "blocked", "waiting"])
 def test_redeliver_refuses_every_started_status(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, status: str
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, status: str, *, launch_worktree: str
 ) -> None:
     unit, recorded, _pane_writes, _guard_calls = _prepare_redeliver_real_send(
-        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")], agent_status=status
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ ")],
+        agent_status=status,
+        launch_worktree=launch_worktree,
     )
     launcher.redeliver(unit)
     assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
@@ -2315,13 +2422,18 @@ def test_redeliver_refuses_every_started_status(
 
 
 def test_redeliver_into_an_idle_session_still_sends(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Counter-case for F04/F30: the liveness rule must not close the retry door on the
     session it exists for -- one still sitting idle with a cleared composer is redelivered
     and, once it takes the task, recorded RUNNING."""
     unit, recorded, _pane_writes, guard_calls = _prepare_redeliver_real_send(
-        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")], accepted=True
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ ")],
+        accepted=True,
+        launch_worktree=launch_worktree,
     )
     launcher.redeliver(unit)
     assert len([c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]]) == 1
@@ -2332,7 +2444,7 @@ def test_redeliver_into_an_idle_session_still_sends(
 
 
 def test_redeliver_admits_a_transcript_older_than_the_retry(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, launch_worktree: str
 ) -> None:
     """Terminal review F17: the redelivery passes ``since=None`` on purpose -- the receipt
     records no creation time, so the recency floor a fresh launch applies cannot be
@@ -2341,7 +2453,12 @@ def test_redeliver_admits_a_transcript_older_than_the_retry(
     a live timestamp floors that transcript out and the retry stops on an unverified
     account."""
     unit, recorded, _pane_writes, _guard_calls = _prepare_redeliver_real_send(
-        launcher, monkeypatch, owned=True, pane_dumps=[_claude_pane("❯ ")], accepted=True
+        launcher,
+        monkeypatch,
+        owned=True,
+        pane_dumps=[_claude_pane("❯ ")],
+        accepted=True,
+        launch_worktree=launch_worktree,
     )
     monkeypatch.undo()
     # Rebuild the boundary without the preflight stub; every pane read without --format is
@@ -2365,7 +2482,7 @@ def test_redeliver_admits_a_transcript_older_than_the_retry(
         lambda *_a, **_k: {
             "agent_status": "idle",
             "pane_id": "w1:p1",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w1",
             "interactive_ready": True,
             "agent": "claude",
@@ -2374,7 +2491,7 @@ def test_redeliver_admits_a_transcript_older_than_the_retry(
     personal = tmp_path / "personal"
     company = tmp_path / "company"
     monkeypatch.setattr(launcher, "claude_transcript_roots", lambda: (personal, company))
-    project = personal / launcher.claude_project_slug("/tmp/wt")
+    project = personal / launcher.claude_project_slug(launch_worktree)
     project.mkdir(parents=True)
     transcript = project / "session.jsonl"
     transcript.write_text("{}\n")
@@ -2451,7 +2568,7 @@ def test_a_long_bordered_draft_past_the_old_byte_cap_still_reads_staged(
 
 
 def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Terminal review F18: the two calls that write into a pane were the only Herdr calls
     with no bound, so a wedged daemon hung go and land mid-delivery. Both carry
@@ -2467,7 +2584,7 @@ def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
 
     monkeypatch.setattr(launcher, "run", fake_run)
     unit = launcher.LaunchRequest(
-        name="worker", vendor="qwen", worktree="/tmp/wt", launch_receipt={"owned": True}
+        name="worker", vendor="qwen", worktree=launch_worktree, launch_receipt={"owned": True}
     )
     launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
     assert timeouts == [
@@ -2493,7 +2610,7 @@ def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
 
 
 def test_a_pane_typing_timeout_names_the_ambiguity_like_the_prompt_door(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Terminal review cycle 2, F60: the pane-typing door's timeout was a generic stop that
     never said the line may have reached the session. Both doors now raise the same shape."""
@@ -2510,20 +2627,20 @@ def test_a_pane_typing_timeout_names_the_ambiguity_like_the_prompt_door(
 
     monkeypatch.setattr(launcher, "run", timed_out_typing)
     unit = launcher.LaunchRequest(
-        name="worker", vendor="qwen", worktree="/tmp/wt", launch_receipt={"owned": True}
+        name="worker", vendor="qwen", worktree=launch_worktree, launch_receipt={"owned": True}
     )
     with pytest.raises(SystemExit, match="pane run into w1:p1 did not return within"):
         launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
 
 
 def test_the_receipt_shape_reads_ownership_from_the_unit_not_the_receipt_it_replaces(
-    launcher: ModuleType,
+    launcher: ModuleType, *, launch_worktree: str
 ) -> None:
     """Cycle 2, F58: session_owned() prefers the receipt key, and the shape is built while
     the unit still holds the previous launch's receipt. The shape reads the unit attribute
     the caller just computed, so a stale receipt saying unowned cannot leak into a new one."""
     unit = launcher.LaunchRequest(
-        name="worker", vendor="claude", worktree="/tmp/wt", launch_receipt={"owned": False}
+        name="worker", vendor="claude", worktree=launch_worktree, launch_receipt={"owned": False}
     )
     info = {"tab_id": "w1:t-new", "agent_name": "worker-2", "pane_id": "w1:p1", "reused": False}
     receipt = launcher.record_wrapper_identity(unit, info, preexisting=frozenset())
@@ -2532,12 +2649,12 @@ def test_the_receipt_shape_reads_ownership_from_the_unit_not_the_receipt_it_repl
 
 
 def test_wrapper_identity_receipt_is_the_shape_function_output(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Terminal review F15: the receipt the wrapper create records is
     launch_receipt_shape's dict, built once from the attributes just set, not a second
     hand-typed literal of the same ten keys."""
-    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree=launch_worktree)
     info = {"tab_id": "w1:t-new", "agent_name": "worker-2", "pane_id": "w1:p1", "reused": "true"}
     receipt = launcher.record_wrapper_identity(unit, info, preexisting=frozenset())
     assert receipt == launcher.launch_receipt_shape(unit)
@@ -2790,6 +2907,7 @@ def _prepare_opencode_launch(
     existing_tabs: tuple[str, ...],
     composer_dumps: list[str] | None = None,
     accepted: bool = True,
+    launch_worktree: str,
 ) -> tuple[Any, list[list[str]], list[str], list[str]]:
     """An OpenCode launch with the real picker driver, the real writer and the real guard,
     only the Herdr boundary stubbed. Recent-unwrapped reads serve the picker menu; ANSI reads
@@ -2842,13 +2960,15 @@ def _prepare_opencode_launch(
         lambda *_a, **_k: {
             "agent_status": "idle",
             "pane_id": "w80:p9",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w80",
             "interactive_ready": True,
             "agent": "opencode",
         },
     )
-    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt", effort="high")
+    unit = launcher.LaunchRequest(
+        name="oc", vendor="opencode", worktree=launch_worktree, effort="high"
+    )
     return unit, recorded, typed, guard_calls
 
 
@@ -2857,13 +2977,13 @@ def _prompts(recorded: list[list[str]]) -> list[list[str]]:
 
 
 def test_an_unowned_opencode_launch_inspects_before_all_three_writes(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """The picker's two writes and the task are three writes through one writer, each
     inspected on an unowned session -- observed as guard calls at the real guard, with the
     real picker driver typing into the pane."""
     unit, recorded, typed, guard_calls = _prepare_opencode_launch(
-        launcher, monkeypatch, existing_tabs=("w80:t1",)
+        launcher, monkeypatch, existing_tabs=("w80:t1",), launch_worktree=launch_worktree
     )
     launcher.launch(unit)
     assert typed == ["/variants", "high"]
@@ -2874,14 +2994,14 @@ def test_an_unowned_opencode_launch_inspects_before_all_three_writes(
 
 
 def test_an_owned_opencode_launch_inspects_before_the_select_and_the_task(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Terminal review cycle 2, F40/F47: at 7aa0e3b7 an owned OpenCode launch made three
     pane writes with no inspection, because the picker never set the write flag. The writer
     records its own first write -- the picker opening -- so the variant select and the task
     are both inspected; only that first write into the fresh tab is exempt."""
     unit, recorded, typed, guard_calls = _prepare_opencode_launch(
-        launcher, monkeypatch, existing_tabs=()
+        launcher, monkeypatch, existing_tabs=(), launch_worktree=launch_worktree
     )
     launcher.launch(unit)
     assert unit.owned is True
@@ -2891,13 +3011,13 @@ def test_an_owned_opencode_launch_inspects_before_the_select_and_the_task(
 
 
 def test_an_owned_opencode_redelivery_inspects_before_every_write(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Terminal review cycle 2, F39: the picker write site on the retry door, where the
     write half of the rule is load-bearing. A redelivery seeds the writer as having written,
     so the picker open, the select and the task are all inspected."""
     unit, recorded, typed, guard_calls = _prepare_opencode_launch(
-        launcher, monkeypatch, existing_tabs=()
+        launcher, monkeypatch, existing_tabs=(), launch_worktree=launch_worktree
     )
     unit.pane_id, unit.tab_id, unit.owned = "w80:p9", "w80:t1", True
     unit.launch_receipt = {
@@ -2913,7 +3033,7 @@ def test_an_owned_opencode_redelivery_inspects_before_every_write(
 
 
 def test_a_draft_staged_while_the_picker_was_open_stops_the_task(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """REL-08 rebuilt on the writer: the inspection before the task is taken after the picker
     and the preflight, so a draft staged in between still stops the send. The classifier has
@@ -2929,6 +3049,7 @@ def test_a_draft_staged_while_the_picker_was_open_stops_the_task(
             _claude_pane("❯ "),
             _claude_pane(f"❯ {STAGED_SLASH_COMMAND}"),
         ],
+        launch_worktree=launch_worktree,
     )
 
     def guard(unit: Any, pane_id: str) -> None:
@@ -2946,7 +3067,7 @@ def test_a_draft_staged_while_the_picker_was_open_stops_the_task(
 
 
 def test_each_setup_line_and_the_task_are_separately_inspected(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Terminal review cycle 2, F41: send() was several writes -- one per setup slash command,
     then the task -- behind one guard, so the task could land up to a minute past its
@@ -2958,6 +3079,7 @@ def test_each_setup_line_and_the_task_are_separately_inspected(
         pane_dump=_claude_pane("❯ "),
         receipt_tab="w80:t1",
         existing_tabs=("w80:t1",),
+        launch_worktree=launch_worktree,
     )
     unit.setup = ["/effort high", "/model opus"]
     guard_calls: list[str] = []
@@ -2982,6 +3104,7 @@ def test_each_setup_line_and_the_task_are_separately_inspected(
         pane_dump=_claude_pane("❯ "),
         receipt_tab="w80:t-new",
         existing_tabs=(),
+        launch_worktree=launch_worktree,
     )
     owned.setup = ["/effort high", "/model opus"]
     guard_calls.clear()
@@ -3018,6 +3141,8 @@ def test_variant_confirmation_records_whether_the_token_was_seen_outside_the_men
     readback: str,
     seen_in: str,
     confirmed: bool,
+    *,
+    launch_worktree: str,
 ) -> None:
     """Cycle 2, F75: the confirmation searched the same pane the token was scraped from, and
     the picker menu lists every option, so finding the token there proved nothing. The source
@@ -3025,7 +3150,7 @@ def test_variant_confirmation_records_whether_the_token_was_seen_outside_the_men
     itself showed it on a non-menu row."""
     monkeypatch.setattr(launcher, "read_pane", lambda *_a, **_k: readback)
     unit = launcher.LaunchRequest(
-        name="oc", vendor="opencode", worktree="/tmp/wt", variant="high", launch_receipt={}
+        name="oc", vendor="opencode", worktree=launch_worktree, variant="high", launch_receipt={}
     )
     assert launcher.confirm_opencode_variant_selected(unit, "w80:p9", "high") == seen_in
     unit.launch_receipt["variant_confirmed_from"] = seen_in
@@ -3038,11 +3163,11 @@ def test_variant_confirmation_records_whether_the_token_was_seen_outside_the_men
 
 
 def test_an_absent_variant_token_is_still_a_stop(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Counter-case for F75: recording the source does not weaken the existing stop."""
     monkeypatch.setattr(launcher, "read_pane", lambda *_a, **_k: "Select variant\n> low\n")
-    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="oc", vendor="opencode", worktree=launch_worktree)
     with pytest.raises(SystemExit, match="does not report it"):
         launcher.confirm_opencode_variant_selected(unit, "w80:p9", "high")
 
@@ -3216,12 +3341,14 @@ def test_redeliver_cli_accepts_an_undelivered_receipt(
 
 
 def test_a_retry_receipt_without_an_ownership_key_verifies_identity(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, launch_worktree: str
 ) -> None:
     """Issue 1002 F112: a receipt that omits `owned` is refused, not adopted as unowned."""
     receipt = _staged_receipt()
     del receipt["owned"]
-    adopted = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt", task="x")
+    adopted = launcher.LaunchRequest(
+        name="worker", vendor="claude", worktree=launch_worktree, task="x"
+    )
     with pytest.raises(launcher.RetryReceiptRefused, match="records no owned key"):
         launcher._adopt_retry_receipt(adopted, receipt)
 
@@ -3253,8 +3380,10 @@ def test_redeliver_cli_as_a_real_subprocess_reprompts_the_recorded_pane(tmp_path
     no fixture stands in for the launcher. The receipt's pane is inspected once before the
     prompt, the wrapper create never runs, the session leaves idle after the prompt, and the
     updated receipt comes back on stdout with the exit code saying delivered."""
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
     worktree = tmp_path / "wt"
     worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     herdr = bin_dir / "herdr"
@@ -3479,11 +3608,16 @@ def test_non_object_json_keeps_its_message(launcher: ModuleType) -> None:
         launcher._load_receipt("[1, 2]")
 
 
-def test_confirm_preview_stops_on_cwd_mismatch(launcher: ModuleType) -> None:
+def test_confirm_preview_stops_on_cwd_mismatch(
+    launcher: ModuleType, *, launch_worktree: str
+) -> None:
     with pytest.raises(SystemExit, match="cwd"):
         launcher.confirm_preview(
-            {"cwd": "/tmp/other", "herdr_workspace": "<current-terminal:w1>"},
-            "/tmp/expected",
+            {
+                "cwd": str(Path(launch_worktree).with_name("other")),
+                "herdr_workspace": "<current-terminal:w1>",
+            },
+            str(Path(launch_worktree).with_name("expected")),
             "w1",
         )
 
@@ -3498,14 +3632,14 @@ def test_confirm_preview_stops_on_workspace_mismatch(launcher: ModuleType, tmp_p
 
 
 def test_herdr_readback_receipt_separates_confirmed_from_requested(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     monkeypatch.setattr(
         launcher,
         "agent_row",
         lambda unit, agents=None: {
             "pane_id": "pane-1",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "workspace_id": "w1",
             "interactive_ready": True,
             "agent": "codex",
@@ -3516,7 +3650,7 @@ def test_herdr_readback_receipt_separates_confirmed_from_requested(
     unit = launcher.LaunchRequest(
         name="reviewer",
         vendor="codex",
-        worktree="/tmp/wt",
+        worktree=launch_worktree,
         workspace="review",
         model="gpt-5.4",
         effort="xhigh",
@@ -3539,7 +3673,7 @@ def test_herdr_readback_receipt_separates_confirmed_from_requested(
 
 
 def test_herdr_cwd_mismatch_closes_owned_session(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     closed: list[str] = []
     monkeypatch.setattr(
@@ -3547,7 +3681,7 @@ def test_herdr_cwd_mismatch_closes_owned_session(
         "agent_row",
         lambda unit, agents=None: {
             "pane_id": "pane-1",
-            "cwd": "/tmp/other",
+            "cwd": str(Path(launch_worktree).with_name("other")),
             "interactive_ready": True,
             "agent": "codex",
         },
@@ -3556,14 +3690,16 @@ def test_herdr_cwd_mismatch_closes_owned_session(
         launcher, "close_run_session", lambda unit: closed.append(unit.tab_id or "")
     )
     unit = launcher.LaunchRequest(
-        name="reviewer", vendor="codex", worktree="/tmp/wt", pane_id="pane-1", tab_id="tab-1"
+        name="reviewer", vendor="codex", worktree=launch_worktree, pane_id="pane-1", tab_id="tab-1"
     )
     with pytest.raises(SystemExit, match="working directory"):
         launcher.verify_unit_preflight(unit, "pane-1", ready=True)
     assert closed == ["tab-1"]
 
 
-def test_task_name_with_separator_is_refused_before_any_write(launcher: ModuleType) -> None:
+def test_task_name_with_separator_is_refused_before_any_write(
+    launcher: ModuleType, *, launch_worktree: str
+) -> None:
     with pytest.raises(SystemExit, match="path separator"):
         launcher.assert_safe_path_component("../victim/CLAUDE", "task name")
     with pytest.raises(SystemExit, match="path separator"):
@@ -3573,7 +3709,7 @@ def test_task_name_with_separator_is_refused_before_any_write(launcher: ModuleTy
                 (),
                 {
                     "task": "feature/auth-review",
-                    "cwd": "/tmp",
+                    "cwd": str(Path(launch_worktree).parent),
                     "vendor": "codex",
                     "prompt": "x",
                     "model": None,
@@ -3619,7 +3755,7 @@ def test_preexisting_tab_is_not_owned(
 
 
 def test_cwd_mismatch_on_preexisting_tab_does_not_close(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     closed: list[list[str]] = []
 
@@ -3634,7 +3770,7 @@ def test_cwd_mismatch_on_preexisting_tab_does_not_close(
         "agent_row",
         lambda unit, agents=None: {
             "pane_id": "pane-1",
-            "cwd": "/tmp/other",
+            "cwd": str(Path(launch_worktree).with_name("other")),
             "interactive_ready": True,
             "agent": "codex",
         },
@@ -3642,7 +3778,7 @@ def test_cwd_mismatch_on_preexisting_tab_does_not_close(
     unit = launcher.LaunchRequest(
         name="reviewer",
         vendor="codex",
-        worktree="/tmp/wt",
+        worktree=launch_worktree,
         pane_id="pane-1",
         tab_id="tab-1",
         owned=False,
@@ -3654,7 +3790,7 @@ def test_cwd_mismatch_on_preexisting_tab_does_not_close(
 
 
 def test_ownership_is_tab_id_not_in_prelaunch_snapshot(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     listed: list[str] = []
 
@@ -3706,7 +3842,7 @@ def test_ownership_is_tab_id_not_in_prelaunch_snapshot(
         "verify_unit_preflight",
         lambda *a, **k: (_ for _ in ()).throw(SystemExit("stop after identity")),
     )
-    unit = launcher.LaunchRequest(name="smoke", vendor="codex", worktree="/tmp/wt")
+    unit = launcher.LaunchRequest(name="smoke", vendor="codex", worktree=launch_worktree)
     with pytest.raises(SystemExit, match="stop after identity"):
         launcher.launch(unit)
     assert unit.tab_id == "w80:t9"
@@ -3717,20 +3853,20 @@ def test_ownership_is_tab_id_not_in_prelaunch_snapshot(
 
 
 def test_kind_mismatch_stops_before_prompt(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     monkeypatch.setattr(
         launcher,
         "agent_row",
         lambda unit, agents=None: {
             "pane_id": "pane-1",
-            "cwd": "/tmp/wt",
+            "cwd": launch_worktree,
             "interactive_ready": True,
             "agent": "claude",
         },
     )
     unit = launcher.LaunchRequest(
-        name="reviewer", vendor="codex", worktree="/tmp/wt", pane_id="pane-1", tab_id="tab-1"
+        name="reviewer", vendor="codex", worktree=launch_worktree, pane_id="pane-1", tab_id="tab-1"
     )
     with pytest.raises(SystemExit, match="herdr reports agent 'claude'"):
         launcher.verify_unit_preflight(unit, "pane-1", ready=True)
@@ -4054,7 +4190,9 @@ def test_downstream_only_redaction_would_fail_its_guard() -> None:
     assert _downstream_redaction_violations(fixture) != []
 
 
-def test_the_documented_preflight_recipe_is_runnable(launcher: ModuleType) -> None:
+def test_the_documented_preflight_recipe_is_runnable(
+    launcher: ModuleType, *, launch_worktree: str
+) -> None:
     """The probe recipe must actually run: a prompt (and the account flag when an account is
     named) on the launch line, an exit-status statement, and a read-back that selects only keys
     the receipt can supply -- never the model, which is the request echoed back."""
@@ -4070,7 +4208,7 @@ def test_the_documented_preflight_recipe_is_runnable(launcher: ModuleType) -> No
     assert tokens[:2] == ["python3", "$S"]
     replacements = {
         "<probe-name>": "probe",
-        "$PWD": "/tmp/worktree",
+        "$PWD": launch_worktree,
         "<model>": "model",
         "<effort>": "high",
         "<selection>": "company",
@@ -4243,7 +4381,7 @@ def test_done_is_a_started_status(launcher: ModuleType) -> None:
 
 
 def test_redeliver_refuses_a_done_session(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     """Issue 1002 F103: redeliver does not send into a session that already finished."""
     unit, recorded, pane_writes, _guard_calls = _prepare_redeliver_real_send(
@@ -4252,6 +4390,7 @@ def test_redeliver_refuses_a_done_session(
         owned=True,
         pane_dumps=[_claude_pane("❯ ")],
         agent_status="done",
+        launch_worktree=launch_worktree,
     )
     launcher.redeliver(unit)
     assert [c for c in recorded if c[:3] == ["herdr", "agent", "prompt"]] == []
@@ -4469,7 +4608,7 @@ def test_pane_writer_unknown_door_is_a_named_stop(launcher: ModuleType) -> None:
 
 
 def test_launch_without_pane_id_is_a_named_stop(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, *, launch_worktree: str
 ) -> None:
     receipt = {"tab_id": "w80:t1", "agent_name": "worker-2", "reused": False}
 
@@ -4481,7 +4620,9 @@ def test_launch_without_pane_id_is_a_named_stop(
     monkeypatch.setattr(launcher, "run", fake_run)
     monkeypatch.setattr(launcher, "launcher", lambda: "agents")
     monkeypatch.setattr(launcher, "list_tab_ids", lambda *_a, **_k: frozenset())
-    unit = launcher.LaunchRequest(name="worker", vendor="claude", worktree="/tmp/wt", task="x")
+    unit = launcher.LaunchRequest(
+        name="worker", vendor="claude", worktree=launch_worktree, task="x"
+    )
     with pytest.raises(SystemExit, match="did not return a pane_id"):
         launcher.launch(unit)
 
@@ -4577,3 +4718,12 @@ def test_structural_detector_kills_enumerated_evasion_shapes(snippet: str) -> No
     """Issue 1002 F121: the production detector reports every enumerated catchable shape."""
     tree = ast.parse(snippet)
     assert _raw_door_calls(tree), snippet
+
+
+@pytest.fixture
+def launch_worktree(tmp_path: Path) -> str:
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    assert worktree.resolve().is_relative_to(tmp_path.resolve())
+    return str(worktree)

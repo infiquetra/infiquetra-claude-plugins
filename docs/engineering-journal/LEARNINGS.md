@@ -2,6 +2,45 @@
 
 ## 2026-10-29
 
+### A security report must prove scanner execution and complete input coverage  {#bandit-report-boundary-t08}
+
+**Author.** Codex (T08).
+**Evidence.** The parent CI swallowed Bandit's exit with `|| true`. Its locked 1.9.4
+medium/high scan covered 366 Python files in `plugins/`, `scripts/`, `tests/`, and
+`tools/` and reported 87 diagnostics without scanner errors. These were 74 synthetic
+path hygiene sites, three data-only readers, a filename hash, eight intentional test
+sites and one production execution boundary, rather than 87 proven vulnerabilities.
+
+**Mechanism and fix.** A repository helper deletes stale output, inventories and hashes
+all four roots independently, preserves default confidence and medium/high severity,
+and rejects scanner failures, internal-error logs, stale/malformed/error reports,
+incomplete file metrics, inconsistent totals and unresolved findings. CI uploads JSON,
+log and status on failure; the local gate uses the same blocking helper. Publish now
+also requires release parity. Validation uses read authority and hosted PR runners;
+existing-major actions use reviewed official immutable commits.
+
+**Preservation.** Private pytest paths preserve request/cwd/argv/transcript identities,
+quoted shell parsing, distinct worktrees and outside-root/socket-length negatives.
+Strict literal AST readers retain the common-Risk/package-root oracles and generated
+bytes. SHA1 remains the noncryptographic legacy filename algorithm, with exact filename,
+repeat-write suppression and full-attribution controls; Saga's release surfaces advance
+together to 1.2.1. Five real permission fixtures, inert scalar-preserving BaseLoader,
+the secure short temporary root and the fixed launcher compile probe have eight narrow
+test-only scanner dispositions, exposed by real `--ignore-nosec` controls.
+
+**Validation limits.** The ordinary gate retains the production Orchestrate B102 and is
+red. Its existing installed-code execution authority is unchanged; a separate reversible
+proposal documents override/cache trust and the lack of external-effect rollback. It is
+unaccepted and requires its own owner decision, both final critical reviews and hosted
+qualification. Local checks use the locked Python environment and authentic Mermaid
+parser. This sandbox denies Unix sockets, so socket regression evidence still needs a
+hosted runner. No publication, runtime redesign or transferred Mimir acceptance occurs.
+
+**Generalizable rule.** A clean-looking JSON file is insufficient evidence. Bind the
+scanner result to its exact inputs and successful execution, and distinguish private
+fixture hygiene, reviewed test dispositions and a retained runtime trust decision.
+
+
 ### Keep named fleet diagnostics without restarting the test framework  {#changelog-baseline-cli}
 
 **Evidence.** The full suite collects `test_fleet_baseline`, while the release-surface

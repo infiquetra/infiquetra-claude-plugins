@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -154,16 +155,24 @@ class TestPrePushGateHookDetection:
         ):
             assert not hook._push_target(command)[0], f"must not gate: {command}"
 
-    def test_repo_is_resolved_from_the_invocation(self, hook: Any) -> None:
+    def test_repo_is_resolved_from_the_invocation(self, hook: Any, tmp_path: Path) -> None:
         """#663 fault (a): resolve the target repo from the invocation, not the session cwd."""
-        assert hook._push_target("git -C /tmp/repo push")[1] == "/tmp/repo"
-        assert hook._push_target("git --git-dir=/tmp/r/.git push")[1] == "/tmp/r/.git"
-        assert hook._push_target("git --work-tree /tmp/wt push")[1] == "/tmp/wt"
+        repo = tmp_path / "repo with spaces"
+        assert hook._push_target(f"git -C {shlex.quote(str(repo))} push")[1] == str(repo)
+        git_dir = tmp_path / "r with spaces/.git"
+        assert hook._push_target(f"git --git-dir={shlex.quote(str(git_dir))} push")[1] == str(
+            git_dir
+        )
+        worktree = tmp_path / "wt with spaces"
+        assert hook._push_target(f"git --work-tree {shlex.quote(str(worktree))} push")[1] == str(
+            worktree
+        )
         assert hook._push_target("git push origin main")[1] is None
 
-    def test_cd_prefix_targets_the_other_repo(self, hook: Any) -> None:
+    def test_cd_prefix_targets_the_other_repo(self, hook: Any, tmp_path: Path) -> None:
         """The live failure: `cd <other-repo>` then push ran THIS repo's suite and blocked it."""
-        assert hook._cd_target("cd /tmp/other-repo ; git push") == "/tmp/other-repo"
+        other = tmp_path / "other repo"
+        assert hook._cd_target(f"cd {shlex.quote(str(other))} ; git push") == str(other)
         assert hook._cd_target("git push origin main") is None
 
     def test_operators_without_whitespace_still_gate(self, hook: Any) -> None:
@@ -194,8 +203,9 @@ class TestPrePushGateHookDetection:
         `git rev-parse --show-toplevel` fails, `_find_repo_root` returns None, and main() exits 0
         before reading the manifest -- the exact targeting form the fix claimed to support.
         """
-        assert hook._as_worktree_dir("/tmp/repo/.git") == "/tmp/repo"
-        assert hook._as_worktree_dir("/tmp/repo") == "/tmp/repo"
+        repo_path = tmp_path / "repo"
+        assert hook._as_worktree_dir(str(repo_path / ".git")) == str(repo_path)
+        assert hook._as_worktree_dir(str(repo_path)) == str(repo_path)
         assert hook._as_worktree_dir(None) is None
 
         import subprocess as sp

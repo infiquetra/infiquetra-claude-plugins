@@ -331,7 +331,7 @@ def test_guard_allows_only_closed_ordinary_classifier_response(
 
 
 def test_guard_rejects_malformed_response_and_paths_outside_root(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, *, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(guard, "resolve_team_mimir_root", lambda _cwd: MIMIR_ROOT)
     monkeypatch.setattr(
@@ -354,7 +354,7 @@ def test_guard_rejects_malformed_response_and_paths_outside_root(
     )
     assert guard.main() == 2
     with pytest.raises(RuntimeError, match="outside"):
-        guard.normalize_path("/tmp/not-team-mimir", MIMIR_ROOT)
+        guard.normalize_path(str(tmp_path / "not-team-mimir"), MIMIR_ROOT)
 
 
 def test_guard_resolves_configured_root_and_runs_actual_classifier(

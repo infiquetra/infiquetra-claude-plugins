@@ -49,7 +49,7 @@ def store(tmp_path: Path) -> Path:
     return root
 
 
-def _full_record(rr: ModuleType):
+def _full_record(rr: ModuleType, *, tmp_path: Path):
     """A record with every one of the twelve top-level keys populated."""
     run_configuration = rr.empty_run_configuration()
     for index, name in enumerate(rr.RUN_CONFIGURATION_PARAMETERS):
@@ -73,7 +73,7 @@ def _full_record(rr: ModuleType):
         units=[
             {
                 "unit": "U1",
-                "worktree": "/tmp/wt",
+                "worktree": str(tmp_path / "wt"),
                 "branch": "issue/1023",
                 "merge_turn": "waiting",
                 "mechanical_checks": "green",
@@ -119,9 +119,9 @@ def test_unknown_record_version_exits_3_with_exactly_one_line_and_no_stdout(
 
 
 def test_a_valid_record_shows_next_step_and_exits_0(
-    rr: ModuleType, store: Path, capsys: pytest.CaptureFixture[str]
+    rr: ModuleType, store: Path, capsys: pytest.CaptureFixture[str], *, tmp_path: Path
 ) -> None:
-    rr.save(store, _full_record(rr))
+    rr.save(store, _full_record(rr, tmp_path=tmp_path))
     exit_code = rr.main(["--store-root", str(store), "show", "1023"])
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -134,9 +134,9 @@ def test_a_valid_record_shows_next_step_and_exits_0(
 
 
 def test_unknown_top_level_field_survives_a_read_and_write_round_trip(
-    rr: ModuleType, store: Path
+    rr: ModuleType, store: Path, *, tmp_path: Path
 ) -> None:
-    rr.save(store, _full_record(rr))
+    rr.save(store, _full_record(rr, tmp_path=tmp_path))
     path = rr.record_path(store, 1023)
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["a_field_a_newer_writer_added"] = {"kept": True}
@@ -175,8 +175,10 @@ def test_a_missing_known_key_reads_back_as_its_empty_default(rr: ModuleType, sto
 # ---------------------------------------------------------------------------
 
 
-def test_top_level_key_set_is_exactly_the_twelve(rr: ModuleType, store: Path) -> None:
-    rr.save(store, _full_record(rr))
+def test_top_level_key_set_is_exactly_the_twelve(
+    rr: ModuleType, store: Path, *, tmp_path: Path
+) -> None:
+    rr.save(store, _full_record(rr, tmp_path=tmp_path))
     written = list(json.loads(rr.record_path(store, 1023).read_text(encoding="utf-8")))
     assert written == list(rr.TOP_LEVEL_KEYS), (
         f"top-level keys drifted: written={written} declared={list(rr.TOP_LEVEL_KEYS)}"
@@ -300,12 +302,14 @@ def test_a_common_directory_that_is_not_a_dot_git_refuses_with_one_line(
 # ---------------------------------------------------------------------------
 
 
-def test_a_full_record_round_trips_byte_identically(rr: ModuleType, store: Path) -> None:
+def test_a_full_record_round_trips_byte_identically(
+    rr: ModuleType, store: Path, *, tmp_path: Path
+) -> None:
     """Content is preserved exactly. The clock is injected because ``updated_at`` moves by design."""
     from datetime import UTC, datetime
 
     frozen = datetime(2026, 9, 19, 12, 0, 0, tzinfo=UTC)
-    path = rr.save(store, _full_record(rr), now=frozen)
+    path = rr.save(store, _full_record(rr, tmp_path=tmp_path), now=frozen)
     first = path.read_bytes()
     rr.save(store, rr.load(store, 1023, warn=None), now=frozen)
     assert path.read_bytes() == first

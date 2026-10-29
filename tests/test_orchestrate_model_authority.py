@@ -187,7 +187,7 @@ class TestModelAuthorityBoundary:
         assert orchestrate.models("unknown-vendor") == []
 
     def test_opencode_muse_routes_stay_distinct_with_variants_intact(
-        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch, *, tmp_path: Path
     ) -> None:
         """opencode-go and opencode routes remain distinct; opencode-go is a provider."""
         route1 = "opencode-go/muse-spark-1.2-contributor"
@@ -200,7 +200,7 @@ class TestModelAuthorityBoundary:
             model=route1,
             variant="xhigh",
             pane_id="pane-1",
-            worktree="/tmp/wt1",
+            worktree=str(tmp_path / "wt1"),
             tab_id="tab-1",
         )
         unit2 = orchestrate.Unit(
@@ -210,7 +210,7 @@ class TestModelAuthorityBoundary:
             model=route2,
             variant="xhigh",
             pane_id="pane-2",
-            worktree="/tmp/wt2",
+            worktree=str(tmp_path / "wt2"),
             tab_id="tab-2",
         )
 
@@ -227,13 +227,13 @@ class TestModelAuthorityBoundary:
             lambda: [
                 {
                     "pane_id": "pane-1",
-                    "cwd": "/tmp/wt1",
+                    "cwd": str(tmp_path / "wt1"),
                     "interactive_ready": True,
                     "agent": "opencode",
                 },
                 {
                     "pane_id": "pane-2",
-                    "cwd": "/tmp/wt2",
+                    "cwd": str(tmp_path / "wt2"),
                     "interactive_ready": True,
                     "agent": "opencode",
                 },
@@ -254,7 +254,7 @@ class TestModelAuthorityBoundary:
         assert receipt2["kind"] == "opencode"
 
     def test_launch_receipt_separates_requested_only_from_herdr_confirmed_facts(
-        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch, *, tmp_path: Path
     ) -> None:
         """Receipt places model in requested_only and never falsely in confirmed_against_herdr."""
         unit = orchestrate.Unit(
@@ -263,7 +263,7 @@ class TestModelAuthorityBoundary:
             task="do work",
             model="opus",
             pane_id="pane-1",
-            worktree="/tmp/wt",
+            worktree=str(tmp_path / "wt"),
             tab_id="tab-1",
         )
 
@@ -273,7 +273,7 @@ class TestModelAuthorityBoundary:
             lambda: [
                 {
                     "pane_id": "pane-1",
-                    "cwd": "/tmp/wt",
+                    "cwd": str(tmp_path / "wt"),
                     "interactive_ready": True,
                     "agent": "claude",
                 }

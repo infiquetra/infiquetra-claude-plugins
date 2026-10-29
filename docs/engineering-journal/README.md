@@ -30,6 +30,8 @@ Each of the four core files has a block-quote intro at the top with its own form
 
 ## Quick navigation by topic
 
+- Daily lifecycle regression entrypoint and supported CLI scenario mapping → [LEARNINGS](LEARNINGS.md#lifecycle-schedule-stranded-t08), [DECISIONS](DECISIONS.md#lifecycle-cli-regression-t08)
+
 - Saga Plan shared contract parser and interim #926 repair → [DECISIONS](DECISIONS.md#926-plan-drift-checks-derive-dont-restate)
 
 - Channel plugins are foreground-only; `--bg` / `/bg` strips `--dangerously-load-development-channels` → [LEARNINGS](LEARNINGS.md#cc-channels-bg-not-supported)

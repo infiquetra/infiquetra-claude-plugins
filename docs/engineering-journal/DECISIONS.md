@@ -1,5 +1,38 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-10-29
+
+### Keep the daily lifecycle obligation on supported CLI artifact contracts  {#lifecycle-cli-regression-t08}
+
+**Author.** Codex (T08).
+**Decision.** Repair `lifecycle-regression.yml` with a maintained pytest entrypoint invoking the
+current plan-conformance, Saga, review-result, and run-record CLIs in private fixture repositories.
+Keep the daily/manual triggers, workflow/job names, and all required merge contexts. Bound the
+job to ten minutes, serialize per workflow/ref without cancelling active work, and retain JUnit
+for seven days. Disable coverage instrumentation for this subprocess artifact probe; the normal
+merge suite keeps its coverage configuration. This is a workflow/test repair with no plugin
+runtime change, so it does not invent a plugin version or alter release surfaces.
+
+**Rationale.** Saga still owns plan/work ticks, review artifacts, gate pointers and resume
+persistence. These useful boundaries need a runnable regression even though the old outcome and
+managed-worktree contracts no longer exist. Input fixtures are explicit: no agent session,
+computed review verdict, outcome-DAG equivalence, managed-worktree reclamation, or hosted success
+is inferred from passing CLI persistence checks.
+
+**Rejected alternatives.** Retiring the schedule without evidence of equivalent owned coverage;
+resurrecting retired outcome/worktree machinery; replacing the missing entrypoint with tests
+that only carry a lifecycle name; changing duplicate Ruff, Bandit, or publication admission in
+the same package. None satisfies this narrowly approved T08 repair.
+
+**Revisit when.** A supported lifecycle artifact seam changes ownership or is retired, or an
+owned replacement demonstrates the same production-CLI coverage. Update the mapping and failure
+controls together. Roll back via a revert of this repair commit; because that reintroduces the
+known missing-path schedule, the owner must supply a valid entrypoint before accepting it for
+an active daily run.
+
+**Refs.** [Observed failure](LEARNINGS.md#lifecycle-schedule-stranded-t08),
+[scenario mapping and runbook](../../tests/lifecycle-fixture/README.md).
+
 ## 2026-09-20
 
 ### The ruff specifier pins the locked minor instead of declaring an open floor  {#ruff-minor-pin-1043}

@@ -1,11 +1,9 @@
 name: Lifecycle Regression
 
-# End-to-end lifecycle regression harness on the fixture repo (#428). The PR-blocking ci.yml
-# jobs verify the fleet's *parts* (manifests, agent files, contracts); this scheduled run drives
-# the canonical lifecycle scenarios headlessly against throwaway clones of
-# tests/lifecycle-fixture/ and asserts on artifact shape (spec JSON validity, saga-log append,
-# gate-record presence, worktree reclamation). It is a detection instrument for lifecycle-shape
-# regressions, deliberately cron-scheduled and separate from the merge-gating CI jobs (R5).
+# Owned by the repository's Saga maintainers. Exercise current production CLIs in isolated
+# fixture repositories: plan conformance, immutable saga ticks/resume, and review artifacts.
+# Scope and historical #428 scenario mapping: tests/lifecycle-fixture/README.md.
+# This scheduled detection job remains separate from the required merge contexts in ci.yml.
 
 on:
   schedule:
@@ -13,10 +11,18 @@ on:
     - cron: "43 6 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   lifecycle-regression:
     name: Lifecycle Regression (fixture-repo scenarios)
     runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -33,9 +39,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
 
-      - name: Run the lifecycle regression harness (all fixture scenarios)
+      - name: Run current lifecycle CLI scenarios and failure controls
         run: >
-          uv run pytest tests/test_lifecycle_regression_harness.py -v -rA
+          uv run --frozen pytest tests/test_lifecycle_regression_harness.py --no-cov -v -rA
           --junitxml=lifecycle-regression-report.xml
 
       - name: Upload run report
@@ -44,4 +50,5 @@ jobs:
         with:
           name: lifecycle-regression-report
           path: lifecycle-regression-report.xml
-          if-no-files-found: warn
+          if-no-files-found: error
+          retention-days: 7

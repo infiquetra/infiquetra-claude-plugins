@@ -140,7 +140,7 @@ jobs:
         run: uv run python scripts/check_release_surface_parity.py
 
       - name: CHANGELOG heading grammar lint (fleet baseline)
-        run: uv run python -m pytest tests/test_changelog_heading_lint.py -k fleet_baseline -v
+        run: uv run python scripts/changelog_heading_lint.py
 
       # PR-scoped: needs the PR's base ref, so it only runs on pull_request events —
       # a direct push to main has no "PR base" for the diff-aware bump comparison (KTD4).

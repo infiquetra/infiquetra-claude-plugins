@@ -2,6 +2,28 @@
 
 ## 2026-10-29
 
+### Keep named fleet diagnostics without restarting the test framework  {#changelog-baseline-cli}
+
+**Evidence.** The full suite collects `test_fleet_baseline`, while the release-surface
+job separately ran that test with global pytest coverage options. The existing changelog
+CLI passes all 13 canonical plugin changelogs and exits 1 for unbracketed versions,
+plugin-suffixed titles, and em-dash date separators in isolated fixture trees.
+
+**Mechanism and fix.** CI and the local gate now invoke `scripts/changelog_heading_lint.py`
+under the same named heading step, avoiding a second pytest/coverage startup. The full-suite
+baseline and malformed-input assertions remain; four subprocess cases add exit-status and
+diagnostic coverage. The cheap standalone issue-contract parity gate remains intentionally:
+its named, dependency-free failure signal identifies vendored drift before the full suite.
+
+**Validation.** All 47 focused heading, release-parity, and gate tests pass. Isolated gate
+controls with unrelated commands stubbed preserve exit 1 for validator failure and exit 2
+for an uncovered workflow step. Shell syntax, workflow YAML parsing, and focused Ruff checks
+pass. These controls do not claim a full gate or hosted CI result.
+
+**Generalizable rule.** Keep useful named diagnostics while removing framework overhead;
+prove the replacement's failure exit crosses the executable boundary. Repeated coverage
+options are not evidence of multiple full-suite executions.
+
 ### Retiring CLI machinery can strand a scheduled regression entrypoint  {#lifecycle-schedule-stranded-t08}
 
 **Author.** Codex (T08).

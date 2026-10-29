@@ -8,13 +8,13 @@
 **Decision.** Use one repository-local fail-closed Bandit helper in CI and the local gate,
 with no blanket findings baseline, rule skip, root exclusion or confidence change.
 Keep the unaccepted Orchestrate launcher-ingest B102 in the ordinary candidate. Prepare
-its exact single-site annotation, installed trust guidance, 6.0.1 release surfaces and
+its exact single-site annotation, installed trust guidance, proposed 6.0.2 release surfaces and
 rollback as a separate local proposal. Saga's explicit noncryptographic filename hash
 ships with 1.2.1 metadata despite preserving digest and ledger bytes.
 
 **Rationale.** Test-only false positives do not authorize production execution. Module
-namespace restoration preserves bindings after failure; it cannot contain import-time
-host effects. Replacing the import mechanism or migrating filename hashes would require
+namespace restoration is shallow and attempted only for caught SystemExit/Exception
+failures; it cannot reverse referenced-object mutations or contain import-time host effects. Replacing the import mechanism or migrating filename hashes would require
 separate supported-interface and legacy-ledger designs. The existing five named mandatory
 checks and release parity retain their independent authority at publication.
 

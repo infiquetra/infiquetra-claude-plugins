@@ -32,10 +32,11 @@ CHANGELOG = PLUGIN_ROOT / "CHANGELOG.md"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 #: Orchestrate's version at this card. Named with its predecessor so a bump is deliberate.
-ORCHESTRATE_VERSION = "6.0.0"
+ORCHESTRATE_VERSION = "6.0.1"
+# 6.0.1 corrects the documentation of shallow, caught-failure restoration only.
 # 6.0.0 is issue 1028: the board-writeback path is removed and `merge`'s exit status 2 is retired
 # with it. 5.0.0 was issue 1025, the slim to the run driver.
-ORCHESTRATE_PREDECESSOR = "5.0.0"
+ORCHESTRATE_PREDECESSOR = "6.0.0"
 
 REMOVED_SUBCOMMANDS = ("redrive", "collect", "land")
 KEPT_SUBCOMMANDS = ("plan-check", "start", "go", "merge", "clean")
@@ -161,6 +162,53 @@ class TestReleaseSurfacesMoveTogether:
 
     def test_this_releases_entry_names_what_it_removed(self) -> None:
         """5.1.0's own claim: the board writeback is gone and exit status 2 went with it."""
-        section = self._section(ORCHESTRATE_VERSION).lower()
+        section = self._section("6.0.0").lower()
         assert "board-writeback" in section or "board writeback" in section
         assert "exit status" in section and "2" in section
+
+
+def test_ingest_guidance_states_restoration_limits(orch) -> None:
+    text = orch._ingest_agent_launcher.__doc__
+    for token in (
+        "shallow",
+        "SystemExit/Exception",
+        "BaseException",
+        "KeyboardInterrupt",
+        "Mutations of referenced objects",
+        "external effects",
+        "Imported module state",
+        "full process",
+        "do not authenticate",
+    ):
+        assert token in text
+    assert "atomic" not in text
+    assert "documentation" in TestReleaseSurfacesMoveTogether._section("6.0.1").lower()
+
+
+@pytest.mark.parametrize("failure", ["SystemExit", "RuntimeError", "KeyboardInterrupt"])
+def test_ingest_restoration_is_shallow_and_only_for_caught_failures(
+    orch, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    source = tmp_path / "launcher.py"
+    source.write_text(
+        '_repair_mutable.append("survives")\n_repair_rebound = "during"\n'
+        + f'raise {failure}("controlled fixture failure")\n'
+    )
+    original: list[str] = []
+    monkeypatch.setattr(orch, "_AGENT_LAUNCHER_ERROR", "")
+    monkeypatch.setattr(orch, "_repair_mutable", original, raising=False)
+    monkeypatch.setattr(orch, "_repair_rebound", "before", raising=False)
+    monkeypatch.setattr(orch, "_agent_launcher_script", lambda: source)
+    # Isolate compatibility boundaries to measure the real production ingest handler.
+    monkeypatch.setattr(orch, "_companion_source_faults", lambda text: ([], None))
+    monkeypatch.setattr(orch, "_validated_agent_launcher", lambda script: None)
+    if failure == "KeyboardInterrupt":
+        with pytest.raises(KeyboardInterrupt, match="controlled fixture failure"):
+            orch._ingest_agent_launcher()
+        assert orch._repair_rebound == "during"
+    else:
+        assert orch._ingest_agent_launcher() is False
+        assert orch._repair_rebound == "before"
+        assert failure in orch._AGENT_LAUNCHER_ERROR
+    assert orch._repair_mutable is original
+    assert original == ["survives"]

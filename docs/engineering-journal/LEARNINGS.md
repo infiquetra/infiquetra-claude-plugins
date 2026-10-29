@@ -2,6 +2,39 @@
 
 ## 2026-10-29
 
+### Inventory traversal and literal grammars must fail closed at their real boundaries  {#bandit-concrete-repair-t08}
+
+**Author.** Codex (T08).
+**Evidence.** Concrete review found that `Path.rglob` can silently omit unreadable
+subtrees, locked Bandit 1.9.4 includes both `*.py` and `*.pyw`, and `ast.literal_eval`
+accepts `set()` and `1+2j` despite their Call/BinOp syntax. These are inventory and
+grammar-contract gaps; the two literal-eval special cases are not executed exploits.
+
+**Mechanism and fix.** Inventory now uses `os.walk` with an error callback that raises,
+hashes both default extensions, and retains evidence when traversal fails. Controlled
+traversal-denial and real `.pyw` scanner controls cover all four roots without weakening
+severity or confidence. A strict AST node whitelist precedes literal evaluation and
+rejects both special cases while preserving the generated data and independent hashes.
+
+**Trust wording.** Orchestrate's snapshot is shallow. Only caught SystemExit/Exception
+failures attempt binding restoration; KeyboardInterrupt and other uncaught BaseException
+subclasses bypass it. Referenced-object mutations survive even caught failures. Imported module state, other process state and external effects cannot be
+rolled back. Controlled real-ingest fixtures measure exactly those
+limits. Documentation correction advances ordinary release surfaces to 6.0.1 without
+changing executable behavior. The separate single-site B102 proposal is rebuilt as 6.0.2,
+remains unapplied and unaccepted, and requires a fresh precise owner decision and review.
+
+**Validation limits.** Existing sandbox socket failures are preserved. Root's separate
+`outside-socket-results.json` records all four unchanged cases passing with the CI venv;
+that focused receipt does not imply full hosted qualification. Authentic unprivileged
+filesystem-denial evidence belongs to Root's outside-sandbox probe; a controlled callback
+failure proves the local fail-closed control without pretending chmod defeats root.
+
+**Generalizable rule.** Match the locked scanner's actual discovery grammar, propagate
+traversal failures, and validate syntax before convenience evaluators. Describe recovery
+by its caught exception classes, shallow-copy limits and remaining process authority.
+
+
 ### A security report must prove scanner execution and complete input coverage  {#bandit-report-boundary-t08}
 
 **Author.** Codex (T08).

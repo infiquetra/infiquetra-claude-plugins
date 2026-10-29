@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import errno
 import importlib.util
 import json
 import subprocess
@@ -205,3 +206,50 @@ def test_inventory_includes_default_python_extension_only(tmp_path: Path) -> Non
         *(f"{p}/seed.py" for p in GATE.ROOTS),
         "tools/nested/extra.py",
     }
+
+
+def test_unreadable_traversal_fails_closed_and_retains_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _tree(tmp_path)
+    denied = root / "tools/private"
+    (root / GATE.REPORT).write_text('{"stale": true}')
+    real_walk = GATE.os.walk
+
+    def denied_walk(path: Path, *, onerror: Any) -> Any:
+        if path == root / "tools":
+            onerror(PermissionError(errno.EACCES, "controlled traversal denial", str(denied)))
+        yield from real_walk(path, onerror=onerror)
+
+    def must_not_scan(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("scanner must not run after incomplete inventory")
+
+    monkeypatch.setattr(GATE.os, "walk", denied_walk)
+    monkeypatch.setattr(GATE.subprocess, "run", must_not_scan)
+    assert GATE.run_scan(root) == 1
+    status = json.loads((root / GATE.STATUS).read_text())
+    assert status["ok"] is False
+    assert "controlled traversal denial" in status["error"]
+    assert str(denied) in (root / GATE.LOG).read_text()
+    assert "scanner_exit" not in status
+    assert not (root / GATE.REPORT).exists()
+
+
+@pytest.mark.parametrize("root_name", ["plugins", "scripts", "tests", "tools"])
+@pytest.mark.parametrize("seed", ["value = 1\n", 'exec("value = 1")\n'])
+def test_real_pyw_inventory_matches_locked_scanner(
+    tmp_path: Path, root_name: str, seed: str
+) -> None:
+    root = _tree(tmp_path)
+    name = f"{root_name}/extra.pyw"
+    (root / name).write_text(seed)
+    assert name in GATE.input_inventory(root)
+    expected_exit = int(seed.startswith("exec"))
+    assert GATE.run_scan(root) == expected_exit
+    report = json.loads((root / GATE.REPORT).read_text())
+    assert set(report["metrics"]) == {*GATE.input_inventory(root), "_totals"}
+    assert report["errors"] == []
+    assert any(
+        row["filename"] == name and row["test_id"] == "B102" for row in report["results"]
+    ) == bool(expected_exit)
+    assert json.loads((root / GATE.STATUS).read_text())["scanner_exit"] == expected_exit

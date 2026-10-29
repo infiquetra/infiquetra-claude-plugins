@@ -1,5 +1,10 @@
 # Changelog
 
+## [6.0.1] - 2026-10-29
+
+### Changed
+- Correct ingest documentation: snapshots are shallow, only caught SystemExit/Exception failures attempt binding restoration, other BaseException subclasses bypass it, and referenced-object mutations and external effects survive. Runtime selection and execution are unchanged; the production B102 decision remains unaccepted.
+
 ## [6.0.0] - 2026-09-20
 
 **Bumped from 5.0.0**, the orchestrate version on `origin/parent/1018` at commit `25619cd1`.

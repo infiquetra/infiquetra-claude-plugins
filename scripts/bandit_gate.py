@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 ROOTS = ("plugins", "scripts", "tests", "tools")
 REPORT = "bandit-report.json"
@@ -28,18 +29,24 @@ METRICS = {
 }
 
 
+def _raise_walk_error(error: OSError) -> NoReturn:
+    raise error
+
+
 def input_inventory(root: Path) -> dict[str, str]:
-    """Independently enumerate Bandit's default *.py inputs under all four roots."""
+    """Enumerate locked Bandit's *.py/*.pyw inputs; traversal failures are fatal."""
     inventory = {}
     for name in ROOTS:
         directory = root / name
         if not directory.is_dir():
             raise ValueError(f"missing scan root: {name}")
-        for path in directory.rglob("*.py"):
-            if path.is_file():
-                inventory[path.relative_to(root).as_posix()] = hashlib.sha256(
-                    path.read_bytes()
-                ).hexdigest()
+        for parent, _, filenames in os.walk(directory, onerror=_raise_walk_error):
+            for filename in filenames:
+                if filename.endswith((".py", ".pyw")):
+                    path = Path(parent) / filename
+                    inventory[path.relative_to(root).as_posix()] = hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
     if not inventory:
         raise ValueError("empty scan inventory")
     return dict(sorted(inventory.items()))

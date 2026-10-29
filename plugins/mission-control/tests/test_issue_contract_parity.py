@@ -503,6 +503,9 @@ def _literal_namespace(source: str, expected_docstring: str) -> dict[str, Any]:
         name = statement.targets[0].id
         if name in namespace:
             raise ValueError("duplicate DATA assignment")
+        literal_nodes = (ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Load)
+        if any(type(node) not in literal_nodes for node in ast.walk(statement.value)):
+            raise ValueError("expected literal DATA nodes only")
         namespace[name] = ast.literal_eval(statement.value)
     return namespace
 
@@ -524,6 +527,8 @@ def test_literal_reader_accepts_nested_data() -> None:
         "class C: pass",
         "DATA = [x for x in ()]",
         "DATA = len([])",
+        "DATA = set()",
+        "DATA = 1+2j",
         "DATA = 1 + 2",
         "DATA = 1\nDATA = 2",
         "DATA = OTHER = 1",
@@ -560,3 +565,16 @@ def test_literal_reader_never_executes_a_side_effect(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         _literal_namespace(source, "fixture DATA")
     assert not marker.exists()
+
+
+@pytest.mark.parametrize("expression", ["set()", "1+2j", "{'nested': [set()]}"])
+def test_literal_reader_rejects_expressions_before_literal_eval(
+    expression: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def must_not_evaluate(node: ast.AST) -> None:
+        pytest.fail("nonliteral AST reached literal_eval")
+
+    monkeypatch.setattr(ast, "literal_eval", must_not_evaluate)
+    source = '"""fixture DATA"""\nfrom __future__ import annotations\nDATA = ' + expression
+    with pytest.raises(ValueError, match="literal DATA nodes only"):
+        _literal_namespace(source, "fixture DATA")

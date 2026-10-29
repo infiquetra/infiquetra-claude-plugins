@@ -1170,8 +1170,9 @@ LAUNCHER_ONLY_NAMES = (
 
 def test_a_launcher_that_fails_mid_file_binds_nothing(tmp_path: Path) -> None:
     """CORR-11 / REL-11: a launcher that dies partway through its own import leaves the
-    namespace exactly as it was -- run is still the fallback and no launcher-only name is
-    live. At the frozen revision the partial exec left every name it had bound."""
+    simple namespace bindings restored -- run is still the fallback and no launcher-only
+    name is live. This fixture does not measure referenced-object mutations or external
+    effects. At the frozen revision the partial exec left every name it had bound."""
     cache = tmp_path / "cache" / MARKETPLACE
     orch_install = _install_plugin(
         cache, "orchestrate", _declared_version("orchestrate"), parts=(".claude-plugin", "skills")

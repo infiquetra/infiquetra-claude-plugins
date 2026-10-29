@@ -2021,9 +2021,14 @@ def _ingest_agent_launcher() -> bool:
     module. ``exec`` into ``globals()`` makes those names the ones the extracted
     functions look up, so the patches still apply. Importing a second module
     would hide them. A missing plugin must not kill every subcommand at import.
-    The exec is atomic: a launcher that fails partway through its own import binds
-    nothing (the namespace is restored), and a successful ingest restores this
-    module's own ``__doc__``, so ``--help`` keeps describing Orchestrate. Floor
+    The snapshot is shallow. Only caught SystemExit/Exception failures attempt
+    namespace binding restoration; other BaseException subclasses, including
+    KeyboardInterrupt, bypass it. Mutations of referenced objects survive even
+    caught failures, as do external effects. Imported module state and other process
+    state are not rolled back. Selected code inherits full process,
+    environment, filesystem, network and subprocess authority; compatibility checks
+    do not authenticate it. A successful ingest restores this module's own
+    ``__doc__``, so ``--help`` keeps describing Orchestrate. Floor
     policy after a successful ingest is
     ``docs/engineering-journal/DECISIONS.md`` ``{#907-agent-launcher-floor-owner}``.
     """
@@ -2080,8 +2085,8 @@ def _ingest_agent_launcher() -> bool:
     try:
         exec(compile(source, str(script), "exec"), globals())
     except (SystemExit, Exception) as exc:
-        # The exec is atomic: a launcher that fails partway through its own import binds
-        # nothing, not a subset of its names over this module's own definitions.
+        # Only caught failures attempt shallow binding restoration. Referenced-object
+        # mutations and filesystem/network/subprocess effects cannot be rolled back.
         globals().clear()
         globals().update(snapshot)
         _AGENT_LAUNCHER_ERROR = _agent_launcher_error(

@@ -2,6 +2,22 @@
 
 ## 2026-10-30
 
+### Enforce the existing coverage minimum without rounding admission upward  {#coverage-floor-admission-t08}
+
+**Decision.** Enforce the existing 80% requirement in the shared coverage report
+configuration, with six decimal places so a raw sub-80 result is not rounded into
+admission at the current denominator. Root's final admission compares the raw XML
+covered/valid ratio against 0.8. Coverage sources, omissions and exclusions stay unchanged.
+
+**Evidence.** On 2026-10-30, the verified hosted report had 19,980/25,277 covered
+lines (79.044190%), despite successful CI. New real board-write and Orchestrate
+command tests exercise transport contracts, refusal, replay, attribution and state
+publication. The scoped cases pass, while their global coverage floor correctly
+fails because the run covers only a subset. An unchanged-code line-set union is an
+estimate, not a full-run result; exact full-plugin coverage remains pending Root's
+complete run and new hosted qualification. The single B102 acceptance grants no
+coverage waiver.
+
 ### Accept the single launcher-ingest reporting disposition  {#claude-b102-owner-acceptance}
 
 **Decision.** On 2026-10-30, the repository owner accepted only the canonical

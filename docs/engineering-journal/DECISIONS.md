@@ -2,6 +2,21 @@
 
 ## 2026-10-30
 
+### Apply the coverage minimum at complete-run entrypoints  {#coverage-full-run-boundary-t08}
+
+**Correction.** The initial shared 80% setting also constrained nested pytest:
+three retired-transport cases passed, but their 17.636729% scoped coverage forced
+exit 1 and broke the unchanged routing integration assertion. The incomplete
+600-second full attempt is not qualification evidence.
+
+**Decision.** Keep shared precision at six and enforce the existing 80% floor
+explicitly on both complete CI and local-gate pytest commands. Unflagged nested
+or focused runs retain coverage instrumentation without being treated as complete
+admission. Sources, omissions, exclusions, tests and required gates are preserved.
+The installed engine must still reject one-line-below-80 coverage at both full
+boundaries. Exact-head full hosted execution, raw XML covered/valid >= 0.8, and
+all existing review, policy and publication requirements remain pending.
+
 ### Enforce the existing coverage minimum without rounding admission upward  {#coverage-floor-admission-t08}
 
 **Decision.** Enforce the existing 80% requirement in the shared coverage report

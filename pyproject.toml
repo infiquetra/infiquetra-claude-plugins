@@ -101,7 +101,6 @@ source = ["plugins"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-fail_under = 80
 precision = 6
 exclude_lines = [
     "pragma: no cover",

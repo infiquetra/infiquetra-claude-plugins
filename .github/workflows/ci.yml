@@ -50,7 +50,7 @@ jobs:
         run: python3 plugins/mission-control/config/generated/check_issue_contract_parity.py
 
       - name: Run tests with coverage
-        run: uv run python -m pytest -v --cov=plugins --cov-report=xml --cov-report=term-missing
+        run: uv run python -m pytest -v --cov=plugins --cov-report=xml --cov-report=term-missing --cov-fail-under=80
 
       - name: Upload coverage report
         if: always()

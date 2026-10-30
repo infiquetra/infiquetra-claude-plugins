@@ -176,7 +176,7 @@ tracked_test_shape() {
 step "Issue-contract vendored parity (consumer-side gate)" \
   python3 plugins/mission-control/config/generated/check_issue_contract_parity.py
 step "Run tests with coverage" \
-  uv run python -m pytest -q --cov=plugins --cov-report=term-missing
+  uv run python -m pytest -q --cov=plugins --cov-report=term-missing --cov-fail-under=80
 
 # --- validate ----------------------------------------------------------------
 step "Validate plugin manifests"     uv run python scripts/validate_plugins.py

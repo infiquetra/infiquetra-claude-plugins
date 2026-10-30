@@ -13,9 +13,9 @@ referenced object mutations, imported module and other process state, and extern
 effects are not rolled back. Full exact-candidate hosted checks and all existing
 review and publication gates remain required.
 
-## 2026-10-29
-
 ### Keep ordinary security qualification separate from a proposed runtime disposition  {#bandit-runtime-proposal-t08}
+
+**Historical decision date.** 2026-10-29.
 
 **Author.** Codex (T08).
 **Decision.** Use one repository-local fail-closed Bandit helper in CI and the local gate,
@@ -40,6 +40,8 @@ leave the gate red and scope a trust-interface redesign.
 provenance/ledger migration design is available. This is an uncommitted implementation;
 no source commit or acceptance is implied.
 
+
+## 2026-10-29
 
 ### Keep the daily lifecycle obligation on supported CLI artifact contracts  {#lifecycle-cli-regression-t08}
 

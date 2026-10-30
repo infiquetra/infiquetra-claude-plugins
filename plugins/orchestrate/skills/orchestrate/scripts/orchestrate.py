@@ -2083,7 +2083,7 @@ def _ingest_agent_launcher() -> bool:
     snapshot = dict(globals())
     own_doc = globals()["__doc__"]
     try:
-        exec(compile(source, str(script), "exec"), globals())
+        exec(compile(source, str(script), "exec"), globals())  # nosec B102 - CLAUDE-B102-INGEST: trusted installed code has full inherited authority; caught-failure restoration is shallow, not containment.
     except (SystemExit, Exception) as exc:
         # Only caught failures attempt shallow binding restoration. Referenced-object
         # mutations and filesystem/network/subprocess effects cannot be rolled back.

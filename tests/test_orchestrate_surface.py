@@ -32,11 +32,11 @@ CHANGELOG = PLUGIN_ROOT / "CHANGELOG.md"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 #: Orchestrate's version at this card. Named with its predecessor so a bump is deliberate.
-ORCHESTRATE_VERSION = "6.0.1"
+ORCHESTRATE_VERSION = "6.0.2"
 # 6.0.1 corrects the documentation of shallow, caught-failure restoration only.
 # 6.0.0 is issue 1028: the board-writeback path is removed and `merge`'s exit status 2 is retired
 # with it. 5.0.0 was issue 1025, the slim to the run driver.
-ORCHESTRATE_PREDECESSOR = "6.0.0"
+ORCHESTRATE_PREDECESSOR = "6.0.1"
 
 REMOVED_SUBCOMMANDS = ("redrive", "collect", "land")
 KEPT_SUBCOMMANDS = ("plan-check", "start", "go", "merge", "clean")
@@ -212,3 +212,23 @@ def test_ingest_restoration_is_shallow_and_only_for_caught_failures(
         assert failure in orch._AGENT_LAUNCHER_ERROR
     assert orch._repair_mutable is original
     assert original == ["survives"]
+
+
+def test_installed_launcher_proposal_guidance_states_precise_limits() -> None:
+    text = (PLUGIN_ROOT / "skills/orchestrate/SKILL.md").read_text()
+    normalized = " ".join(text.split())
+    for token in (
+        "AGENT_LAUNCHER_ROOT",
+        "CLAUDE_PLUGIN_ROOT",
+        "full inherited process",
+        "shallow",
+        "SystemExit/Exception",
+        "BaseException",
+        "KeyboardInterrupt",
+        "Mutations of referenced objects survive",
+        "Imported module state",
+        "cannot undo",
+        "do not authenticate",
+    ):
+        assert token in normalized
+    assert "B102" in TestReleaseSurfacesMoveTogether._section("6.0.2")

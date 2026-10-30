@@ -556,3 +556,21 @@ its branch, and its tab — look at them.
 An earlier implementation did all of those things, in 14,875 lines of production code and about
 15,700 lines of tests. It is preserved on `origin` at `archive/orchestrate-full-implementation` if a
 real failure ever justifies pulling a piece of it back.
+
+## Installed launcher execution authority
+
+Orchestrate deliberately executes the selected agent-launcher module in its own globals at
+initialization, including for read-only CLI imports. `AGENT_LAUNCHER_ROOT` selects a launcher
+first; repository siblings, `CLAUDE_PLUGIN_ROOT` siblings and installed cache siblings supply
+fallback candidates. Whoever controls those locations, their dependencies or these environment
+variables can select code with full inherited process, environment, host filesystem, network and
+subprocess authority. Use only owner-trusted installed code and trusted overrides.
+
+Syntax/name/guard checks and manifest version floors test compatibility. They do not authenticate
+source, ownership, mode, containment or dependencies. The real compile filename governs sibling
+composer discovery. The snapshot is shallow. Only caught SystemExit/Exception failures attempt
+binding restoration; other BaseException subclasses, including KeyboardInterrupt, bypass it.
+Mutations of referenced objects survive even caught failures. Imported module state and other
+process state are not rolled back. Restoration cannot undo import-time
+filesystem, network or subprocess effects. The single-site B102 reporting disposition records
+this retained local installed-plugin trust boundary; it adds no execution containment.

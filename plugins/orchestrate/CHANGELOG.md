@@ -1,5 +1,10 @@
 # Changelog
 
+## [6.0.2] - 2026-10-29
+
+### Changed
+- Document retained launcher override/cache execution authority and the single-site B102 disposition. Compatibility checks do not authenticate source. Binding restoration is shallow, attempted only for caught SystemExit/Exception; other BaseException subclasses bypass it, and referenced-object mutations and external effects survive. Executable behavior is unchanged.
+
 ## [6.0.1] - 2026-10-29
 
 ### Changed

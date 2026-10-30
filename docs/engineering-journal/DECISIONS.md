@@ -1,5 +1,18 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-10-30
+
+### Accept the single launcher-ingest reporting disposition  {#claude-b102-owner-acceptance}
+
+**Decision.** On 2026-10-30, the repository owner accepted only the canonical
+CLAUDE-B102-INGEST reporting disposition at Orchestrate's launcher-ingest call.
+Selected launcher code retains full inherited process, environment, filesystem,
+network and subprocess authority; compatibility checks do not authenticate it.
+Binding restoration is shallow and attempted only for caught SystemExit/Exception;
+referenced object mutations, imported module and other process state, and external
+effects are not rolled back. Full exact-candidate hosted checks and all existing
+review and publication gates remain required.
+
 ## 2026-10-29
 
 ### Keep ordinary security qualification separate from a proposed runtime disposition  {#bandit-runtime-proposal-t08}

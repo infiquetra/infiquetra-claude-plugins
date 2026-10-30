@@ -196,7 +196,9 @@ def test_ensure_private_dir_refuses_world_writable_ancestor_below_home(
     home = Path.home()
     loose = home / "loose"
     loose.mkdir(parents=True)
-    os.chmod(loose, 0o777)
+    assert loose.resolve().is_relative_to(tmp_path.resolve())
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    os.chmod(loose, 0o777)  # nosec B103 - real nonsticky refusal fixture, below private pytest root.
     with pytest.raises(audit_store.AuditStoreError, match="world-writable"):
         audit_store._ensure_private_dir(loose / "audit")
     assert not (loose / "audit").exists()
@@ -211,7 +213,9 @@ def test_for_root_ensure_refuses_world_writable_ancestor_outside_home(
     through the real ``Store.for_root(...).ensure()`` entry point that resolves the root first."""
     outside = tmp_path / "outside-home"  # tmp_path is not under the monkeypatched home
     outside.mkdir()
-    os.chmod(outside, 0o777)  # world-writable, no sticky bit — the exFAT/FAT32 shape
+    assert outside.resolve().is_relative_to(tmp_path.resolve())
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    os.chmod(outside, 0o777)  # nosec B103 - real outside-home refusal fixture, below private pytest root.
     store = audit_store.Store.for_root(outside / "audit")
     with pytest.raises(audit_store.AuditStoreError, match="world-writable"):
         store.ensure()
@@ -225,7 +229,9 @@ def test_for_root_ensure_accepts_sticky_world_writable_ancestor(
     mode exemption — the store is created 0o700 below it, reached through the real entry point."""
     sticky = tmp_path / "sticky-tmp"
     sticky.mkdir()
-    os.chmod(sticky, 0o1777)  # world-writable + sticky, e.g. /tmp
+    assert sticky.resolve().is_relative_to(tmp_path.resolve())
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    os.chmod(sticky, 0o1777)  # nosec B103 - real sticky-directory acceptance fixture, below private pytest root.
     store = audit_store.Store.for_root(sticky / "audit").ensure()
     assert stat.S_IMODE(store.root.lstat().st_mode) == 0o700
 
@@ -241,7 +247,9 @@ def test_for_root_ensure_refuses_symlinked_home_component(
     home.mkdir(parents=True, exist_ok=True)
     wwroot = tmp_path / "wwroot"
     wwroot.mkdir()
-    os.chmod(wwroot, 0o777)
+    assert wwroot.resolve().is_relative_to(tmp_path.resolve())
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    os.chmod(wwroot, 0o777)  # nosec B103 - real symlink-target refusal fixture, below private pytest root.
     link = home / "link"
     link.symlink_to(wwroot)
     store = audit_store.Store.for_root(link / "audit")
@@ -312,7 +320,9 @@ def test_ensure_private_dir_accepts_group_writable_ancestor_below_home(
     home = Path.home()
     shared = home / "shared"
     shared.mkdir(parents=True)
-    os.chmod(shared, 0o770)
+    assert shared.resolve().is_relative_to(tmp_path.resolve())
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    os.chmod(shared, 0o770)  # nosec B103 - real group-write acceptance fixture, below private pytest root.
     target = shared / "audit"
     audit_store._ensure_private_dir(target)
     assert stat.S_IMODE(target.lstat().st_mode) == 0o700

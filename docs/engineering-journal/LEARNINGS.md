@@ -2,6 +2,78 @@
 
 ## 2026-10-29
 
+### Inventory traversal and literal grammars must fail closed at their real boundaries  {#bandit-concrete-repair-t08}
+
+**Author.** Codex (T08).
+**Evidence.** Concrete review found that `Path.rglob` can silently omit unreadable
+subtrees, locked Bandit 1.9.4 includes both `*.py` and `*.pyw`, and `ast.literal_eval`
+accepts `set()` and `1+2j` despite their Call/BinOp syntax. These are inventory and
+grammar-contract gaps; the two literal-eval special cases are not executed exploits.
+
+**Mechanism and fix.** Inventory now uses `os.walk` with an error callback that raises,
+hashes both default extensions, and retains evidence when traversal fails. Controlled
+traversal-denial and real `.pyw` scanner controls cover all four roots without weakening
+severity or confidence. A strict AST node whitelist precedes literal evaluation and
+rejects both special cases while preserving the generated data and independent hashes.
+
+**Trust wording.** Orchestrate's snapshot is shallow. Only caught SystemExit/Exception
+failures attempt binding restoration; KeyboardInterrupt and other uncaught BaseException
+subclasses bypass it. Referenced-object mutations survive even caught failures. Imported module state, other process state and external effects cannot be
+rolled back. Controlled real-ingest fixtures measure exactly those
+limits. Documentation correction advances ordinary release surfaces to 6.0.1 without
+changing executable behavior. The separate single-site B102 proposal is rebuilt as 6.0.2,
+remains unapplied and unaccepted, and requires a fresh precise owner decision and review.
+
+**Validation limits.** Existing sandbox socket failures are preserved. Root's separate
+`outside-socket-results.json` records all four unchanged cases passing with the CI venv;
+that focused receipt does not imply full hosted qualification. Authentic unprivileged
+filesystem-denial evidence belongs to Root's outside-sandbox probe; a controlled callback
+failure proves the local fail-closed control without pretending chmod defeats root.
+
+**Generalizable rule.** Match the locked scanner's actual discovery grammar, propagate
+traversal failures, and validate syntax before convenience evaluators. Describe recovery
+by its caught exception classes, shallow-copy limits and remaining process authority.
+
+
+### A security report must prove scanner execution and complete input coverage  {#bandit-report-boundary-t08}
+
+**Author.** Codex (T08).
+**Evidence.** The parent CI swallowed Bandit's exit with `|| true`. Its locked 1.9.4
+medium/high scan covered 366 Python files in `plugins/`, `scripts/`, `tests/`, and
+`tools/` and reported 87 diagnostics without scanner errors. These were 74 synthetic
+path hygiene sites, three data-only readers, a filename hash, eight intentional test
+sites and one production execution boundary, rather than 87 proven vulnerabilities.
+
+**Mechanism and fix.** A repository helper deletes stale output, inventories and hashes
+all four roots independently, preserves default confidence and medium/high severity,
+and rejects scanner failures, internal-error logs, stale/malformed/error reports,
+incomplete file metrics, inconsistent totals and unresolved findings. CI uploads JSON,
+log and status on failure; the local gate uses the same blocking helper. Publish now
+also requires release parity. Validation uses read authority and hosted PR runners;
+existing-major actions use reviewed official immutable commits.
+
+**Preservation.** Private pytest paths preserve request/cwd/argv/transcript identities,
+quoted shell parsing, distinct worktrees and outside-root/socket-length negatives.
+Strict literal AST readers retain the common-Risk/package-root oracles and generated
+bytes. SHA1 remains the noncryptographic legacy filename algorithm, with exact filename,
+repeat-write suppression and full-attribution controls; Saga's release surfaces advance
+together to 1.2.1. Five real permission fixtures, inert scalar-preserving BaseLoader,
+the secure short temporary root and the fixed launcher compile probe have eight narrow
+test-only scanner dispositions, exposed by real `--ignore-nosec` controls.
+
+**Validation limits.** The ordinary gate retains the production Orchestrate B102 and is
+red. Its existing installed-code execution authority is unchanged; a separate reversible
+proposal documents override/cache trust and the lack of external-effect rollback. It is
+unaccepted and requires its own owner decision, both final critical reviews and hosted
+qualification. Local checks use the locked Python environment and authentic Mermaid
+parser. This sandbox denies Unix sockets, so socket regression evidence still needs a
+hosted runner. No publication, runtime redesign or transferred Mimir acceptance occurs.
+
+**Generalizable rule.** A clean-looking JSON file is insufficient evidence. Bind the
+scanner result to its exact inputs and successful execution, and distinguish private
+fixture hygiene, reviewed test dispositions and a retained runtime trust decision.
+
+
 ### Keep named fleet diagnostics without restarting the test framework  {#changelog-baseline-cli}
 
 **Evidence.** The full suite collects `test_fleet_baseline`, while the release-surface

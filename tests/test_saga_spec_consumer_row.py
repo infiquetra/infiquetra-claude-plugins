@@ -448,7 +448,12 @@ def test_plan_docs_wording_changes_do_not_fail(contract_api: ModuleType, tmp_pat
         if "lifecycle_state.py" in block
     ]
     assert len(commands) == 1, "maintainer runbook: missing runnable recommender example"
-    for target in ("/tmp/outside.py", "../outside.py", "plugins/saga/scripts/saga.py", "-c"):
+    for target in (
+        str(tmp_path / "outside.py"),
+        "../outside.py",
+        "plugins/saga/scripts/saga.py",
+        "-c",
+    ):
         with pytest.raises(AssertionError, match="canonical recommend-backend"):
             recommender_argv(f"python3 {target} recommend-backend lifecycle_state.py", ROOT)
     linked_root = tmp_path / "linked-checkout"

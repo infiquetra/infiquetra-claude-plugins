@@ -46,7 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "1.2.0"  # 1.2.0: the three advisory review
+    assert plugin_json["version"] == "1.2.1"  # 1.2.1: explicit noncryptographic legacy ledger hash.
+    # 1.2.0: the three advisory review
     # judgments of issue #1034 — the conditional-lens proposal at declaration time
     # (review_roster.py --propose, additive only), finding dedupe groups and the severity
     # flag over results (review_result.py, grouped and attached, never applied). Bumped over

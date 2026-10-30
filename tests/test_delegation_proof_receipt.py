@@ -256,7 +256,9 @@ def test_verify_rejects_artifact_rows_outside_repository_proof_root(
     release_repository: dict[str, Any],
 ) -> None:
     receipt = _run(release_repository)
-    receipt["proof_artifacts"][0]["path"] = "/tmp/agy.proof.json"
+    receipt["proof_artifacts"][0]["path"] = str(
+        release_repository["repo"].parent / "agy.proof.json"
+    )
     receipt["sha256"] = DPR._digest(receipt)
     receipt_path = DPR._fixed_receipt_path("version-gate")
     receipt_path.write_bytes(DPR._canonical(receipt) + b"\n")

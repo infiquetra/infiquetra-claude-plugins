@@ -101,6 +101,7 @@ source = ["plugins"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
+precision = 6
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",

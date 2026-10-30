@@ -1,5 +1,77 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-10-30
+
+### Apply the coverage minimum at complete-run entrypoints  {#coverage-full-run-boundary-t08}
+
+**Correction.** The initial shared 80% setting also constrained nested pytest:
+three retired-transport cases passed, but their 17.636729% scoped coverage forced
+exit 1 and broke the unchanged routing integration assertion. The incomplete
+600-second full attempt is not qualification evidence.
+
+**Decision.** Keep shared precision at six and enforce the existing 80% floor
+explicitly on both complete CI and local-gate pytest commands. Unflagged nested
+or focused runs retain coverage instrumentation without being treated as complete
+admission. Sources, omissions, exclusions, tests and required gates are preserved.
+The installed engine must still reject one-line-below-80 coverage at both full
+boundaries. Exact-head full hosted execution, raw XML covered/valid >= 0.8, and
+all existing review, policy and publication requirements remain pending.
+
+### Enforce the existing coverage minimum without rounding admission upward  {#coverage-floor-admission-t08}
+
+**Decision.** Enforce the existing 80% requirement in the shared coverage report
+configuration, with six decimal places so a raw sub-80 result is not rounded into
+admission at the current denominator. Root's final admission compares the raw XML
+covered/valid ratio against 0.8. Coverage sources, omissions and exclusions stay unchanged.
+
+**Evidence.** On 2026-10-30, the verified hosted report had 19,980/25,277 covered
+lines (79.044190%), despite successful CI. New real board-write and Orchestrate
+command tests exercise transport contracts, refusal, replay, attribution and state
+publication. The scoped cases pass, while their global coverage floor correctly
+fails because the run covers only a subset. An unchanged-code line-set union is an
+estimate, not a full-run result; exact full-plugin coverage remains pending Root's
+complete run and new hosted qualification. The single B102 acceptance grants no
+coverage waiver.
+
+### Accept the single launcher-ingest reporting disposition  {#claude-b102-owner-acceptance}
+
+**Decision.** On 2026-10-30, the repository owner accepted only the canonical
+CLAUDE-B102-INGEST reporting disposition at Orchestrate's launcher-ingest call.
+Selected launcher code retains full inherited process, environment, filesystem,
+network and subprocess authority; compatibility checks do not authenticate it.
+Binding restoration is shallow and attempted only for caught SystemExit/Exception;
+referenced object mutations, imported module and other process state, and external
+effects are not rolled back. Full exact-candidate hosted checks and all existing
+review and publication gates remain required.
+
+### Keep ordinary security qualification separate from a proposed runtime disposition  {#bandit-runtime-proposal-t08}
+
+**Historical decision date.** 2026-10-29.
+
+**Author.** Codex (T08).
+**Decision.** Use one repository-local fail-closed Bandit helper in CI and the local gate,
+with no blanket findings baseline, rule skip, root exclusion or confidence change.
+Keep the unaccepted Orchestrate launcher-ingest B102 in the ordinary candidate. Prepare
+its exact single-site annotation, installed trust guidance, proposed 6.0.2 release surfaces and
+rollback as a separate local proposal. Saga's explicit noncryptographic filename hash
+ships with 1.2.1 metadata despite preserving digest and ledger bytes.
+
+**Rationale.** Test-only false positives do not authorize production execution. Module
+namespace restoration is shallow and attempted only for caught SystemExit/Exception
+failures; it cannot reverse referenced-object mutations or contain import-time host effects. Replacing the import mechanism or migrating filename hashes would require
+separate supported-interface and legacy-ledger designs. The existing five named mandatory
+checks and release parity retain their independent authority at publication.
+
+**Alternatives.** Transferring Mimir's exception, hiding execution behind another loader,
+using a blanket scanner baseline, or changing SHA1 filenames would conceal or expand the
+approved scope. The owner may accept the precise proposal after critical reviews, or
+leave the gate red and scope a trust-interface redesign.
+
+**Revisit when.** The owner decides CLAUDE-B102-INGEST or a separately approved source
+provenance/ledger migration design is available. This is an uncommitted implementation;
+no source commit or acceptance is implied.
+
+
 ## 2026-10-29
 
 ### Keep the daily lifecycle obligation on supported CLI artifact contracts  {#lifecycle-cli-regression-t08}

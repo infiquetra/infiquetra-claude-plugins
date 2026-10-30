@@ -46,13 +46,13 @@ def es() -> ModuleType:
     return _load("execution_spec.py")
 
 
-def _spec_dict() -> dict[str, object]:
+def _spec_dict(*, tmp_path: Path) -> dict[str, object]:
     """A small valid spec spanning three distinct per-unit tiers (so tier-preservation
     across a recompile is observable)."""
     return {
         "name": "degrade-demo",
         "description": "capability-portable degradation demo",
-        "repo": "/tmp/repo",
+        "repo": str(tmp_path / "repo"),
         "units": [
             {
                 "unit_id": "U1",

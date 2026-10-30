@@ -176,7 +176,7 @@ tracked_test_shape() {
 step "Issue-contract vendored parity (consumer-side gate)" \
   python3 plugins/mission-control/config/generated/check_issue_contract_parity.py
 step "Run tests with coverage" \
-  uv run python -m pytest -q --cov=plugins --cov-report=term-missing
+  uv run python -m pytest -q --cov=plugins --cov-report=term-missing --cov-fail-under=80
 
 # --- validate ----------------------------------------------------------------
 step "Validate plugin manifests"     uv run python scripts/validate_plugins.py
@@ -216,11 +216,13 @@ step "Mermaid syntax check" bash -c 'npm ci --prefix scripts/mermaid && uv run p
 
 # --- type check + security ---------------------------------------------------
 step "Run mypy" uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports
-# CI ends this step with `|| true`, so bandit findings never block a merge there.
-advisory "Run bandit security scan" \
-  uv run python -m bandit -r plugins/ scripts/ tests/ tools/ -ll -f json -o "$LOG_DIR/bandit.json"
-advisory "Report security findings" \
-  bash -c 'f="$0/bandit.json"; [ -f "$f" ] && python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(\"bandit results:\",len(d[\"results\"]))" "$f"' "$LOG_DIR"
+# Mirror CI's fail-closed scanner/report boundary. Preserve diagnostics on red too.
+step "Run bandit security scan" uv run python scripts/bandit_gate.py
+for diagnostic in bandit-report.json bandit.log bandit-gate.json; do
+  if [ -f "$diagnostic" ]; then
+    cp "$diagnostic" "$LOG_DIR/$diagnostic"
+  fi
+done
 
 # --- completeness, measured against the pipeline -----------------------------
 echo

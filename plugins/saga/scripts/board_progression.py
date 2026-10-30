@@ -118,7 +118,9 @@ def _safe_ledger_name(key: str) -> str:
     # separator `normalize_assignments` refuses inside a field or option value, so it cannot
     # arrive from anywhere else.
     if len(safe) > 200 or not all(c.isalnum() or c in "_-.+" for c in safe):
-        safe = hashlib.sha1(key.encode()).hexdigest()
+        # Filename identity only; preserve legacy ledgers and repeat-write suppression.
+        # Authorization is checked separately before lookup; this is not code authentication.
+        safe = hashlib.sha1(key.encode(), usedforsecurity=False).hexdigest()
     return safe + ".json"
 
 

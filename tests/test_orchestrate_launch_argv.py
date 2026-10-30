@@ -734,12 +734,14 @@ class TestBackgroundNoFocusLaunchFlags:
                 f"flag {flag!r} emitted after vendor token {vendor!r}"
             )
 
-    def test_background_flag_ordering_and_completeness(self, orchestrate: ModuleType) -> None:
+    def test_background_flag_ordering_and_completeness(
+        self, orchestrate: ModuleType, *, tmp_path: Path
+    ) -> None:
         unit = orchestrate.Unit(
             name="worker",
             vendor="claude",
             task="do work",
-            worktree="/tmp/wt-worker",
+            worktree=str(tmp_path / "wt-worker"),
             workspace="ws-1",
             model="opus",
             effort="high",
@@ -756,7 +758,7 @@ class TestBackgroundNoFocusLaunchFlags:
             "--task",
             "worker",
             "--cwd",
-            "/tmp/wt-worker",
+            str(tmp_path / "wt-worker"),
             "--workspace",
             "ws-1",
             "claude",

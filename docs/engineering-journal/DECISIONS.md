@@ -1,5 +1,36 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-10-31
+
+### Bound validation jobs and supersede only valid pull-request runs
+
+**Decision.** Keep every CI job, command, runner, matrix, permission and admission
+gate. Supersede runs only for a pull_request event with a positive integer PR
+number; reject string, fractional/exponential and boolean representations.
+Concurrency groups include workflow and ref identity. Other or malformed events
+use unique run/attempt identities with cancellation disabled. Publication remains
+unchanged and cannot be cancelled by this validation policy.
+
+**Evidence.** Actual successful CI runs 41059940351 on main and 41058429191 on
+the same qualified source tree recorded job seconds respectively: tests 367/343,
+validate 12/15, release-surfaces 12/16, lint 19/28, type-check 17/20, security 26/25.
+Set each validation cap to three times the larger observed duration, rounded up
+to a five-minute boundary with a five-minute minimum: tests 20 minutes, other five
+validation jobs 5 minutes. Two samples are not a statistical tail guarantee; the
+headroom is deliberate. Publishing was skipped in both receipts, so no publishing
+timeout is inferred. This change claims no measured savings or candidate runtime.
+
+**Rejected alternatives.** Cancelling by a shared main/tag/ref group could
+interrupt unrelated or publishing runs. Combining jobs, changing caches/actions,
+reducing test selection or altering the 80%/security/release gates is outside this
+stage. The exact CLAUDE-B102-INGEST disposition and its authority limits remain.
+
+**Revisit when.** Trusted ordinary validation approaches these caps or changes
+its input/runtime contract. Roll back only this concurrency block and six timeout
+fields if needed, preserving the qualified validation, security and publication
+surface. Source reviews, full exact-candidate native/hosted, operational and fresh
+policy acceptance remain pending; the wider recommendation is still partial.
+
 ## 2026-10-30
 
 ### Apply the coverage minimum at complete-run entrypoints  {#coverage-full-run-boundary-t08}

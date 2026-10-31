@@ -13,8 +13,15 @@ on:
 permissions:
   contents: read
 
+# Supersede only valid PR runs. Every other event has a unique, non-cancelling group.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number > 0 && !contains(toJSON(github.event.pull_request.number), '"') && !contains(toJSON(github.event.pull_request.number), '.') && !contains(toJSON(github.event.pull_request.number), 'e') && toJSON(github.event.pull_request.number) != 'true' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}-attempt-{1}', github.run_id, github.run_attempt) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.pull_request.number > 0 && !contains(toJSON(github.event.pull_request.number), '"') && !contains(toJSON(github.event.pull_request.number), '.') && !contains(toJSON(github.event.pull_request.number), 'e') && toJSON(github.event.pull_request.number) != 'true' }}
+
 jobs:
   tests:
+    timeout-minutes: 20
     name: Tests (Python 3.12)
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
 
@@ -61,6 +68,7 @@ jobs:
           retention-days: 5
 
   validate:
+    timeout-minutes: 5
     name: Validate Plugins
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
 
@@ -113,6 +121,7 @@ jobs:
         run: uv run python plugins/mission-control/scripts/board_census.py --check
 
   release-surfaces:
+    timeout-minutes: 5
     name: Release Surface Parity
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
 
@@ -169,6 +178,7 @@ jobs:
           uv run python scripts/lint_journal_order.py --base-ref "$PR_BASE_SHA"
 
   lint:
+    timeout-minutes: 5
     name: Lint
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
 
@@ -230,6 +240,7 @@ jobs:
           uv run python scripts/check_mermaid.py
 
   type-check:
+    timeout-minutes: 5
     name: Type Check
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
 
@@ -252,6 +263,7 @@ jobs:
         run: uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports
 
   security:
+    timeout-minutes: 5
     name: Security Scan
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
 
